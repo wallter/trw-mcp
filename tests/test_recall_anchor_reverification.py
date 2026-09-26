@@ -1,19 +1,14 @@
 """CORE268: real anchor refresh belongs to maintenance; recall reports evidence.
 
-NOT PORTED (PRD-CORE-280 slice e1): every test here drives
-``trw_memory.lifecycle.verification_pass.run_maintain_verify`` directly
-against a real ``SQLiteBackend`` and reads it back synchronously
-(``backend.get``/``backend.update``). ``run_maintain_verify`` takes a
-synchronous ``Store`` object; ``daemon_checkout`` exposes only an
-async, remote ``DaemonClient`` with no matching call, so there is no
-daemon-route equivalent, and ``fake_memory_store`` does not implement real
-anchor/assertion re-verification either. Left unchanged and unmigrated
-(still constructs ``SQLiteBackend`` directly) — see the batch report.
+Every test here drives ``trw_memory.lifecycle.verification_pass.run_maintain_verify``
+directly against a real ``SQLiteBackend`` and reads it back synchronously
+(``backend.get``/``backend.update``) — a test may construct a raw ``SQLiteBackend``
+and drive trw-memory functions on it directly; only trw-mcp source must not open a
+checkout's memory.db.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -67,10 +62,6 @@ def recalled(backend, monkeypatch):
     return result
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_maintain_verify needs a synchronous SQLiteBackend/Store; daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion re-verification",
-)
 def test_anchor_only_failure_and_correction_are_explicit(fixture, monkeypatch):
     backend, root = fixture
     (root / "mod.py").write_text("def renamed_symbol(): pass\n")
@@ -86,10 +77,6 @@ def test_anchor_only_failure_and_correction_are_explicit(fixture, monkeypatch):
     assert recalled(backend, monkeypatch)["verification_status"] == "last_known_pass"
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_maintain_verify needs a synchronous SQLiteBackend/Store; daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion re-verification",
-)
 def test_intact_anchor_refresh_matches_direct_compute(fixture, monkeypatch):
     from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
 
@@ -101,10 +88,6 @@ def test_intact_anchor_refresh_matches_direct_compute(fixture, monkeypatch):
     assert recalled(backend, monkeypatch)["verification_status"] == "last_known_pass"
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_maintain_verify needs a synchronous SQLiteBackend/Store; daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion re-verification",
-)
 def test_unavailable_anchor_refresh_keeps_evidence_but_drops_the_verdict(fixture, monkeypatch):
     # PRD-CORE-294 FR07: a "verified" nothing can re-check is not present tense
     # (nudge selection reads it as such), so only the verdict is cleared.
@@ -119,10 +102,6 @@ def test_unavailable_anchor_refresh_keeps_evidence_but_drops_the_verdict(fixture
     assert recalled(backend, monkeypatch)["verification_status"] == "unknown"
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_maintain_verify needs a synchronous SQLiteBackend/Store; daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion re-verification",
-)
 def test_anchor_and_assertion_refresh_share_one_write(fixture, monkeypatch):
     backend, root = fixture
     backend.update(

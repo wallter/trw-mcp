@@ -261,6 +261,67 @@ def test_baseline_eviction_lets_old_arg_pattern_refire(tmp_path: Path) -> None:
     assert "novel_arg_pattern" in obs(first_hash, 3)
 
 
+def test_novel_arg_pattern_stops_firing_after_the_per_pair_shape_cap(tmp_path: Path) -> None:
+    """W41-6: past `max_novel_arg_shapes_per_pair` distinct shapes ever seen for a pair, a
+    fresh hash is absorbed into the baseline (still de-duped against re-firing on repeats)
+    but no longer counted as an anomaly -- the fix measured against the 2026-09-24 replay
+    (docs research: trw-jev/USAGE-7.0.0.md, PLAN.md W41-6)."""
+    cfg = AnomalyDetectorConfig(
+        sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
+        window_seconds=DEFAULT_WINDOW_SECONDS,
+        shadow_clock_path=tmp_path / "security" / "clock.yaml",
+        max_novel_arg_shapes_per_pair=3,
+    )
+    det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    det.seed_baseline(known_pairs={("trw", "trw_assess")})
+    now = datetime.now(tz=timezone.utc)
+
+    def obs(i: int) -> list[str]:
+        return det.observe(
+            AnomalyObservation(
+                ts=now + timedelta(seconds=i),
+                server="trw",
+                tool="trw_assess",
+                session_id="s",
+                args_hash=hash_tool_args({"state": f"call {i}"}),
+            )
+        )
+
+    # First 3 distinct shapes fire (below the cap).
+    assert all("novel_arg_pattern" in obs(i) for i in range(3))
+    # The 4th and 5th distinct shapes are past the cap: absorbed silently.
+    assert "novel_arg_pattern" not in obs(3)
+    assert "novel_arg_pattern" not in obs(4)
+
+
+def test_novel_arg_pattern_cap_is_per_pair_not_global(tmp_path: Path) -> None:
+    """A busy tool exhausting its cap must not suppress a genuinely different (server, tool)."""
+    cfg = AnomalyDetectorConfig(
+        sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
+        window_seconds=DEFAULT_WINDOW_SECONDS,
+        shadow_clock_path=tmp_path / "security" / "clock.yaml",
+        max_novel_arg_shapes_per_pair=1,
+    )
+    det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    det.seed_baseline(known_pairs={("trw", "trw_learn"), ("trw", "trw_deliver")})
+    now = datetime.now(tz=timezone.utc)
+
+    def obs(tool: str, text: str, i: int) -> list[str]:
+        return det.observe(
+            AnomalyObservation(
+                ts=now + timedelta(seconds=i),
+                server="trw",
+                tool=tool,
+                session_id="s",
+                args_hash=hash_tool_args({"state": text}),
+            )
+        )
+
+    assert "novel_arg_pattern" in obs("trw_learn", "first", 0)
+    assert "novel_arg_pattern" not in obs("trw_learn", "second", 1)  # trw_learn's cap (1) is spent
+    assert "novel_arg_pattern" in obs("trw_deliver", "first", 2)  # a different pair still fires
+
+
 def test_baseline_store_file_rolls_at_cap(tmp_path: Path) -> None:
     """The append-only baseline store must roll to its tail, not grow forever."""
     baseline_path = tmp_path / "security" / "mcp_arg_baseline.jsonl"

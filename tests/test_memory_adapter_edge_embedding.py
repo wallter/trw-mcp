@@ -7,143 +7,15 @@ What ``store_learning`` embeds is the daemon's: ``memory_store_impl`` encodes
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from trw_mcp.state.memory_adapter import (
-    embed_text,
-    embed_text_batch,
-    embedding_available,
     find_entry_by_id,
     store_learning,
 )
 
 from ._memory_adapter_edge_support import trw_dir  # noqa: F401
 from ._memory_store_fake import FakeMemoryStore
-
-
-class TestEmbedText:
-    def test_returns_none_when_embedder_unavailable(self) -> None:
-        """embed_text returns None when get_embedder() returns None."""
-        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
-            result = embed_text("some text")
-            assert result is None
-
-    def test_returns_none_for_empty_string(self) -> None:
-        """embed_text returns None for empty/whitespace-only text."""
-        mock_embedder = MagicMock()
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            assert embed_text("") is None
-            assert embed_text("   ") is None
-            assert embed_text("\t\n") is None
-            mock_embedder.embed.assert_not_called()
-
-    def test_returns_vector_on_success(self) -> None:
-        """embed_text returns the embedding vector from the provider."""
-        mock_embedder = MagicMock()
-        expected_vec = [0.1, 0.2, 0.3]
-        mock_embedder.embed.return_value = expected_vec
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text("hello world")
-            assert result == expected_vec
-            mock_embedder.embed.assert_called_once_with("hello world")
-
-    def test_returns_none_on_os_error(self) -> None:
-        """embed_text catches OSError and returns None."""
-        mock_embedder = MagicMock()
-        mock_embedder.embed.side_effect = OSError("model file missing")
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text("test input")
-            assert result is None
-
-    def test_returns_none_on_value_error(self) -> None:
-        """embed_text catches ValueError and returns None."""
-        mock_embedder = MagicMock()
-        mock_embedder.embed.side_effect = ValueError("bad input shape")
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text("test input")
-            assert result is None
-
-    def test_returns_none_on_runtime_error(self) -> None:
-        """embed_text catches RuntimeError and returns None."""
-        mock_embedder = MagicMock()
-        mock_embedder.embed.side_effect = RuntimeError("inference failed")
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text("test input")
-            assert result is None
-
-
-class TestEmbedTextBatch:
-    def test_empty_input_returns_empty_list(self) -> None:
-        """embed_text_batch([]) returns [] without calling embedder."""
-        result = embed_text_batch([])
-        assert result == []
-
-    def test_returns_none_list_when_embedder_unavailable(self) -> None:
-        """embed_text_batch returns [None, None, ...] when embedder is None."""
-        with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
-            result = embed_text_batch(["a", "b", "c"])
-            assert result == [None, None, None]
-
-    def test_uses_vectorized_embed_batch_single_call(self) -> None:
-        """embed_text_batch issues ONE embed_batch call, not N serial embed() calls."""
-        mock_embedder = MagicMock()
-        vec1 = [0.1, 0.2]
-        vec2 = [0.3, 0.4]
-        mock_embedder.embed_batch.return_value = [vec1, vec2]
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text_batch(["hello", "world"])
-            assert result == [vec1, vec2]
-            # The vectorized batch path is used exactly once with all texts...
-            mock_embedder.embed_batch.assert_called_once_with(["hello", "world"])
-            # ...and the per-text serial path is NOT used (the regression we fixed).
-            mock_embedder.embed.assert_not_called()
-
-    def test_batch_exception_returns_none_list(self) -> None:
-        """embed_text_batch catches exceptions and returns [None, ...]."""
-        mock_embedder = MagicMock()
-        mock_embedder.embed_batch.side_effect = RuntimeError("batch explosion")
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=mock_embedder,
-        ):
-            result = embed_text_batch(["a", "b"])
-            assert result == [None, None]
-
-
-class TestEmbeddingAvailable:
-    def test_true_when_embedder_exists(self) -> None:
-        """embedding_available() returns True when get_embedder returns non-None."""
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=MagicMock(),
-        ):
-            assert embedding_available() is True
-
-    def test_false_when_embedder_none(self) -> None:
-        """embedding_available() returns False when get_embedder returns None."""
-        with patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=None,
-        ):
-            assert embedding_available() is False
 
 
 class TestStoreLearningTagInference:

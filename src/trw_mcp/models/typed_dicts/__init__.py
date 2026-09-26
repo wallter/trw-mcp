@@ -40,7 +40,6 @@ from trw_mcp.models.typed_dicts._analytics import (
     AggregateMetrics,
     AnalyticsReport,
     CeremonyTrendItem,
-    EmbedHealthStatus,
     ImpactDistributionResult,
     ImpactTierInfo,
     RunAnalysisResult,
@@ -104,7 +103,6 @@ from trw_mcp.models.typed_dicts._ceremony import (
     TierCeremonyScoreResult,
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
-    WalCheckpointResultDict,
 )
 
 # _codex
@@ -139,7 +137,6 @@ from trw_mcp.models.typed_dicts._delivery import (
     AutoProgressStepResult,
     BatchSendResult,
     CeremonyFeedbackStepResult,
-    ConsolidationStepResult,
     IndexSyncResult,
     MemoryDecayStepResult,
     ProgressionItem,
@@ -299,7 +296,6 @@ __all__ = [
     "CheckpointResultDict",
     "ClaudeMdSyncResultDict",
     "ComplianceArtifactsDict",
-    "ConsolidationStepResult",
     "CoverageTrendResult",
     "CrossModelReviewResult",
     "DedupHandleResult",
@@ -315,7 +311,6 @@ __all__ = [
     "ReconciledLocalWritesDict",
     "DeployFrameworksVersionDataDict",
     "DimensionScoreDict",
-    "EmbedHealthStatus",
     "EscalationResult",
     "ExportAnalyticsSection",
     "ExportMetadata",
@@ -389,7 +384,6 @@ __all__ = [
     "TrwStatusDict",
     "ValidateResultDict",
     "ValidationFailureDict",
-    "WalCheckpointResultDict",
     "WaveDetailDict",
     "WaveProgressDict",
     "WaveShardCountsDict",

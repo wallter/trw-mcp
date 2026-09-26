@@ -8,7 +8,6 @@ remain effective without needing to know about this module.
 
 from __future__ import annotations
 
-import functools
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +19,7 @@ from trw_memory.retrieval.recall_policy import RECALL_PREFETCH_MULTIPLIER
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallResultDict
 from trw_mcp.scoring._recall import RecallContext
+from trw_mcp.state._platform_trust import platform_contact_enabled
 
 # PRD-CORE-146 follow-up: build_recall_context was relocated to
 # ``trw_mcp.state.recall_context`` so state/ callers no longer need an
@@ -272,27 +272,21 @@ def _dedup_ranked_learnings(
     """Collapse near-duplicate recall entries (F-DEDUP-001).
 
     Exact-content collapse always runs; a cosine pass runs additionally over the
-    stored embeddings encoded in the loaded embedder's space. Both fail open — a
-    backend error never blocks recall, the entries are returned unchanged.
+    stored vectors in the daemon's active space, at the threshold the daemon
+    calibrated for that space -- both from one ``memory_vectors`` answer
+    (PRD-CORE-302 C2). Both fail open: a backend error never blocks recall.
     """
-    from trw_mcp.state._embedding_space import loaded_embedding_space, loaded_space_threshold
-    from trw_mcp.tools._recall_dedup import DEFAULT_COSINE_DUP_THRESHOLD, dedup_ranked_learnings
+    from trw_mcp.tools._recall_dedup import dedup_ranked_learnings
 
-    embeddings_fn: Callable[[list[str]], dict[str, list[float]]] | None = None
+    vectors_fn = None
     try:
         from trw_mcp.state._store_selection import selected_store
 
-        # Stored vectors are compared only within the loaded embedder's space; with
-        # none loaded nothing is provably comparable, so exact-content only.
-        space = loaded_embedding_space()
-        if space is not None:
-            store, _ = selected_store(trw_dir)
-            embeddings_fn = functools.partial(store.vectors, space=space)
+        store, _ = selected_store(trw_dir)
+        vectors_fn = store.vectors
     except Exception:  # justified: fail-open, embedding access must not block recall
         logger.debug("recall_dedup_backend_unavailable", exc_info=True)
-
-    threshold = loaded_space_threshold(DEFAULT_COSINE_DUP_THRESHOLD)  # in the loaded embedder's scale
-    return dedup_ranked_learnings(ranked_learnings, embeddings_fn=embeddings_fn, cosine_threshold=threshold)
+    return dedup_ranked_learnings(ranked_learnings, vectors_fn=vectors_fn)
 
 
 def _log_recall_surface_events(
@@ -401,6 +395,8 @@ def _augment_with_remote(
     redaction posture and no gate at all, so unvetted peer text reached agent
     context directly.
     """
+    if not platform_contact_enabled():  # the operator's egress switch: the query text never leaves the box
+        return matching_learnings, None
     try:
         from trw_memory.models.config import MemoryConfig
         from trw_memory.sync import fetch_shared_memories

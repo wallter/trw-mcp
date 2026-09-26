@@ -12,13 +12,14 @@ from pydantic import ValidationError
 from trw_mcp.profile import PROFILE_SURFACE_KEYS, Profile
 
 
-def test_profile_schema_keys_exact_ten() -> None:
-    """FR-1: the surface declares exactly the 10 documented override keys."""
-    assert len(PROFILE_SURFACE_KEYS) == 10
+def test_profile_schema_keys_exact() -> None:
+    """FR-1: the surface declares exactly the documented override keys.
+
+    ``allowed_tools_by_phase`` left with phase exposure (PRD-CORE-300 S11a).
+    """
     assert set(PROFILE_SURFACE_KEYS) == {
         "ceremony_tier",
         "phase_enabled_set",
-        "allowed_tools_by_phase",
         "recall_policy",
         "checkpoint_cadence",
         "review_threshold",
@@ -27,7 +28,7 @@ def test_profile_schema_keys_exact_ten() -> None:
         "cost_budget_usd",
         "token_budget",
     }
-    # All 10 surface keys are real fields on the model.
+    # Every surface key is a real field on the model.
     for key in PROFILE_SURFACE_KEYS:
         assert key in Profile.model_fields
 
@@ -45,13 +46,18 @@ def test_profile_rejects_unknown_key_raises_validation_error() -> None:
         Profile.model_validate({"not_a_real_key": "x"})
 
 
+def test_profile_rejects_the_removed_phase_allowlist_key_by_name() -> None:
+    """PRD-CORE-300 S11a: the phase allowlist is retired; the error names it and the remedy."""
+    with pytest.raises(ValidationError, match=r"profile key 'allowed_tools_by_phase' is retired.*Delete the key"):
+        Profile.model_validate({"allowed_tools_by_phase": {"IMPLEMENT": ["trw_learn"]}, "ceremony_tier": "STANDARD"})
+
+
 def test_profile_accepts_all_surface_keys() -> None:
     """FR-1: a profile setting every surface key validates and round-trips."""
     profile = Profile.model_validate(
         {
             "ceremony_tier": "STANDARD",
             "phase_enabled_set": ["IMPLEMENT", "DELIVER"],
-            "allowed_tools_by_phase": {"IMPLEMENT": ["trw_learn"]},
             "recall_policy": {"k": 5, "min_impact": 0.7, "rerank_strategy": "mmr"},
             "checkpoint_cadence": "aggressive",
             "review_threshold": "COMPREHENSIVE",

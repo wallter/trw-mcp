@@ -153,9 +153,10 @@ def install_opencode_distill_channels(
     # 4. Explorer agent — PRD-CORE-239: licence-gated. Third sibling of cc-05
     #    and ag-02; all three install an agent that cannot function without the
     #    proprietary package. Note the CUSTOM COMMANDS above are deliberately
-    #    NOT gated: their bodies call `trw_before_edit_hint`,
-    #    `trw_codebase_risk_report` and `trw_recall` over MCP, which work on the
-    #    free tier. Only the distill-dependent agent is withheld.
+    #    NOT gated: their bodies call `trw_code(mode="hint")` and `trw_recall`
+    #    over MCP, and run `trw-mcp code risk` from a shell (PRD-CORE-300 S4),
+    #    all of which work on the free tier. Only the distill-dependent agent
+    #    is withheld.
     from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
 
     if distill_artifacts_entitled(artifact="opencode-explorer-agent", repo_root=repo_root):

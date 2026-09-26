@@ -45,6 +45,7 @@ from trw_mcp.server._version_status_manifests import (
     _read_package_json_version_or_unknown,
     _read_pyproject_version_or_unknown,
 )
+from trw_mcp.state._platform_trust import operator_release_bearer_value
 
 logger = structlog.get_logger(__name__)
 
@@ -291,11 +292,16 @@ def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> 
         url,
         data=payload,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers={"Content-Type": "application/json"},
     )
+    # operator_release_bearer_value: backend_url and api_key are both literal
+    # --backend-url/--api-key CLI arguments the operator typed -- see its
+    # docstring in _platform_trust.py for the exact invariant this exception
+    # requires. add_unredirected_header (not
+    # the headers= dict above) so a 3xx from this endpoint never forwards the
+    # bearer to whatever host it redirects to -- the same pattern
+    # scripts/_release_public/installer_bundle.py::_read uses.
+    req.add_unredirected_header("Authorization", operator_release_bearer_value(api_key))
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — see Request comment above
             data = _json.loads(resp.read().decode("utf-8"))

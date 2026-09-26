@@ -39,18 +39,6 @@ from trw_mcp.tools._delivery_models import RecoverStatus, RecoveryAction, StepSt
 
 _JOURNAL_OWNER = "trw_deliver"
 
-# PRD-CORE-280 slice e1: the resumed real trw_deliver's deferred maintenance
-# batch (graph_backfill via _graph_backfill.get_backend, memory_decay via
-# tiers.assign_impact_tiers -> selected_store's still-unmigrated SqliteMemoryStore)
-# opens memory.db in-process, same as test_delivery_wiring.py's
-# _BLOCKED_ON_E3_DEFERRED_MAINTENANCE cases. Not e1's to fix; skipped only
-# under the e1 oracle, never in a normal run.
-_BLOCKED_ON_E3_DEFERRED_MAINTENANCE = pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: resumed deliver's deferred maintenance still opens the store in-process",
-)
-
-
 # --- FR01 -------------------------------------------------------------------
 
 
@@ -235,7 +223,6 @@ def _child_delivery_killed_between_s05_and_s08(tmp_path_str: str, delivery_id: s
 
     tmp_path = Path(tmp_path_str)
     os.environ["TRW_PROJECT_ROOT"] = str(tmp_path)
-    os.environ["TRW_OFFLINE"] = "1"
 
     from tests.conftest import get_tools_sync, make_test_server
 
@@ -283,7 +270,7 @@ def resumed_deliver(tmp_path: Path, delivery_id: str, cap: str) -> dict:
 
 
 @pytest.mark.integration
-@_BLOCKED_ON_E3_DEFERRED_MAINTENANCE
+@pytest.mark.usefixtures("fake_memory_store")  # the deferred memory steps need a store
 def test_sigkilled_delivery_resumes_with_zero_duplicated_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_memory_store
 ) -> None:
@@ -299,7 +286,6 @@ def test_sigkilled_delivery_resumes_with_zero_duplicated_effects(
     monkeypatch.syspath_prepend(repo_root)
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, (repo_root, os.environ.get("PYTHONPATH", "")))))
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("TRW_OFFLINE", "1")
 
     run_dir = seed_deliver_run(tmp_path)
     trw_dir = tmp_path / ".trw"
@@ -368,7 +354,6 @@ def test_sigkilled_delivery_resumes_with_zero_duplicated_effects(
 def test_evidence_and_audit_writes_precede_the_terminal_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """FR04: no step finalizes after the operation's terminal timestamp."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("TRW_OFFLINE", "1")
     run_dir = seed_deliver_run(tmp_path)
     did = make_uuid7()
 

@@ -53,8 +53,8 @@ PROFILES = (
 #:     OPTIONAL `trw-distill` package is installed …" — conditional and honest,
 #:     which is precisely how a paid package should be referenced.
 #:   - `.opencode/commands/trw-distill-{conventions,hotspots}.md` carry the
-#:     string only in the filename; their bodies call `trw_recall` and
-#:     `trw_codebase_risk_report` over MCP (PRD-CORE-239 §3b).
+#:     string only in the filename; their bodies call `trw_recall` over MCP and
+#:     run `trw-mcp code risk` from a shell (PRD-CORE-239 §3b; PRD-CORE-300 S4).
 #:   - `.trw/channels/manifest.yaml` and `.trw/managed-artifacts.yaml` record
 #:     those filenames as internal bookkeeping, not instruction.
 #:   - `.trw/hooks/trw-post-commit.sh` comments that it exits 0 "including

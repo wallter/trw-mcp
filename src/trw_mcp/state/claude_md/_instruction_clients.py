@@ -1,4 +1,4 @@
-"""Which client profiles ``trw_instructions_sync`` drives, and why the rest are not.
+"""Which client profiles ``trw-mcp instructions sync`` drives, and why the rest are not.
 
 Belongs to the ``_agents_md.py`` facade; re-exported there so importers keep a
 single entry point.
@@ -80,7 +80,7 @@ def _managed_manifest_hashes(project_root: Path) -> dict[str, str] | None:
     it. Without a baseline ``_is_user_modified`` cannot answer and returns
     ``False`` — "could not verify" degrades to "overwrite".
 
-    Only correct for a standalone sync (``trw_instructions_sync``), where the
+    Only correct for a standalone sync (``trw-mcp instructions sync``), where the
     manifest on disk still describes the last TRW write. Inside
     ``update-project`` the manifest is rewritten from current on-disk content
     *before* this path runs, which launders a user's edit into the baseline —
@@ -152,7 +152,7 @@ def _generate_antigravity_instruction_target(
     """Generate the Antigravity CLI instruction file (``ANTIGRAVITY.md``).
 
     The generator already existed but was reachable only from the install-time
-    bootstrap path, so the delivery-time ``trw_instructions_sync`` — the call the
+    bootstrap path, so the delivery-time instruction sync — the call the
     protocol mandates — never refreshed this client's primary surface.
 
     Like Copilot, this writer is a marker-based smart merge and takes no hash

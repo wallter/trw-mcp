@@ -55,6 +55,28 @@ init_hook_timer() { :; }
 get_repo_root() { printf '%s' "$TRW_PROJECT_ROOT"; }
 find_active_run() { return 1; }
 log_hook_execution() { printf '%s|%s|%s\\n' "$1" "$2" "$3" >> "$TRW_HOOK_LOG"; }
+
+# PRD-SEC/RC8: minimal stand-ins for the real lib-trw.sh helpers the hook now
+# routes every state write/read through (see hooks/lib-trw.sh for the real,
+# symlink-refusing implementation exercised by tests/test_hook_state_symlink_safety.py).
+_trw_safe_write() {
+  _tsw_dest="$1"
+  _tsw_mode="${2:-}"
+  _tsw_dir=$(dirname "$_tsw_dest")
+  [ -d "$_tsw_dir" ] || mkdir -p "$_tsw_dir" 2>/dev/null || return 1
+  _tsw_tmp="${_tsw_dest}.tmp.$$"
+  if [ "$_tsw_mode" = "append" ] && [ -f "$_tsw_dest" ]; then
+    cat "$_tsw_dest" > "$_tsw_tmp" 2>/dev/null || { rm -f "$_tsw_tmp"; return 1; }
+  fi
+  cat >> "$_tsw_tmp" 2>/dev/null || { rm -f "$_tsw_tmp"; return 1; }
+  mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
+  rm -f "$_tsw_tmp"
+  return 1
+}
+_trw_safe_read() {
+  [ -f "$1" ] || return 1
+  cat "$1" 2>/dev/null
+}
 """,
         encoding="utf-8",
     )

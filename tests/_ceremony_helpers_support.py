@@ -13,20 +13,37 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 
 
 @pytest.fixture(autouse=True)
-def _default_embedding_downloads_offline(
+def _no_platform_contact_by_default(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """Keep the general suite hermetic while online-boundary tests opt in.
 
-    Session-start enables embeddings by default and may otherwise launch a
-    daemon Hugging Face warm-up whose sockets and event loop outlive the test.
-    The two dedicated modules below own and drain/mock that lifecycle.
+    The update check and the team-sync pull are the only automatic platform
+    contacts, and both ask ``platform_contact_enabled`` first. The general suite
+    has it answer False at both consumer sites; the modules that exercise those
+    contacts' own request/header behavior mock the HTTP client directly and
+    drive the switch themselves. Model loads need no guard: runtime loads are
+    cache-only (PRD-CORE-302 W40).
     """
-    online_owner_modules = {"test_embedder_warmup.py", "test_embeddings_offline.py"}
+    online_owner_modules = {
+        "test_auto_upgrade_credential_egress.py",
+        "test_auto_upgrade_update_checks.py",
+        "test_platform_trust.py",
+        "test_sync_pull.py",
+    }
     if request.path.name not in online_owner_modules:
-        monkeypatch.setenv("TRW_OFFLINE", "1")
+        disable_platform_contact(monkeypatch)
     yield
+
+
+def disable_platform_contact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make both automatic platform contacts see the switch turned off."""
+    import trw_mcp.state.auto_upgrade as auto_upgrade
+    import trw_mcp.sync.pull as pull
+
+    monkeypatch.setattr(auto_upgrade, "_platform_contact_enabled", lambda: False)
+    monkeypatch.setattr(pull, "platform_contact_enabled", lambda: False)
 
 
 @pytest.fixture()

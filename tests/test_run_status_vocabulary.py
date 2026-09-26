@@ -410,8 +410,14 @@ def test_gate_completes_within_budget_budget() -> None:
 # ── NFR02 ───────────────────────────────────────────────────────────────
 
 
-def test_gate_fails_closed_reader_stays_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """NFR02: the gate rejects a truncated file; ``resolve_task_type`` still returns None."""
+def test_gate_fails_closed_reader_stays_fail_open(tmp_path: Path) -> None:
+    """NFR02: the gate rejects a truncated file rather than silently skipping it.
+
+    ``surface_authority.resolve_task_type`` (the OTHER fail-open reader this
+    test used to drive against the same truncated file) was deleted outright
+    by PRD-CORE-300 S11b — the surface no longer resolves per-task, so there
+    is no second reader left to prove fail-open against here.
+    """
     runs_root = _seed_tree(tmp_path, {"good": "abandoned"})
     truncated = runs_root / "truncated" / "20260903T000009Z-trunc001" / "meta"
     truncated.mkdir(parents=True, exist_ok=True)
@@ -426,25 +432,6 @@ def test_gate_fails_closed_reader_stays_fail_open(tmp_path: Path, monkeypatch: p
     assert result.returncode == 1, result.stdout + result.stderr
     assert "scanned=2 parsed=1" in result.stdout
     assert "truncated" in result.stdout
-
-    # The same file through the fail-open reader: None, no exception.
-    from trw_mcp.middleware.surface_authority import resolve_task_type
-    from trw_mcp.models.config import _reset_config
-    from trw_mcp.state import _pin_store as pin_store_mod
-    from trw_mcp.state._paths import _pinned_runs
-    from trw_mcp.state._pin_store import upsert_pin_entry
-
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.delenv("TRW_SESSION_ID", raising=False)
-    _reset_config()
-    _pinned_runs.clear()
-    pin_store_mod.invalidate_pin_store_cache()
-    upsert_pin_entry("sess-truncated", truncated.parent)
-    assert resolve_task_type(session_id="sess-truncated") is None
-
-    _pinned_runs.clear()
-    pin_store_mod.invalidate_pin_store_cache()
-    _reset_config()
 
 
 def test_gate_fails_on_an_undecodable_file(tmp_path: Path) -> None:

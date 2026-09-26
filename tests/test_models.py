@@ -76,19 +76,13 @@ class TestTRWConfig:
         config = TRWConfig()
         assert config.parallelism_max == 20
 
-    def test_config_field_validation(self) -> None:
-        """PRD-QUAL-056-FR11: audit-cycle config fields reject out-of-range values.
-
-        max_audit_cycles was removed under PRD-CORE-291 (slice 2): no
-        production reader.
-        """
-        with pytest.raises(ValidationError):
-            TRWConfig(audit_pattern_promotion_threshold=21)
-
     def test_removed_fields_not_in_config(self) -> None:
         """PRD-FIX-016-FR02: Verify dead fields are removed."""
         config = TRWConfig()
         for removed in (
+            "audit_pattern_promotion_threshold",  # PRD-CORE-302 FR03, with delivery step 2.6
+            "max_cluster_size",  # PRD-CORE-302 FR03, with trw-mcp's tag-overlap clustering
+            "memory_store_path",  # PRD-CORE-302 FR05, with trw-mcp's local vector store
             "correlation_min",
             "learning_prune_threshold",
             "validation_smell_false_positive_max",

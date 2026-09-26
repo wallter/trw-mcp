@@ -327,6 +327,20 @@ class ClientSpec(BaseModel):
             "either path. Applied on top of the credential allowlist, never instead of it."
         ),
     )
+    # PRD-SEC-015-FR10/FR11, the NFR02 host-tool-surface gap: reviewer_argv_template
+    # bounds the trw MCP transport; this field bounds the CHILD PROCESS's own
+    # tool/config surface (codex --ignore-user-config/--disable apps; claude
+    # --tools). No placeholders, not subject to the codex fresh-mcp-table check.
+    # codex's --ignore-user-config is safe HERE (unlike under default/with_trw)
+    # only because the reviewer template already supplies mcp_servers.trw's full
+    # transport via -c; --disable apps drops ChatGPT connectors/plugins (a live
+    # probe without it exposed a GitHub connector's create_commit/
+    # create_pull_request/delete_file). claude's --tools Read,Grep,Glob REPLACES
+    # the built-in tool set — distinct from the forbidden --allowedTools, which
+    # pre-authorises rather than restricts. EMPTY IS A GAP, not a refusal: the
+    # server-side SurfaceAuthorityMiddleware role is the primary bound; this is
+    # defense in depth against the HOST surface, not a required completion of it.
+    reviewer_extra_argv: tuple[str, ...] = ()
     isolated_review: IsolatedReviewSpec | None = None
     model_flag: str | None = None
     tier_profile: str | None = Field(
@@ -481,6 +495,11 @@ class ClientSpec(BaseModel):
                 f"{self.client_id!r}: reviewer_env is set but reviewer_argv_template is empty; "
                 "the env alone marks the child without giving it a TRW-controlled MCP transport"
             )
+        if self.reviewer_extra_argv and not self.reviewer_argv_template:
+            raise ValueError(
+                f"{self.client_id!r}: reviewer_extra_argv is set but reviewer_argv_template is "
+                "empty; a client with no reviewer posture at all gets no reviewer-only hardening"
+            )
         for field_name in ("reviewer_argv_template", "trw_access_argv_template"):
             for token in getattr(self, field_name):
                 for name in _placeholder_names(token):
@@ -490,7 +509,7 @@ class ClientSpec(BaseModel):
                             f"{{{name}}}; known: {sorted(REVIEWER_ARGV_PLACEHOLDERS)}"
                         )
         # A with_trw child is an ORDINARY peer, not a bounded reviewer. Naming
-        # the reviewer allowlist here would hand it the nine read-only tools
+        # the reviewer allowlist here would hand it the read-only reviewer tools
         # while the result reported an unrestricted TRW connection — the exact
         # "declared bound is not the delivered bound" inversion this module's
         # derived properties exist to prevent.

@@ -1,4 +1,4 @@
-"""Tests for ``trw_submit_feedback`` MCP tool — PRD-CORE-182.
+"""Tests for the submit_feedback helper (formerly a standalone MCP tool) — PRD-CORE-182.
 
 Covers:
 - Validation: category enum, length bounds, header injection guards
@@ -31,7 +31,6 @@ from trw_mcp.tools.submit_feedback import (
     _extract_submission_id,
     _merge_metadata,
     _validate,
-    register_submit_feedback_tools,
     submit_feedback,
     submit_feedback_via_http,
 )
@@ -276,7 +275,8 @@ def _mock_httpx_response(status: int, body: dict[str, Any] | None = None) -> Mag
     return resp
 
 
-def test_submit_feedback_via_http_success() -> None:
+def test_submit_feedback_via_http_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRW_PLATFORM_TRUSTED_HOSTS", "api.trw.test")
     with patch("httpx.Client") as mock_client_cls:
         ctx_mgr = MagicMock()
         mock_client = MagicMock()
@@ -306,6 +306,26 @@ def test_submit_feedback_via_http_success() -> None:
     assert call.kwargs["headers"]["Authorization"] == "Bearer key-xyz"
     assert call.kwargs["headers"]["Content-Type"] == "application/json"
     assert call.kwargs["json"]["category"] == "bugfix"
+
+
+def test_submit_feedback_via_http_withholds_bearer_from_untrusted_host() -> None:
+    """P1-C: an untrusted backend_url (project-tracked config) gets no Authorization header."""
+    with patch("httpx.Client") as mock_client_cls:
+        ctx_mgr = MagicMock()
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_httpx_response(200, {"submission_id": "sub_abc123", "status": "accepted"})
+        ctx_mgr.__enter__.return_value = mock_client
+        mock_client_cls.return_value = ctx_mgr
+
+        submit_feedback_via_http(
+            backend_url="https://attacker.example",
+            api_key="key-xyz",
+            payload={"category": "bugfix", "subject": "x", "message": "valid length"},
+        )
+
+    call = mock_client.post.call_args
+    assert "Authorization" not in call.kwargs["headers"]
+    assert call.kwargs["headers"]["Content-Type"] == "application/json"
 
 
 def test_submit_feedback_via_http_strips_trailing_slash() -> None:
@@ -506,25 +526,8 @@ def test_submit_feedback_forwards_contact_email_only_when_set() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MCP tool registration smoke
-# ---------------------------------------------------------------------------
-
-
-def test_register_submit_feedback_tools_registers_tool_on_server() -> None:
-    """The registration helper attaches a tool callable to the FastMCP server."""
-    import asyncio
-
-    from fastmcp import FastMCP
-
-    server = FastMCP(name="test-server")
-    register_submit_feedback_tools(server)
-    tools = asyncio.run(server.list_tools())
-    names = {getattr(t, "name", None) for t in tools}
-    assert "trw_submit_feedback" in names, (
-        f"expected trw_submit_feedback registered; found: {sorted(n for n in names if n)}"
-    )
-
-
+# MCP tool registration: the standalone feedback tool was deleted (PRD-CORE-300-FR11,
+# S9). See tests/test_status_feedback_mode.py for trw_status(feedback=...).
 # ---------------------------------------------------------------------------
 # Parametric corner cases on bounds
 # ---------------------------------------------------------------------------

@@ -190,7 +190,7 @@ def _check_empty_graph(health: GateResult) -> str | None:
     PRD-FIX-141-FR02: this used to RE-DERIVE the verdict from ``edge_count == 0``
     against its own threshold, which is how ``trw_session_start`` escalated
     "knowledge graph dead: 0 edges for 1343 memories" at severity error in the
-    same second ``trw_pipeline_health`` reported ``graph_edges.degraded=false``
+    same second the pipeline-health probe reported ``graph_edges.degraded=false``
     for the same store (learning L-Rikf). Two defects in one line: ``edge_count``
     stopped being the question when PRD-CORE-245 FR07 moved tag co-occurrence to
     a DERIVED relation that materialises no row, and the threshold here was a

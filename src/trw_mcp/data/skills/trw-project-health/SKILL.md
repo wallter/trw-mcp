@@ -17,7 +17,7 @@ Produce a read-only, evidence-backed TRW operational snapshot for the current or
 ## 1. Resolve evidence sources
 
 1. Resolve the project root and require `.trw/`; otherwise report `not initialized`.
-2. Call `trw_status()` first. When available, also use `trw_pipeline_health()` and `trw_mcp_security_status()` rather than recreating their logic.
+2. Call `trw_status()` first. Also run `trw-mcp telemetry pipeline-health` and `trw-mcp telemetry security` rather than recreating their logic.
 3. Read run state with `trw_status()`, then resolve the path from the caller, current session-start result (`run.active_run`), or runtime pins. Status itself does not return a path. The canonical layout is `.trw/runs/<task>/<run>/`; inspect only explicitly resolved paths.
 4. Treat every file source as optional and schema-check it before use:
    - `.trw/context/analytics.yaml`, `build-status.yaml`, `session-events.jsonl`, and dated `events-*.jsonl`;

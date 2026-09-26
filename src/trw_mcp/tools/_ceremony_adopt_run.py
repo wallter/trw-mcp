@@ -1,4 +1,4 @@
-"""trw_adopt_run impl — extracted from ceremony.py.
+"""adopt_run impl (``trw-mcp run adopt``) — extracted from ceremony.py.
 
 Belongs to the ``ceremony.py`` facade. Re-exported there for back-compat.
 
@@ -71,15 +71,19 @@ def adopt_run(
     ctx: Context | None,
     run_path: str,
     force: bool,
+    *,
+    pin_key: str | None = None,
 ) -> TrwAdoptRunResultDict:
-    """Transfer the run at ``run_path`` to the caller's pin.
+    """Transfer the run at ``run_path`` to the caller's pin, or to ``pin_key`` when given.
 
     Raises :class:`StateError` for out-of-project paths, missing run
-    directories, terminal-status runs (without ``force``), and live-owner
-    runs (without ``force``). On success returns a TrwAdoptRunResultDict.
+    directories, terminal-status runs (without ``force``), live-owner
+    runs (without ``force``), and a ``pin_key`` the resolver will not honour
+    (``ctx_isolation_enabled: false`` pins every run to its own process). On
+    success returns a TrwAdoptRunResultDict.
     """
     if not run_path:
-        raise StateError("run_path is required for trw_adopt_run")
+        raise StateError("run_path is required to adopt a run")
 
     # Containment check — must be under project root. No force override.
     # Import lazily so conftest's monkeypatch of the source attribute
@@ -93,7 +97,13 @@ def adopt_run(
     if not resolved.exists():
         raise StateError(f"run_path does not exist: {resolved}", path=str(resolved))
 
-    caller_pin_key = resolve_pin_key(ctx=ctx, explicit=None)
+    caller_pin_key = resolve_pin_key(ctx=ctx, explicit=pin_key)
+    if pin_key and caller_pin_key != pin_key:
+        raise StateError(
+            f"cannot pin to session {pin_key!r}: ctx_isolation_enabled is false, so pins are per process "
+            "and this process can only pin itself. Enable ctx_isolation_enabled, or adopt from the session itself.",
+            path=str(resolved),
+        )
 
     target_status = _validate_adoptable_run(resolved, project_root)
 

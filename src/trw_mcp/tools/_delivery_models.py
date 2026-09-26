@@ -84,7 +84,7 @@ DELIVERY_JOURNAL_OWNER = "trw_deliver"
 
 
 class RecoveryAction(str, Enum):
-    """Authorized ``trw_delivery_recover`` actions (§6.5 + PRD-FIX-127 FR01/FR06).
+    """Authorized ``trw-mcp delivery recover`` actions (§6.5 + PRD-FIX-127 FR01/FR06).
 
     PRD-FIX-127 FR06 deleted the rollback member: no descriptor registers a
     compensator, so the action's entire behaviour was to refuse, and the value was

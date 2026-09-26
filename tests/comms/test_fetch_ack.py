@@ -32,7 +32,7 @@ async def invoke(client: Client[Any], name: str, **args: Any) -> dict[str, Any]:
 async def test_native_request_reply_ack_and_sender_status(transport_scene: SendScene) -> None:
     s = transport_scene
     async with Client(s.server) as client:
-        assert (await invoke(client, "trw_peers", action="enroll"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox", action="enroll"))["status"] == "ok"
         sent = await invoke(client, "trw_send", recipient_member_id="impl-2", request_key="q", body="question")
         request_id = sent["receipt"]["message_id"]
         s.actor("impl-2")

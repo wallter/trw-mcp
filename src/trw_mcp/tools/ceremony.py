@@ -27,8 +27,6 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     DeliverResultDict,
     SessionStartResultDict,
-    TrwAdoptRunResultDict,
-    TrwHeartbeatResultDict,
 )
 from trw_mcp.state._call_context import build_call_context
 from trw_mcp.state._paths import (
@@ -53,7 +51,6 @@ from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateWriter,
 )
-from trw_mcp.tools._ceremony_adopt_run import adopt_run as _adopt_run_impl
 
 # mcp-x-failopen: the typed fail-open degradation collector. Re-exported at this
 # facade so tests/operators can construct or patch it via ``ceremony.<name>``.
@@ -64,7 +61,6 @@ from trw_mcp.tools._ceremony_degradations import (
     record_into as record_into,
 )
 from trw_mcp.tools._ceremony_deliver_tool import run_trw_deliver as _run_trw_deliver
-from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._ceremony_profile_step import (
     step_resolve_profile as step_resolve_profile,
 )
@@ -418,7 +414,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # the .trw/overrides/ ledger before the gate is bypassed. delivery_id is a
         # caller UUIDv7 and capability_token a >=128-bit recovery secret
         # (PRD-CORE-208); with both, a timed-out response is recoverable through
-        # trw_delivery_status / trw_delivery_recover. Omit both for the legacy,
+        # trw_status(delivery=...) / `trw-mcp delivery recover`. Omit both for the legacy,
         # non-recoverable path.
         return _run_trw_deliver(
             ctx,
@@ -431,44 +427,11 @@ def register_ceremony_tools(server: FastMCP) -> None:
             capability_token,
         )
 
-    # ── PRD-CORE-141 FR07 — trw_heartbeat ─────────────────────────────
-    @server.tool(output_schema=None)
-    def trw_heartbeat(
-        ctx: Context | None = None,
-        message: str = "",
-    ) -> TrwHeartbeatResultDict:
-        """Keep the caller's pin alive on a long-running run.
+    # PRD-CORE-141 FR07's standalone heartbeat tool was removed by PRD-CORE-300 S6a.
+    # Its implementation (``tools/_ceremony_heartbeat.compute_heartbeat_result``)
+    # is now called from ``trw_checkpoint(heartbeat=True, ...)`` in
+    # ``tools/orchestration.py``, which records exactly what this tool recorded.
 
-        Use when a campaign runs long between checkpoints, or to check staleness.
-
-        Output: run_id, staleness timestamps, age_hours, should_checkpoint and
-        rate_limited (nothing is written within 60s of the last call); or
-        "no_active_pin". thread_hotspot (share, cpu_seconds) is included when
-        this server's own hottest thread is measurable (Linux only).
-        """
-        # ``message`` is optional context appended to the heartbeat event.
-        # Rate-limit state lives in pins.json::<pin_key>::last_heartbeat_ts, so
-        # the 60s window survives a server restart; inside it the call
-        # short-circuits with no events.jsonl append and no pin-store write, to
-        # keep long loops out of the audit trail.
-        return compute_heartbeat_result(ctx, message)
-
-    # ── PRD-CORE-141 FR08 — trw_adopt_run ─────────────────────────────
-    @server.tool(output_schema=None)
-    def trw_adopt_run(
-        ctx: Context | None = None,
-        run_path: str = "",
-        force: bool = False,
-    ) -> TrwAdoptRunResultDict:
-        """Transfer an existing run's pin to the caller's session.
-
-        Use when resuming a run another session started, or reclaiming one whose
-        owner went away. run_path is absolute; out-of-project paths are refused,
-        and terminal status or a live owner needs force=True.
-
-        Output: adopted run id, old/new pin keys, prior-owner liveness, force use.
-        """
-        # An out-of-project run_path raises StateError with no force override.
-        # "Live owner" = heartbeat within pin_ttl_hours; displacing one emits a
-        # run_adopted_potential_writer_conflict WARN.
-        return _adopt_run_impl(ctx, run_path, force)
+    # PRD-CORE-141 FR08's standalone run-adoption tool was removed by
+    # PRD-CORE-300 S6b. Its implementation (``tools/_ceremony_adopt_run.adopt_run``)
+    # is now invoked from ``trw-mcp run adopt --session-id ...``.

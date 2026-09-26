@@ -23,7 +23,7 @@ class Pages:
     config: Any
 
     def call(self, action: str = "list", cursor: str | None = None) -> dict[str, Any]:
-        result = asyncio.run(self.server.call_tool("trw_peers", {"action": action, "cursor": cursor}))
+        result = asyncio.run(self.server.call_tool("trw_inbox", {"action": action, "cursor": cursor}))
         assert isinstance(result.structured_content, dict)
         return result.structured_content
 

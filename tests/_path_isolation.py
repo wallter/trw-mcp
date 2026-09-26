@@ -37,7 +37,9 @@ module escapes this, so correctness no longer depends on a grep or a list.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 from collections.abc import Callable
@@ -65,6 +67,14 @@ def _quarantine_root() -> Path:
     global _quarantine
     if _quarantine is None:
         _quarantine = Path(tempfile.mkdtemp(prefix="trw-test-quarantine-"))
+        # Never otherwise removed (learning L-d6WS: this directory, plus
+        # trw_mcp.state.auto_upgrade's trw-upgrade-* scratch dirs, leaked
+        # thousands of mkdtemp dirs into $TMPDIR across full-suite runs,
+        # about 1 GB/day under swarm test activity). One quarantine dir is
+        # created at most once per test PROCESS, so an atexit hook is the
+        # right lifetime -- it fires once, at the same point the interpreter
+        # would otherwise abandon this directory forever.
+        atexit.register(shutil.rmtree, _quarantine, ignore_errors=True)
     return _quarantine
 
 
@@ -124,18 +134,32 @@ def _trw_mcp_modules() -> list[tuple[str, object]]:
 
 
 def install() -> int:
-    """Rebind every genuine resolver alias in ``trw_mcp`` to the isolated one.
+    """Rebind every non-isolated resolver alias in ``trw_mcp`` to the isolated one.
 
     Idempotent and cheap: an alias already pointing at the stand-in is skipped,
     so re-running per test only pays for modules imported since the last sweep.
 
-    Returns:
-        Number of aliases rebound by this call.
+    Rebinds on ANYTHING other than the isolated stand-in itself — not only the
+    genuine resolver. A module first imported while some OTHER test's
+    ``unittest.mock.patch("trw_mcp.state._paths.resolve_project_root", ...)``
+    context is open (e.g. one triggered transitively by rendering AGENTS.md's
+    "## TRW Tools" section, which lazily imports every tool module including
+    ones no earlier test had touched) captures that test's ``MagicMock`` into
+    its own module-level binding at import time. ``unittest.mock.patch``
+    restores only the ATTRIBUTE IT PATCHED (``_paths.py``'s own), so the
+    importing module's independent copy is never reverted — the stray mock
+    (bound with that test's ``return_value``) then answers every later test's
+    calls with a stale path forever, since it is not ``is real`` and the old
+    check left it untouched. Any value that is not already the isolated
+    stand-in is unsafe by definition (either the genuine resolver, which must
+    still be redirected, or a foreign leftover like this), so this sweep
+    corrects both in one pass on the very next test.
     """
     rebound = 0
     for _name, module in _trw_mcp_modules():
-        for attr, real, isolated in _SUBSTITUTIONS:
-            if getattr(module, attr, None) is real:
+        for attr, _real, isolated in _SUBSTITUTIONS:
+            current = getattr(module, attr, None)
+            if current is not None and current is not isolated:
                 setattr(module, attr, isolated)
                 rebound += 1
     return rebound

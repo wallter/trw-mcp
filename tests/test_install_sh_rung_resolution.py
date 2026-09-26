@@ -127,7 +127,7 @@ def test_served_bootstrap_uv_rung_succeeds_when_launcher_is_not_under_uv_tool_di
     assert "trw-mcp installed (uv tool)" in output, f"the uv rung reported failure.\n--- output ---\n{output}"
     assert "Could not install trw-mcp" not in output, output
     assert result.returncode == 0, output
-    assert "Open-source package installed" in output, output
+    assert "trw-mcp package installed" in output, output
 
 
 # ── S6: a shadow whose `--version` FAILS must not kill the installer ─────────
@@ -182,7 +182,7 @@ def test_served_bootstrap_survives_a_shadow_whose_version_command_fails(tmp_path
 
     assert "does not report a version" in output, f"the guard did not degrade honestly.\n--- output ---\n{output}"
     assert result.returncode == 0, f"an unreadable shadow version killed the installer.\n--- output ---\n{output}"
-    assert "Open-source package installed" in output, output
+    assert "trw-mcp package installed" in output, output
 
 
 # ── S8: the fresh version must come from the interpreter that OWNS the install ──

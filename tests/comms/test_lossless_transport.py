@@ -18,7 +18,7 @@ from mcp.types import TextContent
 
 from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
 
-COMMS_NAMES = ("trw_peers", "trw_send", "trw_inbox")
+COMMS_NAMES = ("trw_send", "trw_inbox")
 
 
 def envelope(index: int, *, empty: bool = False) -> dict[str, Any]:

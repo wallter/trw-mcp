@@ -68,19 +68,3 @@ class _SyncFields:
         ge=1,
         description="Minimum memories before an empty knowledge graph fails the FR06 gate.",
     )
-
-    # -- Pipeline-health bandit probe (PRD-FIX-105-FR02) --
-    # The bandit_state.json file is written by the TRW platform's meta-tune
-    # bandit policy service, NOT by the MCP runtime. In a self-hosted repo
-    # or any deployment where the backend bandit is not actively driven, the file
-    # legitimately goes stale and the probe cries wolf. These knobs let operators
-    # tune the SLA or disable the probe entirely where no local writer exists.
-    pipeline_health_bandit_probe_enabled: bool = Field(
-        default=True,
-        description="Whether the pipeline-health bandit_state staleness probe is active.",
-    )
-    pipeline_health_bandit_stale_days: float = Field(
-        default=7.0,
-        ge=0.1,
-        description="Days since bandit_state.json mtime before the probe marks degraded.",
-    )

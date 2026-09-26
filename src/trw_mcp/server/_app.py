@@ -80,11 +80,19 @@ _DEFAULT_INSTRUCTIONS = (
 
 
 def _load_server_instructions() -> str:
-    """Load MCP server instructions from centralized messages, with fallback."""
+    """Load MCP server instructions from centralized messages, with fallback.
+
+    Appends the PRD-CORE-300-FR02 CLI-replacement pointer, rendered from the
+    live registry rather than baked into the YAML template — a future S1-S6
+    registry entry shows up here without touching ``messages.yaml``.
+    """
     try:
         from trw_mcp.prompts.messaging import get_message_or_default
+        from trw_mcp.server._cli_replacements import render_cli_replacements_pointer
 
-        return get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
+        base = get_message_or_default("server_instructions", _DEFAULT_INSTRUCTIONS)
+        pointer = render_cli_replacements_pointer()
+        return f"{base} {pointer}" if pointer else base
     except Exception:  # justified: fail-open, message registry failure falls back to inline default
         return _DEFAULT_INSTRUCTIONS
 
@@ -121,8 +129,7 @@ def _try_init_surface_authority() -> object | None:
 
     PRD-CORE-218 FR03/FR04 activation: the kernel/pack resolver is the production
     tool-exposure authority (replacing the removed PRD-CORE-125 preset filter).
-    Registered BEFORE PhaseExposureMiddleware so phase masking composes WITHIN the
-    CORE-218 surface. The middleware self-resolves ``tool_resolution_mode`` from
+    The middleware self-resolves ``tool_resolution_mode`` from
     config at request time (default ``standard``; ``all`` is a strict no-op
     operator escape), so it is always appended — a broken init is fail-open.
 
@@ -146,25 +153,6 @@ def _try_init_surface_authority() -> object | None:
             logger.exception("middleware_init_failed_reviewer_abort", component="SurfaceAuthorityMiddleware")
             raise
         logger.warning("middleware_init_failed", component="SurfaceAuthorityMiddleware")  # justified: fail-open
-        return None
-
-
-def _try_init_phase_exposure() -> object | None:
-    """Try to initialize PhaseExposureMiddleware. Returns None on failure (fail-open).
-
-    PRD-INTENT-002 FR08: inserted immediately after CeremonyMiddleware (session
-    state resolved first) and before ResponseOptimizerMiddleware (phase filtering
-    precedes response shaping). The middleware self-resolves its
-    ``enabled`` flag from ``phase_exposure_enabled`` config (default false for
-    the v1 rollout), so it is always appended — a disabled flag is a no-op
-    pass-through, not a missing chain entry.
-    """
-    try:
-        from trw_mcp.middleware.phase_exposure import PhaseExposureMiddleware
-
-        return PhaseExposureMiddleware()
-    except Exception:  # justified: fail-open, middleware init failure must not crash startup
-        logger.warning("middleware_init_failed", component="PhaseExposureMiddleware")
         return None
 
 
@@ -250,18 +238,10 @@ def _build_middleware() -> list[object]:
         middleware.append(ceremony)
 
     # PRD-CORE-218 FR03/FR04: surface-authority masking sits AFTER Ceremony
-    # (session state first) and BEFORE PhaseExposure so phase masking composes
-    # WITHIN the resolved CORE-218 surface (task packs first, then phase subset).
+    # (session state first). No layer masks by run phase (PRD-CORE-300 S11a).
     surface_authority = _try_init_surface_authority()
     if surface_authority is not None:
         middleware.append(surface_authority)
-
-    # PRD-INTENT-002 FR08: phase masking sits AFTER Ceremony (session state
-    # first) and BEFORE ResponseOptimizer (phase filtering precedes response
-    # shaping). Appended here so the relative order holds.
-    phase_exposure = _try_init_phase_exposure()
-    if phase_exposure is not None:
-        middleware.append(phase_exposure)
 
     # PRD-CORE-215-FR02: version-drift advisory. Outer relative to the response
     # optimizer so its plain-text advisory block is appended after re-serialization.

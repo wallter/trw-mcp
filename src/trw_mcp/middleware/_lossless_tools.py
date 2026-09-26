@@ -7,4 +7,4 @@ This set changes presentation only, never dispatch or authorization.
 
 from typing import Final
 
-LOSSLESS_COMMS_TOOLS: Final[frozenset[str]] = frozenset({"trw_peers", "trw_send", "trw_inbox"})
+LOSSLESS_COMMS_TOOLS: Final[frozenset[str]] = frozenset({"trw_send", "trw_inbox"})

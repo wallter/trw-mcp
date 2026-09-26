@@ -33,7 +33,7 @@ def _no_learnings(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
 
 
 def _sync_agents_md(project_root: Path) -> None:
-    """Run the real sync writer (what ``trw_instructions_sync``/``trw_deliver``
+    """Run the real sync writer (what ``instructions sync``/``trw_deliver``
 
     call) against *project_root*'s AGENTS.md.
     """
@@ -58,7 +58,7 @@ class TestFR06InstallThenSyncLeavesOneBlock:
         assert after_install.count(_SHARED_START) == 1
         assert _LEGACY_START not in after_install
 
-        # 2. Sync writer runs (what `trw_instructions_sync`/`trw_deliver` call).
+        # 2. Sync writer runs (what `instructions sync`/`trw_deliver` call).
         _sync_agents_md(tmp_path)
         after_sync = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
 

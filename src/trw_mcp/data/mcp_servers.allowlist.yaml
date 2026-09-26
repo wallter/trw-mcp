@@ -12,11 +12,7 @@ servers:
       - {name: trw_deliver, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
       - {name: trw_build_check, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read, write]}
       - {name: trw_init, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
-      - {name: trw_prd_create, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [write]}
       - {name: trw_prd_validate, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
-      - {name: trw_mcp_security_status, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
-      - {name: trw_query_events, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
-      - {name: trw_surface_diff, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
   - name: filesystem
     url_or_command: npx -y @modelcontextprotocol/server-filesystem
     public_key_fingerprint: sha256:e1e6ca97e71a612a9b6803b8327d25f16b35e1e509dc7158b6233b98b83b155c
@@ -44,6 +40,6 @@ servers:
       - {name: get_pull_request, allowed_phases: [research, plan, implement, validate, review, deliver], allowed_scopes: [read]}
 signature_block:
   algorithm: ed25519
-  signed_at: "2026-04-24T00:00:00Z"
-  signer_fingerprint: sha256:a3322d2e7379658d97e923d37ce268269753372295f0e076f94c2d4a0a4380fc
-  signature: "+6VRe/oDbstWjX1cFdd/zn8dgzqmQOAooW/UZYb/6CJ+J7ixPLLaBlk5j+MWwCR7XM+oonyx3GlDQ6amXjyACQ=="
+  signed_at: "2026-09-24T23:11:53Z"
+  signer_fingerprint: sha256:ea03f4e538501a4580c30ff1d81de1b802600081a0fffe9ae635db5aebbe33b9
+  signature: "xex5T5piaTFcAw8IXV2OJaTc4GPk+xI1jeO3n4FfXzYKmwzPLFJl+6KzvNR6yW2D8x4zMXJiSsam3fQK0gB5Aw=="

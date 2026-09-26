@@ -87,7 +87,7 @@ class _DegradedModeFields:
         default="pointer",
         description=(
             "Whether a full-ceremony client's generated protocol block carries a pointer to "
-            "trw_skill_discovery/trw_status ('pointer', the default) or the verbatim tool "
+            "trw_status(detail=\"surface\") ('pointer', the default) or the verbatim tool "
             "table ('verbatim'). Light-ceremony profiles always render verbatim — the "
             "generated file is their only protocol carrier — regardless of this value."
         ),

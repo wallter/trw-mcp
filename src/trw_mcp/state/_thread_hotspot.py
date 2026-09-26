@@ -1,4 +1,5 @@
-"""This server's own hottest-thread CPU share, for ``trw_heartbeat`` (PRD-FIX-131 follow-up).
+"""This server's own hottest-thread CPU share, for the heartbeat checkpoint
+mode (PRD-FIX-131 follow-up).
 
 Incident this exists to surface (2026-09-05): three live trw-mcp stdio servers
 each had ONE worker thread burning 70-85% of process CPU for hours while
@@ -152,7 +153,7 @@ def _sample_server(pid: int, clk_tck: float, sys_uptime: float) -> _ServerSample
 def own_thread_hotspot() -> dict[str, float] | None:
     """This process's own hottest-thread CPU share of its own uptime, or ``None``.
 
-    Read by ``trw_heartbeat`` (PRD-FIX-131 follow-up FR-in-band) so a caller
+    Read by ``trw_checkpoint(heartbeat=True)`` (PRD-FIX-131 follow-up FR-in-band) so a caller
     sees the same signal in-band without waiting for a ``trw-mcp doctor`` run.
     Samples the CALLING process's own pid. Returns ``None`` on non-Linux or an unreadable ``/proc``
     — the tool-response budget rule omits the key entirely rather than

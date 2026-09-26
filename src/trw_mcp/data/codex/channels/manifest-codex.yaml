@@ -25,7 +25,7 @@ channels:
     action: NONE
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
-  description: T2 default for trw_before_edit_hint when TRW_CLIENT_PROFILE=codex. Detection via TRW_CLIENT_PROFILE env var only.
+  description: T2 default for trw_code(mode="hint") when TRW_CLIENT_PROFILE=codex. Detection via TRW_CLIENT_PROFILE env var only.
   regenerate_cmd:
   mdc_description:
   mdc_globs:

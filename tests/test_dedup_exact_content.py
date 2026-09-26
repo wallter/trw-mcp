@@ -47,7 +47,6 @@ class TestExactContentDedupBypassesEmbeddingsGate:
             "exact duplicate summary",
             "exact duplicate detail",
             entries_dir,
-            reader,
             config=config,
         )
 
@@ -73,7 +72,6 @@ class TestExactContentDedupBypassesEmbeddingsGate:
             "novel summary",
             "novel detail",
             entries_dir,
-            reader,
             config=config,
         )
 
@@ -83,10 +81,10 @@ class TestExactContentDedupBypassesEmbeddingsGate:
     def test_exact_match_short_circuits_before_embedding_path(
         self, tmp_path: Path, reader: FileStateReader, fake_memory_store: FakeMemoryStore
     ) -> None:
-        """An exact hit returns merge WITHOUT touching the embedding fast path.
+        """An exact hit returns merge WITHOUT asking the daemon for a semantic verdict.
 
-        Even with embeddings enabled, the exact check wins first — embed() is
-        never called because the exact merge returns before the gate.
+        Even with embeddings enabled, the exact check wins first: ``memory_similar``
+        is never called because the exact merge returns before the gate.
         """
         entries_dir = tmp_path / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
@@ -94,19 +92,12 @@ class TestExactContentDedupBypassesEmbeddingsGate:
 
         fake_memory_store.put("s", FAKE_NAMESPACE, {"entry_id": "L-exact-hit", "detail": "d"})
 
-        embed_called: list[str] = []
-
-        def tracking_embed(text: str) -> list[float]:
-            embed_called.append(text)
-            return [0.0] * 384
-
-        with patch("trw_mcp.state.dedup.embed", side_effect=tracking_embed):
-            result = dedup_verdict("s", "d", entries_dir, reader, config=config)
+        result = dedup_verdict("s", "d", entries_dir, config=config)
 
         assert result.action == "merge"
         assert result.existing_id == "L-exact-hit"
-        # Exact path short-circuited before any embedding was computed.
-        assert embed_called == []
+        # Exact path short-circuited before any semantic verdict was asked for.
+        assert [call for call, _ in fake_memory_store.calls if call == "similar"] == []
 
     def test_backend_unavailable_fails_open_to_store(self, tmp_path: Path, reader: FileStateReader) -> None:
         """If the store raises, the exact check fails open (store), never blocks."""
@@ -118,7 +109,7 @@ class TestExactContentDedupBypassesEmbeddingsGate:
             "trw_mcp.state._store_selection.selected_store",
             side_effect=RuntimeError("store down"),
         ):
-            result = dedup_verdict("s", "d", entries_dir, reader, config=config)
+            result = dedup_verdict("s", "d", entries_dir, config=config)
 
         assert result.action == "store"
         assert result.existing_id is None
@@ -161,7 +152,7 @@ class TestExactContentDedupRealBackendContract:
 
         # Now the dedup caller must resolve the SAME real method and merge.
         with capture_logs() as logs:
-            result = dedup_verdict(summary, detail, entries_dir, reader, config=config)
+            result = dedup_verdict(summary, detail, entries_dir, config=config)
 
         assert result.action == "merge"
         assert result.existing_id == "L-contract-1"

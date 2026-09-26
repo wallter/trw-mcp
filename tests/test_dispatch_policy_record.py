@@ -2,7 +2,7 @@
 
 What a dispatch requested versus what its child's command line carried is
 written to the active run's events, printed by the CLI's ``--json``, persisted
-on a background job and returned by ``trw_dispatch_status``. A model counts as
+on a background job and returned by ``trw_dispatch(action="status")``. A model counts as
 applied only when the client has a model flag to carry it.
 """
 
@@ -88,7 +88,7 @@ def test_the_cli_json_carries_the_policy_and_records_it(
 
     out = json.loads(capsys.readouterr().out)
     assert out["text"] == "ok"
-    assert out["policy"]["effort"] == {"requested": "high", "applied": "high", "source": "table"}
+    assert out["policy"]["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
     assert out["policy"]["turns"]["source"] == "exempt"
     assert _policy_events(run)[0]["payload"]["effort"] == out["policy"]["effort"]
 
@@ -116,5 +116,5 @@ def test_a_background_job_persists_its_policy_and_status_returns_it(
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", lambda _id: job)
     server = FastMCP("test")
     register_dispatch_tools(server)
-    status = extract_tool_fn(server, "trw_dispatch_status")(job_id=job.job_id)
+    status = extract_tool_fn(server, "trw_dispatch")(action="status", target=job.job_id)
     assert status["policy"] == job.policy

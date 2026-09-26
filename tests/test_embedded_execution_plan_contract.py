@@ -68,7 +68,7 @@ def test_public_entry_resolves_default_without_changing_mcp_schema(surface: Path
     for fragment in (
         "exact standalone `--embedded-plan` option",
         "Require\nnonempty remaining input",
-        "Never pass the option to `trw_prd_create`",
+        "Never pass the option to\n`trw-mcp prd create` or `trw_prd_validate`",
         "New feature descriptions default to embedded mode",
         "Existing PRD ID/path input without the option preserves its existing",
         "Explicit project/operator requirements for separate artifacts take precedence",

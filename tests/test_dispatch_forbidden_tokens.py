@@ -62,12 +62,17 @@ def test_new_bypass_tokens_rejected_on_both_surfaces() -> None:
 
 _FR09_TOKENS: tuple[str, ...] = ("--allowed-tools", "--allowedTools")
 
+# PRD-SEC-015-FR10 (2026-09-24): TRW itself now emits these to RESTRICT a
+# reviewer-posture child (claude --tools; codex --disable/--enable a feature).
+# Floored so a caller cannot countermand them through extra_args.
+_FR10_TOKENS: tuple[str, ...] = ("--tools", "--disable", "--enable")
 
-def test_forbidden_extra_arg_token_set_is_exactly_twenty_two() -> None:
-    # 12 original + the 8 above + the 2 FR09 tool-preauthorisation spellings
-    # (PRD-LOCAL-074 success metric). trw-loop mirrors this set and its parity test
-    # asserts the superset relation from source.
-    assert len(_FORBIDDEN_EXTRA_ARG_TOKENS) == 22
+
+def test_forbidden_extra_arg_token_set_is_exactly_twenty_five() -> None:
+    # 12 original + the 8 bypass tokens + the 2 FR09 tool-preauthorisation
+    # spellings + the 3 FR10 reviewer-hardening tokens. trw-loop mirrors this set
+    # and its parity test asserts the superset relation from source.
+    assert len(_FORBIDDEN_EXTRA_ARG_TOKENS) == 25
 
 
 def test_allowed_tools_both_spellings_rejected_on_both_surfaces() -> None:
@@ -75,6 +80,12 @@ def test_allowed_tools_both_spellings_rejected_on_both_surfaces() -> None:
     # human prompt, defeating the mechanism ``read_only`` relies on. Both spellings
     # are live in Claude Code 2.1.261, so blocking one is blocking neither.
     for token in _FR09_TOKENS:
+        assert token in _FORBIDDEN_EXTRA_ARG_TOKENS
+        _assert_rejected_on_both_surfaces(token)
+
+
+def test_fr10_reviewer_hardening_tokens_rejected_on_both_surfaces() -> None:
+    for token in _FR10_TOKENS:
         assert token in _FORBIDDEN_EXTRA_ARG_TOKENS
         _assert_rejected_on_both_surfaces(token)
 

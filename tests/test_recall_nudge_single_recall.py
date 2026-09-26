@@ -44,12 +44,15 @@ def test_a_recall_response_runs_one_recall(
         recalls.append(spec.query)
         return real_recall(store, spec)
 
-    # Both learning-drawing nudge paths forced open: cached bandit weights force
-    # the learnings pool, a modified file anchors the contextual watch-out.
+    # Both learning-drawing nudge paths forced open: the pool picks learnings
+    # whenever its weight allows, a modified file anchors the contextual watch-out.
     touched = RecallContext(modified_files=["src/pool.py"])
     with (
         patch.object(DaemonMemoryStore, "recall", _counted),
-        patch("trw_mcp.tools._ceremony_status_pool._has_cached_learning_weights", return_value=True),
+        patch(
+            "trw_mcp.state.ceremony_nudge._select_nudge_pool",
+            side_effect=lambda _state, weights, *_a, **_k: "learnings" if weights.learnings else "workflow",
+        ),
         patch("trw_mcp.state.recall_context.build_recall_context", return_value=touched),
     ):
         result = tools["trw_recall"].fn(query="database")

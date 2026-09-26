@@ -1,6 +1,6 @@
 <!-- Canonical human-reference source for the TRW tool lifecycle.
      Run scripts/sync-instruction-surfaces.py after edits; renderers load the
-     bundled mirror and trw_instructions_sync propagates its hash-stamped gate
+     bundled mirror and `trw-mcp instructions sync` propagates its hash-stamped gate
      section into supported client instruction files. -->
 
 # TRW Tool Lifecycle
@@ -24,13 +24,15 @@ For material unfinished work, preserve progress, observed checks, residual risks
 
 ## Tool surface (PRD-CORE-218)
 
-`tool_resolution_mode` (default `standard`) is the sole tool-exposure authority. Under `standard` each session exposes:
+The tool surface is flat. Every session sees the kernel plus every capability pack whose config flag is on; there is no
+per-task pack resolution and no phase-based hiding.
 
-- **Kernel — always, 9 tools**: `trw_session_start`, `trw_status`, `trw_recall`, `trw_learn`, `trw_checkpoint`, `trw_deliver`, `trw_skill_discovery`, `trw_request_tool_access`, `trw_profile_explain`.
-- **Task packs — selected by the active run's `task_type`**: `coding` → verification + code_navigation; `research` → code_navigation + memory_management; `docs` → requirements + verification; `eval` → verification; `rca` → code_navigation + verification; `planning` → requirements; `unknown` / no run → kernel only.
-- **Always exposed regardless of task or mode**: the RIGID lifecycle gates `trw_session_start`, `trw_build_check`, `trw_deliver` plus bootstrap `trw_init`. The deliver-gate tools (`trw_build_check` and `trw_deliver`) are therefore always callable, and a bounded surface can never brick a session.
+- **Kernel — always, every phase**: `trw_session_start`, `trw_init`, `trw_status`, `trw_recall`, `trw_learn`, `trw_checkpoint`, `trw_deliver`, `trw_build_check`, `trw_review`, `trw_prd_validate`, `trw_code`. The `run_maintenance` pack is also always on.
+- **Flag-gated packs**: `trw_send`/`trw_inbox` need `comms_enabled` (default true); `trw_dispatch` needs `dispatch_tools_exposed` (default false, required in every mode including `tool_resolution_mode: all`); `trw_assess` needs `assess_enabled` (default false). Turn one on by setting the flag to true in `.trw/config.yaml`.
+- `tool_resolution_mode: all` turns on the comms and assess packs too, never dispatch.
 
-Tools outside the resolved surface are masked, not deregistered. A denial names the pack(s) that contain the tool and the remedy: call `trw_request_tool_access(tool_name=..., reason=...)` for a single-use grant, or set `tool_resolution_mode='all'` to expose the full registered surface (the operator escape).
+A call to an off tool returns `tool_not_in_surface` with an `enable_with` hint naming the flag to set. See the resolved
+surface with `trw_status(detail="surface")` (or the CLI `trw-mcp profile explain [--json]`).
 
 ## Delegation
 

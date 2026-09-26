@@ -7,7 +7,7 @@ import pytest
 
 from tests._coverage_tools_support import _extract_tool, _make_server
 from trw_mcp.exceptions import StateError, ValidationError
-from trw_mcp.tools.requirements import register_requirements_tools
+from trw_mcp.tools.requirements import create_prd, register_requirements_tools
 
 
 class TestRequirementsFailurePaths:
@@ -19,14 +19,12 @@ class TestRequirementsFailurePaths:
         return _extract_tool(server, name)
 
     def test_prd_create_invalid_risk_level_raises(self, tmp_path: Path) -> None:
-        tool = self._register_and_get("trw_prd_create")
-
         with (
             patch("trw_mcp.tools.requirements.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.tools.requirements.next_prd_sequence", return_value=42),
         ):
             with pytest.raises(ValidationError, match="Invalid risk_level"):
-                tool(
+                create_prd(
                     input_text="Test PRD content",
                     category="CORE",
                     priority="P1",
@@ -35,7 +33,6 @@ class TestRequirementsFailurePaths:
 
     @pytest.mark.parametrize("risk_level", ["critical", "high", "medium", "low"])
     def test_prd_create_valid_risk_levels_accepted(self, tmp_path: Path, risk_level: str) -> None:
-        tool = self._register_and_get("trw_prd_create")
         prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
         prds_dir.mkdir(parents=True)
 
@@ -50,7 +47,7 @@ class TestRequirementsFailurePaths:
             mock_get_cfg.return_value.ambiguity_rate_max = 0.3
             mock_get_cfg.return_value.completeness_min = 0.7
             mock_get_cfg.return_value.traceability_coverage_min = 0.5
-            result = tool(input_text="Test feature", category="CORE", priority="P1", risk_level=risk_level)
+            result = create_prd(input_text="Test feature", category="CORE", priority="P1", risk_level=risk_level)
 
         assert result["prd_id"] == "PRD-CORE-099"
 

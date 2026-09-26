@@ -1,7 +1,9 @@
-"""trw_codebase_risk_report MCP tool (PRD-DIST-1990, cycle 747).
+"""Codebase risk-report engine, read by the ``trw-mcp code risk`` CLI
+command (PRD-DIST-1990, cycle 747; PRD-CORE-300-FR06 slice S4 moved this from
+an MCP tool to the CLI).
 
-Second cross-package wire (after c746 trw_before_edit_hint).
-Surfaces the c737/c739 ranked composite-risk report to any MCP client.
+Second cross-package wire (after c746 trw_code's hint mode).
+Surfaces the c737/c739 ranked composite-risk report to any caller.
 
 Reads the c742 ``risk-report-<sha>.json`` sidecar (written by
 ``trw-distill self-improve risk-report --persist-sidecar``); returns
@@ -13,13 +15,11 @@ Uses the c747 DRY substrate (``_sidecar_substrate``). NO
 
 from __future__ import annotations
 
-from contextlib import suppress
-from typing import Any, Literal
+from typing import Literal
 
-from fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
+from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
 from trw_mcp.tools._learnings_collector import (
     LearningSummary,
     build_file_queries,
@@ -28,7 +28,7 @@ from trw_mcp.tools._learnings_collector import (
 from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus, resolve_current_sidecar
 
 _ARTIFACT_NAME_RISK_REPORT: str = "risk-report"
-_TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
+_TIER_FEATURE: str = DISTILL_SIDECAR_FEATURE
 
 
 class FileRiskScorePayload(BaseModel):
@@ -160,53 +160,8 @@ def compute_codebase_risk_report(
     )
 
 
-def register_codebase_risk_report_tools(server: FastMCP) -> None:
-    """Register trw_codebase_risk_report on the MCP server."""
-
-    @server.tool()
-    def trw_codebase_risk_report(
-        repo_root: str | None = None,
-        cache_dir: str | None = None,
-        top_n: int = 20,
-        ctx: Context | None = None,
-    ) -> dict[str, Any]:
-        """Return the ranked file-level composite-risk report for the current SHA.
-
-        Use when: prioritizing review effort. Tier-gated.
-
-        Args:
-            top_n: entries to return; 0 returns all (default 20).
-        """
-        result = compute_codebase_risk_report(
-            repo_root=repo_root,
-            cache_dir=cache_dir,
-            top_n=top_n,
-        )
-        # --- telemetry (fail-open) ---
-        with suppress(Exception):  # justified: fail-open telemetry, never break the tool
-            from trw_mcp.channels._distill_telemetry import emit_tool_call
-
-            sidecar_sha = result.distill_sidecar_sha or ""
-            record_ids = [f"risk-report@{sidecar_sha[:8]}"] if sidecar_sha else []
-            emit_tool_call(
-                tool_name="trw_codebase_risk_report",
-                tier=result.tier,
-                record_ids=record_ids,
-            )
-        # --- tier-aware response enrichment (fail-open) ---
-        base: dict[str, Any] = result.model_dump()
-        with suppress(Exception):  # justified: fail-open enrichment never breaks the base response
-            from trw_mcp.channels._tool_return_tiers import enrich_response
-
-            client = resolve_client_profile(ctx=ctx)
-            client_tier = resolve_tier_for_client(client)
-            return enrich_response(base, client_tier=client_tier)
-        return base
-
-
 __all__ = [
     "CodebaseRiskReportResult",
     "FileRiskScorePayload",
     "compute_codebase_risk_report",
-    "register_codebase_risk_report_tools",
 ]

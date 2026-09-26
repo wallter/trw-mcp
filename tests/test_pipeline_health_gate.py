@@ -80,18 +80,9 @@ def _make_config(*, platform_urls: list[str] | None = None, **overrides: object)
 
 
 def _healthy_pipeline(trw_dir: Path) -> None:
-    """Write a fully-healthy, fully-MEASURED pipeline state (no probe degraded).
-
-    PRD-CORE-263 DEF-08: ``bandit_state.json`` must exist (fresh mtime) too —
-    an absent file now reports ``measured: False`` (not a fabricated healthy
-    default), which would otherwise make this "healthy" fixture also trip the
-    DEF-05 unmeasured advisory.
-    """
+    """Write a fully-healthy, fully-MEASURED pipeline state (no probe degraded)."""
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     # The pinned store is empty, so graph/recall probes are suppressed (not degraded).
-    meta_dir = trw_dir / "meta"
-    meta_dir.mkdir(parents=True, exist_ok=True)
-    (meta_dir / "bandit_state.json").write_text(json.dumps({"updated_at": _iso_ago(0.1)}), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

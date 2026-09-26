@@ -154,7 +154,7 @@ def test_adoption_happens_once_per_process(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", _NEW_KEY)
     assert get_pinned_run(session_id=_NEW_KEY) == run
 
-    # The adopted pin is later taken away (e.g. trw_adopt_run by another session).
+    # The adopted pin is later taken away (e.g. `trw-mcp run adopt` by another session).
     _write_pins({_OLD_KEY: _entry(run, pid=os.getpid() + 1, client_pid=os.getppid())})
     assert get_pinned_run(session_id=_NEW_KEY) is None
 

@@ -200,15 +200,11 @@ def test_the_recall_extras_read_and_gate_through_the_selected_store(
     trw_dir: Path, fake: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Near-duplicate vectors come from the store; shared results pass the store's gate (PRD-CORE-280 FR01)."""
-    from trw_memory.embeddings.provenance import EmbeddingSpace
     from trw_memory.sync import SharedFetchResult
 
     from trw_mcp.tools import _recall_impl
 
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
-    monkeypatch.setattr(
-        "trw_mcp.state._embedding_space.loaded_embedding_space", lambda: EmbeddingSpace("d" * 64, "enc", 2)
-    )
     fake.stored_vectors = {"L-a": [1.0, 0.0], "L-b": [1.0, 0.0]}
     rows: list[dict[str, object]] = [
         {"id": "L-a", "summary": "First wording", "detail": ""},

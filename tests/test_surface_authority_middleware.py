@@ -1,13 +1,14 @@
-"""PRD-CORE-218 FR03/FR04 — SurfaceAuthorityMiddleware acceptance tests.
+"""PRD-CORE-218 FR03/FR04, flattened by PRD-CORE-300 S11b — SurfaceAuthorityMiddleware
+acceptance tests.
 
 Enters through the middleware's real ``on_list_tools`` / ``on_call_tool`` hooks
-(the production entrypoint the activation wires into the chain), mirroring the
-``test_phase_exposure_middleware.py`` idiom. Proves: standard mode masks a
-non-kernel tool for a session with no run; a run with ``task_type=coding``
-exposes kernel + the coding packs; ``mode="all"`` exposes everything (operator
-escape); a ``trw_request_tool_access`` grant unmasks a masked pack tool for
-exactly one call; a resolution failure fails OPEN; and the denial payload names
-the containing pack + ``trw_request_tool_access``.
+(the production entrypoint the activation wires into the chain). Proves: standard
+mode masks a flag-gated tool whose flag is off; a resolution failure fails OPEN;
+a denial payload names the config flag that turns the tool on; and a surface
+change (a config flag flip) still notifies on the LIST path. The surface no
+longer depends on the task or the run phase — there is no grant path and no
+per-task pack resolution (both deleted in S11b), so this file no longer forces
+``task_type`` or plants a grant.
 """
 
 from __future__ import annotations
@@ -20,18 +21,16 @@ import pytest
 from structlog.testing import capture_logs
 
 from trw_mcp.middleware.surface_authority import (
-    _ALWAYS_EXPOSED,
     SurfaceAuthorityMiddleware,
     reset_surface_authority_state,
 )
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, PACK_TOOLS
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, KERNEL_TOOLS, PACK_TOOLS
 from trw_mcp.server._surface_manifest_registry import eligible_tool_names, resolve_tool_surface
-from trw_mcp.tools import phase_overrides
 
 _MOD = "trw_mcp.middleware.surface_authority"
 
 
-# ── Fakes (mirror test_phase_exposure_middleware.py) ────────────────────
+# ── Fakes ──────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -72,95 +71,98 @@ def middleware() -> SurfaceAuthorityMiddleware:
 
 
 @pytest.fixture(autouse=True)
-def _clear_overrides() -> Any:
-    phase_overrides.reset_overrides()
+def _clear_state() -> Any:
     reset_surface_authority_state()
     yield
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
 
 
-def _force(monkeypatch: pytest.MonkeyPatch, *, mode: str, task_type: str | None) -> None:
+class _StubConfig:
+    """Only the attributes ``_resolve`` reads off the config."""
+
+    def __init__(self, *, comms_enabled: bool = False, dispatch_enabled: bool = False, assess_enabled: bool = False):
+        self.comms_enabled = comms_enabled
+        self.dispatch_tools_exposed = dispatch_enabled
+        self.assess_enabled = assess_enabled
+
+
+def _force(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mode: str,
+    comms_enabled: bool = False,
+    dispatch_enabled: bool = False,
+    assess_enabled: bool = False,
+) -> None:
     monkeypatch.setattr(f"{_MOD}._resolve_mode", lambda: mode)
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: task_type)
-
-
-# ── FR04: standard default, no run → kernel only ────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_standard_no_run_masks_non_kernel(
-    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No active run under standard mode → only kernel ∪ rigid survive; a
-    non-kernel pack tool (trw_code_search) is masked."""
-    _force(monkeypatch, mode="standard", task_type=None)
-
-    async def call_next(_ctx: Any) -> Any:
-        return _all_tools()
-
-    ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
-    out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
-    names = {t.name for t in out}
-
-    # PRD-CORE-274 NFR07: comms is default-on, so peer_comms is visible before any
-    # formation exists (FR18 announce needs it); listing it creates no state.
-    comms = set(PACK_TOOLS["peer_comms"])
-    assert names == (set(KERNEL_TOOLS) | _ALWAYS_EXPOSED | comms) & set(eligible_tool_names())
-    assert "trw_code_search" not in names  # code_navigation pack is masked
-    assert "trw_session_start" in names  # kernel
-    assert "trw_build_check" in names  # rigid (NOT kernel) — never locked out
-    assert "trw_init" in names  # bootstrap-critical (P2b): fresh session must init
-
-
-# ── FR03: task-selected packs ───────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_coding_run_exposes_coding_packs(
-    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A run with task_type=coding exposes kernel + verification + code_navigation."""
-    _force(monkeypatch, mode="standard", task_type="coding")
-
-    async def call_next(_ctx: Any) -> Any:
-        return _all_tools()
-
-    ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
-    out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
-    names = {t.name for t in out}
-
-    comms = set(PACK_TOOLS["peer_comms"])  # PRD-CORE-274 NFR07 default-on
-    expected = (set(resolve_tool_surface("coding", "standard").tools) | _ALWAYS_EXPOSED | comms) & set(
-        eligible_tool_names()
+    monkeypatch.setattr(
+        "trw_mcp.models.config.get_config",
+        lambda: _StubConfig(
+            comms_enabled=comms_enabled, dispatch_enabled=dispatch_enabled, assess_enabled=assess_enabled
+        ),
     )
-    assert names == expected
-    assert "trw_code_search" in names  # code_navigation pack (coding)
-    assert "trw_build_check" in names  # verification pack
-    # Repointed 2026-07-29: this named trw_entity_risk_map, which UF-011
-    # removed, so the assertion had become trivially true and would pass
-    # forever whether or not the code_risk pack was actually excluded.
-    assert "trw_codebase_risk_report" not in names  # code_risk pack NOT in coding standard
-    # 2026-09-04 wiring-defect fix: "coding" names no "requirements" pack entry
-    # (STANDARD_TASK_PACKS), so trw_prd_validate is masked from a coding-task
-    # session UNLESS it is bootstrap-critical. A trw-prd-groomer /
-    # trw-requirement-reviewer sub-agent dispatched from a coding session shares
-    # this same masked surface (same stdio connection -> same session_id), so
-    # without this it could never call the validator it is grafted to. This
-    # assertion is a hardcoded literal (not derived from _ALWAYS_EXPOSED) so it
-    # goes red if trw_prd_validate is ever dropped from the bootstrap set.
-    assert "trw_prd_validate" in names
 
 
-# ── FR04: explicit all is a strict no-op (operator escape) ──────────────
+# ── FR04: standard default, every flag off → the always-on surface only ─
 
 
 @pytest.mark.asyncio
-async def test_mode_all_exposes_everything(
+async def test_standard_all_flags_off_masks_flag_gated_packs(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """mode='all' passes the full catalogue through unchanged (no masking)."""
-    _force(monkeypatch, mode="all", task_type="coding")
+    """Standard mode with every pack flag off exposes exactly ALWAYS_ON_TOOLS;
+    a flag-gated pack tool (trw_dispatch) is masked."""
+    _force(monkeypatch, mode="standard")
+
+    async def call_next(_ctx: Any) -> Any:
+        return _all_tools()
+
+    ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
+    out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+    names = {t.name for t in out}
+
+    assert names == ALWAYS_ON_TOOLS & set(eligible_tool_names())
+    assert "trw_dispatch" not in names  # dispatch pack is gated by dispatch_tools_exposed
+    assert "trw_inbox" not in names  # peer_comms pack is gated by comms_enabled
+    assert "trw_assess" not in names  # assess_support pack is gated by assess_enabled
+    assert "trw_session_start" in names  # kernel
+    assert "trw_code" in names  # kernel since S10/S11b
+    assert "trw_init" in names  # kernel
+
+
+# ── FR04/S11b: a flag turns its pack on ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_comms_flag_on_exposes_peer_comms_pack(
+    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Turning comms_enabled on adds exactly the peer_comms pack."""
+    _force(monkeypatch, mode="standard", comms_enabled=True)
+
+    async def call_next(_ctx: Any) -> Any:
+        return _all_tools()
+
+    ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
+    out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
+    names = {t.name for t in out}
+
+    expected = (ALWAYS_ON_TOOLS | set(PACK_TOOLS["peer_comms"])) & set(eligible_tool_names())
+    assert names == expected
+    assert "trw_dispatch" not in names  # dispatch still needs its own flag
+
+
+# ── FR04/FR09: explicit all turns on comms + assess but never dispatch ──
+
+
+@pytest.mark.asyncio
+async def test_mode_all_exposes_comms_and_assess_but_not_dispatch(
+    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mode='all' widens comms + assess (PRD-CORE-300 FR09) but still needs
+    dispatch_tools_exposed for the dispatch pack — process launching is never
+    on by default in any mode."""
+    _force(monkeypatch, mode="all")
     tools = _all_tools()
 
     async def call_next(_ctx: Any) -> Any:
@@ -168,91 +170,84 @@ async def test_mode_all_exposes_everything(
 
     ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
     out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
-    assert {t.name for t in out} == {t.name for t in tools}
+    names = {t.name for t in out}
+
+    assert "trw_inbox" in names  # comms widened by all mode
+    assert "trw_assess" in names  # assess widened by all mode
+    assert "trw_dispatch" not in names  # dispatch is NOT widened by all mode alone
 
 
 @pytest.mark.asyncio
-async def test_mode_all_allows_any_call(
+async def test_mode_all_with_dispatch_flag_allows_the_dispatch_call(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _force(monkeypatch, mode="all", task_type=None)
+    _force(monkeypatch, mode="all", dispatch_enabled=True)
 
     async def call_next(_ctx: Any) -> Any:
         return _SENTINEL
 
-    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
     assert await middleware.on_call_tool(ctx, call_next) is _SENTINEL  # type: ignore[arg-type]
 
 
-# ── FR03: masked call denied + FR06 discoverability payload ─────────────
-
-
 @pytest.mark.asyncio
-async def test_masked_call_denied_with_pack_and_request_access(
+async def test_mode_all_without_dispatch_flag_still_denies_dispatch_call(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A masked pack tool is denied with a payload naming the pack(s) and
-    trw_request_tool_access (the discoverability contract)."""
-    _force(monkeypatch, mode="standard", task_type=None)
+    _force(monkeypatch, mode="all")
 
     async def call_next(_ctx: Any) -> Any:
         raise AssertionError("masked call must not reach the tool")
 
-    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
+    denied = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+    assert denied.structured_content["error_type"] == "tool_not_in_surface"
+
+
+# ── Masked call denied, naming the gating flag ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_masked_call_denied_names_the_gating_flag(
+    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flag-gated tool outside the resolved surface is denied with a payload
+    naming the config flag that turns it on (no packs/override_hint keys)."""
+    _force(monkeypatch, mode="standard")
+
+    async def call_next(_ctx: Any) -> Any:
+        raise AssertionError("masked call must not reach the tool")
+
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
     result = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
     payload = result.structured_content
     assert payload is not None
     assert payload["error_type"] == "tool_not_in_surface"
-    assert payload["tool_name"] == "trw_code_search"
-    assert "code_navigation" in payload["packs"]
-    assert payload["packs"] == [p for p, tools in PACK_TOOLS.items() if "trw_code_search" in tools]
-    assert "trw_request_tool_access" in payload["override_hint"]
-    assert "trw_request_tool_access" in result.content[0].text
-
-
-# ── FR06: request_tool_access grant unmasks one call (the verified path) ─
+    assert payload["tool_name"] == "trw_dispatch"
+    assert payload["enable_with"] == "dispatch_tools_exposed: true in .trw/config.yaml"
+    assert "packs" not in payload
+    assert "override_hint" not in payload
+    assert "dispatch_tools_exposed" in result.content[0].text
 
 
 @pytest.mark.asyncio
-async def test_grant_unmasks_for_exactly_one_call(
+async def test_masked_call_denied_no_flag_names_no_enable_with(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A single-use trw_request_tool_access grant unmasks a masked pack tool in
-    both the LIST view and ONE call; the second call re-masks (single-use)."""
-    _force(monkeypatch, mode="standard", task_type=None)
-    phase_overrides.grant_override("sess-1", "trw_code_search", reason="need a one-off code search for audit")
+    """A tool outside the surface for a reason other than a flag (there is none
+    left in standard mode, since every non-flag pack is always on) is a
+    structurally impossible case today; this asserts the denial shape is still
+    honest when no flag applies — covered via an unregistered/unknown name."""
+    _force(monkeypatch, mode="standard")
 
-    # LIST view: the grant surfaces the tool.
-    async def call_next_list(_ctx: Any) -> Any:
-        return _all_tools()
+    async def call_next(_ctx: Any) -> Any:
+        raise AssertionError("must not reach the tool")
 
-    list_ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext())
-    listed = {t.name for t in await middleware.on_list_tools(list_ctx, call_next_list)}  # type: ignore[arg-type]
-    assert "trw_code_search" in listed
-
-    calls = {"n": 0}
-
-    async def call_next_call(_ctx: Any) -> Any:
-        calls["n"] += 1
-        return _SENTINEL
-
-    # A FRESH context per call: FastMCP builds one MiddlewareContext per
-    # tools/call and hands that same object down the chain. Reusing one object
-    # across two calls does not model two calls -- and since the grant is now
-    # single-use per CALL (stamped on the request so both masking gates can
-    # honour one grant), reusing it would have the second call legitimately
-    # re-read the first call's own authorization.
-    def _call_ctx() -> _FakeMiddlewareContext:
-        return _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
-
-    # First call: grant consumed → reaches the tool.
-    assert await middleware.on_call_tool(_call_ctx(), call_next_call) is _SENTINEL  # type: ignore[arg-type]
-    assert calls["n"] == 1
-    # Second call: grant already consumed → denied (masked again).
-    denied = await middleware.on_call_tool(_call_ctx(), call_next_call)  # type: ignore[arg-type]
-    assert calls["n"] == 1
-    assert denied.structured_content is not None
-    assert denied.structured_content["error_type"] == "tool_not_in_surface"
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_nonexistent_tool"), fastmcp_context=_FakeContext())
+    result = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+    payload = result.structured_content
+    assert payload["error_type"] == "tool_not_in_surface"
+    assert "enable_with" not in payload
 
 
 # ── Diagnostic finding: a raising tool must execute exactly once ────────
@@ -265,12 +260,12 @@ async def test_raising_tool_call_next_invoked_exactly_once(
     """A tool that raises inside ``call_next`` must be invoked exactly once.
 
     Regression for the double-invocation bug: ``on_call_tool`` used to call
-    ``call_next`` inside ``try`` (via ``_call_then_push``) AND again in the
-    fail-open ``except`` when the tool's own exception propagated up, so a
-    raising tool ran twice. A kernel tool is used so the call reaches the
-    tool (in-surface) rather than being denied.
+    ``call_next`` inside ``try`` AND again in the fail-open ``except`` when the
+    tool's own exception propagated up, so a raising tool ran twice. A kernel
+    tool is used so the call reaches the tool (in-surface) rather than being
+    denied.
     """
-    _force(monkeypatch, mode="standard", task_type=None)
+    _force(monkeypatch, mode="standard")
     calls = {"n": 0}
 
     async def call_next(_ctx: Any) -> Any:
@@ -322,25 +317,20 @@ async def test_resolution_failure_fails_open_call(
     async def call_next(_ctx: Any) -> Any:
         return _SENTINEL
 
-    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
     assert await middleware.on_call_tool(ctx, call_next) is _SENTINEL  # type: ignore[arg-type]
 
 
 # ── F1a: the middleware is actually in the production chain ──────────────
 
 
-def test_middleware_registered_in_build_middleware_before_phase_exposure() -> None:
-    """Production-path proof: _build_middleware() installs SurfaceAuthorityMiddleware
-    and places it BEFORE PhaseExposureMiddleware (so phase masking composes within
-    the CORE-218 surface). Round-1 audit F1: nothing asserted chain membership."""
-    from trw_mcp.middleware.phase_exposure import PhaseExposureMiddleware  # noqa: F401
+def test_middleware_registered_in_build_middleware() -> None:
+    """Production-path proof: _build_middleware() installs SurfaceAuthorityMiddleware.
+    Round-1 audit F1: nothing asserted chain membership."""
     from trw_mcp.server._app import _build_middleware
 
-    chain = _build_middleware()
-    types = [type(m).__name__ for m in chain]
+    types = [type(m).__name__ for m in _build_middleware()]
     assert "SurfaceAuthorityMiddleware" in types, types
-    assert "PhaseExposureMiddleware" in types, types
-    assert types.index("SurfaceAuthorityMiddleware") < types.index("PhaseExposureMiddleware")
 
 
 # ── P2d: denials are observable ─────────────────────────────────────────
@@ -350,22 +340,21 @@ def test_middleware_registered_in_build_middleware_before_phase_exposure() -> No
 async def test_denial_emits_structured_event(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every masked call logs a structured warning naming tool/task_type/mode/packs."""
-    _force(monkeypatch, mode="standard", task_type="rca")
+    """Every masked call logs a structured warning naming tool/mode/flag."""
+    _force(monkeypatch, mode="standard")
 
     async def call_next(_ctx: Any) -> Any:
         raise AssertionError("must not reach tool")
 
-    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_prd_create"), fastmcp_context=_FakeContext())
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
     with capture_logs() as logs:
         await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
     denied = [e for e in logs if e.get("event") == "surface_authority_call_denied"]
     assert denied, logs
     ev = denied[0]
-    assert ev["tool"] == "trw_prd_create"
-    assert ev["task_type"] == "rca"
+    assert ev["tool"] == "trw_dispatch"
     assert ev["mode"] == "standard"
-    assert "requirements" in ev["packs"]
+    assert ev["flag"] == "dispatch_tools_exposed"
 
 
 # ── P2a: a surface change notifies capable clients ──────────────────────
@@ -393,11 +382,15 @@ class _CtxWithSession:
 async def test_surface_change_emits_list_changed(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When a session's resolved surface changes (task_type shift), the LIST path
-    emits notifications/tools/list_changed; the first listing seeds silently."""
-    task = {"t": "unknown"}
+    """When a session's resolved surface changes (a config reload flipped a
+    flag), the LIST path emits notifications/tools/list_changed; the first
+    listing seeds silently."""
+    flags = {"comms_enabled": False}
     monkeypatch.setattr(f"{_MOD}._resolve_mode", lambda: "standard")
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: task["t"])
+    monkeypatch.setattr(
+        "trw_mcp.models.config.get_config",
+        lambda: _StubConfig(comms_enabled=flags["comms_enabled"]),
+    )
 
     session = _RecordingSession()
     ctx = _FakeMiddlewareContext(fastmcp_context=_CtxWithSession("sess-1", session))
@@ -405,11 +398,11 @@ async def test_surface_change_emits_list_changed(
     async def call_next(_ctx: Any) -> Any:
         return _all_tools()
 
-    # First listing (unknown → kernel) seeds the ledger, no notify.
+    # First listing seeds the ledger, no notify.
     await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
     assert session.calls == 0
-    # task_type shifts to coding → surface changes → notify emitted.
-    task["t"] = "coding"
+    # comms_enabled flips → surface changes → notify emitted.
+    flags["comms_enabled"] = True
     await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
     assert session.calls == 1
     # Re-listing with the SAME surface does not re-notify.
@@ -417,148 +410,55 @@ async def test_surface_change_emits_list_changed(
     assert session.calls == 1
 
 
-# ── F1b + P2b: real-chain entrypoint (no monkeypatch of the two seams) ───
+# ── F1b + P2b: real-chain entrypoint (no monkeypatch of the resolution seam) ──
 
 
 @pytest.mark.integration
-async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_real_chain_entrypoint_masks_and_denies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Production-path proof (F1b): drive the REAL SurfaceAuthorityMiddleware with
-    tool_resolution_mode from real config (TRW_PROJECT_ROOT tmp project) and a
-    task_type resolved GENUINELY from a real pin + run.yaml — no monkeypatch of
-    _resolve_mode or resolve_task_type. Covers the newly-mapped 'rca' type (F2),
-    the bootstrap trw_init exposure (P2b), a real denial, and a real grant."""
+    real config (TRW_PROJECT_ROOT tmp project) — no monkeypatch of ``_resolve``,
+    ``_resolve_mode`` or ``get_config``. Standard mode, real defaults
+    (comms_enabled=True, dispatch_tools_exposed=False)."""
     from trw_mcp.models.config import _reset_config, get_config
-    from trw_mcp.state import _pin_store as pin_store_mod
-    from trw_mcp.state._paths import _pinned_runs
-    from trw_mcp.state._pin_store import upsert_pin_entry
 
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.delenv("TRW_SESSION_ID", raising=False)
     _reset_config()
-    _pinned_runs.clear()
-    pin_store_mod.invalidate_pin_store_cache()
 
     trw = tmp_path / ".trw"
     trw.mkdir(parents=True, exist_ok=True)
-    # Real config: standard is the default; write it explicitly for the record.
     (trw / "config.yaml").write_text("tool_resolution_mode: standard\n", encoding="utf-8")
     _reset_config()
 
     config = get_config()
-    run_dir = tmp_path / config.runs_root / "rca-task" / "20260101T000000Z-rca00001"
-    (run_dir / "meta").mkdir(parents=True, exist_ok=True)
-    (run_dir / "meta" / "run.yaml").write_text(
-        "run_id: 20260101T000000Z-rca00001\n"
-        "task: rca-task\n"
-        "framework: v99.9_TRW\n"
-        "status: active\n"
-        "phase: implement\n"
-        "task_type: rca\n",
-        encoding="utf-8",
-    )
-    session_id = "sess-real-rca"
-    upsert_pin_entry(session_id, run_dir)
+    assert config.comms_enabled is True
+    assert config.dispatch_tools_exposed is False
 
     mw = SurfaceAuthorityMiddleware()  # REAL — no seam monkeypatching
+    session_id = "sess-real"
     ctx = _FakeMiddlewareContext(fastmcp_context=_FakeContext(session_id))
 
     async def call_next_list(_ctx: Any) -> Any:
         return _all_tools()
 
     listed = {t.name for t in await mw.on_list_tools(ctx, call_next_list)}  # type: ignore[arg-type]
-    comms = set(PACK_TOOLS["peer_comms"])  # PRD-CORE-274 NFR07: real config, comms default-on
-    rca_surface = (set(resolve_tool_surface("rca", "standard").tools) | _ALWAYS_EXPOSED | comms) & set(
-        eligible_tool_names()
-    )
-    assert listed == rca_surface
-    assert "trw_code_search" in listed  # code_navigation (rca) resolved via real pin+run.yaml
-    assert "trw_build_check" in listed  # verification (rca)
-    assert "trw_init" in listed  # bootstrap-critical (P2b)
-    assert "trw_prd_create" not in listed  # requirements pack NOT in rca
-    # Same repoint as above — the old subject no longer exists.
-    assert "trw_codebase_risk_report" not in listed  # code_risk pack NOT in rca
+    expected = (ALWAYS_ON_TOOLS | set(PACK_TOOLS["peer_comms"])) & set(eligible_tool_names())
+    assert listed == expected
+    assert "trw_inbox" in listed  # comms default-on
+    assert "trw_dispatch" not in listed  # dispatch pack off by default
 
-    # Real denial through the call path.
     async def call_next_deny(_ctx: Any) -> Any:
         raise AssertionError("masked call must not reach the tool")
 
-    deny_ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_prd_create"), fastmcp_context=_FakeContext(session_id))
+    deny_ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext(session_id))
     denied = await mw.on_call_tool(deny_ctx, call_next_deny)  # type: ignore[arg-type]
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
 
-    # Real grant unmasks exactly one call.
-    phase_overrides.grant_override(session_id, "trw_prd_create", reason="need a one-off prd_create for rca")
-
-    async def call_next_allow(_ctx: Any) -> Any:
-        return _SENTINEL
-
-    allow_ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_prd_create"), fastmcp_context=_FakeContext(session_id))
-    assert await mw.on_call_tool(allow_ctx, call_next_allow) is _SENTINEL  # type: ignore[arg-type]
-
-
-# ── PRD-FIX-126-FR06: the three readers on a real swept run ─────────────
-
-
-@pytest.mark.integration
-def test_resolve_task_type_reads_a_swept_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR06: a run the stale-run sweep abandoned still resolves its real context.
-
-    Before PRD-FIX-126 the enum did not contain ``abandoned``, so
-    ``RunState.model_validate`` raised on 189 of the 191 live runs and all three
-    readers degraded to their defaults: ``resolve_task_type`` returned ``None``
-    (kernel-only surface), ``resolve_active_phase`` returned ``RESEARCH``, and
-    ``assemble_agent_work_evidence`` raised a ``ValidationError`` straight out
-    of ``trw_agent_work_evidence``.
-
-    The proof runs on the REAL path — a real run directory, the real pin store,
-    the real ``RunState``. Nothing here monkeypatches ``RunState``,
-    ``resolve_run_dir_for_session``, or ``FileStateReader``; only the project
-    root env var is redirected, which is how every isolated test in this repo
-    points the production resolvers at a scratch tree.
-    """
-    from trw_mcp.middleware.phase_exposure import _DEFAULT_PHASE, resolve_active_phase
-    from trw_mcp.middleware.surface_authority import resolve_task_type
-    from trw_mcp.models.config import _reset_config, get_config
-    from trw_mcp.models.run import RunStatus
-    from trw_mcp.state import _pin_store as pin_store_mod
-    from trw_mcp.state._paths import _pinned_runs
-    from trw_mcp.state._pin_store import upsert_pin_entry
-    from trw_mcp.state.agent_work_evidence import assemble_agent_work_evidence
-
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.delenv("TRW_SESSION_ID", raising=False)
     _reset_config()
-    _pinned_runs.clear()
-    pin_store_mod.invalidate_pin_store_cache()
 
-    config = get_config()
-    run_id = "20260903T000000Z-swept001"
-    run_dir = tmp_path / config.runs_root / "swept-task" / run_id
-    (run_dir / "meta").mkdir(parents=True, exist_ok=True)
-    (run_dir / "meta" / "run.yaml").write_text(
-        f"run_id: {run_id}\n"
-        "task: swept-task\n"
-        "framework: v99.9_TRW\n"
-        f"status: {RunStatus.ABANDONED.value}\n"
-        "phase: review\n"
-        "task_type: coding\n"
-        "objective: prove the readers survive a swept run\n",
-        encoding="utf-8",
-    )
-    (run_dir / "meta" / "events.jsonl").touch()
 
-    session_id = "sess-swept"
-    upsert_pin_entry(session_id, run_dir)
-
-    assert resolve_task_type(session_id=session_id) == "coding"
-    assert resolve_active_phase(session_id=session_id) == "REVIEW" != _DEFAULT_PHASE
-
-    evidence = assemble_agent_work_evidence(run_dir)
-    assert evidence.identity.run_id == run_id
-    assert evidence.status == RunStatus.ABANDONED.value
-    assert evidence.phase == "review"
-
-    _pinned_runs.clear()
-    pin_store_mod.invalidate_pin_store_cache()
-    _reset_config()
+def test_resolve_tool_surface_agrees_with_kernel_membership() -> None:
+    """The registry's kernel-derived tools stay a subset of KERNEL_TOOLS."""
+    standard = resolve_tool_surface("standard")
+    assert set(KERNEL_TOOLS) & set(eligible_tool_names()) <= set(standard.tools)

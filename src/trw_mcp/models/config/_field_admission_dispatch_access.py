@@ -29,27 +29,26 @@ DISPATCH_ACCESS_ADMISSIONS: dict[str, ConfigAdmission] = {
             "trw_mcp.server._surface_manifest_registry.resolve_tool_surface(dispatch_enabled=...)"
         ),
         default_rationale=(
-            "false. The dispatch pack is HIGH-RISK (models/config/_defaults.HIGH_RISK_PACKS): its "
-            "tools launch another agent process with its own model spend and its own filesystem "
-            "reach, so it stays off the advertised surface of a session that never asked for it. "
-            "The field exists because the alternatives were both wrong: tool_resolution_mode='all' "
-            "exposes EVERY pack to buy one, and a trw_request_tool_access grant is SINGLE-USE, so "
-            "the launch-then-poll loop the bundled trw-delegate skill prescribes would need a fresh "
-            "20-character justification before every poll."
+            "false. The dispatch pack's tools launch another agent process with its own model "
+            "spend and its own filesystem reach, so it stays off the advertised surface of a "
+            "session that never asked for it. The field is the only switch: it is required in "
+            "every mode, including tool_resolution_mode='all', and there is no per-call grant, so "
+            "the launch-then-poll loop the bundled trw-delegate skill prescribes needs only the "
+            "flag set once."
         ),
         interaction_analysis=(
             "Read once per surface resolution, alongside comms_enabled, and it only ADDS a pack to "
-            "the bounded standard resolution -- it cannot narrow one, and it is not consulted at "
-            "all under tool_resolution_mode='all'. It is dominated by surface_role='reviewer', "
+            "the flat resolution -- it cannot narrow one, and unlike comms_enabled and "
+            "assess_enabled it is still consulted under tool_resolution_mode='all', which never "
+            "turns dispatch on. It is dominated by surface_role='reviewer', "
             "which REPLACES the surface before any mode or pack is read, so it can never widen a "
             "dispatched reviewer (that would be the dispatch-recursion escape REVIEWER_TOOLS "
             "excludes the pack for). Turning it on changes the advertised catalogue, so a client "
             "that listed tools at connect needs the list_changed push the same middleware emits."
         ),
         deprecation_plan=(
-            "Retire when a task type legitimately OWNS delegation and STANDARD_TASK_PACKS names the "
-            "pack for it; until then removing this field restores 'a shipped skill names two tools "
-            "no default session can see'."
+            "Retire when a task type legitimately OWNS delegation; until then removing this field "
+            "restores 'a shipped skill names a tool no default session can see'."
         ),
         docs_pointer=_PRD,
         test_pointer="trw-mcp/tests/test_dispatch_surface_reachability.py",
@@ -85,6 +84,26 @@ DISPATCH_ACCESS_ADMISSIONS: dict[str, ConfigAdmission] = {
         ),
         docs_pointer=_PRD,
         test_pointer="trw-mcp/tests/test_dispatch_trw_access.py",
+        budget_decision="admitted",
+    ),
+    "dispatch_fallback_clients": ConfigAdmission(
+        field_name="dispatch_fallback_clients",
+        owner="7.0.0 W21 (docs/sprint-mcp7/PLAN.md)",
+        consumer="trw_mcp.dispatch._cli.run_dispatch -> trw_mcp.dispatch._fallback.dispatch_with_fallback",
+        default_rationale=(
+            "[]. A fallback answers the operator's question with a different agent, so the chain is "
+            "the operator's to list; empty keeps a single-client dispatch exactly as before."
+        ),
+        interaction_analysis=(
+            "Used when --fallback-clients is omitted ('' disables). Each listed client resolves through "
+            "the same resolver, so dispatch_enabled_clients and the unverified-client refusal still "
+            "apply (a refused client is recorded unresolved), and a client that cannot run the request's "
+            "posture is recorded posture_unsupported and never launched. Only quota_exhausted, an "
+            "unsupported flag or a launch failure hands over; every attempt is recorded on the result."
+        ),
+        deprecation_plan="Retire if client selection moves into a per-role operator policy object.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-297-dispatch-roles-reviewer-lanes.md",
+        test_pointer="trw-mcp/tests/test_dispatch_fallback.py",
         budget_decision="admitted",
     ),
 }

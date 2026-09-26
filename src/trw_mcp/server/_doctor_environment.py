@@ -16,7 +16,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-__all__ = ["foreign_client_paths_row", "gnu_timeout_row"]
+from trw_mcp.state._checkout_servers import stray_servers
+
+__all__ = ["claude_code_version_row", "foreign_client_paths_row", "gnu_timeout_row", "stray_servers_row"]
 
 Row = tuple[Literal["PASS", "WARN", "SKIP"], str]
 
@@ -70,3 +72,39 @@ def foreign_client_paths_row(target: Path, home: Path | None = None) -> Row:
         f"{len(findings)} generated client file(s) carry an absolute path from another machine: "
         f"{'; '.join(findings[:5])}. Remedy: trw-mcp update-project.",
     )
+
+
+def stray_servers_row(target: Path) -> Row:
+    """sprint-mcp7 W12: trw-mcp servers still holding this checkout that no client will use again."""
+    lines = stray_servers(target / ".trw")
+    if not lines:
+        return "PASS", "no stray trw-mcp server recorded for this checkout."
+    return "WARN", f"{len(lines)} stray trw-mcp server(s) hold this checkout's store: {'; '.join(lines[:5])}"
+
+
+#: PRD-CORE-289 FR07: Claude Code 2.1.280 is the first release that runs Claude Opus 5.5,
+#: its default model since 2026-09-22.
+_CLAUDE_FLOOR = (2, 1, 280)
+_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def claude_code_version_row(timeout_s: int) -> Row:
+    """WARN below the Claude Code floor, and whenever the version cannot be read; never PASS on a guess."""
+    from trw_mcp.dispatch._client_specs import client_spec_for
+    from trw_mcp.server._doctor_formation_readiness import probe_version
+
+    if shutil.which("claude") is None:
+        return "SKIP", "no claude binary on PATH."
+    floor = ".".join(map(str, _CLAUDE_FLOOR))
+    version, failure = probe_version("claude", client_spec_for("claude"), timeout_s)
+    match = _SEMVER.search(version or "")
+    if match is None:
+        return "WARN", f"could not read the Claude Code version ({failure or repr(version)}); Opus 5.5 needs {floor}+."
+    found = tuple(int(part) for part in match.groups())
+    if found < _CLAUDE_FLOOR:
+        installed = ".".join(map(str, found))
+        return (
+            "WARN",
+            f"Claude Code {installed} is older than {floor}, the first release that runs Opus 5.5; upgrade it.",
+        )
+    return "PASS", f"Claude Code {'.'.join(map(str, found))} runs Opus 5.5 (floor {floor})."

@@ -1,11 +1,15 @@
-"""trw_submit_feedback — thin MCP client for the backend submission portal.
+"""submit_feedback — thin client for the backend submission portal.
 
 Implements the client side of PRD-CORE-182. Wraps ``POST /v1/submissions`` so
 TRW framework users can submit memos (bug reports, installation issues,
 feedback, feature requests, questions) directly from their IDE without
 re-implementing the HTTP contract.
 
-The tool:
+PRD-CORE-300-FR11 (S9) deleted the standalone feedback MCP
+tool; :func:`submit_feedback` survives as the helper ``trw_status`` calls in
+its feedback mode (``tools/orchestration.py``).
+
+The helper:
 - Reads the backend URL + API key from :class:`TRWConfig`.
 - Auto-populates client metadata (``trw_mcp_version``, ``python_version``,
   ``os_platform``) so the maintainer can triage submissions without guessing
@@ -22,11 +26,11 @@ import sys
 from typing import Any
 
 import structlog
-from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
 # Secret/PII redaction: the single trw-mcp redactor lives in ``telemetry.anonymizer`` (R2-014).
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.telemetry.anonymizer import redact_metadata, redact_secrets
 
 __all__ = ["submit_feedback", "submit_feedback_via_http"]
@@ -86,7 +90,7 @@ _HTTP_TIMEOUT_SECONDS = 10.0
 
 
 class SubmitFeedbackResult(BaseModel):
-    """Stable result shape returned by ``trw_submit_feedback``."""
+    """Stable result shape returned by the deleted standalone feedback tool."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -235,9 +239,16 @@ def submit_feedback_via_http(
     import httpx
 
     attached: dict[str, str] = payload.get("metadata", {})
+    if not platform_contact_enabled():  # the operator's egress switch covers agent-invoked sends too
+        error = "platform contact is disabled (platform_contact_enabled: false); nothing was sent"
+        return SubmitFeedbackResult(success=False, error=error, metadata_attached=attached)
     url = f"{backend_url.rstrip('/')}/v1/submissions"
+    # platform_auth_headers is the ONE function that may build this header —
+    # see trw_mcp.state._platform_trust module docstring. A project-tracked
+    # `.trw/config.yaml` cannot point backend_url at an untrusted host and
+    # still receive the bearer.
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        **platform_auth_headers(url, api_key),
         "Content-Type": "application/json",
     }
 
@@ -399,31 +410,6 @@ def submit_feedback(
         )
 
 
-def register_submit_feedback_tools(server: FastMCP) -> None:
-    """Register the ``trw_submit_feedback`` MCP tool on the given server."""
-
-    @server.tool()
-    def trw_submit_feedback(
-        category: str,
-        subject: str,
-        message: str,
-        contact_email: str | None = None,
-        metadata: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Submit a memo to the TRW maintainer; environment metadata is
-        auto-attached. Use when reporting a bug, feedback, or feature
-        request. Never raises. category is one of {bugfix, installation,
-        feedback, feature_request, question, other}.
-        """
-        return submit_feedback(
-            category=category,
-            subject=subject,
-            message=message,
-            contact_email=contact_email,
-            metadata=metadata,
-        ).model_dump()
-
-
 __all__ = [
     "MAX_CONTACT_EMAIL_LEN",
     "MAX_MESSAGE_LEN",
@@ -433,7 +419,6 @@ __all__ = [
     "MAX_SUBJECT_LEN",
     "MIN_MESSAGE_LEN",
     "SubmitFeedbackResult",
-    "register_submit_feedback_tools",
     "submit_feedback",
     "submit_feedback_via_http",
 ]

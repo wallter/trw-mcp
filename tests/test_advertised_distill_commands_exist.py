@@ -4,8 +4,8 @@
 . --persist-sidecar` as its remediation on every `sidecar_missing` /
 `sidecar_malformed` response. That subcommand has never been registered:
 enumerating `@self_improve_group.command("…")` across trw-distill's CLI yields
-`before-edit` and `risk-report` — the producers behind `trw_before_edit_hint`
-and `trw_codebase_risk_report` — and nothing for entity-risk-map.
+`before-edit` and `risk-report` — the producers behind `trw_code`'s hint mode
+and the `trw-mcp code risk` CLI (PRD-CORE-300 S4) — and nothing for entity-risk-map.
 `DEFECT-LEDGER.md` UF-011 records the same absence from the producer side.
 
 That made it a sharper failure than the unlicensed-artifact defect fixed in
@@ -150,8 +150,8 @@ def test_the_two_known_good_producers_are_still_advertised() -> None:
     advertised = _advertised_commands()
     all_names = {name for names in advertised.values() for name in names}
 
-    assert "before-edit" in all_names, "trw_before_edit_hint lost its remediation"
-    assert "risk-report" in all_names, "trw_codebase_risk_report lost its remediation"
+    assert "before-edit" in all_names, "trw_code's hint mode lost its remediation"
+    assert "risk-report" in all_names, "trw-mcp code risk lost its remediation"
 
 
 def test_no_shipped_artifact_advertises_a_dead_trw_mcp_subcommand() -> None:

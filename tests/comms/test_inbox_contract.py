@@ -36,7 +36,7 @@ def add_real_response_middleware(scene: SendScene) -> None:
 async def test_initialized_clients_exchange_request_reply_and_explicit_ack(send_scene: SendScene) -> None:
     add_real_response_middleware(send_scene)
     async with Client(send_scene.server) as sender, Client(send_scene.server) as receiver:
-        assert (await call(sender, send_scene, "sender", "trw_peers", action="enroll"))["status"] == "ok"
+        assert (await call(sender, send_scene, "sender", "trw_inbox", action="enroll"))["status"] == "ok"
         sent = await call(
             sender,
             send_scene,

@@ -67,7 +67,7 @@ def test_session_start_org_layer_flows_into_resolved_profile(tmp_path: Path) -> 
     assert resolved["build_check_scope"] == "full"
     assert "org" in result["profile_layers_applied"]
 
-    # Field attribution belongs to trw_profile_explain, not startup.
+    # Field attribution belongs to trw_status(detail="surface"), not startup.
 
 
 def test_session_start_compact_mode_preserves_profile_block(tmp_path: Path) -> None:
@@ -76,7 +76,7 @@ def test_session_start_compact_mode_preserves_profile_block(tmp_path: Path) -> N
     ``resolved_profile`` is the load-bearing half — it tells the caller which
     ceremony tier it is operating under. The ``profile_snapshot_id`` digest is
     the audit half: opaque, with no caller action, and served in full by
-    trw_profile_explain. Since 2026-07-27 compact drops the digest and keeps
+    trw_status(detail="surface"). Since 2026-07-27 compact drops the digest and keeps
     the block; this pins BOTH sides so neither can drift.
     """
     fn = _session_start_fn()
@@ -138,7 +138,7 @@ def test_session_start_profile_disabled_omits_block(tmp_path: Path, monkeypatch:
 
 @pytest.mark.parametrize("verbose", [False, True])
 def test_startup_does_not_build_profile_explanation(tmp_path: Path, verbose: bool) -> None:
-    """Attribution is demand-driven through trw_profile_explain in both modes."""
+    """Attribution is demand-driven through trw_status(detail="surface") in both modes."""
     fn = _session_start_fn()
     with patch("trw_mcp.profile.build_explanation") as explanation:
         result = fn(ctx=None, query="*", verbose=verbose)

@@ -528,10 +528,9 @@ def _update_cursor_artifacts(
         # authority ``scripts/generate-inventory.py`` publishes
         # ``<!-- inv:tools -->`` from, and it is stdlib-only, so reading it here
         # costs no server boot.
-        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS, PACK_TOOLS
+        from trw_mcp.models.surface_packs import PACK_TOOLS
 
-        registered = {name for tools in PACK_TOOLS.values() for name in tools}
-        visible = len(registered - set(OPERATOR_ONLY_TOOLS))
+        visible = len({name for tools in PACK_TOOLS.values() for name in tools})
         verb = "already exceeds" if visible > _CURSOR_TOOL_CEILING else "may approach"
         result.setdefault("info", []).append(
             f"cursor-ide: TRW exposes {visible} MCP tools (tool_resolution_mode=all). "

@@ -15,9 +15,9 @@ from trw_mcp.tools import swarm_comms
 @pytest.mark.parametrize(
     "tool,args,facade",
     [
-        ("trw_peers", {}, "peers"),
         ("trw_send", {"request_key": "r", "body": "b", "recipient_member_id": "peer"}, "send"),
         ("trw_inbox", {}, "inbox"),
+        ("trw_inbox", {"action": "list"}, "peers"),
     ],
 )
 @pytest.mark.parametrize("cursor", [None, "opaque-cursor"])

@@ -55,7 +55,12 @@ def _alive(pid: int) -> bool:
 
 def daemon_pids_under(root: Path) -> list[int]:
     """Pids of live daemons whose discovery file lies under *root*."""
-    pids: list[int] = []
+    return list(_discoveries_under(root))
+
+
+def _discoveries_under(root: Path) -> dict[int, Path]:
+    """Each live daemon published under *root*, and the discovery file that names it."""
+    pids: dict[int, Path] = {}
     if not root.is_dir():
         return pids
     for discovery in root.rglob(_DISCOVERY_FILE):
@@ -69,7 +74,7 @@ def daemon_pids_under(root: Path) -> list[int]:
         ):  # trw-fail-silent-allow: an unreadable or partial discovery file names no daemon to stop
             continue
         if pid > 0 and pid != os.getpid() and _is_daemon(pid):
-            pids.append(pid)
+            pids[pid] = discovery
     return pids
 
 
@@ -127,17 +132,35 @@ def _cwd(pid: int) -> str | None:
     return str(Path(names[0]).resolve()) if names else None
 
 
-def reap_daemons_under(*roots: Path, wait: bool = False, by_process: bool = False) -> list[int]:
+def daemon_placement(pid: int, discovery: Path | None = None) -> str:
+    """Where *pid* was started from: its discovery file, ``HOME``, ``TRW_USER_DIR`` and cwd.
+
+    Each lies under the tmp tree of the test that started it, so it names that test.
+    """
+    places = {**_placing_environment(pid), "cwd": _cwd(pid) or "?"}
+    if discovery is not None:
+        places["discovery"] = str(discovery)
+    return " ".join(f"{name}={value}" for name, value in sorted(places.items()))
+
+
+def reap_daemons_under(
+    *roots: Path, wait: bool = False, by_process: bool = False, placements: dict[int, str] | None = None
+) -> list[int]:
     """Stop every daemon published (or, with *by_process*, placed) under any of *roots*.
 
     SIGTERM lets the daemon remove its discovery file and lock. With *wait*, a
     daemon still alive after a grace period gets SIGKILL; a per-test reap does not
-    wait, and the session-end sweep does.
+    wait, and the session-end sweep does. *placements*, when given, receives each
+    pid's :func:`daemon_placement` before it is signalled, so a leak report can
+    name the test that started it.
     """
-    pids = {pid for root in roots for pid in daemon_pids_under(root)}
+    published = {pid: path for root in roots for pid, path in _discoveries_under(root).items()}
+    pids = set(published)
     if by_process:
         pids |= {pid for root in roots for pid in daemon_pids_placed_under(root)}
     pids.discard(os.getpid())
+    if placements is not None:
+        placements.update({pid: daemon_placement(pid, published.get(pid)) for pid in pids})
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -154,3 +177,26 @@ def reap_daemons_under(*roots: Path, wait: bool = False, by_process: bool = Fals
                 except ProcessLookupError:  # trw-fail-silent-allow: the process already exited, which is the goal
                     pass
     return sorted(pids)
+
+
+def stop_spawned(processes: list[subprocess.Popen[bytes]]) -> list[int]:
+    """Stop the daemons a test's own client spawned; the pids that were still running.
+
+    A per-test reap by discovery file misses a daemon that has not published yet: an
+    auto-start takes seconds to publish, so a test that triggers one and returns
+    leaves it to outlive the test (the 2026-09-25 C1 "1 leaked memory daemon"). The
+    spawn's own handle needs no discovery file and no process scan.
+    """
+    running = [process for process in processes if process.poll() is None]
+    for process in running:
+        try:
+            process.send_signal(signal.SIGTERM)
+        except ProcessLookupError:  # trw-fail-silent-allow: the process already exited, which is the goal
+            continue
+    deadline = time.monotonic() + _GRACE_SECONDS
+    while time.monotonic() < deadline and any(process.poll() is None for process in running):
+        time.sleep(0.05)
+    for process in running:
+        if process.poll() is None:
+            process.kill()
+    return [process.pid for process in running]

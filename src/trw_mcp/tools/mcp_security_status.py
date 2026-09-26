@@ -1,4 +1,7 @@
-"""Operator-facing MCP security status tool.
+"""MCP security status — PRD-CORE-300 slice S3a moved this to
+``trw-mcp telemetry security`` (see ``tools/_telemetry_cli.py``), which reads
+:func:`compute_security_status` directly, plus a ``trw-mcp doctor`` row that
+reports the same status.
 
 Reads the authoritative unified ``events-YYYY-MM-DD.jsonl`` stream and, when
 present, the legacy ``tool_call_events.jsonl`` projection for back-compat.
@@ -11,12 +14,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class MCPSecurityStatus(BaseModel):
-    """PRD shape for `trw_mcp_security_status()`."""
+    """PRD shape for the ``telemetry security`` status document."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -109,30 +111,7 @@ def compute_security_status(
     )
 
 
-def register_mcp_security_status(server: FastMCP) -> None:
-    @server.tool()
-    def trw_mcp_security_status() -> dict[str, Any]:
-        """Report registered servers, allowlist identity, anomalies, and quarantines.
-
-        Use when an MCP call was blocked or a server looks untrusted, and you
-        need the security/trust-boundary state: which servers are registered,
-        which are quarantined, and what anomalies were detected.
-
-        Output: per-server trust rows, anomaly counts, quarantine list.
-        """
-        from trw_mcp.server import _app as app_module
-        from trw_mcp.state._paths import resolve_trw_dir
-
-        middleware = getattr(app_module, "_mcp_security", None)
-        if middleware is not None and hasattr(middleware, "status_snapshot"):
-            snapshot: dict[str, Any] = middleware.status_snapshot().model_dump()
-            return snapshot
-        trw_dir = resolve_trw_dir()
-        return compute_security_status(events_dir=trw_dir / "context").model_dump()
-
-
 __all__ = [
     "MCPSecurityStatus",
     "compute_security_status",
-    "register_mcp_security_status",
 ]

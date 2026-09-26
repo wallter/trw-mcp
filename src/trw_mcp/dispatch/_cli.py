@@ -20,10 +20,12 @@ import sys
 import uuid
 from pathlib import Path
 
+from trw_mcp.dispatch._fallback import dispatch_with_fallback, host_dispatch_client
+from trw_mcp.dispatch._private_io import write_private_atomic
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
 from trw_mcp.dispatch._roles import ROLE_TABLE
 from trw_mcp.dispatch._runner import dispatch
-from trw_mcp.dispatch._types import DispatchResult
+from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 from trw_mcp.dispatch._usage import record_dispatch_policy
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_project_root
@@ -104,6 +106,43 @@ def _write_answer_variant(base: Path, role: str | None, result: DispatchResult, 
     print(f"variant: {path}", file=sys.stderr)
 
 
+def _resolve_cli_posture(args: argparse.Namespace) -> str:
+    """Derive the dispatch posture the CLI passes into :func:`resolve_dispatch_request`.
+
+    An explicit ``--posture`` wins. Otherwise a ``--role`` that is a review/audit
+    role (every entry in :data:`ROLE_TABLE` today: code-review, design-audit,
+    architectural-audit, adversarial-audit) fail-closed derives
+    ``posture="reviewer"`` -- a review role must never run unbounded just because
+    the caller forgot a flag. ``--posture default`` overrides that derivation
+    explicitly; since the override puts a reviewer-labeled child on an unbounded
+    surface, a warning is printed to stderr rather than overriding silently. This
+    is the one code path the MCP ``trw_dispatch`` tool's ``posture`` parameter
+    also reaches (:func:`trw_mcp.dispatch._resolve.resolve_dispatch_request`), so
+    CLI and MCP dispatch cannot diverge on what "reviewer" means.
+    """
+    explicit_raw = getattr(args, "posture", None)
+    explicit = str(explicit_raw) if explicit_raw is not None else None
+    role = getattr(args, "role", None)
+    role_wants_reviewer = role in ROLE_TABLE
+    if explicit is not None:
+        if explicit == "default" and role_wants_reviewer:
+            print(
+                f"warning: --posture default overrides the posture=reviewer that --role {role!r} "
+                "would otherwise derive; this child runs UNBOUNDED (no read-only TRW surface).",
+                file=sys.stderr,
+            )
+        return explicit
+    return "reviewer" if role_wants_reviewer else "default"
+
+
+def _fallback_clients(args: argparse.Namespace, dispatch_cfg: object) -> list[str]:
+    """--fallback-clients (comma list; "" disables) or the dispatch_fallback_clients config default."""
+    flag = getattr(args, "fallback_clients", None)
+    if flag is None:
+        return list(getattr(dispatch_cfg, "dispatch_fallback_clients", []))
+    return [c.strip() for c in str(flag).split(",") if c.strip()]
+
+
 def run_dispatch(args: argparse.Namespace) -> None:
     """Handle the ``dispatch`` subcommand.
 
@@ -120,13 +159,19 @@ def run_dispatch(args: argparse.Namespace) -> None:
     prompt = _read_prompt(args)
     base = _variant_base(args)
     cwd = Path(args.cwd) if getattr(args, "cwd", None) else None
+    posture = _resolve_cli_posture(args)
+    output_file = getattr(args, "output_file", None)
+    if output_file and Path(output_file).is_symlink():
+        print(f"--output-file {output_file} is a symlink; refusing to write through it", file=sys.stderr)
+        sys.exit(2)
 
-    try:
-        req = resolve_dispatch_request(
-            client=getattr(args, "client", None),
+    def build(client: str | None, model: str | None) -> DispatchRequest:
+        return resolve_dispatch_request(
+            client=client,
             prompt=prompt,
             role=getattr(args, "role", None),
-            model=getattr(args, "model", None),
+            model=model,
+            posture=posture,
             effort=getattr(args, "effort", None),
             cwd=cwd,
             timeout_s=getattr(args, "timeout", None),
@@ -141,26 +186,45 @@ def run_dispatch(args: argparse.Namespace) -> None:
             verify_sandbox=bool(getattr(args, "verify_sandbox", False)),
             dispatch_cfg=dispatch_cfg,
         )
+
+    try:
+        req = build(getattr(args, "client", None), getattr(args, "model", None))
     except DispatchResolutionError as err:
         print(str(err), file=sys.stderr)
         sys.exit(err.exit_code)
 
-    policy = record_dispatch_policy(req, f"cli-{uuid.uuid4().hex}")  # PRD-CORE-290-FR03
-    result = dispatch(req)
+    ran: list[tuple[DispatchRequest, dict[str, dict[str, object]]]] = []
+
+    def run(request: DispatchRequest) -> DispatchResult:
+        ran.append((request, record_dispatch_policy(request, f"cli-{uuid.uuid4().hex}")))  # PRD-CORE-290-FR03
+        return dispatch(request)
+
+    # A fallback client gets its own configured model: --model names the primary's.
+    result = dispatch_with_fallback(
+        req,
+        _fallback_clients(args, dispatch_cfg),
+        lambda c: build(c, None),
+        run=run,
+        host_client=host_dispatch_client(),
+    )
+    last_req, policy = ran[-1]  # the request whose result this is
+    if result.fallback_note:
+        print(f"dispatch fallback: {result.fallback_note}", file=sys.stderr)
     payload = json.dumps({**result.model_dump(mode="json"), "policy": policy}, indent=2)
 
-    output_file = getattr(args, "output_file", None)
     if output_file:
         out_path = Path(output_file)
         # Create any missing parent dirs so a nested --output-file path does not
         # crash on write.
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(payload, encoding="utf-8")
+        # A rename replaces a symlink swapped in since the check above; it never
+        # writes through one.
+        write_private_atomic(out_path, payload)
     if getattr(args, "json", False):
         print(payload)
     elif not output_file:
         print(result.text)
     if base is not None:
-        _write_answer_variant(base, getattr(args, "role", None), result, req.model)
+        _write_answer_variant(base, getattr(args, "role", None), result, last_req.model)
 
     sys.exit(0 if result.ok else 1)

@@ -40,7 +40,9 @@ ordering is the point: an unverified entry carries provisional flag data recorde
 for documentation, and it must never be possible for that data to reach a command
 line. No fallback and no substitution is ever applied — silently answering with a
 different client would answer the operator's question with a different agent's
-output, which is a worse failure than refusing.
+output, which is a worse failure than refusing The one exception is opt-in and recorded:
+an operator-listed fallback chain (``_fallback.dispatch_with_fallback``) runs
+after a quota refusal or launch failure and names every attempt on the result.
 """
 
 from __future__ import annotations

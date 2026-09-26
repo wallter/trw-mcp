@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from tests.conftest import get_tools_sync
+from trw_mcp.tools.requirements import create_prd
 
 
 @pytest.fixture(autouse=True)
@@ -109,7 +110,7 @@ class TestPrdCreateIdentityCollisionGate:
 
         tools = _get_tools()
         with pytest.raises(ValidationError) as excinfo:
-            tools["trw_prd_create"].fn(
+            create_prd(
                 input_text="Conflicting thing",
                 category="CORE",
                 sequence=153,
@@ -132,7 +133,7 @@ class TestPrdCreateIdentityCollisionGate:
 
         tools = _get_tools()
         with pytest.raises(ValidationError, match="PRD-CORE-042"):
-            tools["trw_prd_create"].fn(
+            create_prd(
                 input_text="Reuse attempt",
                 category="CORE",
                 sequence=42,
@@ -146,8 +147,7 @@ class TestPrdCreateIdentityCollisionGate:
             "---\nprd:\n  id: PRD-CORE-153\n  title: Registry hygiene\n---\n"
         )
 
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="New feature",
             category="CORE",
             title="New feature",
@@ -163,12 +163,11 @@ class TestPrdCreateIdentityCollisionGate:
 
 
 class TestPrdCreateEdgeCases:
-    """Edge-case tests for trw_prd_create."""
+    """Edge-case tests for create_prd."""
 
     def test_category_uppercased(self, tmp_path: Path) -> None:
         """Category is always uppercased."""
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Test feature",
             category="core",
             title="Case Test",
@@ -179,7 +178,7 @@ class TestPrdCreateEdgeCases:
         """Auto-generated title is truncated to 60 chars."""
         tools = _get_tools()
         long_input = "A" * 100  # 100 char first line
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text=long_input,
             category="CORE",
         )
@@ -187,13 +186,12 @@ class TestPrdCreateEdgeCases:
 
     def test_different_categories(self, tmp_path: Path) -> None:
         """Different categories produce different PRD IDs."""
-        tools = _get_tools()
-        r1 = tools["trw_prd_create"].fn(
+        r1 = create_prd(
             input_text="Core feature",
             category="CORE",
             title="Core",
         )
-        r2 = tools["trw_prd_create"].fn(
+        r2 = create_prd(
             input_text="Fix bug",
             category="FIX",
             title="Fix",
@@ -203,8 +201,7 @@ class TestPrdCreateEdgeCases:
 
     def test_p0_confidence_is_highest(self, tmp_path: Path) -> None:
         """P0 priority produces 0.9 confidence."""
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Urgent fix",
             category="FIX",
             priority="P0",
@@ -214,8 +211,7 @@ class TestPrdCreateEdgeCases:
 
     def test_p3_confidence_is_lowest(self, tmp_path: Path) -> None:
         """P3 priority produces 0.5 confidence."""
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Low priority",
             category="CORE",
             priority="P3",

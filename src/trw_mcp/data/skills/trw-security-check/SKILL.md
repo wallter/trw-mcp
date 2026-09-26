@@ -51,7 +51,7 @@ Perform an OWASP-focused security audit of the selected target. This skill is re
    - MCP/API/CLI parameter validation (Pydantic, Zod, JSON Schema, typed DTOs, Clap/Click validators, etc.)
    - Check for unvalidated string interpolation in file paths
    - Verify repository-specific file/path inputs are validated at their boundary
-   - For TRW MCP scope, include `trw_prd_create` input handling as a conditional example
+   - For TRW MCP scope, include `trw-mcp prd create` flag handling as a conditional example
 
 7. **Dependency Security (OWASP A06)**: Check dependencies:
    - Read dependency manifests for the target package (`pyproject.toml`, `package.json`, lockfiles, `Cargo.toml`, `go.mod`, etc.)

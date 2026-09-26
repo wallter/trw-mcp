@@ -72,6 +72,30 @@ class TestPublishFiltering:
         assert len(captured_payloads) == 1
         assert captured_payloads[0]["status"] == "resolved"
 
+    def test_publish_body_carries_no_embedding_key(self, tmp_path: Path) -> None:
+        """OD6: the telemetry publisher sends no vectors -- the body has no "embedding" key at all."""
+        cfg = _make_config()
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        _write_learning(entries_dir, "no-vector.yaml", _make_learning(impact=0.9))
+
+        captured_payloads: list[dict[str, object]] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            captured_payloads.append(payload)
+            return True
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
+        ):
+            result = publish_learnings()
+
+        assert result["published"] == 1
+        assert len(captured_payloads) == 1
+        assert "embedding" not in captured_payloads[0]
+
     def test_publish_includes_obsolete(self, tmp_path: Path) -> None:
         """Obsolete learnings are published with status preserved."""
         cfg = _make_config()

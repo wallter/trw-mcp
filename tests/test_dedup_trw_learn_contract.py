@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from tests._dedup_test_support import mock_embed, write_entry
+from tests._memory_fixtures import FAKE_NAMESPACE
 from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+
+def _daemon_sees(
+    store: FakeMemoryStore, row_id: str, summary: str, detail: str, new_text: str, new_vector: list[float]
+) -> None:
+    """Hold *row_id* in the fake daemon at [1, 0] and have its encoder place *new_text* at *new_vector*."""
+    store.put(summary, FAKE_NAMESPACE, {"entry_id": row_id, "detail": detail})
+    store.stored_vectors[row_id] = [1.0, 0.0]
+    store.text_vectors[new_text] = new_vector
 
 
 class TestSkipUpdatesAccessCount:
@@ -23,6 +31,7 @@ class TestSkipUpdatesAccessCount:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """When dedup action=skip, existing entry's access_count is incremented."""
         from fastmcp import FastMCP
@@ -62,8 +71,8 @@ class TestSkipUpdatesAccessCount:
             },
         )
 
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
-        # Isolate the embedding-based SKIP path (sim >= 0.95) — suppress the
+        _daemon_sees(fake_memory_store, "L-existing-skip", summary, detail, f"{summary} {detail}", [1.0, 0.0])
+        # Isolate the daemon's SKIP verdict (sim >= 0.95) — suppress the
         # embedding-independent exact-content MERGE path so this contract test
         # still exercises skip. (Exact-content merge is covered separately.)
         monkeypatch.setattr("trw_mcp.state.dedup._check_exact_content_duplicate", lambda *a, **k: None)
@@ -110,8 +119,7 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: cfg)
         monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
         monkeypatch.setattr("trw_mcp.tools.learning.generate_learning_id", lambda: "L-key-test")
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
-        # These contract tests assert the embedding-path return dicts (recorded /
+        # These contract tests assert the daemon-verdict return dicts (recorded /
         # skipped / merged). Suppress the embedding-independent exact-content
         # MERGE path so byte-identical content still exercises the skip branch.
         monkeypatch.setattr("trw_mcp.state.dedup._check_exact_content_duplicate", lambda *a, **k: None)
@@ -172,6 +180,8 @@ class TestTrwLearnReturnDictKeys:
             },
         )
 
+        _daemon_sees(fake_memory_store, "L-skip-key", summary, detail, f"{summary} {detail}", [1.0, 0.0])
+
         result = tool_fn(summary=summary, detail=detail)
 
         assert result["status"] == "skipped"
@@ -213,20 +223,22 @@ class TestTrwLearnReturnDictKeys:
             },
         )
 
-        # New entry is similar but not identical (should trigger merge)
+        # New entry is similar but not identical: the daemon places it at cosine 0.9 (merge band)
         new_summary = "pytest fixture autouse yield teardown"
         new_detail = "autouse fixtures with yield in pytest for clean teardown"
+        _daemon_sees(
+            fake_memory_store,
+            "L-merge-key",
+            existing_summary,
+            existing_detail,
+            f"{new_summary} {new_detail}",
+            [0.9, 0.43589],
+        )
 
         result = tool_fn(summary=new_summary, detail=new_detail)
 
-        # Result is one of merged, skipped, or recorded depending on similarity
-        assert result["status"] in ("merged", "skipped", "recorded")
-        assert "learning_id" in result or "new_id" in result, "result must have an ID"
-
-        if result["status"] == "merged":
-            assert "merged_into" in result, "merged result must have 'merged_into' per PRD"
-        elif result["status"] == "skipped":
-            assert "duplicate_of" in result, "skipped result must have 'duplicate_of' per PRD"
+        assert (result["status"], result["merged_into"]) == ("merged", "L-merge-key")
+        assert "new_id" in result, "merged result must name the incoming id"
 
     def test_all_paths_always_return_learning_id(
         self,
@@ -249,28 +261,3 @@ class TestTrwLearnReturnDictKeys:
             detail="no possible match for this detail xkcd1234",
         )
         assert "learning_id" in result, f"recorded: learning_id missing from {result}"
-
-    def test_skip_threshold_boundary(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FR04/CORE-042 AC: skip_threshold >= 0.95 means >=0.95 similarity triggers skip."""
-        from trw_mcp.state.dedup import dedup_verdict as cd
-
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-        reader = FileStateReader()
-        writer = FileStateWriter()
-
-        # Config with explicit thresholds
-        config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.95, dedup_merge_threshold=0.85)
-
-        summary = "skip threshold test"
-        detail = "boundary condition at 0.95"
-        write_entry(entries_dir, writer, "L-thresh-skip", summary, detail)
-
-        # embed returns same vector → similarity = 1.0 >= 0.95 → skip
-        with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = cd(summary, detail, entries_dir, reader, config=config)
-
-        assert result.action == "skip", (
-            f"Expected skip at similarity >= 0.95, got {result.action} (sim={result.similarity})"
-        )
-        assert result.similarity >= 0.95

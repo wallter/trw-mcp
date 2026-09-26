@@ -136,7 +136,8 @@ class SessionStartResultDict(TypedDict, total=False):
     # Unified compounding-pipeline health advisory (PRD-FIX-COMPOUNDING-6 FR03).
     # Compact single-line string injected ONLY when any of the five pipeline
     # signals is degraded (PRD-INFRA-068 lesson: absent on healthy sessions
-    # to avoid focus-distraction). Use trw_pipeline_health() for the full report.
+    # to avoid focus-distraction). Run `trw-mcp telemetry pipeline-health` for
+    # the full report (PRD-CORE-300 S3b: moved off the MCP tool surface).
     pipeline_health_advisory: str
     # Auto-maintenance results merged in from AutoMaintenanceDict
     update_advisory: str
@@ -161,7 +162,7 @@ class SessionStartResultDict(TypedDict, total=False):
     resolved_profile: dict[str, object]
     # PRD-FIX-141-FR06: what the profile above was resolved FROM (run dir,
     # whether the Scout's session layer existed yet, layers applied, tier).
-    # trw_profile_explain emits the identical block, so two reports of the same
+    # trw_status(detail="surface") emits the identical block, so two reports of the same
     # session are reconcilable instead of contradictory.
     profile_resolution_basis: dict[str, object]
     profile_layers_applied: list[str]
@@ -484,7 +485,8 @@ class DeliverResultDict(TypedDict, total=False):
 
 
 class PreCompactResultDict(TypedDict, total=False):
-    """Return shape of ``trw_pre_compact_checkpoint`` MCP tool.
+    """Return shape of ``trw_checkpoint(pre_compact=True)`` (PRD-CORE-300 S6a;
+    formerly a standalone pre-compact-checkpoint tool).
 
     Always-present key: ``status``.
     Success path: ``run_path``, ``compact_instructions_path``,

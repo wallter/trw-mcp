@@ -53,16 +53,6 @@ class _BootMaintenanceFields:
             "checkpoints once early rather than waiting for the size trigger."
         ),
     )
-    wal_checkpoint_idle_interval_seconds: int = Field(
-        default=60,
-        ge=5,
-        le=3600,
-        description=(
-            "Interval (seconds) between idle-sweep evaluations on the 'trw-wal-checkpoint' daemon "
-            "thread. An evaluation with no trigger satisfied costs one stat call and opens no SQLite "
-            "connection, so a server that is idle stays idle."
-        ),
-    )
     # -- Deferred boot work (PRD-CORE-248 FR01) --
     boot_deferred_work_budget_ms: int = Field(
         default=5000,

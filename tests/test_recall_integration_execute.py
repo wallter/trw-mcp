@@ -50,8 +50,8 @@ def test_rank_fn_receives_context_in_execute_recall(tmp_path: Path) -> None:
     assert calls[0]["context"] is expected_ctx
 
 
-def test_execute_recall_threads_live_intel_cache_context(tmp_path: Path) -> None:
-    """execute_recall passes a real intel cache through the production context builder."""
+def test_execute_recall_builds_no_context_from_a_cached_bandit_payload(tmp_path: Path) -> None:
+    """PRD-CORE-303 FR02: a cache holding bandit_params no longer produces a recall context."""
     from trw_mcp.models.config import get_config
     from trw_mcp.sync.cache import IntelligenceCache
     from trw_mcp.tools._recall_impl import execute_recall
@@ -88,8 +88,7 @@ def test_execute_recall_threads_live_intel_cache_context(tmp_path: Path) -> None
             _rank_by_utility=capturing_rank_fn,
         )
 
-    assert calls
-    assert getattr(calls[0], "intel_cache", None) is not None
+    assert calls == [None]
 
 
 def test_recall_no_context_regression(tmp_path: Path) -> None:

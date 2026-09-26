@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._memory_store_fake import FakeMemoryStore
-from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
+from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools, instructions_sync_fn
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -30,7 +30,7 @@ class TestClaudeMdSyncQValuePromotion:
             impact=0.9,
         )
 
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        sync_result = instructions_sync_fn(scope="root")
         # CORE-093: learnings_promoted always 0
         assert sync_result["learnings_promoted"] == 0
 

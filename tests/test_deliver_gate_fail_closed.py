@@ -222,7 +222,7 @@ def test_three_failure_postures_are_distinct(tmp_project: Path, monkeypatch: pyt
     def _boom(**_kwargs: object) -> str:
         raise RuntimeError("resolver exploded")
 
-    monkeypatch.setattr(sa, "resolve_task_type", _boom)
+    monkeypatch.setattr(sa, "_resolve_mode", _boom)
 
     class _Tool:
         def __init__(self, name: str) -> None:
@@ -233,12 +233,12 @@ def test_three_failure_postures_are_distinct(tmp_project: Path, monkeypatch: pyt
         fastmcp_context = None
 
     async def _call_next(_ctx: object) -> list[_Tool]:
-        return [_Tool("trw_code_search"), _Tool("trw_learn")]
+        return [_Tool("trw_code"), _Tool("trw_learn")]
 
     listed = asyncio.run(
         sa.SurfaceAuthorityMiddleware().on_list_tools(_Ctx(), _call_next)  # type: ignore[arg-type]
     )
-    assert {t.name for t in listed} == {"trw_code_search", "trw_learn"}, "middleware must fail OPEN"
+    assert {t.name for t in listed} == {"trw_code", "trw_learn"}, "middleware must fail OPEN"
 
 
 def test_uncomputable_count_blocks_through_the_production_path(

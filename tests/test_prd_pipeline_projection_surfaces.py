@@ -71,13 +71,14 @@ def test_opencode_ready_delivers_reviewed_execution_plan(tmp_path: Path) -> None
     command = (tmp_path / ".opencode/commands/trw-prd-ready.md").read_text()
     assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
     skill = (directory / "SKILL.md").read_text()
-    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+    assert not (directory / "trw-prd-ready-contract.md").exists()
+    for phase in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
         resource = directory / f"{phase}-contract.md"
         # CANONICAL-SKILL CONTENT GAP (PRD-CORE-291-FR04, documented in
         # test_bootstrap_opencode_split.py / test_prd_ready_delegation.py):
         # the canonical body never names the sibling `*-contract.md` files.
         assert resource.read_bytes() == (DATA / "skills" / phase / "SKILL.md").read_bytes()
-    owner = (directory / "trw-prd-ready-contract.md").read_text()
+    owner = skill
     for phrase in (
         "author-independent helper/human",
         "no inline author self-review fallback",

@@ -1,17 +1,11 @@
 # ruff: noqa: E402
-"""Adapter layer between trw-mcp learning tools and trw-memory SQLite backend.
+"""Adapter layer between trw-mcp learning tools and the checkout's memory store.
 
-Provides singleton backend access, one-time YAML-to-SQLite migration, and
-CRUD operations that preserve the exact return shapes of the original
-YAML-based learning tools.
-
-When ``embeddings_enabled=True`` in config, the adapter:
-- Generates embeddings on store via :class:`LocalEmbeddingProvider`
-- Uses hybrid search (BM25 + dense + RRF fusion) on recall
-- Backfills embeddings for existing entries on first activation
+Every read and write goes through ``_store_selection.selected_store`` (the
+memory daemon, PRD-CORE-280); the CRUD operations here preserve the return
+shapes of the original YAML-based learning tools.
 
 Implementation is split across focused sub-modules:
-- ``_memory_connection``: singleton management, embedder lifecycle, migration
 - ``_memory_transforms``: result transformation between internal/external formats
 
 This module is the public facade -- all external imports should come here.
@@ -23,67 +17,17 @@ from pathlib import Path
 
 import structlog
 
-# PRD-FIX-COMPOUNDING-2 FR01: ``schedule_graph_update`` is imported (and
-# re-exported) for the operator backfill runbook + parity with the trw-memory
-# MemoryClient store path. The in-process store path uses ``update_entry_graph``
-# directly on the singleton connection — see ``SqliteMemoryStore._enrich`` for
-# the path-divergence rationale. Both names stay here as patch seams.
-from trw_memory.graph import schedule_graph_update as schedule_graph_update
-from trw_memory.graph import update_entry_graph as update_entry_graph
-from trw_memory.security.runtime import (
-    initialize_canaries as initialize_canaries,
-)
-
-# ``probe_canaries`` / ``should_halt_recalls`` are re-exported (not used here)
-# so the recall path in ``_memory_recall`` can resolve them through this facade
-# and existing tests patching ``memory_adapter.<name>`` still take effect
-# (PRD-CORE-185 FR06 split preserves the patch seam).
-from trw_memory.security.runtime import probe_canaries as probe_canaries
-from trw_memory.security.runtime import should_halt_recalls as should_halt_recalls
-
-# PRD-CORE-251 FR03: THE write path. Entry construction, namespace validation,
-# RBAC, input validation, the quarantine decision and the row write all happen
-# there now -- ``trw-memory-server`` and this server reach the store through the
-# same function (via ``SqliteMemoryStore.put``). What stays on this side is in
-# ``store_learning``'s docstring.
-from trw_memory.tools.store import memory_store_impl as memory_store_impl
-
 from trw_mcp.models.config import get_config as get_config
-from trw_mcp.state import _memory_connection, _memory_lookups, _memory_recovery, _memory_transforms
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.state import _memory_lookups, _memory_transforms
 from trw_mcp.state._store_arguments import build_store_arguments
 
-# Re-export: connection mgmt + embedding ops + query routing + transforms.
-embed_text = _memory_connection.embed_text
-embed_text_batch = _memory_connection.embed_text_batch
-check_embeddings_status = _memory_connection.check_embeddings_status
-embedding_available = _memory_connection.embedding_available
-ensure_migrated = _memory_connection.ensure_migrated
-get_backend = _memory_connection.get_backend
-get_embedder = _memory_connection.get_embedder
-reset_backend = _memory_connection.reset_backend
-reset_embedder = _memory_connection.reset_embedder
+# Re-export: transforms. trw-mcp encodes nothing; the daemon owns the model (PRD-CORE-302 FR05).
 _memory_to_learning_dict = _memory_transforms._memory_to_learning_dict
 
 logger = structlog.get_logger(__name__)
 
-# Preserve module-level constants for backward compatibility with test patches
-_NAMESPACE = DEFAULT_NAMESPACE
-
-# Corruption-recovery helpers extracted to _memory_recovery (PRD-DIST-243 batch 44).
-_is_corruption_error = _memory_recovery._is_corruption_error
-_log_terminal_recovery = _memory_recovery._log_terminal_recovery
-_memory_recovery_in_progress = _memory_recovery._memory_recovery_in_progress
-_recover_and_reset_backend = _memory_recovery._recover_and_reset_backend
-_schedule_deferred_recovery = _memory_recovery._schedule_deferred_recovery
-
 # update_learning extracted to _memory_update (PRD-DIST-243 batch 59).
 from trw_mcp.state._memory_update import update_learning as update_learning
-
-# PRD-CORE-185 core185-2: re-exported so the user-tier corruption-recovery
-# branch in ``store_learning`` (and tests patching ``memory_adapter.<name>``)
-# resolve the user-backend singleton reset through this facade.
-from trw_mcp.state._user_tier import reset_user_backend as reset_user_backend
 
 # ---------------------------------------------------------------------------
 # CRUD operations (return shapes match original YAML tools)
@@ -113,8 +57,10 @@ _STORE_STATUS_TO_LEARNING_STATUS: dict[str, str] = {
     # A schema/PII/poisoning refusal of the content itself: replaying it fails identically.
     "invalid": "rejected",
     "blocked": "rejected",
-    # The write window clears: keep the journal record and retry it without spending its budget.
+    # The write window clears, or a concurrent write to the row lands first: keep the journal
+    # record and retry it without spending its budget.
     "rate_limited": "rate_limited",
+    "conflict": "rate_limited",
     "not_found": "error",
     "error": "error",
 }
@@ -129,33 +75,6 @@ def _learning_status_for(store_status: object) -> str:
     an orphaned sidecar the dedup check can never suppress.
     """
     return _STORE_STATUS_TO_LEARNING_STATUS.get(str(store_status), "error")
-
-
-#: How far to follow ``__cause__`` when classifying a store failure. Five is
-#: past any real wrap depth (driver -> backend -> tool) and bounds a cyclic or
-#: adversarially deep chain.
-_MAX_CAUSE_DEPTH = 5
-
-
-def _failure_chain(exc: BaseException) -> list[BaseException]:
-    """Return *exc* and its ``__cause__`` ancestors, outermost first.
-
-    PRD-CORE-251 FR03 made this necessary: ``memory_store_impl`` re-raises a
-    failed row+vector write as a NEW ``StorageError`` ("failed to persist
-    entry+vector ...; transaction rolled back") to state its atomicity
-    guarantee. That wrapper carries neither the "database disk image is
-    malformed" text ``_is_corruption_error`` matches on NOR the
-    ``CorruptDatabaseUnsalvageableError`` type the terminal branch matches on,
-    so classifying the wrapper alone would silently disable BOTH corruption
-    paths: a corrupt store would be reported as an ordinary error and never
-    recovered.
-    """
-    chain: list[BaseException] = []
-    current: BaseException | None = exc
-    while current is not None and len(chain) < _MAX_CAUSE_DEPTH:
-        chain.append(current)
-        current = current.__cause__
-    return chain
 
 
 def store_learning(
@@ -318,14 +237,13 @@ def store_learning(
 
 # recall_learnings + _rank_wildcard_by_utility extracted to _memory_recall.py
 # (PRD-CORE-185 FR06 user-tier federation + the 350 eff-LOC gate, NFR07).
-# Lookup, list, count, access tracking, WAL checkpoint helpers extracted to
+# Lookup, list, count and access-tracking helpers extracted to
 # _memory_lookups.py (PRD-DIST-243 batch 43).
 count_entries = _memory_lookups.count_entries
 find_entry_by_id = _memory_lookups.find_entry_by_id
 find_yaml_path_for_entry = _memory_lookups.find_yaml_path_for_entry
 list_active_learnings = _memory_lookups.list_active_learnings
 list_entries_by_status = _memory_lookups.list_entries_by_status
-maybe_checkpoint_wal = _memory_lookups.maybe_checkpoint_wal
 record_surfaced = _memory_lookups.record_surfaced
 
 # PRD-CORE-185 FR06: user-tier federated recall + the wildcard-utility ranker,
@@ -333,9 +251,7 @@ record_surfaced = _memory_lookups.record_surfaced
 # gate, NFR07). This re-export is THE recall path — it supersedes the historical
 # inline recall_learnings, adding the user-tier federation step.
 # F5 root-cause B: forced (non-deferrable) knowledge-graph backfill over the
-# EXISTING corpus, extracted to a focused sibling so the facade stays under the
-# 350 eff-LOC gate. Runs update_entry_graph on the singleton's own connection
-# (NEVER schedule_graph_update — that hits a divergent per-namespace DB file).
+# EXISTING corpus, run by the store (``MemoryStore.graph_backfill``).
 from trw_mcp.state._graph_backfill import (
     backfill_graph as backfill_graph,
 )

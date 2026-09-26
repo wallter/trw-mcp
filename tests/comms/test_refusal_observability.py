@@ -14,7 +14,7 @@ from tests.comms.conftest import core
 from tests.comms.test_identity_boundary import Scene, scene  # noqa: F401
 from trw_mcp import comms, formation
 
-TOOLS = ("trw_peers", "trw_send", "trw_inbox")
+TOOLS = ("trw_send", "trw_inbox")
 EVENT = "comms_identity_refused"
 STORAGE_EVENT = "comms_storage_refused"
 ENDPOINT_EVENT = "comms_endpoint_refused"

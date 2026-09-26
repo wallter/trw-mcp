@@ -169,13 +169,13 @@ _emit_framework_directive() {
 # _protocol_in_instruction_file: true when the client instruction file already
 # carries the behavioral protocol.
 #
-# trw_instructions_sync renders the SAME protocol into both the client
+# `trw-mcp instructions sync` renders the SAME protocol into both the client
 # instruction file and .trw/context/behavioral_protocol.md. Clients keep their
 # instruction file in context across resume, compact, and clear -- it lives in
 # the system prompt, not the conversation -- so emitting the protocol again on
 # those events costs ~1.3k tokens for zero new information. Emit it only when
 # no instruction file carries it (light clients, bare harnesses, a project that
-# has never run instructions_sync).
+# has never run `trw-mcp instructions sync`).
 #
 # Matches the TRW managed-block marker on a WHOLE LINE, fixed-string. Not a
 # token scan: `.claude/rules/trw-mcp-python.md` §Marker/Sentinel Matching
@@ -185,7 +185,7 @@ _emit_framework_directive() {
 # project whose instruction file merely MENTIONS the tool -- a migration note,
 # a changelog entry, a README paragraph -- and then suppress the protocol while
 # pointing at a section that does not exist. The marker is written only by
-# trw_instructions_sync, which is the same code path that renders the protocol,
+# `trw-mcp instructions sync`, which is the same code path that renders the protocol,
 # so its presence is proof rather than correlation.
 #
 # Source of truth for the marker: state/claude_md/_parser.py::TRW_MARKER_START.
@@ -264,7 +264,7 @@ fi
 # UserPromptSubmit invocation always emits phase guidance.
 rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
 # PRD-CORE-095 FR12: Clear injection dedup state so learnings can be re-injected.
-> "$_project_root/.trw/context/injected_learning_ids.txt" 2>/dev/null || true
+printf '' | _trw_safe_write "$_project_root/.trw/context/injected_learning_ids.txt" || true
 
 case "$_source" in
   startup)
@@ -324,7 +324,11 @@ case "$_source" in
       _last_cp=$(_json_get --file "$_state_file" .last_checkpoint) || true
       # Sanitize all values read from the untrusted pre_compact_state.json before
       # echoing them into the AI context (prompt-injection / control-char defense).
-      _run_path=$(_sanitize_context_text "$_run_path")
+      # Relativize to the project root first, matching _emit_run_state's
+      # "$_own_run_rel" above: the absolute prefix is redundant with the
+      # agent's own cwd, and repeating it here made this line's cost scale
+      # with the install path's length rather than with the run's identity.
+      _run_path=$(_sanitize_context_text "${_run_path#"$_project_root"/}")
       _phase=$(_sanitize_context_text "$_phase")
       _last_cp=$(_sanitize_context_text "$_last_cp")
       # events_logged must be numeric; coerce to 0 if not.

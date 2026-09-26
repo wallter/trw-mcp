@@ -45,12 +45,12 @@ STATES = frozenset(
     }
 )
 
-_ENROLL = "trw_peers(action='enroll')"
+_ENROLL = "trw_inbox(action='enroll')"
 _NEXT_FOR_STATE: dict[str, str] = {
-    "no_run": "pin a run (trw_init or trw_adopt_run)",
-    "unannounced": "trw_peers(action='announce') to become admissible; discover shows open formations",
-    "candidate": "wait for the orchestrator to admit you; your next trw_peers call picks you up",
-    "admitted": "call trw_peers once to be picked up",
+    "no_run": "pin a run (trw_init or `trw-mcp run adopt`)",
+    "unannounced": "trw_inbox(action='announce') to become admissible; discover shows open formations",
+    "candidate": "wait for the orchestrator to admit you; your next trw_inbox call picks you up",
+    "admitted": "call trw_inbox once to be picked up",
     "joined": f"enroll: {_ENROLL}",
     "enrolled": "trw_inbox fetch; ACK what you handled; reply with trw_send",
     "opted_out": "announce again to become admissible",
@@ -58,7 +58,7 @@ _NEXT_FOR_STATE: dict[str, str] = {
     "comms_disabled": "none: comms_enabled is false",
     "paused": (
         "the formation is paused: finish your current atomic step, commit or list shared-tree edits, then "
-        "trw_peers(action='ack_pause', pause_id=<pause.pause_id>) and stay idle until resume"
+        "trw_inbox(action='ack_pause', pause_id=<pause.pause_id>) and stay idle until resume"
     ),
     "paused_acked": "stay idle until resume; inbox fetch/ACK and status or reply to the orchestrator still work",
 }

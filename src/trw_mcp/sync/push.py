@@ -17,6 +17,7 @@ import structlog
 from pydantic import BaseModel
 from trw_memory.security.pii import anonymize_installation_id, redact_paths
 
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.sync.identity import resolve_sync_client_id
 from trw_mcp.telemetry.anonymizer import redact_secrets
 
@@ -152,6 +153,21 @@ class SyncPusher:
             )
             return PushResult()
 
+        # P1-C follow-up: platform_contact_enabled is the global egress kill
+        # switch. platform_auth_headers only withholds the bearer for an
+        # untrusted host below -- it must not be the only thing standing
+        # between a disabled switch and an unauthenticated POST of learning
+        # CONTENT. No request is attempted; entries stay locally dirty for a
+        # future consented push, same as the learning_sharing_enabled gate above.
+        if not platform_contact_enabled():
+            logger.debug(
+                "sync_push_skipped",
+                reason="platform_contact_disabled",
+                client_id=self._client_id,
+                entry_count=len(entries),
+            )
+            return PushResult()
+
         started_at = perf_counter()
         total_pushed = 0
         total_failed = 0
@@ -174,12 +190,18 @@ class SyncPusher:
                 "client_id": self._get_client_id(),
                 "push_seq": max(e.sync_seq for e in batch) if batch else 0,
             }
+            url = f"{self._backend_url}/v1/sync/learnings"
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(
-                        f"{self._backend_url}/v1/sync/learnings",
+                        url,
                         json=payload,
-                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        # platform_auth_headers is the ONE function that may
+                        # build this header — see _platform_trust module
+                        # docstring. An untrusted backend_url (project-tracked
+                        # config) or a disabled platform_contact_enabled
+                        # never receives the bearer.
+                        headers=platform_auth_headers(url, self._api_key),
                     )
                     resp.raise_for_status()
                     result = resp.json()
@@ -242,6 +264,15 @@ class SyncPusher:
             )
             return PushResult()
 
+        if not platform_contact_enabled():
+            logger.debug(
+                "sync_push_outcomes_skipped",
+                reason="platform_contact_disabled",
+                client_id=self._client_id,
+                count=len(outcomes),
+            )
+            return PushResult()
+
         started_at = perf_counter()
         total_pushed = 0
         total_failed = 0
@@ -258,12 +289,13 @@ class SyncPusher:
                 "outcomes": batch,
                 "client_id": self._get_client_id(),
             }
+            url = f"{self._backend_url}/v1/sync/outcomes"
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     resp = await client.post(
-                        f"{self._backend_url}/v1/sync/outcomes",
+                        url,
                         json=payload,
-                        headers={"Authorization": f"Bearer {self._api_key}"},
+                        headers=platform_auth_headers(url, self._api_key),
                     )
                     resp.raise_for_status()
                     result = resp.json()

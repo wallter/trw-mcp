@@ -3,8 +3,9 @@
 Installs three ``.opencode/commands/*.md`` files at ``init-project`` and
 ``update-project`` time:
 
-- ``trw-before-edit.md``     — calls ``trw_before_edit_hint``
-- ``trw-distill-hotspots.md`` — calls ``trw_codebase_risk_report``
+- ``trw-before-edit.md``     — calls ``trw_code(mode="hint")``
+- ``trw-distill-hotspots.md`` — runs ``trw-mcp code risk`` (PRD-CORE-300 S4;
+  formerly an MCP tool call)
 - ``trw-distill-conventions.md`` — calls ``trw_recall`` (single call — P2-09)
 
 Each file is capped at 4096 bytes (FR15 / NFR05).
@@ -52,7 +53,7 @@ description: "Get trw-distill risk intelligence for a file before editing it. Us
 
 # TRW Before-Edit Intelligence
 
-Call `trw_before_edit_hint(file_path="$1")` via MCP and parse the result.
+Call `trw_code(mode="hint", files="$1")` via MCP and parse the result.
 
 ## Result States
 
@@ -68,12 +69,12 @@ When `distill_status == "hint_available"`:
 
 When `distill_status == "sidecar_missing"`:
 - Inform the user that no sidecar is available.
-- Fall back to `trw_codebase_risk_report(top_n=20)` via MCP for live
+- Fall back to running `trw-mcp code risk --top-n 20` from a shell for live
   project-level risk intelligence.
 
 When `distill_status == "stale_sha"`:
 - Surface last-known data with a staleness notice.
-- Call `trw_codebase_risk_report(top_n=20)` via MCP for a live project-level
+- Run `trw-mcp code risk --top-n 20` from a shell for a live project-level
   report instead of requiring a separately installed executable.
 
 When `distill_status == "tier_required"`:
@@ -93,7 +94,7 @@ description: "Show the top-20 highest-risk files in this project by composite sc
 
 # TRW Distill Hotspots
 
-Call `trw_codebase_risk_report(top_n=20)` via MCP.
+Run `trw-mcp code risk --top-n 20 --json` from a shell and parse the output.
 
 Format the results as a ranked Markdown table:
 

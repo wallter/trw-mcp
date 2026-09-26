@@ -133,25 +133,18 @@ class TestOfflineParity:
         assert payload["success"] is True
         assert payload["errors"] == []
 
-    def test_meta_tune_propose_is_operator_only(self) -> None:
-        """The tool registry loads offline; the self-modifying trw_meta_tune_propose
-        is operator-only (never in the eligible public surface). PRD-CORE-218:
-        tools are registered then MASKED per session by SurfaceAuthorityMiddleware,
-        so this checks the manifest authority, not a boot-time preset filter."""
+    def test_every_registered_tool_is_eligible(self) -> None:
+        """The tool registry loads offline, and the eligible surface is exactly the
+        registered tools. PRD-CORE-218: tools are registered then MASKED per
+        session by SurfaceAuthorityMiddleware, so this checks the manifest
+        authority, not a boot-time preset filter. PRD-CORE-300 S3a deleted the
+        operator-only tier that used to be registered but never eligible.
+        """
         import trw_mcp  # noqa: F401
-        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS
         from trw_mcp.server._surface_manifest_registry import eligible_tool_names
         from trw_mcp.server._tools import raw_registered_tool_names
 
-        registered = raw_registered_tool_names()
-        eligible = set(eligible_tool_names())
-
-        # meta_tune_propose is REGISTERED (grantable) but NOT in the eligible surface.
-        assert "trw_meta_tune_propose" in registered
-        assert "trw_meta_tune_propose" not in eligible
-        assert "trw_meta_tune_propose" in OPERATOR_ONLY_TOOLS
-        # The eligible surface is exactly the registered tools minus operator-only.
-        assert eligible == registered - set(OPERATOR_ONLY_TOOLS)
+        assert set(eligible_tool_names()) == raw_registered_tool_names()
 
 
 class TestStaleStoreErrorIsolation:

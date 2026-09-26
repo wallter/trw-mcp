@@ -13,7 +13,9 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.exceptions import ConfigError
 from trw_mcp.models.config._credentials import resolve_platform_api_key
+from trw_mcp.models.config._local_only_guard import reject_local_only_env, reject_local_only_mapping
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._retired_keys import warn_retired_env_vars, warn_unrecognised_config_keys
 
@@ -175,6 +177,11 @@ def _build_config_unguarded() -> TRWConfig:
     # A retired key's TRW_* alias is dropped as silently as its YAML key, with or
     # without a config file; the one retired-keys table covers both.
     warn_retired_env_vars(os.environ)
+    # F5 follow-up (P1): unlike every other retired key, local_only fails
+    # closed, not warn-and-ignore — pydantic-settings never surfaces this
+    # env var into TRWConfig's model_validator (it isn't a declared field),
+    # so this raw os.environ scan is the only place that catches it.
+    reject_local_only_env(os.environ)
     try:
         from trw_mcp.state._paths import resolve_project_root
 
@@ -185,6 +192,15 @@ def _build_config_unguarded() -> TRWConfig:
         merged = resolve_config_overrides(project_config_path, apply_env_exclusion=False)
 
         if merged:
+            # F5 follow-up (P1): checked BEFORE warn_unrecognised_config_keys
+            # and BEFORE the generic except-Exception fail-open branch below
+            # can turn this refusal into a silent revert-to-defaults. A
+            # TRWConfig model_validator also rejects local_only (defense in
+            # depth for a direct TRWConfig(**kwargs) caller that bypasses
+            # this loader), but that raise happens INSIDE the try below and
+            # would otherwise be swallowed by the malformed-config fail-open
+            # path -- this call is what actually stops that.
+            reject_local_only_mapping(merged, source=".trw/config.yaml")
             # PRD-QUAL-131-FR04: TRWConfig is extra="ignore", so any key it does
             # not define is about to be dropped without a word. Say so BEFORE the
             # constructor swallows it. Checked against the whole merged set
@@ -198,6 +214,12 @@ def _build_config_unguarded() -> TRWConfig:
             filtered = exclude_env_shadowed_keys(merged)
             if filtered:
                 return TRWConfig(**filtered)  # type: ignore[arg-type]
+    except ConfigError:
+        # local_only's refusal (raised just above, or by TRWConfig's own
+        # model_validator) is a deliberate security gate, not a malformed-
+        # config failure -- it must never be silently swallowed by the
+        # fail-open branch below, in strict mode or not.
+        raise
     except Exception as exc:
         # PRD-QUAL-110-FR01: fail LOUD, not silent. A malformed or invalid
         # config.yaml here means every operator hardening override is about to

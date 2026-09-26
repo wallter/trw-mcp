@@ -29,7 +29,7 @@ _phase=""
 _event_count=0
 _last_cp=""
 
-if [ -f "$_state_file" ] && _trw_has_json_parser; then
+if [ -f "$_state_file" ] && [ ! -L "$_state_file" ] && _trw_has_json_parser; then
   _run_path=$(_json_get --file "$_state_file" .run_path) || true
   _phase=$(_json_get --file "$_state_file" .phase) || true
   _event_count=$(_json_get --file "$_state_file" --default 0 .events_logged) || true

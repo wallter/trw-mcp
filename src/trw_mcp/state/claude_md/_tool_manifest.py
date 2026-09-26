@@ -23,17 +23,14 @@ import structlog
 # importing the registry triggers ``server/__init__`` (eager tool registration) —
 # an unwanted import-time side effect for this state-layer module. The eligible
 # public surface computed here is byte-identical to ``eligible_tool_names()``
-# (both = PACK_TOOLS minus OPERATOR_ONLY_TOOLS).
-from trw_mcp.models.phase_policy import RIGID_TOOLS
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, OPERATOR_ONLY_TOOLS, PACK_TOOLS, REVIEWER_TOOLS
+# (both = every PACK_TOOLS member).
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, PACK_TOOLS, REVIEWER_TOOLS
 
 _logger = structlog.get_logger(__name__)
 
 #: The full eligible (public) tool surface — what ``all`` mode exposes. Identical
 #: to ``server._surface_manifest_registry.eligible_tool_names()``.
-_ELIGIBLE_TOOLS: frozenset[str] = frozenset(
-    tool for tools in PACK_TOOLS.values() for tool in tools if tool not in OPERATOR_ONLY_TOOLS
-)
+_ELIGIBLE_TOOLS: frozenset[str] = frozenset(tool for tools in PACK_TOOLS.values() for tool in tools)
 
 # ---------------------------------------------------------------------------
 # FR01: Canonical tool description mapping (single source of truth)
@@ -50,65 +47,36 @@ class ToolEntry(NamedTuple):
 TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Core
     "trw_session_start": "Load prior learnings and recover any active run",
-    "trw_checkpoint": "Save milestone progress so you can resume after interruptions",
+    "trw_checkpoint": "Save milestone progress so you can resume after interruptions"
+    " (heartbeat=True keeps a long run's pin alive; pre_compact=True saves a"
+    " pre-compaction safety checkpoint)",
     "trw_learn": "Record durable technical discoveries (no status reports), or correct one by learning_id",
     "trw_deliver": "Persist everything when done (learnings, checkpoint, instruction sync)",
     # Memory
-    "trw_recall": "Retrieve relevant learnings for a specific topic",
-    "trw_graph_related": "Traverse a bounded typed neighborhood from one learning",
+    "trw_recall": "Retrieve relevant learnings for a specific topic (or a bounded typed knowledge-graph neighborhood via graph_id)",
     # Quality
     "trw_build_check": "Record project-native test/build/static-check results after you run them",
     "trw_review": "Run code review analysis on changed files",
-    "trw_prd_create": "Create a new PRD from a template",
     "trw_prd_validate": "Validate PRD structure and completeness",
     # Observability
     "trw_status": "Show current run status and session overview",
-    "trw_query_events": "Merged cross-emitter view of HPO telemetry events for a session (FR-7)",
-    "trw_surface_diff": "Structured diff between two surface snapshots (FR-8)",
-    "trw_surface_classify": "Classify a repository path as SAFE-001 control or advisory surface",
-    "trw_mcp_security_status": "Report MCP-security observability counters and shadow-clock state (FR-5)",
+    # Four sibling tools moved to `trw-mcp telemetry` CLI verbs
+    # (PRD-CORE-300 slice S3a) and are no longer registered tools.
     # Admin
-    "trw_pre_compact_checkpoint": "Save checkpoint before context compaction",
     "trw_init": "Initialize TRW in a project directory",
-    "trw_instructions_sync": "Synchronize the client instruction file (CLAUDE.md/AGENTS.md/etc.) with current TRW configuration",
-    "trw_claude_md_sync": "Deprecated alias for trw_instructions_sync — use the canonical name",
     # trw_knowledge_sync removed by PRD-FIX-076 (dead MCP surface).
-    "trw_heartbeat": "Refresh run liveness and report whether a checkpoint is due",
-    "trw_adopt_run": "Attach this session to an existing run for an explicit handoff or resume",
-    "trw_meta_tune_rollback": "Restore a promoted SAFE-001 advisory edit from its recorded pre-edit snapshot",
-    # Probe (PRD-CORE-144) — gated OFF by default via TRW_PROBE_ENABLED
-    "trw_probe": "Run a bounded sandboxed experiment to resolve a disputed plan assumption (gated by TRW_PROBE_ENABLED)",
-    "trw_probe_budget_status": "Report live probe budget usage for a session (read-only)",
-    # Phase control (PRD-INTENT-002 FR06) — recommended by the phase-mask denial
-    "trw_request_tool_access": "Grant one masked tool call when the current phase has hidden it (phase-exposure override)",
-    # Profile (PRD-HPO-PROF-001 FR-11)
-    "trw_profile_explain": "Explain how the resolved session profile was layered (read-only introspection)",
-    # Intelligence pipeline (PRD-FIX-COMPOUNDING-6 FR02)
-    "trw_pipeline_health": "Report intelligence-pipeline health for a project (read-only probe)",
+    # PRD-CORE-300 S6a: the former heartbeat and pre-compact-checkpoint tools
+    # are now trw_checkpoint(heartbeat=True) / trw_checkpoint(pre_compact=True).
+    # PRD-CORE-300 S6b: instruction-file sync and run-adoption are now
+    # `trw-mcp instructions sync` / `trw-mcp run adopt` (CLI verbs).
     # Cross-client dispatch (Phase 3) — second-opinion audit by another agent CLI
-    "trw_dispatch": "Dispatch a prompt to another coding-agent CLI for a second opinion (background job; poll trw_dispatch_status)",
-    "trw_dispatch_status": "Poll a background dispatch job and return its status + redacted result when terminal",
+    "trw_dispatch": 'Dispatch a prompt to another coding-agent CLI for a second opinion (background job; poll with action="status"); also exports or validates AgentWorkEvidence',
     # Crash-safe delivery operations (PRD-CORE-208)
-    "trw_delivery_status": "Read a delivery operation's durable status without mutation",
-    "trw_delivery_recover": "Perform capability-bound stale/crash recovery for a delivery operation",
     # Code intelligence + risk (read-only / advisory)
-    "trw_skill_discovery": "Discover available TRW skills and their metadata (read-only)",
-    "trw_code_search": "Search local code by query and look up symbols",
-    "trw_code_symbol": "Look up a symbol definition in the local code index",
-    "trw_code_index_update": "Refresh the local SHA-256 code index for fast search",
-    "trw_before_edit_hint": "Surface risk hints for a file before you edit it",
-    "trw_before_edit_hint_batch": "Surface risk hints for a batch of files before editing",
-    "trw_codebase_risk_report": "Report aggregate codebase risk for a repository",
-    "trw_ordering_compare": "Compare candidate build/work ordering strategies",
-    "trw_cross_repo_ordering": "Compute cross-repository work ordering",
+    "trw_code": "Search local code, find a symbol's definition, or get risk hints for files before you edit them",
     # Evidence + coordination
-    "trw_agent_work_evidence": "Export AgentWorkEvidence v1 for a run (delivered=wired coordination)",
-    "trw_validate_agent_work_evidence": "Validate an AgentWorkEvidence v1 record",
-    "trw_prd_diff": "Structural diff between two PRD versions (read-only)",
-    "trw_submit_feedback": "Submit feedback to the TRW backend portal (thin client)",
-    "trw_peers": "Enroll, list or heartbeat this agent among its formation peers (pull-only)",
     "trw_send": "Send a bounded message to a formation peer or reconcile an exact retry (pull-only)",
-    "trw_inbox": "Fetch pending messages, ACK receipt, or inspect body-free message facts (pull-only)",
+    "trw_inbox": "Fetch pending messages, ACK receipt, inspect body-free message facts, or run a peer action (enroll, list, heartbeat, announce, withdraw, discover, ack_pause) (pull-only)",
     "trw_assess": "Batch typed noul/choice/score questions about a state (or many items) to an opt-in calibrated judge (advisory only)",
 }
 
@@ -128,24 +96,17 @@ if _ALL_TOOLS != _DESCRIBED_TOOLS:
 def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:
     """The tool surface an instruction file may describe (PRD-CORE-218 + PRD-FIX-140-FR08).
 
-    Instruction files project the TASK-INDEPENDENT baseline of the CORE-218
-    resolution authority, scoped to the ROLE that will read them:
+    Instruction files project the flag-independent baseline of the surface,
+    scoped to the ROLE that will read them:
 
       * a reviewer lane (``state._surface_role.reviewer_role_active``) resolves to
         ``REVIEWER_TOOLS`` and nothing else — the middleware REPLACES the surface
-        for that role, ahead of mode, task packs and the never-hide union, so an
-        agent-shaped baseline would promise a reviewer tools it cannot call;
+        for that role, ahead of mode and flags, so an agent-shaped baseline would
+        promise a reviewer tools it cannot call;
       * ``"all"`` — the full eligible public surface (operator-escape mode);
-      * anything else (``"standard"``, the default) — the kernel UNION the
-        never-hide ``RIGID_TOOLS``. The kernel alone under-reported the guarantee:
-        ``middleware/surface_authority.py`` and ``middleware/phase_exposure.py``
-        both apply ``| RIGID_TOOLS`` at the point of use, so ``trw_build_check``
-        and ``trw_review`` are callable in every agent session — yet
-        ``check-instructions`` flagged the Deliver Gate section for naming
-        ``trw_build_check``, which is the remedy that section exists to state.
-
-    A concrete run's task packs are resolved per-session at the middleware layer,
-    so instruction files stay task-independent and never over-promise.
+      * anything else (``"standard"``, the default) — every tool no config flag
+        gates (``surface_packs.ALWAYS_ON_TOOLS``): the kernel plus the
+        always-on packs, which every agent session sees in every phase.
 
     Args:
         mode: ``tool_resolution_mode`` (``"standard"`` | ``"all"``).
@@ -160,7 +121,7 @@ def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:
     elif mode == "all":
         result = frozenset(_ELIGIBLE_TOOLS)
     else:
-        result = frozenset(KERNEL_TOOLS) | RIGID_TOOLS
+        result = ALWAYS_ON_TOOLS
     _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
     return result
 

@@ -67,14 +67,16 @@ def render_surface_matrix() -> str:
 
 
 def render_tool_resolution_section() -> str:
-    """Describe the single global tool-exposure authority (PRD-CORE-218 FR04)."""
+    """Describe the flat tool surface (PRD-CORE-218 FR04, updated PRD-CORE-300)."""
     return (
-        "**Tool resolution** (`tool_resolution_mode`): the kernel/pack resolver "
-        "(SurfaceAuthorityMiddleware) is the sole exposure authority. `standard` "
-        "(default) exposes the 9-tool kernel plus the packs a run's `task_type` "
-        "selects; `all` is the explicit operator escape that exposes the full "
-        "eligible surface. Masked pack tools stay grantable via "
-        "`trw_request_tool_access`."
+        "**Tool surface**: flat, no per-task pack resolution. Every session sees the "
+        "kernel plus every capability pack whose config flag is on. `trw_send`/"
+        "`trw_inbox` need `comms_enabled` (default true); `trw_dispatch` "
+        "needs `dispatch_tools_exposed` (default false, required in every mode "
+        "including `tool_resolution_mode: all`); `trw_assess` needs `assess_enabled` "
+        "(default false). `tool_resolution_mode: all` turns on the comms and assess "
+        "packs too, never dispatch. A call to an off tool returns "
+        "`tool_not_in_surface` with an `enable_with` hint."
     )
 
 

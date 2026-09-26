@@ -35,8 +35,15 @@ from trw_mcp.exceptions import StateError
 logger = structlog.get_logger(__name__)
 
 
-def _atomic_write_text_file(path: Path, suffix: str, write: Callable[[TextIO], object]) -> None:
-    """Write through the ``mkstemp`` descriptor, then replace the target."""
+def _atomic_write_text_file(
+    path: Path, suffix: str, write: Callable[[TextIO], object], *, mode: int | None = None
+) -> None:
+    """Write through the ``mkstemp`` descriptor, then replace the target.
+
+    ``mkstemp`` creates the file 0600; *mode* is applied to the temp file before
+    the replace, so the target never appears with a transient mode. By path, not
+    ``os.fchmod``: Windows has no ``fchmod`` before Python 3.13.
+    """
     fd, tmp_path_str = tempfile.mkstemp(dir=str(path.parent), suffix=suffix)
     tmp_path = Path(tmp_path_str)
     try:
@@ -45,6 +52,8 @@ def _atomic_write_text_file(path: Path, suffix: str, write: Callable[[TextIO], o
             write(fh)
             fh.flush()
             os.fsync(fh.fileno())
+        if mode is not None:
+            os.chmod(tmp_path, mode)
         os.replace(tmp_path, path)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
@@ -53,6 +62,16 @@ def _atomic_write_text_file(path: Path, suffix: str, write: Callable[[TextIO], o
         if fd >= 0:
             with contextlib.suppress(OSError):
                 os.close(fd)
+
+
+def write_text_atomic(path: Path, content: str, *, mode: int) -> None:
+    """Publish *content* at *path* whole or not at all, with permission bits *mode*.
+
+    For files another process reads at any moment (a hook ``source``-ing its
+    environment, a server loading ``config.yaml``): a truncate-then-write lets
+    that reader see an empty or partial file.
+    """
+    _atomic_write_text_file(path, ".tmp", lambda fh: fh.write(content), mode=mode)
 
 
 # Suppress-internal-events ContextVar + INTERNAL_EVENT_TYPES extracted to
@@ -403,8 +422,9 @@ class FileEventLogger:
 
         # PRD-HPO-MEAS-001 FR-3/FR-10: Phase 2 parallel-emit. Every legacy
         # event also lands in the unified events-YYYY-MM-DD.jsonl file so
-        # trw_query_events returns a merged cross-emitter view. Fail-open
-        # so unified-file failures never break the legacy write path.
+        # `trw-mcp telemetry events` (PRD-CORE-300 slice S3a; a former MCP
+        # tool) returns a merged cross-emitter view. Fail-open so unified-file
+        # failures never break the legacy write path.
         try:
             self._parallel_emit_unified(events_path, event_type, data)
         except Exception:  # justified: fail-open, Phase 2 retrofit must not block legacy emitters

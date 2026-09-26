@@ -6,17 +6,7 @@ not an override). Cross-project transfer: a portable learning written while in
 repo A is surfaced by recall in repo B on the same box (one shared user-home
 store). With the user store absent/empty, recall is byte-identical to today.
 
-NOT PORTED (PRD-CORE-280 slice e1): the two ``*_tamper_*`` tests and the two
-``*_embedder_warmup_*`` tests below directly manipulate
-``trw_mcp.state.memory_adapter.should_halt_recalls``/``resolve_user_memory_dir``
-and ``trw_mcp.state._memory_connection``'s embedder-warmup singleton state --
-mechanisms specific to the interim dual-SQLite-backend ``SqliteMemoryStore``
-implementation with no daemon-store equivalent a test can attach to from
-outside the daemon process (the daemon owns its own canary/tamper detection
-and embedder lifecycle internally). They keep using ``get_backend`` /
-``_memory_connection`` and are left unchanged and unmigrated; see the batch
-report for detail. Everything else below routes through ``daemon_checkout`` /
-``attach_checkout``.
+Every test routes through ``daemon_checkout`` / ``attach_checkout``.
 """
 
 from __future__ import annotations
@@ -28,22 +18,6 @@ import pytest
 from tests._memory_fixtures import DaemonCheckout, MemoryDaemon, attach_checkout
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state import memory_adapter
-from trw_mcp.state._user_tier import reset_user_backend
-
-
-@pytest.fixture
-def _isolated_user_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """Only for the not-ported legacy tests below (see module docstring)."""
-    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    monkeypatch.setenv("TRW_USER_TIER_ENABLED", "true")
-    _reset_config()
-    memory_adapter.reset_backend()
-    reset_user_backend()
-    yield
-    memory_adapter.reset_backend()
-    reset_user_backend()
-    _reset_config()
 
 
 def _trw_dir(tmp_path: Path, name: str) -> Path:
@@ -59,9 +33,7 @@ def _ids(rows: list[dict[str, object]]) -> list[str]:
 def test_cross_project_transfer(memory_daemon: MemoryDaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Portable learning written in repo A is recalled in repo B (shared user store)."""
     monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
-    # route_tier's user_scope_present() gate needs this: the base test got it
-    # for free from the (formerly autouse) _isolated_user_dir fixture below,
-    # which now only applies to the not-ported legacy tests.
+    # route_tier's user_scope_present() gate needs this.
     monkeypatch.setenv("TRW_USER_TIER_ENABLED", "true")
     _reset_config()
     repo_a = _trw_dir(tmp_path, "repoA")
@@ -223,14 +195,3 @@ def test_mixed_scope_dedup_project_copy_wins(daemon_checkout: DaemonCheckout) ->
     # The project copy is included first; the user copy is deduped away.
     # Both copies have the same id and summary; we verify only one survives.
     assert matched[0]["id"] == "L-win"
-
-
-# ---------------------------------------------------------------------------
-# P1/Item7 — Embedder warm-up race: recall during uninitialized embedder.
-# NOT PORTED — see module docstring.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# core185-3 tamper tests — NOT PORTED, see module docstring.
-# ---------------------------------------------------------------------------

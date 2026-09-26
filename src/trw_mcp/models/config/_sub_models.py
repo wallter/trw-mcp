@@ -64,6 +64,7 @@ class DispatchConfig(BaseModel):
     dispatch_tools_exposed: bool = False
     dispatch_child_trw_access: bool = False
     dispatch_role_client: dict[str, str] = Field(default_factory=dict)
+    dispatch_fallback_clients: list[str] = Field(default_factory=list)
     dispatch_default_effort: DispatchEffort | None = None
     dispatch_default_max_turns: int = DEFAULT_DISPATCH_MAX_TURNS
     #: The dispatch field names the OPERATOR set (config.yaml or TRW_* env). The
@@ -80,11 +81,6 @@ class MemoryConfig(BaseModel):
     learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
     recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
-    # PRD-INFRA-102 FR-03: secondary embedding-sidecar path, NOT primary
-    # store. Primary store is `<trw_dir>/memory/memory.db` (hardcoded in
-    # `_memory_connection.get_backend`). See `_fields_memory.py:37` for
-    # the canonical declaration with full clarification.
-    memory_store_path: str = ".trw/memory/vectors.db"
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95
     dedup_merge_threshold: float = 0.85

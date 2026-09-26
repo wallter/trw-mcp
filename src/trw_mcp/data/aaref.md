@@ -5,7 +5,7 @@
 **Purpose**: Project-agnostic framework for engineering requirements with AI assistance — truthful, verifiable, and aligned to current requirements-engineering standards.
 **Research Basis**: ISO/IEC/IEEE 29148:2018 (confirmed current in 2024 and marked for revision in 2026), INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), requirements-engineering V&V practice, and TRW's empirical findings (eval iterations and the PRD-audit corpus).
 
-> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v27.3_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
+> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v27.4_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
 
 > **Operative summary (read this even under context pressure).** Verified closure is §6.2: risk-appropriate independent review + requirement-matched verification evidence + status truthfulness + recorded project-native validation. A delivery override may ship known risk, but it does not make the requirement verified. The validator score (§5 of the full AARE-F reference) is a drafting aid, not a verdict (§0). The anti-patterns that actually ship defects are A1 (existence ≠ wiring), A3 (`implemented` over stubs), and A4 (self-review only) — check them at evidence design, status update, and reviewer assignment respectively (§7). A PRD without acceptance criteria and declared verification methods is not ready to implement (§9).
 
@@ -377,7 +377,7 @@ Higher risk raises the bar **and** shifts weight toward implementation-readiness
 ```
 create → groom requirements + plan → risk/tier-required review of both → IMPLEMENT → VALIDATE → REVIEW when required → DELIVER → audit
 ```
-In the TRW reference: `trw_prd_create` → requirements and execution-plan authoring → independent review when risk/tier requires it → implementation (optionally grouped in a sprint) → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
+In the TRW reference: `trw-mcp prd create` → requirements and execution-plan authoring → independent review when risk/tier requires it → implementation (optionally grouped in a sprint) → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
 
 **Implementation-start gate** (the inverse of A3): if a PRD lacks acceptance criteria, declared verification methods, or objective pass conditions (§2.5) when implementation begins, STOP and groom before writing code. A3 catches false completion at the end; this catches unverifiable scope at the start.
 
@@ -421,7 +421,7 @@ Keep mutable inventory out of this portable canon; source, Make targets, and the
 
 ## 11. Relationship to FRAMEWORK.md
 
-| | AARE-F (this doc) | FRAMEWORK.md (`v27.3_TRW`) |
+| | AARE-F (this doc) | FRAMEWORK.md (`v27.4_TRW`) |
 |---|---|---|
 | Governs | the **specification** (requirement/PRD quality, traceability, verification) | the **execution** (phases, gates, formations, persistence, learning) |
 | Key artifact | the PRD | the run (phases + checkpoints + evidence) |

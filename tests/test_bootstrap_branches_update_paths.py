@@ -170,11 +170,7 @@ class TestRunAutoMaintenance:
                 "trw_mcp.models.config._reset_config",
                 side_effect=[None, RuntimeError("reset failed")],
             ),
-            patch("trw_mcp.models.config.get_config", return_value=MagicMock()),
-            patch(
-                "trw_mcp.state._memory_connection.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
+            patch("trw_mcp.models.config.get_config", return_value=MagicMock(embeddings_enabled=False)),
         ):
             _run_auto_maintenance(tmp_path, result)
 

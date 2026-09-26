@@ -137,19 +137,24 @@ from trw_mcp.bootstrap._client_integrations import (
 
 
 def _coding_profile() -> ResolvedProfile:
-    """A resolved profile spanning all three classes plus a retired capability."""
+    """A resolved profile spanning both classes plus a retired capability.
+
+    PRD-CORE-300 S11b flattened the surface to two classes: AVAILABLE (kernel +
+    every always-on pack) and GATED (behind a config flag). The former
+    DISCOVERABLE class (skill discovery / request_tool_access) is gone with
+    those tools, so trw_prd_validate/trw_code are AVAILABLE (both are kernel).
+    """
     return ResolvedProfile(
         task_type="coding",
         capabilities=(
-            # available: kernel + selected packs
+            # available: kernel + every always-on pack
             ResolvedCapability("trw_session_start", "kernel", CapabilityClass.AVAILABLE),
             ResolvedCapability("trw_recall", "kernel", CapabilityClass.AVAILABLE),
-            ResolvedCapability("trw_build_check", "verification", CapabilityClass.AVAILABLE),
-            # discoverable: reachable via skill discovery / request_tool_access
-            ResolvedCapability("trw_prd_validate", "requirements", CapabilityClass.DISCOVERABLE),
-            ResolvedCapability("trw_code_search", "code_navigation", CapabilityClass.DISCOVERABLE),
-            # gated: operator-grant only
-            ResolvedCapability("trw_meta_tune_rollback", "experimentation", CapabilityClass.GATED),
+            ResolvedCapability("trw_build_check", "kernel", CapabilityClass.AVAILABLE),
+            ResolvedCapability("trw_prd_validate", "kernel", CapabilityClass.AVAILABLE),
+            ResolvedCapability("trw_code", "kernel", CapabilityClass.AVAILABLE),
+            # gated: behind a config flag
+            ResolvedCapability("trw_dispatch", "dispatch", CapabilityClass.GATED),
             # retired: must NOT be advertised in any truthful projection
             ResolvedCapability(
                 "trw_claude_md_sync",
@@ -162,7 +167,7 @@ def _coding_profile() -> ResolvedProfile:
 
 
 def test_prd_core_218_fr06() -> None:
-    """Client projections derive from the resolved profile and distinguish three classes."""
+    """Client projections derive from the resolved profile and distinguish both classes."""
     profile = _coding_profile()
 
     # Two different client profiles / formats render the SAME semantic state.
@@ -171,27 +176,28 @@ def test_prd_core_218_fr06() -> None:
     assert claude.fmt is not codex.fmt
     assert claude.semantic_state() == codex.semantic_state()
 
-    # The three classes are distinguished, non-empty, and disjoint.
-    assert claude.available == ("trw_build_check", "trw_recall", "trw_session_start")
-    assert claude.discoverable == ("trw_code_search", "trw_prd_validate")
-    assert claude.gated == ("trw_meta_tune_rollback",)
-    all_sets = [set(claude.available), set(claude.discoverable), set(claude.gated)]
-    for a in range(len(all_sets)):
-        for b in range(a + 1, len(all_sets)):
-            assert all_sets[a].isdisjoint(all_sets[b])
+    # The two classes are distinguished, non-empty, and disjoint.
+    assert claude.available == (
+        "trw_build_check",
+        "trw_code",
+        "trw_prd_validate",
+        "trw_recall",
+        "trw_session_start",
+    )
+    assert claude.gated == ("trw_dispatch",)
+    assert set(claude.available).isdisjoint(set(claude.gated))
 
     # The retired capability is advertised by NO class.
-    everything = set(claude.available) | set(claude.discoverable) | set(claude.gated)
+    everything = set(claude.available) | set(claude.gated)
     assert "trw_claude_md_sync" not in everything
 
     # A truthful, freshly-rendered projection has zero parity failures.
     assert check_projection_parity(profile, claude) == ()
 
-    # The rendered human-readable instructions carry the three distinct class labels.
+    # The rendered human-readable instructions carry the two distinct class labels.
     text = render_client_capability_instructions(profile, client_id="claude-code")
-    assert "Available now" in text
-    assert "Discoverable via" in text
-    assert "Operator-grant only" in text
+    assert "Available in every session" in text
+    assert "Behind a config flag" in text
     assert "trw_claude_md_sync" not in text
 
     # NEGATIVE — a stale declared count fails parity (count drift), typed.
@@ -199,7 +205,6 @@ def test_prd_core_218_fr06() -> None:
         claude,
         declared_counts=(
             (CapabilityClass.AVAILABLE, 99),  # wrong
-            (CapabilityClass.DISCOVERABLE, len(claude.discoverable)),
             (CapabilityClass.GATED, len(claude.gated)),
         ),
     )
@@ -212,7 +217,6 @@ def test_prd_core_218_fr06() -> None:
         available=(*claude.available, "trw_claude_md_sync"),
         declared_counts=(
             (CapabilityClass.AVAILABLE, len(claude.available) + 1),
-            (CapabilityClass.DISCOVERABLE, len(claude.discoverable)),
             (CapabilityClass.GATED, len(claude.gated)),
         ),
     )
@@ -226,9 +230,10 @@ def test_prd_core_218_fr06() -> None:
 
 
 def test_fr06_manifest_seam_resolves_from_real_registry() -> None:
-    """Integration wiring: with shard-E's FR01 manifest landed, the FR06 seam
-    produces a REAL resolved profile — kernel available, high-risk packs
-    gated, everything else discoverable; retired tools not advertised."""
+    """Integration wiring: with the FR01 manifest landed, the FR06 seam produces
+    a REAL resolved profile — kernel + always-on packs available, flag-gated
+    packs gated; retired tools not advertised (PRD-CORE-300 S11b: only the two
+    surviving classes)."""
     from trw_mcp.bootstrap._client_integrations import (
         CapabilityClass,
         render_client_capability_instructions,
@@ -242,8 +247,9 @@ def test_fr06_manifest_seam_resolves_from_real_registry() -> None:
         by_class.setdefault(capability.capability_class, []).append(capability.tool_id)
     assert "trw_session_start" in by_class[CapabilityClass.AVAILABLE]
     assert "trw_deliver" in by_class[CapabilityClass.AVAILABLE]
-    assert "trw_dispatch" in by_class[CapabilityClass.GATED]  # high-risk pack
-    assert "trw_build_check" in by_class[CapabilityClass.DISCOVERABLE]
+    assert "trw_build_check" in by_class[CapabilityClass.AVAILABLE]  # kernel now
+    assert "trw_dispatch" in by_class[CapabilityClass.GATED]  # flag-gated pack
+    assert set(by_class) == {CapabilityClass.AVAILABLE, CapabilityClass.GATED}
     text = render_client_capability_instructions(profile, client_id="claude-code")
     assert "trw_session_start" in text
 
@@ -276,7 +282,7 @@ def test_prd_core_218_nfr03() -> None:
     # The RETIRED capability is advertised by NO client projection (lifecycle
     # state is preserved identically across every format).
     for proj in projections:
-        advertised = set(proj.available) | set(proj.discoverable) | set(proj.gated)
+        advertised = set(proj.available) | set(proj.gated)
         assert "trw_claude_md_sync" not in advertised
 
 

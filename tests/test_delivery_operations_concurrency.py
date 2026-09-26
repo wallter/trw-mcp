@@ -416,9 +416,7 @@ def test_prd_core_215_fr03(tmp_path) -> None:
             require_operation_backed("trw_unregistered")
         assert validate_operation_backed_claim("trw_unregistered", {"operation_backed": True}) == "unowned_claim"
         # And the registered delivery owner validates as legitimate.
-        assert (
-            validate_operation_backed_claim("trw_delivery_status", {"operation_id": did, "accepted": True}) == "valid"
-        )
+        assert validate_operation_backed_claim("trw_deliver", {"operation_id": did, "accepted": True}) == "valid"
     finally:
         reset_registry()
 
@@ -441,7 +439,7 @@ def test_prd_core_215_fr03_middleware_consumes_owner_registry() -> None:
     # The registered delivery owner validates as legitimate.
     owned = _Result()
     owned.structured_content = {"operation_id": "op-x", "accepted": True}
-    _annotate_operation_backed_claim("trw_delivery_status", owned)
+    _annotate_operation_backed_claim("trw_deliver", owned)
     assert owned.structured_content["operation_backed_claim"] == "valid"
 
     # A non-claim result is left untouched (no false annotation).

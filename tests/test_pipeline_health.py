@@ -11,7 +11,6 @@ tier (default when not in _UNIT_FILES).
 from __future__ import annotations
 
 import json
-import time
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,11 +47,6 @@ def _iso_ago(hours: float) -> str:
     return (datetime.now(tz=timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
-def _days_ago(days: float) -> float:
-    """Return a Unix mtime N days ago."""
-    return time.time() - (days * 86400)
-
-
 @pytest.fixture(autouse=True)
 def _pinned(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
     """Every checkout here is pinned to the fake store, so the store-reading probes measure."""
@@ -80,13 +74,6 @@ def _stock_store(
         store.rows[(FAKE_NAMESPACE, entry.id)] = entry
     store.stored_vectors.update({f"m{i}": [1.0] for i in range(vec)})
     store.edges[FAKE_NAMESPACE] = edges
-
-
-def _make_bandit_file(trw_dir: Path) -> Path:
-    """Create .trw/meta/bandit_state.json with a recent mtime."""
-    p = trw_dir / "meta" / "bandit_state.json"
-    p.write_text(json.dumps({"state": "ok"}))
-    return p
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +319,7 @@ def _refuse_open(*_args: object, **_kwargs: object) -> None:
 
 @pytest.mark.parametrize("pinned", [True, False], ids=["pinned", "unpinned"])
 def test_no_probe_opens_the_checkout_memory_db(tmp_path: Path, pinned: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Session-start health and ``trw_pipeline_health`` never open a checkout's store (PRD-CORE-280).
+    """Session-start health and the pipeline-health probe never open a checkout's store (PRD-CORE-280).
 
     ``probe_embedding_coverage`` used to open ``.trw/memory/memory.db`` with a
     WRITABLE ``sqlite3.connect``, and an unpinned checkout's selection read it to
@@ -435,164 +422,38 @@ def test_probe_recall_feedback_empty_store(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# probe_bandit_state
-# ---------------------------------------------------------------------------
-
-
-def test_probe_bandit_stale(tmp_path: Path) -> None:
-    """bandit_state.json mtime=51 days ago => degraded=True."""
-    from trw_mcp.tools._pipeline_health import probe_bandit_state
-
-    trw_dir = _make_trw_dir(tmp_path)
-    p = _make_bandit_file(trw_dir)
-
-    # Patch os.path.getmtime to return 51 days ago
-    stale_mtime = _days_ago(51)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=stale_mtime):
-        result = probe_bandit_state(trw_dir)
-
-    assert result["degraded"] is True
-    assert result.get("age_days", 0) > 7
-    assert result["advisory"] != ""
-
-
-def test_probe_bandit_healthy(tmp_path: Path) -> None:
-    """bandit_state.json mtime=2 days ago => not degraded."""
-    from trw_mcp.tools._pipeline_health import probe_bandit_state
-
-    trw_dir = _make_trw_dir(tmp_path)
-    _make_bandit_file(trw_dir)
-
-    recent_mtime = _days_ago(2)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
-        result = probe_bandit_state(trw_dir)
-
-    assert result["degraded"] is False
-    assert result["advisory"] == ""
-
-
-def test_probe_bandit_missing_file(tmp_path: Path) -> None:
-    """No bandit_state.json (fresh install) => fail-open, degraded=False.
-
-    DEF-08 attribution: the pre-fix ``safe_default`` reported ``age_days: 0.0``
-    for a file that has never existed — a FABRICATED "just refreshed"
-    timestamp, not a genuine zero-count measurement (unlike ``edge_count: 0``
-    on an absent memory.db). Reverting the fix turns the ``measured``
-    assertion red because ``age_days`` would come back ``0.0`` under
-    ``measured: True`` again, exactly the "healthy 0.0-day age it never
-    observed" shape the probe-disabled branch two lines below already avoids.
-    """
-    from trw_mcp.tools._pipeline_health import probe_bandit_state
-
-    trw_dir = _make_trw_dir(tmp_path)
-    # Don't create the bandit file
-
-    result = probe_bandit_state(trw_dir)
-
-    assert result["degraded"] is False
-    assert result["measured"] is False
-    assert result["age_days"] is None
-    assert "state_missing" in result["advisory"]
-
-
-def test_probe_bandit_disabled_by_config_not_degraded(tmp_path: Path) -> None:
-    """PRD-FIX-105-FR02: probe disabled via config => never degraded even if stale.
-
-    bandit_state.json is written by the backend, not the MCP runtime, so where
-    no local writer exists the operator disables the probe to stop cry-wolf.
-    """
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._pipeline_health import probe_bandit_state
-
-    trw_dir = _make_trw_dir(tmp_path)
-    _make_bandit_file(trw_dir)
-
-    cfg = TRWConfig(pipeline_health_bandit_probe_enabled=False)  # type: ignore[call-arg]
-    stale_mtime = _days_ago(99)
-    with (
-        patch("trw_mcp.models.config.get_config", return_value=cfg),
-        patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=stale_mtime),
-    ):
-        result = probe_bandit_state(trw_dir)
-
-    assert result["degraded"] is False
-    # PRD-CORE-263-FR03: a disabled probe read nothing, so it reports
-    # not-measured rather than a healthy 0.0-day age it never observed.
-    assert result["measured"] is False
-    assert result["advisory"] == "bandit_state not measured: probe_disabled"
-
-
-def test_probe_bandit_custom_stale_threshold(tmp_path: Path) -> None:
-    """PRD-FIX-105-FR02: configurable threshold widens the SLA so a 10-day-old
-    file is healthy when the operator sets a 30-day window."""
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._pipeline_health import probe_bandit_state
-
-    trw_dir = _make_trw_dir(tmp_path)
-    _make_bandit_file(trw_dir)
-
-    cfg = TRWConfig(pipeline_health_bandit_stale_days=30.0)  # type: ignore[call-arg]
-    mtime_10d = _days_ago(10)
-    with (
-        patch("trw_mcp.models.config.get_config", return_value=cfg),
-        patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=mtime_10d),
-    ):
-        result = probe_bandit_state(trw_dir)
-
-    assert result["degraded"] is False
-
-    # Same file under the default 7-day SLA IS degraded — proves the knob is wired.
-    cfg_default = TRWConfig()
-    with (
-        patch("trw_mcp.models.config.get_config", return_value=cfg_default),
-        patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=mtime_10d),
-    ):
-        result_default = probe_bandit_state(trw_dir)
-
-    assert result_default["degraded"] is True
-
-
-# ---------------------------------------------------------------------------
 # step_pipeline_health (aggregator)
 # ---------------------------------------------------------------------------
 
 
 def test_step_pipeline_health_all_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
-    """All five probes healthy => degraded=False, advisory empty."""
+    """All four probes healthy => degraded=False, advisory empty."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     _stock_store(fake_memory_store, corpus=50, vec=48, max_recall=10, edges=20)
-    _make_bandit_file(trw_dir)
 
-    recent_mtime = _days_ago(1)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
-        result = step_pipeline_health(trw_dir)
+    result = step_pipeline_health(trw_dir)
 
     assert result["degraded"] is False
     assert result["advisory"] == "" or result["advisory"] is None or result["advisory"] == "None"
-    # All five signal keys must be present
+    # All four signal keys must be present
     assert "sync_push" in result
     assert "graph_edges" in result
     assert "embedding_coverage" in result
     assert "recall_feedback" in result
-    assert "bandit_state" in result
 
 
 def test_step_pipeline_health_all_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
-    """All 5 probes degraded => degraded=True, advisory non-empty listing all signals."""
+    """All 4 probes degraded => degraded=True, advisory non-empty listing all signals."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 15, "last_push_at": _iso_ago(48)})
     _stock_store(fake_memory_store, corpus=150, vec=5, max_recall=0, edges=0)
-    # bandit stale 51 days
-    _make_bandit_file(trw_dir)
 
-    stale_mtime = _days_ago(51)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=stale_mtime):
-        result = step_pipeline_health(trw_dir)
+    result = step_pipeline_health(trw_dir)
 
     assert result["degraded"] is True
     advisory = str(result.get("advisory", ""))
@@ -607,13 +468,10 @@ def test_step_pipeline_health_partial_degraded(fake_memory_store: FakeMemoryStor
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 11, "last_push_at": _iso_ago(0.5)})
-    # Healthy: small corpus so graph/recall don't trigger; recent bandit
+    # Healthy: small corpus so graph/recall don't trigger
     _stock_store(fake_memory_store, corpus=50, vec=48, max_recall=10, edges=20)
-    _make_bandit_file(trw_dir)
 
-    recent_mtime = _days_ago(1)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
-        result = step_pipeline_health(trw_dir)
+    result = step_pipeline_health(trw_dir)
 
     assert result["degraded"] is True
     advisory = str(result.get("advisory", ""))
@@ -627,23 +485,19 @@ def test_step_pipeline_health_one_probe_raises(fake_memory_store: FakeMemoryStor
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     _stock_store(fake_memory_store, corpus=50, max_recall=10, edges=20)
-    _make_bandit_file(trw_dir)
 
     # Make probe_graph_edges raise
     with patch(
         "trw_mcp.tools._pipeline_health.probe_graph_edges",
         side_effect=RuntimeError("DB exploded"),
     ):
-        recent_mtime = _days_ago(1)
-        with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
-            result = step_pipeline_health(trw_dir)
+        result = step_pipeline_health(trw_dir)
 
     # Aggregator must not raise and must still have all keys
     assert "sync_push" in result
     assert "graph_edges" in result
     assert "embedding_coverage" in result
     assert "recall_feedback" in result
-    assert "bandit_state" in result
     # The errored probe should produce a safe default
     graph_result = result["graph_edges"]
     assert isinstance(graph_result, dict)
@@ -664,7 +518,6 @@ def test_step_pipeline_health_all_probes_raise(tmp_path: Path) -> None:
             side_effect=RuntimeError("boom"),
         ),
         patch("trw_mcp.tools._pipeline_health.probe_recall_feedback", side_effect=RuntimeError("boom")),
-        patch("trw_mcp.tools._pipeline_health.probe_bandit_state", side_effect=RuntimeError("boom")),
     ):
         result = step_pipeline_health(trw_dir)
 
@@ -672,13 +525,15 @@ def test_step_pipeline_health_all_probes_raise(tmp_path: Path) -> None:
     # All probes failed-open => not degraded overall
     assert result["degraded"] is False
     # All signal keys present
-    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback", "bandit_state"):
+    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback"):
         assert key in result
         assert result[key].get("degraded") is False
 
 
-def test_step_pipeline_health_advisory_ends_with_tool_hint(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
-    """Advisory when degraded must end with hint to call trw_pipeline_health()."""
+def test_step_pipeline_health_advisory_names_the_cli_command(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path
+) -> None:
+    """Advisory when degraded must name ``trw-mcp telemetry pipeline-health`` (PRD-CORE-300 S3b)."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -689,7 +544,7 @@ def test_step_pipeline_health_advisory_ends_with_tool_hint(fake_memory_store: Fa
 
     if result["degraded"]:
         advisory = str(result.get("advisory", ""))
-        assert "trw_pipeline_health" in advisory
+        assert "trw-mcp telemetry pipeline-health" in advisory
 
 
 def test_pipeline_health_probe_no_write(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
@@ -699,115 +554,59 @@ def test_pipeline_health_probe_no_write(fake_memory_store: FakeMemoryStore, tmp_
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     _stock_store(fake_memory_store, corpus=10)
-    _make_bandit_file(trw_dir)
 
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=_days_ago(1)):
-        step_pipeline_health(trw_dir)
+    step_pipeline_health(trw_dir)
 
     assert {name for name, _ in fake_memory_store.calls} == {"health"}
 
 
 # ---------------------------------------------------------------------------
-# trw_pipeline_health MCP tool publication seam
-#
-# Two distinct surfaces, kept explicit so a missing publication is caught:
-#
-#   * Registration inventory — every tool wired into the server, read via the
-#     private ``mcp._list_tools()``. This is the surface that fails if the
-#     ``register_pipeline_health_tools(mcp)`` call is dropped from
-#     ``server/_tools.py::_register_tools``. It bypasses the security
-#     middleware advertisement filter, so it reflects registration, not scope.
-#   * Public advertisement — ``mcp.list_tools()``, the surface MCP clients see
-#     after the security middleware's ``filter_advertised_tools`` runs.
-#     ``trw_pipeline_health`` is an operator/diagnostic tool intentionally kept
-#     OUT of the default agent-facing allowlist, so it is registered but not
-#     publicly advertised. Asserting against the public surface here would be a
-#     false negative — use the registration inventory instead.
+# PRD-CORE-300 S3b: the pipeline-health probe moved off the MCP tool surface
+# onto ``trw-mcp telemetry pipeline-health``. The CLI-publication seam is
+# covered by tests/test_telemetry_cli.py; this module keeps the probes +
+# aggregator.
 # ---------------------------------------------------------------------------
 
 
-async def test_trw_pipeline_health_tool_registered() -> None:
-    """trw_pipeline_health is wired into the *production* server registry.
-
-    Asserts against the real ``trw_mcp.server._app.mcp`` instance that
-    ``_register_tools()`` populates at import — not a conftest test factory.
-    Mirrors ``test_server_startup.test_mcp_registers_ceremony_feedback_tools``:
-    a registrar registered only in conftest would be dead/phantom in prod, so
-    this MUST fail (not silently pass) if the production wiring is dropped.
-    """
-    from trw_mcp.server._app import mcp
-
-    # ``_list_tools`` is the registration inventory — it bypasses the security
-    # middleware advertisement filter, so this verifies *registration*, not the
-    # narrower public allowlist (``trw_pipeline_health`` is deliberately not
-    # in the default public advertisement; see the seam note above).
-    tool_names = {t.name for t in await mcp._list_tools()}
-    assert "trw_pipeline_health" in tool_names, (
-        "trw_pipeline_health is not wired into the production server registry — "
-        "check register_pipeline_health_tools(mcp) in "
-        "server/_tools.py::_register_tools()"
-    )
-
-
-def test_trw_pipeline_health_registrar_publishes_tool() -> None:
-    """The pipeline_health registrar publishes the tool through the test factory.
-
-    Independent of production wiring, this proves ``register_pipeline_health_tools``
-    itself advertises ``trw_pipeline_health`` on a server. Catches a broken or
-    renamed registrar before it reaches the production path above.
-    """
-    from tests.conftest import get_tools_sync, make_test_server
-
-    tools = get_tools_sync(make_test_server("pipeline_health"))
-    assert "trw_pipeline_health" in tools, (
-        f"register_pipeline_health_tools did not advertise trw_pipeline_health; got: {sorted(tools)}"
-    )
-
-
-def test_trw_pipeline_health_tool_crash_reports_measured_false(tmp_path: Path) -> None:
+def test_pipeline_health_cli_crash_reports_measured_false(tmp_path: Path) -> None:
     """PRD-CORE-263 DEF-06 attribution.
 
-    Before this fix the tool's catch-all crash handler returned
+    Before this fix the CLI's catch-all crash handler returned
     ``degraded: False`` with no ``measured`` key anywhere in the payload — top
     level or per-signal — rendering identically to a healthy aggregate for any
     caller that reads ``degraded`` alone. Reverting the fix (dropping the
     ``measured: False`` entries) turns this red.
     """
-    from tests.conftest import extract_tool_fn, make_test_server
-
-    fn = extract_tool_fn(make_test_server("pipeline_health"), "trw_pipeline_health")
+    from trw_mcp.tools._telemetry_cli import safe_pipeline_health
 
     with patch(
         "trw_mcp.state._paths.resolve_trw_dir",
         side_effect=RuntimeError("resolve exploded"),
     ):
-        result = fn()
+        result = safe_pipeline_health()
 
     assert result["degraded"] is False
     assert result["measured"] is False
-    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback", "bandit_state"):
+    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback"):
         assert result[key]["measured"] is False, key
 
 
-def test_trw_pipeline_health_tool_returns_dict(
+def test_pipeline_health_aggregate_returns_dict(
     fake_memory_store: FakeMemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """trw_pipeline_health tool returns a dict with all five signal keys."""
+    """The pipeline-health aggregate returns a dict with all four signal keys."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     _stock_store(fake_memory_store, corpus=10)
-    _make_bandit_file(trw_dir)
 
-    recent_mtime = _days_ago(1)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
-        result = step_pipeline_health(trw_dir)
+    result = step_pipeline_health(trw_dir)
 
     assert isinstance(result, dict)
     assert "degraded" in result
     assert "advisory" in result
-    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback", "bandit_state"):
+    for key in ("sync_push", "graph_edges", "embedding_coverage", "recall_feedback"):
         assert key in result
         assert isinstance(result[key], dict)
 
@@ -821,18 +620,16 @@ _ALL_PROBES = (
     "graph_edges",
     "embedding_coverage",
     "recall_feedback",
-    "bandit_state",
 )
 
 
 def _healthy_trw_dir(tmp_path: Path) -> Path:
-    """A .trw dir on which all five probes measure a healthy result."""
+    """A .trw dir on which all four probes measure a healthy result."""
     trw_dir = _make_trw_dir(tmp_path)
     (trw_dir / "sync-state.json").write_text(
         json.dumps({"consecutive_failures": 0, "last_push_at": datetime.now(timezone.utc).isoformat()}),
         encoding="utf-8",
     )
-    _make_bandit_file(trw_dir)
     return trw_dir
 
 
@@ -841,13 +638,13 @@ def test_probe_exception_is_distinguishable_from_a_healthy_measurement(
     tmp_path: Path,
     probe_name: str,
 ) -> None:
-    """PRD-CORE-263-FR03 — parametrised over ALL five probes.
+    """PRD-CORE-263-FR03 — parametrised over ALL four probes.
 
     At HEAD four of the five collapsed an exception into ``degraded: False`` with
     an empty advisory, which the aggregator then stripped, so the crash entry and
     the healthy entry were byte-identical dicts. Attribution: reverting FR03
-    turns this red on sync_push, embedding_coverage, recall_feedback and
-    bandit_state (graph_edges already did it correctly and is the precedent the
+    turns this red on sync_push, embedding_coverage and recall_feedback
+    (graph_edges already did it correctly and is the precedent the
     fix generalises).
     """
     from trw_mcp.tools import _pipeline_health as ph
@@ -935,15 +732,12 @@ def _inject_inside_probe(ph: Any, probe_name: str, trw_dir: Path) -> AbstractCon
     handlers, and only an injection below the probe boundary reaches them.
 
     The injections are the failures the PRD names, not synthetic ones: an unreachable
-    daemon for the three that read the store, a state file that is not
-    valid UTF-8 for the one that reads text, and an unreadable config for the
-    one that resolves its threshold before reading anything.
+    daemon for the three that read the store, and a state file that is not
+    valid UTF-8 for the one that reads text.
     """
     if probe_name == "sync_push":
         (trw_dir / "sync-state.json").write_bytes(b'{"consecutive_failures": 0, "last_push_at": "\xff\xfe"}')
         return nullcontext()
-    if probe_name == "bandit_state":
-        return patch.object(ph, "_bandit_probe_config", side_effect=RuntimeError("config unreadable"))
     from trw_mcp.state._store_selection import StoreUnavailableError
 
     return patch.object(ph, "store_health", side_effect=StoreUnavailableError("the memory daemon is unreachable"))

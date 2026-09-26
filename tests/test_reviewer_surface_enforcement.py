@@ -22,13 +22,11 @@ import pytest
 from structlog.testing import capture_logs
 
 from trw_mcp.middleware.surface_authority import (
-    _ALWAYS_EXPOSED,
     SurfaceAuthorityMiddleware,
     reset_surface_authority_state,
 )
-from trw_mcp.models.surface_packs import REVIEWER_TOOLS
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, REVIEWER_TOOLS
 from trw_mcp.server._surface_manifest_registry import eligible_tool_names
-from trw_mcp.tools import phase_overrides
 
 _MOD = "trw_mcp.middleware.surface_authority"
 
@@ -76,14 +74,12 @@ def middleware() -> SurfaceAuthorityMiddleware:
 
 @pytest.fixture(autouse=True)
 def _clean_state() -> Any:
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
     yield
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
 
 
-def _reviewer(monkeypatch: pytest.MonkeyPatch, *, mode: str = "standard", task_type: str | None = None) -> None:
+def _reviewer(monkeypatch: pytest.MonkeyPatch, *, mode: str = "standard") -> None:
     """Select the reviewer role through the CONFIG field, as production does."""
 
     class _Cfg:
@@ -92,24 +88,22 @@ def _reviewer(monkeypatch: pytest.MonkeyPatch, *, mode: str = "standard", task_t
 
     monkeypatch.setattr(f"{_MOD}.get_config", lambda: _Cfg(), raising=False)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _Cfg())
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: task_type)
 
 
-# ── FR03: the role dominates mode, packs, and the never-hide union ──────
+# ── FR03: the role dominates mode and the always-on surface ─────────────
 
 
 @pytest.mark.parametrize("mode", ["standard", "all"])
-@pytest.mark.parametrize("task_type", [None, "coding", "research", "docs", "eval", "rca", "planning", "unknown"])
-async def test_reviewer_role_overrides_mode_all_and_task_packs(
-    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch, mode: str, task_type: str | None
+async def test_reviewer_role_overrides_mode_all(
+    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    """Every (mode, task_type) permutation resolves to exactly REVIEWER_TOOLS.
+    """Every mode resolves to exactly REVIEWER_TOOLS.
 
     ``mode="all"`` is an operator widening of an agent's OWN session; the
     reviewer role is containment of a SUBORDINATE process, so honouring "all"
     would let the audited project's config un-bound the lane auditing it.
     """
-    _reviewer(monkeypatch, mode=mode, task_type=task_type)
+    _reviewer(monkeypatch, mode=mode)
     tools = _all_tools()
 
     async def call_next(_ctx: Any) -> Any:
@@ -119,13 +113,12 @@ async def test_reviewer_role_overrides_mode_all_and_task_packs(
     advertised = {t.name for t in await middleware.on_list_tools(ctx, call_next)}  # type: ignore[arg-type]
 
     assert advertised == set(REVIEWER_TOOLS)
-    # The never-hide union is BYPASSED, not subtracted from: it grew on
-    # 2026-09-04 (trw_prd_validate) and a subtractive design would re-widen
-    # every reviewer surface on the next such addition.
-    assert not (advertised & (_ALWAYS_EXPOSED - REVIEWER_TOOLS))
-    assert "trw_prd_validate" not in advertised  # bootstrap never-hide member
-    assert "trw_build_check" not in advertised  # RIGID member
-    assert "trw_request_tool_access" not in advertised  # kernel member
+    # The reviewer surface REPLACES the resolved surface rather than
+    # subtracting from it: no always-on (kernel-or-pack) tool outside
+    # REVIEWER_TOOLS is ever advertised, whatever mode declares.
+    assert not (advertised & (ALWAYS_ON_TOOLS - REVIEWER_TOOLS))
+    assert "trw_prd_validate" not in advertised  # kernel member
+    assert "trw_build_check" not in advertised  # kernel member
 
 
 async def test_reviewer_list_is_sorted_reviewer_tools_through_the_real_chain(
@@ -152,7 +145,7 @@ async def test_every_write_tool_is_denied_under_reviewer_role(
 ) -> None:
     """NFR03: proven over EVERY registered public tool, not a sampled list —
     a newly registered tool is denied by default."""
-    _reviewer(monkeypatch, mode="all", task_type="coding")
+    _reviewer(monkeypatch, mode="all")
     ctx = _FakeMiddlewareContext(message=_FakeMessage(tool_name), fastmcp_context=_FakeContext())
 
     result = await middleware.on_call_tool(ctx, _execute)  # type: ignore[arg-type]
@@ -171,10 +164,9 @@ async def test_every_write_tool_is_denied_under_reviewer_role(
     assert "override_hint" not in payload
     text = "".join(getattr(block, "text", "") for block in result.content)
     # Naming the tool that was denied is not an escalation path; OFFERING the
-    # escalation primitive or the operator mode switch is. Strip the denied
-    # name first so the trw_request_tool_access case still proves the point.
+    # operator mode switch is. Strip the denied name first so the check is not
+    # trivially satisfied by the tool's own name containing "all" or similar.
     offered = text.replace(tool_name, "<denied>")
-    assert "trw_request_tool_access" not in offered
     assert "tool_resolution_mode" not in offered
 
 
@@ -193,17 +185,13 @@ async def test_reviewer_denial_is_logged_with_the_role(
     assert denied[0]["tool"] == "trw_deliver"
 
 
-async def test_a_planted_override_grant_does_not_unmask_a_write_tool(
+async def test_a_direct_call_to_an_excluded_write_tool_is_denied(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FR04: the single-use grant store is not consulted under the reviewer role.
-
-    ``trw_request_tool_access`` grants any masked tool for a >=20-char reason, so
-    a bound that honoured grants would be self-escalatable by construction.
-    """
+    """FR04: there is no grant path any more — a tool outside REVIEWER_TOOLS is
+    reached only by turning on its config flag, which the reviewer role never
+    consults. A direct call to an excluded write tool must simply be denied."""
     _reviewer(monkeypatch)
-    phase_overrides.grant_override("reviewer-sess", "trw_learn", reason="a deliberately long planted reason")
-    assert phase_overrides.has_active_override("reviewer-sess", "trw_learn")
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_learn"), fastmcp_context=_FakeContext())
 
     result = await middleware.on_call_tool(ctx, _execute)  # type: ignore[arg-type]
@@ -211,16 +199,12 @@ async def test_a_planted_override_grant_does_not_unmask_a_write_tool(
     assert result is not _EXECUTED
     assert result.structured_content is not None
     assert result.structured_content["error_type"] == "tool_not_in_reviewer_surface"
-    # The grant is not even CONSUMED — a reviewer denial must not silently burn
-    # the parent session's single-use grant.
-    assert phase_overrides.has_active_override("reviewer-sess", "trw_learn")
 
 
-async def test_a_planted_grant_does_not_widen_the_reviewer_list(
+async def test_an_excluded_write_tool_never_appears_in_the_reviewer_list(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _reviewer(monkeypatch)
-    phase_overrides.grant_override("reviewer-sess", "trw_deliver", reason="a deliberately long planted reason")
     tools = _all_tools()
 
     async def call_next(_ctx: Any) -> Any:
@@ -230,6 +214,7 @@ async def test_a_planted_grant_does_not_widen_the_reviewer_list(
     advertised = {t.name for t in await middleware.on_list_tools(ctx, call_next)}  # type: ignore[arg-type]
 
     assert advertised == set(REVIEWER_TOOLS)
+    assert "trw_deliver" not in advertised
 
 
 # ── NFR01: the reviewer branch does strictly LESS work than an agent call ──
@@ -239,9 +224,10 @@ async def test_reviewer_resolution_adds_no_io(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The role is a cached-singleton attribute read: the branch returns BEFORE
-    ``resolve_task_type`` (which reads the pinned run's meta/run.yaml from disk)
-    and before the mode lookup. Both seams are replaced with raisers, so any
-    reordering that reintroduces the I/O fails loudly rather than slowly."""
+    the mode lookup (there is no per-task resolution left to skip — S11b
+    deleted it outright). The mode-lookup seam is replaced with a raiser, so
+    any reordering that reintroduces that read fails loudly rather than
+    slowly."""
 
     class _Cfg:
         surface_role = "reviewer"
@@ -252,7 +238,6 @@ async def test_reviewer_resolution_adds_no_io(
 
     monkeypatch.setattr(f"{_MOD}.get_config", lambda: _Cfg(), raising=False)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _Cfg())
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", _boom)
     monkeypatch.setattr(f"{_MOD}._resolve_mode", _boom)
 
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_recall"), fastmcp_context=_FakeContext())
@@ -267,20 +252,23 @@ async def test_reviewer_marked_process_fails_closed_on_resolution_error(
 ) -> None:
     """A fault in the resolution path must not silently un-bound the lane.
 
-    The raiser here is the SESSION-ID lookup, i.e. a fault that happens before
-    any role decision could be made — the one shape that still reaches this
-    handler now that the role itself is read from the environment first. The
-    predicate that decides the posture reads ``os.environ`` directly, never the
-    config object that may have just failed. A bricked reviewer is a lost second
-    opinion; an un-bounded reviewer is an authorization bypass, so availability
-    loses to containment for a subordinate process and the PRD accepts
-    "the reviewer returns only denials".
+    The raiser here is the role predicate itself (``_is_reviewer_role``,
+    ``_resolve()``'s FIRST call) — the one seam still inside ``_resolve()``'s
+    try block for a reviewer-marked process, now that the role is decided
+    before any config or mode lookup. The except handler's OWN posture check
+    (``_env_marks_reviewer()``) reads ``TRW_SURFACE_ROLE`` straight from
+    ``os.environ`` — a separate reference never patched here — so it still
+    resolves fail-closed even though the primary predicate just raised. A
+    bricked reviewer is a lost second opinion; an un-bounded reviewer is an
+    authorization bypass, so availability loses to containment for a
+    subordinate process and the PRD accepts "the reviewer returns only
+    denials".
     """
 
-    def _raise(*_args: object, **_kwargs: object) -> str:
-        raise RuntimeError("session resolution is broken")
+    def _raise(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("role resolution is broken")
 
-    monkeypatch.setattr(f"{_MOD}.safe_session_id_from_context", _raise)
+    monkeypatch.setattr(f"{_MOD}._is_reviewer_role", _raise)
     monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
 
@@ -299,10 +287,10 @@ async def test_the_same_fault_without_the_env_marker_still_fails_open(
     """The fail-closed inversion is scoped to reviewer-marked processes and
     nothing else — the PRD-CORE-218 contract is unchanged for every session."""
 
-    def _raise(*_args: object, **_kwargs: object) -> str:
-        raise RuntimeError("session resolution is broken")
+    def _raise(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("role resolution is broken")
 
-    monkeypatch.setattr(f"{_MOD}.safe_session_id_from_context", _raise)
+    monkeypatch.setattr(f"{_MOD}._is_reviewer_role", _raise)
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
 
@@ -404,57 +392,47 @@ def test_the_env_marker_is_case_insensitive_and_ignores_a_bogus_value() -> None:
             os.environ["TRW_SURFACE_ROLE"] = before
 
 
-# ── NFR03 / OQ-003: the three retained telemetry appends stay unsuppressed ──
+# ── NFR03 superseded: PRD-CORE-300 slice S10a suppresses the retained write ──
 
 
-def test_no_suppression_branch_exists_for_the_retained_telemetry_appends() -> None:
-    """DECIDED (OQ-003, corrected by the round-2 audit's Row 6): only
-    ``trw_before_edit_hint`` and ``trw_codebase_risk_report`` carry an
-    emit_tool_call / emit_hint_delivered append -- both, per
-    ``channels/_distill_telemetry.py``'s own module docstring, write to the
-    SAME sink (``.trw/telemetry/channel-events.jsonl``). ``trw_before_edit_hint_batch``
-    was PREVIOUSLY (mis)claimed as a third retained writer here and in
-    NFR03/CHANGELOG; it has no emission seam at all (``before_edit_hint_batch.py``
-    imports neither ``emit_tool_call`` nor ``emit_hint_delivered``) -- the claim
-    was corrected to match reality rather than a seam being wired to match the
-    claim, since inventing a new write in a safety-critical reviewer-role PRD
-    needs its own reviewed design, not a same-PRD patch-up.
+def test_a_reviewer_role_conditional_now_suppresses_the_hint_telemetry_append() -> None:
+    """SUPERSEDES the prior OQ-003 decision (Row 6 corrected claim): the ONE
+    retained telemetry append (``emit_hint_delivered``, writing to
+    ``.trw/telemetry/channel-events.jsonl``) used to be deliberately
+    unsuppressed under the reviewer role, on the grounds that a local,
+    append-only diagnostic with no agent-authored content should not be
+    blinded.
 
-    These two are local, append-only diagnostics with no agent-authored
-    content and no shared-truth destination, and suppressing them would blind
-    the very telemetry that measures whether the bound works.
-
-    Asserted structurally because the append happens INSIDE the tool, where the
-    middleware never reaches: the failure mode this guards is someone adding a
-    role-conditional there, which no middleware-level behavioural test can see.
+    PRD-CORE-300 slice S10a reverses that decision for ``trw_code``: both
+    ``compute_before_edit_hint`` (``tools/_before_edit_hint_core.py``) and its
+    caller (``tools/code.py``) now gate on ``reviewer_role_active()`` and skip
+    the append, the exposure write, and the transition-nudge selector
+    entirely — see test_reviewer_surface_purity.py's byte-identical-tree
+    sweep, which has no allowlist left to name. Asserted structurally because
+    the append happens INSIDE the tool, where the middleware never reaches.
     """
     src = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
-    modules = [
-        src / "tools" / "_before_edit_hint_core.py",
-        src / "tools" / "codebase_risk_report.py",
-        src / "channels" / "_distill_telemetry.py",
-    ]
-    for module in modules:
-        text = module.read_text(encoding="utf-8")
-        assert "surface_role" not in text, f"{module.name} gained a role-conditional"
-        assert "REVIEWER_TOOLS" not in text, f"{module.name} gained a role-conditional"
-        assert "TRW_SURFACE_ROLE" not in text, f"{module.name} gained a role-conditional"
-    # Non-vacuity: the emit seams these modules must keep are actually there.
-    assert "emit_hint_delivered" in modules[0].read_text(encoding="utf-8")
-    assert "emit_tool_call" in modules[1].read_text(encoding="utf-8")
+    core = src / "tools" / "_before_edit_hint_core.py"
+    code_tool = src / "tools" / "code.py"
+
+    core_text = core.read_text(encoding="utf-8")
+    code_text = code_tool.read_text(encoding="utf-8")
+    assert "reviewer_role_active" in core_text, "compute_before_edit_hint lost its reviewer gate"
+    assert "reviewer_role_active" in code_text, "tools/code.py lost its reviewer gate"
+    # Non-vacuity: the emit seam these gates guard is actually still there.
+    assert "emit_hint_delivered" in core_text
+    assert "emit_tool_call" in code_text
 
 
-async def test_a_reviewer_call_to_a_telemetry_emitting_tool_still_executes(
+async def test_a_reviewer_call_to_trw_code_still_executes_but_writes_nothing(
     middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The middleware half of the same decision: all three remain callable
-    under the reviewer role (proving the surface never blocks them), though
-    only ``trw_before_edit_hint`` and ``trw_codebase_risk_report`` actually
-    carry a telemetry append -- see the corrected claim above."""
+    """The middleware half of the same decision: ``trw_code`` remains callable
+    under the reviewer role (the surface never blocks it) -- the write
+    suppression above is the TOOL's own decision, not a middleware denial."""
     _reviewer(monkeypatch)
-    for tool_name in ("trw_before_edit_hint", "trw_before_edit_hint_batch", "trw_codebase_risk_report"):
-        ctx = _FakeMiddlewareContext(message=_FakeMessage(tool_name), fastmcp_context=_FakeContext())
-        assert await middleware.on_call_tool(ctx, _execute) is _EXECUTED, tool_name  # type: ignore[arg-type]
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_code"), fastmcp_context=_FakeContext())
+    assert await middleware.on_call_tool(ctx, _execute) is _EXECUTED  # type: ignore[arg-type]
 
 
 # ── FR14: the env declaration is authoritative, and sufficient on its own ──
@@ -475,7 +453,6 @@ async def test_the_env_marker_alone_bounds_a_session_with_a_hostile_config(
 
     monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _HostileCfg())
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: "coding")
 
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
     denied = await middleware.on_call_tool(ctx, _execute)  # type: ignore[arg-type]
@@ -505,7 +482,6 @@ async def test_the_same_hostile_config_without_the_env_marker_is_an_ordinary_ses
 
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _HostileCfg())
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: "coding")
 
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
 

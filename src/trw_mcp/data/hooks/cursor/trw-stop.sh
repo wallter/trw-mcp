@@ -14,6 +14,14 @@ set -euo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _LOG_DIR="${CURSOR_PROJECT_DIR:-${PWD}}/.trw/logs"
 _LOG_FILE="${_LOG_DIR}/cursor-hooks.jsonl"
+# PRD-SEC/RC8: refuse to log through a symlinked .trw, .trw/logs, or log
+# file -- a crafted checkout must not be able to redirect this append at an
+# arbitrary target the user can write. Logging is best-effort (never blocks
+# the gate this hook may also be deciding), so the fix is to silently drop
+# the log line, not to abort.
+if [ -L "${_LOG_DIR%/logs}" ] || [ -L "$_LOG_DIR" ] || [ -L "$_LOG_FILE" ]; then
+    _LOG_FILE="/dev/null"
+fi
 mkdir -p "${_LOG_DIR}" 2>/dev/null || true
 
 # Read stdin once and tee to two consumers: the observability log AND the

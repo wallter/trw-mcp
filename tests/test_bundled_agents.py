@@ -103,6 +103,34 @@ class TestAgentDefinitions:
         assert "Edit" in tools, "trw-implementer: Edit must be in tools"
         assert "Write" in tools, "trw-implementer: Write must be in tools"
 
+    @pytest.mark.parametrize("agent_name", ["trw-implementer.md", "trw-prd-groomer.md"])
+    def test_implementer_and_groomer_list_trw_assess(self, agents_dir: Path, agent_name: str) -> None:
+        """W19/OD7: dispatched implementer and groomer surfaces list trw_assess.
+
+        Static bundled tool lists (no per-flag rendering, verified against
+        ``agent_frontmatter.py``/``tier_resolver.py``) -- the grant name is present
+        unconditionally, and the tool itself refuses the call with
+        ``{"status": "disabled"}`` server-side when ``assess_enabled`` is off
+        (``tools/assess.py``), so listing it here never bypasses the flag.
+        """
+        import yaml
+
+        content = (agents_dir / agent_name).read_text(encoding="utf-8")
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        tools = meta.get("tools", [])
+        assert "mcp__trw__trw_assess" in tools, f"{agent_name}: mcp__trw__trw_assess must be in tools"
+
+    def test_reviewer_does_not_list_trw_assess(self, agents_dir: Path) -> None:
+        """OD7: the reviewer bound stays unchanged -- no assess egress from a read-only lane."""
+        import yaml
+
+        content = (agents_dir / "trw-reviewer.md").read_text(encoding="utf-8")
+        _, frontmatter, _ = content.split("---", 2)
+        meta = yaml.safe_load(frontmatter)
+        tools = meta.get("tools", [])
+        assert "mcp__trw__trw_assess" not in tools, "trw-reviewer: trw_assess must stay out of the reviewer bound"
+
     @pytest.mark.parametrize(
         "agent_name",
         [

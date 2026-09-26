@@ -31,12 +31,12 @@ import structlog
 
 from trw_mcp.dispatch._capability import unadvertised_flags
 from trw_mcp.dispatch._child_marker import dispatched_child_active
-from trw_mcp.dispatch._client_specs import CLIENT_SPECS, client_spec_for
+from trw_mcp.dispatch._client_specs import client_spec_for
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._env import build_subprocess_env
 from trw_mcp.dispatch._host_confinement import _confinement_for, _needs_host_confinement, _read_only_enforced
 from trw_mcp.dispatch._isolated import IsolationFailedError, run_isolated
-from trw_mcp.dispatch._normalize import classify_silence, normalize_output
+from trw_mcp.dispatch._normalize import classify_silence, normalize_output, turn_cap_next_read
 from trw_mcp.dispatch._posture import (
     ISOLATED_REVIEW_POSTURE,
     ReviewerPostureError,
@@ -77,22 +77,6 @@ def _cap_output(text: str) -> str:
         return text
     dropped = len(text) - _MAX_OUTPUT_CHARS
     return text[:_MAX_OUTPUT_CHARS] + f"\n…[truncated {dropped} chars]"
-
-
-def _turn_cap_next_read(req: DispatchRequest, stderr: str) -> str:
-    """A pointer to the rest of the work when the turn cap stopped the child (PRD-CORE-290-FR04).
-
-    Only the client's own measured exhaustion text counts; an ordinary failure is
-    never relabelled. The partial transcript is kept whole in ``raw_stdout``.
-    """
-    spec = CLIENT_SPECS.get(req.client)
-    marker = spec.max_turns_exhausted_marker if spec is not None else None
-    if req.max_turns is None or not marker or marker not in stderr:
-        return ""
-    return (
-        f"incomplete: the {req.max_turns}-turn cap stopped the child. The partial transcript is whole in "
-        "raw_stdout (verbose=True); raise dispatch_default_max_turns to let the work finish."
-    )
 
 
 def _kill_tree(proc: subprocess.Popen[str], identity: dict[str, str | int] | None = None) -> None:
@@ -423,8 +407,9 @@ def dispatch(
         # stdout and proc.stderr is empty, so the stderr rules would inspect
         # nothing. Hand the merged stream over for that launch shape alone.
         merged_stderr=raw_stdout if req.use_pty else "",
+        prompt=req.prompt,
     )
-    next_read = _turn_cap_next_read(req, raw_stderr if not req.use_pty else raw_stdout)
+    next_read = turn_cap_next_read(req, raw_stderr if not req.use_pty else raw_stdout)
     if next_read:
         silence_reason = "turn_cap_reached"
 

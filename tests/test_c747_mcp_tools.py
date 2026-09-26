@@ -1,4 +1,11 @@
-"""Tests for c747 batch + risk-report MCP tools (PRD-DIST-1989, PRD-DIST-1990)."""
+"""Tests for c747 risk-report MCP tools (PRD-DIST-1990).
+
+The before-edit-hint-batch tool (PRD-DIST-1989) was deleted whole under
+PRD-CORE-300: ``compute_before_edit_hint_batch``, ``BeforeYouEditBatchPayload``
+and ``BeforeEditHintBatchResult`` no longer exist. ``trw_code(mode="hint")``
+retains a per-file batch-artifact FALLBACK (see test_before_edit_hint_tool.py
+TestBatchArtifactFallback) but there is no whole-sidecar batch dump anymore.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +18,6 @@ import pytest
 
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools._sidecar_substrate import SCHEMA_VERSION_ACCEPTED
-from trw_mcp.tools.before_edit_hint_batch import (
-    BeforeEditHintBatchResult,
-    BeforeYouEditBatchPayload,
-    compute_before_edit_hint_batch,
-)
 from trw_mcp.tools.codebase_risk_report import (
     CodebaseRiskReportResult,
     FileRiskScorePayload,
@@ -63,96 +65,6 @@ def _write_envelope(path: Path, sha: str, payload) -> None:
         "payload": payload,
     }
     path.write_text(json.dumps(envelope))
-
-
-class TestBatchTool:
-    def test_no_repo_root(self) -> None:
-        r = compute_before_edit_hint_batch(repo_root="/nonexistent/path")
-        # Path exists check is _explicit arg_ so will treat as repo root and try git
-        # In tests, fall through to no_git_sha
-        assert r.tier == "free"
-        assert r.distill_status in ("no_git_sha", "tier_required")
-
-    def test_free_tier_blocked(self, tmp_path: Path) -> None:
-        _make_git_repo(tmp_path)
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
-        assert r.tier == "free"
-        assert r.distill_status == "tier_required"
-
-    def test_pro_no_sidecar(self, tmp_path: Path) -> None:
-        _make_git_repo(tmp_path)
-        _write_entitlement(tmp_path / ".trw", "pro")
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
-        assert r.tier == "pro"
-        assert r.distill_status == "sidecar_missing"
-        assert "before-edit" in (r.distill_action or "")
-        assert "files-from" in (r.distill_action or "")
-
-    def test_pro_with_sidecar_happy(self, tmp_path: Path) -> None:
-        sha = _make_git_repo(tmp_path)
-        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
-        _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json",
-            sha,
-            {
-                "total_files": 2,
-                "files_in_map": 2,
-                "total_hotspot_warnings": 1,
-                "hints": [
-                    {
-                        "target_path": "foo.py",
-                        "target_exists_in_map": True,
-                        "importers": [],
-                        "inferred_tests": [],
-                        "doc_references": [],
-                        "co_change_neighbors": [],
-                        "hotspot_warnings": ["warn"],
-                        "risk_score": 0.3,
-                    },
-                    {
-                        "target_path": "bar.py",
-                        "target_exists_in_map": True,
-                        "importers": ["foo.py"],
-                        "inferred_tests": [],
-                        "doc_references": [],
-                        "co_change_neighbors": [],
-                        "hotspot_warnings": [],
-                        "risk_score": 0.1,
-                    },
-                ],
-            },
-        )
-        _write_entitlement(tmp_path / ".trw", "pro")
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
-        assert r.distill_status == "hint_available"
-        assert r.distill_batch is not None
-        assert r.distill_batch.total_files == 2
-        assert len(r.distill_batch.hints) == 2
-
-    def test_pro_with_stale_sidecar(self, tmp_path: Path) -> None:
-        sha = _make_git_repo(tmp_path)
-        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
-        _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json",
-            "0" * 40,
-            {"total_files": 0, "files_in_map": 0, "total_hotspot_warnings": 0, "hints": []},
-        )
-        _write_entitlement(tmp_path / ".trw", "pro")
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
-        assert r.distill_status == "stale_sha"
-
-    def test_pro_with_malformed_payload(self, tmp_path: Path) -> None:
-        sha = _make_git_repo(tmp_path)
-        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
-        # Payload missing required fields
-        _write_envelope(
-            cache_dir / f"before-edit-batch-{sha}.json",
-            sha,
-            {"total_files": 1, "unexpected": "boom"},
-        )
-        _write_entitlement(tmp_path / ".trw", "pro")
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
-        assert r.distill_status == "sidecar_malformed"
 
 
 class TestRiskReportTool:
@@ -295,11 +207,6 @@ class TestRiskReportTool:
 
 
 class TestModelContracts:
-    def test_batch_result_frozen(self) -> None:
-        r = BeforeEditHintBatchResult(tier="free")
-        with pytest.raises(Exception):
-            r.tier = "pro"  # type: ignore[misc]
-
     def test_risk_report_result_frozen(self) -> None:
         r = CodebaseRiskReportResult(tier="free")
         with pytest.raises(Exception):
@@ -318,11 +225,3 @@ class TestModelContracts:
                 size_score=0.5,
                 unknown_field="boom",
             )
-
-    def test_batch_payload_defaults(self) -> None:
-        b = BeforeYouEditBatchPayload(
-            total_files=0,
-            files_in_map=0,
-            total_hotspot_warnings=0,
-        )
-        assert b.hints == []

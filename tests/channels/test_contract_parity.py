@@ -3,7 +3,7 @@
 PRD-DIST-2405 FR03/FR04 (audit P0-11).
 
 Verifies that the ``BeforeYouEditHintPayload`` Pydantic mirror in
-``before_edit_hint.py`` remains compatible with the pinned sidecar
+``_before_edit_hint_core.py`` remains compatible with the pinned sidecar
 fixture at ``tests/fixtures/sample_sidecar_v0.json``.
 
 The test FAILS if:
@@ -49,7 +49,7 @@ def test_sidecar_fixture_parses_via_payload_model() -> None:
     new required field without updating the mirror here, this test fails
     with ValidationError.
     """
-    from trw_mcp.tools.before_edit_hint import BeforeYouEditHintPayload
+    from trw_mcp.tools._before_edit_hint_core import BeforeYouEditHintPayload
 
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -73,7 +73,7 @@ def test_sidecar_fixture_parses_via_payload_model() -> None:
 
 def test_fixture_required_fields_present() -> None:
     """All required BeforeYouEditHintPayload fields are present in fixture payload."""
-    from trw_mcp.tools.before_edit_hint import BeforeYouEditHintPayload
+    from trw_mcp.tools._before_edit_hint_core import BeforeYouEditHintPayload
 
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     payload_dict = data["payload"]
@@ -96,7 +96,7 @@ def test_fixture_schema_mismatch_raises_validation_error() -> None:
     Confirms the test is correctly catching schema drift. The model uses
     extra='forbid', so unknown fields raise a ValidationError.
     """
-    from trw_mcp.tools.before_edit_hint import BeforeYouEditHintPayload
+    from trw_mcp.tools._before_edit_hint_core import BeforeYouEditHintPayload
 
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     payload_dict = dict(data["payload"])
@@ -107,8 +107,8 @@ def test_fixture_schema_mismatch_raises_validation_error() -> None:
 
 
 def test_compute_before_edit_hint_importable() -> None:
-    """compute_before_edit_hint is importable from trw_mcp.tools.before_edit_hint."""
-    from trw_mcp.tools.before_edit_hint import compute_before_edit_hint
+    """compute_before_edit_hint is importable from trw_mcp.tools._before_edit_hint_core."""
+    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
 
     assert callable(compute_before_edit_hint)
     # Verify it has a docstring (FR01)

@@ -223,7 +223,7 @@ def test_cursor_rules_mdc_cursor_ide_includes_appendix(tmp_path: Path) -> None:
     assert "Follow the TRW ceremony protocol" in content
     assert "Planning" in content
     assert "Plan Mode" in content
-    assert "trw_pre_compact_checkpoint" in content
+    assert "trw_checkpoint(pre_compact=True)" in content
 
 
 @pytest.mark.integration

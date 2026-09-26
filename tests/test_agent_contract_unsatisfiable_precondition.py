@@ -37,7 +37,7 @@ if not SCRIPT.is_file():
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in mirror)", allow_module_level=True)
 
 RULE = "cap-unsatisfiable-precondition"
-KNOWN = {"trw_checkpoint", "trw_learn", "trw_init", "trw_adopt_run", "trw_session_start"}
+KNOWN = {"trw_checkpoint", "trw_learn", "trw_init", "trw_session_start"}
 
 AGENT_TEMPLATE = """---
 name: synthetic-agent
@@ -99,7 +99,7 @@ def test_documented_run_path_remedy_clears_the_violation(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provider", ["trw_init", "trw_adopt_run", "trw_session_start"])
+@pytest.mark.parametrize("provider", ["trw_init", "trw_session_start"])
 def test_holding_any_run_provider_clears_the_violation(tmp_path: Path, provider: str) -> None:
     """Any tool that can establish a run satisfies the precondition."""
     module = _module()

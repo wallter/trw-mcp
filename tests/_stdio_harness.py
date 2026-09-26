@@ -173,7 +173,22 @@ def pid_is_live(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    return True
+    return not _is_zombie(pid)
+
+
+def _is_zombie(pid: int) -> bool:
+    """Whether *pid* has exited but was never reaped (Linux ``/proc`` state ``Z``).
+
+    An orphan is reparented to the nearest subreaper or pid 1. In a container
+    whose pid 1 is ``sleep infinity`` (the release check's Linux leg) nothing
+    reaps it, so an exited orphan stays a zombie that still answers signal 0.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:  # trw-fail-silent-allow: no /proc (macOS) or the pid is gone; neither is a zombie
+        return False
+    # The comm field is parenthesised and may hold spaces; the state follows the last ')'.
+    return stat.rpartition(")")[2].split()[:1] == ["Z"]
 
 
 class StdioServerHarness:

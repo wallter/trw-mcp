@@ -7,16 +7,17 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from trw_mcp.code_index.update import update_code_index
-from trw_mcp.tools.code_search import register_code_search_tools, trw_code_search, trw_code_symbol
+from trw_mcp.tools.code import register_code_tools
+from trw_mcp.tools.code_search import code_search, code_symbol
 
 
-def test_trw_code_search_returns_structured_failure_for_missing_index(tmp_path: Path) -> None:
+def test_trw_code_search_returns_structured_failure_for_index_missing(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def hidden() -> str:\n    return 'secret'\n", encoding="utf-8")
 
-    result = trw_code_search(repo_root=str(tmp_path), query="hidden", top_k=10)
+    result = code_search(repo_root=str(tmp_path), query="hidden", top_k=10)
 
     assert result["status"] == "failed"
-    assert result["error_code"] == "missing_index"
+    assert result["error_code"] == "index_missing"
     assert "results" in result
     assert result["results"] == []
     assert "secret" not in str(result)
@@ -27,7 +28,7 @@ def test_trw_code_search_returns_ranked_capped_snippets_after_index(tmp_path: Pa
     (tmp_path / "app.py").write_text(body, encoding="utf-8")
     update_code_index(tmp_path)
 
-    result = trw_code_search(repo_root=str(tmp_path), query="bounded snippet", top_k=3)
+    result = code_search(repo_root=str(tmp_path), query="bounded snippet", top_k=3)
 
     assert result["status"] == "ok"
     assert result["results"][0]["path"] == "app.py"
@@ -40,7 +41,7 @@ def test_trw_code_search_returns_ranked_capped_snippets_after_index(tmp_path: Pa
 def test_trw_code_search_rejects_unsafe_path_filters(tmp_path: Path) -> None:
     update_code_index(tmp_path)
 
-    result = trw_code_search(repo_root=str(tmp_path), query="anything", path="../outside.py")
+    result = code_search(repo_root=str(tmp_path), query="anything", path="../outside.py")
 
     assert result["status"] == "failed"
     assert result["error_code"] == "invalid_path"
@@ -52,7 +53,7 @@ def test_trw_code_symbol_returns_exact_match_with_disambiguating_location(tmp_pa
     (tmp_path / "pkg" / "two.py").write_text("def duplicate_more() -> str:\n    return 'two'\n", encoding="utf-8")
     update_code_index(tmp_path)
 
-    result = trw_code_symbol(repo_root=str(tmp_path), symbol="duplicate", top_k=5)
+    result = code_symbol(repo_root=str(tmp_path), query="duplicate", top_k=5)
 
     assert result["status"] == "ok"
     assert result["results"][0]["symbol"] == {"name": "duplicate", "kind": "function"}
@@ -63,36 +64,55 @@ def test_trw_code_symbol_returns_exact_match_with_disambiguating_location(tmp_pa
 def _call_registered_search(**arguments: object) -> object:
     """Drive the REGISTERED MCP tool, so the assertion is about the wire schema.
 
-    Calling ``trw_code_search`` directly would only prove Python's own signature
+    Calling ``code_search`` directly would only prove Python's own signature
     binding. The thing UF-031 was about is what an MCP client may send.
     """
     server = FastMCP("code-search-test")
-    register_code_search_tools(server)
+    register_code_tools(server)
 
     async def _run() -> object:
         async with Client(server) as client:
-            return await client.call_tool("trw_code_search", arguments)
+            return await client.call_tool("trw_code", arguments)
 
     return asyncio.run(_run())
 
 
-def test_semantic_mode_is_rejected_by_the_tools_input_schema(tmp_path: Path) -> None:
+def test_semantic_mode_returns_a_failed_status_not_a_ranking(tmp_path: Path) -> None:
     """UF-031: ``mode="semantic"`` used to be accepted and return an empty result.
 
     It was a member of a public ``Literal``, so it validated, dispatched, and
     answered ``dependency_missing`` forever -- registered, reachable, and
-    structurally incapable of ranking anything. 2.0.0 removes the parameter
-    outright, and the tool's schema (``additionalProperties: false``) now REFUSES
-    the argument instead of honouring a mode that cannot work.
+    structurally incapable of ranking anything. 2.0.0 removes the mode
+    outright; ``trw_code`` now takes a plain ``mode: str`` and its dispatch
+    branch (``mode in ("search", "symbol")`` / ``mode == "hint"`` / else)
+    refuses any other value with ``status: "failed"`` rather than raising, so
+    the check moves from "the schema rejects this argument" to "the tool
+    reports failure instead of a ranking".
     """
     update_code_index(tmp_path)
 
-    with pytest.raises(Exception, match="mode"):
-        _call_registered_search(repo_root=str(tmp_path), query="anything", mode="semantic")
+    result = _call_registered_search(repo_root=str(tmp_path), query="anything", mode="semantic")
+    payload = result.structured_content if hasattr(result, "structured_content") else result
+    assert payload["status"] == "failed"
 
-    # Non-vacuity: the same call without ``mode`` is accepted, so the failure
-    # above is about the retired argument and not about the harness.
-    assert _call_registered_search(repo_root=str(tmp_path), query="anything") is not None
+    # Non-vacuity: the same call with a real mode succeeds, so the failure
+    # above is about the retired mode and not about the harness.
+    ok_result = _call_registered_search(repo_root=str(tmp_path), query="anything", mode="search")
+    ok_payload = ok_result.structured_content if hasattr(ok_result, "structured_content") else ok_result
+    assert ok_payload["status"] == "ok"
+
+
+def test_unknown_argument_is_still_rejected_by_the_tools_input_schema(tmp_path: Path) -> None:
+    """The input schema still refuses arguments ``trw_code`` never declared.
+
+    ``mode`` demotion from a closed ``Literal`` to a plain ``str`` only widens
+    what *mode itself* accepts (see the test above); it does not widen the
+    schema to accept unrelated keys.
+    """
+    update_code_index(tmp_path)
+
+    with pytest.raises(Exception, match=r"unexpected_kwarg|Unexpected|additional"):
+        _call_registered_search(repo_root=str(tmp_path), query="anything", unexpected_kwarg="boom")
 
 
 def test_search_mode_vocabulary_no_longer_admits_semantic() -> None:
@@ -117,9 +137,9 @@ def test_trw_code_search_skill_has_valid_frontmatter_and_usage_text() -> None:
 
     assert content.startswith("---\n")
     assert "name: trw-code-search" in content
-    assert "trw_code_index_update" in content
-    assert "trw_code_search" in content
-    assert "trw_code_symbol" in content
+    assert "trw-mcp code index" in content
+    assert 'trw_code(mode="search"' in content
+    assert 'trw_code(mode="symbol"' in content
 
     # This used to assert the skill contained the literal
     # `pytest tests/test_code_chunking.py`. The skill was deliberately rewritten to

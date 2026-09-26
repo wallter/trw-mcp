@@ -42,7 +42,7 @@ Checkpoint the accepted plan before mutation when a run is active.
 - Apply consolidations in a recoverable order: update/create the survivor, verify it, then obsolete duplicates.
 - Re-read an entry immediately before mutation so a stale plan does not overwrite concurrent changes.
 
-`trw_instructions_sync` is not a memory-index refresh and does not place the optimized learning set into client instructions. Do not call it for that purpose. Learnings surface through `trw_session_start` and `trw_recall`.
+`trw-mcp instructions sync` is not a memory-index refresh and does not place the optimized learning set into client instructions. Do not run it for that purpose. Learnings surface through `trw_session_start` and `trw_recall`.
 
 ## 4. Verify
 

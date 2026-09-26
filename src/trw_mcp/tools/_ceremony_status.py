@@ -13,20 +13,14 @@ from trw_mcp.state._ceremony_progress_state import NudgeContext
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.ceremony_progress import CeremonyState, read_ceremony_state
 from trw_mcp.tools._ceremony_status_helpers import (
-    _cached_bandit_weight as _cached_bandit_weight,
     _candidate_domains as _candidate_domains,
-    _coerce_float as _coerce_float,
     _emit_nudge_surface_event as _emit_nudge_surface_event,
     _contextualize_candidates as _contextualize_candidates,
     _ContextualSelector as _ContextualSelector,
     _deterministic_fallback_text as _deterministic_fallback_text,
-    _domain_match_score as _domain_match_score,
-    _has_cached_learning_weights as _has_cached_learning_weights,
     _matches_inferred_domains as _matches_inferred_domains,
     _normalize_inferred_domains as _normalize_inferred_domains,
     _normalized_modified_files as _normalized_modified_files,
-    _phase_match_score as _phase_match_score,
-    _select_cached_or_deterministic_learning as _select_cached_or_deterministic_learning,
     _select_deterministic_fallback_learning as _select_deterministic_fallback_learning,
     _synthetic_nudge_learning_id as _synthetic_nudge_learning_id,
 )

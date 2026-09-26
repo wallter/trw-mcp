@@ -52,30 +52,25 @@ REQUIRED_OUTPUT_CONTRACT: frozenset[str] = frozenset(
         "trw_learn",
         "trw_init",
         "trw_status",
-        "trw_prd_create",
         "trw_prd_validate",
         "trw_review",
-        "trw_heartbeat",
-        "trw_adopt_run",
         # trw_knowledge_sync / trw_ceremony_* removed by PRD-FIX-076.
-        "trw_instructions_sync",
-        "trw_claude_md_sync",
+        # The former heartbeat / pre-compact-checkpoint tools folded into
+        # trw_checkpoint's modes by PRD-CORE-300 S6a (trw_checkpoint above
+        # already carries the required output contract); run-adoption and
+        # instructions-sync folded into CLI verbs by S6b.
         "trw_learn_update",
-        "trw_pre_compact_checkpoint",
         # Added once each was given a served contract above its Args: block.
         # They are not core-preset tools, so nothing else would have guarded
         # them and all six had shipped with no output contract at the wire.
+        # A sibling entry moved to `trw-mcp telemetry channel-stats`
+        # (PRD-CORE-300 slice S3a) and left this set with it.
         "trw_dispatch",
-        "trw_dispatch_status",
-        "trw_channel_stats",
-        "trw_code_index_update",
-        "trw_agent_work_evidence",
-        "trw_validate_agent_work_evidence",
     }
 )
 
 #: The default client-facing preset. Every tool an agent sees by default owes
-#: it an output contract — trw_skill_discovery and trw_profile_explain were
+#: it an output contract — two since-deleted meta tools were once
 #: outside REQUIRED_OUTPUT_CONTRACT and had lost theirs entirely, which the
 #: served-description regression test could not see because it only checks the
 #: required set. Unioned rather than listed twice so the two cannot drift.
@@ -90,9 +85,7 @@ CORE_PRESET: frozenset[str] = frozenset(
         "trw_build_check",
         "trw_review",
         "trw_deliver",
-        "trw_profile_explain",
-        "trw_skill_discovery",
-        "trw_request_tool_access",
+        "trw_prd_validate",
     }
 )
 
@@ -102,10 +95,12 @@ OUTPUT_CONTRACT_REQUIRED: frozenset[str] = REQUIRED_OUTPUT_CONTRACT | CORE_PRESE
 # inline justification comment describing why this exception exists.
 # Grandfather exemptions from the `Use when` floor.
 #
-# EMPTIED 2026-07-28. The three Sprint-96 entries (trw_mcp_security_status,
-# trw_query_events, trw_surface_diff) all satisfy the floor now — each gained a
-# `Use when` clause when the tool descriptions were audited for retrieval
-# quality. They sat here as dead exemptions with nothing to report them, which
+# EMPTIED 2026-07-28. The three Sprint-96 entries (the query-events,
+# surface-diff and security-status tools — all three later moved to
+# `trw-mcp telemetry` CLI verbs, PRD-CORE-300 slice S3a) all satisfied the
+# floor as of that date — each gained a `Use when` clause when the tool
+# descriptions were audited for retrieval quality. They sat here as dead
+# exemptions with nothing to report them, which
 # is the same shape as the grandfather lists this repo keeps finding: an
 # allowance outlives its reason, and the gate silently covers less than its
 # name claims.
@@ -287,13 +282,17 @@ async def test_output_contract_survives_to_the_served_description() -> None:
 
     SCOPE, STATED HONESTLY. This assertion covers exactly the names in
     ``OUTPUT_CONTRACT_REQUIRED`` that the server actually registers — nothing
-    wider. All eight of the originally-measured tools are now members:
-    ``trw_skill_discovery`` and ``trw_request_tool_access`` entered via the
-    core preset, and the remaining six (``trw_dispatch``,
-    ``trw_dispatch_status``, ``trw_channel_stats``, ``trw_code_index_update``,
-    ``trw_agent_work_evidence``, ``trw_validate_agent_work_evidence``) were
-    given served contracts and added to the required set. A tool outside that
-    set is still unguarded here; adding one is a one-line change.
+    wider. Of the eight originally-measured tools, two meta tools (since deleted
+    by PRD-CORE-300 S11b) entered via the core preset; five more
+    (``trw_dispatch``, a sibling channel-telemetry tool, and three dispatch
+    helpers that PRD-CORE-300 S7 folded into ``trw_dispatch`` modes) were given
+    served contracts and added to the required set. Two of those eight later
+    left the registered surface entirely: the former code-index-build MCP tool
+    under PRD-CORE-300 slice S4 (moved to the ``trw-mcp code index`` CLI), and
+    the sibling channel-telemetry tool under slice S3a (moved to
+    ``trw-mcp telemetry channel-stats``) — neither is a member here any
+    longer. A tool outside this set is still unguarded here; adding one is a
+    one-line change.
 
     Two earlier drafts of this docstring were wrong in opposite directions —
     one claimed all eight were covered when two were, the next was left saying

@@ -10,6 +10,10 @@ from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -34,7 +38,7 @@ class TestSweepsDeleteOnlyInstallerOwnedFiles:
         gated.parent.mkdir(parents=True, exist_ok=True)
         gated.write_text("---\nname: trw-distill-explorer\n---\nteammate's copy\n", encoding="utf-8")
         _git(tmp_path, "add", "-A")
-        _git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local artifacts")
+        _git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", *_NO_HOOKS, "commit", "-qm", "local artifacts")
 
         result = update_project(tmp_path)
 

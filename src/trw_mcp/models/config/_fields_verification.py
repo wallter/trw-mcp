@@ -26,7 +26,7 @@ class _VerificationFields:
 
     # -- FR01: T2 hint sidecar generation + delivery measurement -----------
     #: Master switch for the post-commit sidecar refresh. Turning this off is
-    #: the FR01 rollback path (§9): trw_before_edit_hint degrades to its
+    #: the FR01 rollback path (§9): trw_code's hint mode degrades to its
     #: existing T1/T0 behavior with no code change.
     hint_sidecar_refresh_enabled: bool = True
 

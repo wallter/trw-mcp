@@ -185,47 +185,24 @@ class TierManager:
     # Warm Tier — FR02
     # -----------------------------------------------------------------------
 
-    def _get_warm_db_path(self) -> Path:
-        """Resolve path to warm.db (sibling to vectors.db in .trw/memory/)."""
-        mem_dir = self._trw_dir / "memory"
-        mem_dir.mkdir(parents=True, exist_ok=True)
-        return mem_dir / "warm.db"
+    def warm_add(self, entry_id: str, entry_data: dict[str, object]) -> None:
+        """Insert or replace an entry in the warm tier's keyword sidecar.
 
-    def warm_add(
-        self,
-        entry_id: str,
-        entry_data: dict[str, object],
-        embedding: list[float] | None,
-    ) -> None:
-        """Insert or replace an entry in the warm sqlite-vec store.
-
-        When embedding is None or sqlite-vec is unavailable, stores entry
-        metadata in a fallback JSON sidecar for LIKE-based search.
+        trw-mcp keeps no vectors (PRD-CORE-302 FR05): dense search is the memory
+        daemon's, so the warm tier is the JSONL sidecar only.
 
         Args:
             entry_id: Learning entry identifier.
             entry_data: Dict of entry fields (from YAML).
-            embedding: Optional dense embedding vector.
         """
-        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
-
-        db_path = self._get_warm_db_path()
-
-        if MemoryStore.available() and embedding is not None:
-            store = get_memory_store(db_path)
-            if store.connected:
-                store.upsert(entry_id, embedding, {"source": "warm_tier"})
-                logger.debug("warm_tier_add", entry_id=entry_id, has_embedding=True)
-                return
-
-        # Fallback: write to a JSON sidecar for keyword search
         self._warm_sidecar_upsert(entry_id, entry_data)
-
-        logger.debug("warm_tier_add", entry_id=entry_id, has_embedding=embedding is not None)
+        logger.debug("warm_tier_add", entry_id=entry_id)
 
     def _warm_sidecar_path(self) -> Path:
         """Path to the warm tier keyword-search sidecar (JSONL)."""
-        return self._get_warm_db_path().with_suffix(".jsonl")
+        mem_dir = self._trw_dir / "memory"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        return mem_dir / "warm.jsonl"
 
     def _warm_sidecar_upsert(self, entry_id: str, entry_data: dict[str, object]) -> None:
         """Write entry metadata to the warm sidecar JSONL for keyword search."""
@@ -255,20 +232,11 @@ class TierManager:
         )
 
     def warm_remove(self, entry_id: str) -> None:
-        """Delete an entry from the warm sqlite-vec store and sidecar.
+        """Delete an entry from the warm tier's sidecar.
 
         Args:
             entry_id: Learning entry identifier to remove.
         """
-        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
-
-        db_path = self._get_warm_db_path()
-        if MemoryStore.available():
-            store = get_memory_store(db_path)
-            if store.connected:
-                store.delete(entry_id)
-
-        # Also purge from sidecar
         sidecar = self._warm_sidecar_path()
         if sidecar.exists():
             lines = []
@@ -286,37 +254,16 @@ class TierManager:
 
         logger.debug("warm_tier_remove", entry_id=entry_id)
 
-    def warm_search(
-        self,
-        query_tokens: list[str],
-        query_embedding: list[float] | None,
-        top_k: int = 25,
-    ) -> list[dict[str, object]]:
-        """Search the warm tier for relevant entries.
-
-        Performs dense vector search when embedding is available; falls back
-        to SQL LIKE keyword search over the sidecar when embedding is None
-        or sqlite-vec is unavailable.
+    def warm_search(self, query_tokens: list[str], top_k: int = 25) -> list[dict[str, object]]:
+        """Keyword-search the warm tier's sidecar.
 
         Args:
-            query_tokens: Tokenized query for keyword fallback.
-            query_embedding: Optional dense query vector.
+            query_tokens: Tokenized query.
             top_k: Maximum results to return.
 
         Returns:
             List of dicts with at minimum ``{"id": ..., "score": ...}``.
         """
-        from trw_mcp.state.memory_store import MemoryStore, get_memory_store
-
-        db_path = self._get_warm_db_path()
-
-        if MemoryStore.available() and query_embedding is not None:
-            store = get_memory_store(db_path)
-            if store.connected:
-                raw = store.search(query_embedding, top_k=top_k)
-                return [{"id": entry_id, "score": float(1.0 - dist)} for entry_id, dist in raw]
-
-        # Keyword LIKE fallback via sidecar
         return self._warm_keyword_search(query_tokens, top_k)
 
     def _warm_keyword_search(self, query_tokens: list[str], top_k: int) -> list[dict[str, object]]:
@@ -408,52 +355,6 @@ class TierManager:
                 exc_info=True,
             )
             raise
-
-    def cold_promote(self, entry_id: str) -> dict[str, object] | None:
-        """Move a cold-tier entry back to warm tier on access.
-
-        Locates the YAML in the cold archive by scanning for a file
-        containing the entry_id, copies it to the warm tier, updates
-        last_accessed_at, and removes it from the cold archive.
-
-        Args:
-            entry_id: Learning entry identifier to promote.
-
-        Returns:
-            Entry data dict if found and promoted, None otherwise.
-        """
-        cold_base = self._cold_dir()
-        if not cold_base.exists():
-            return None
-
-        for yaml_file in cold_base.rglob("*.yaml"):
-            try:
-                data = self._reader.read_yaml(yaml_file)
-            except Exception:  # justified: scan-resilience, one corrupt YAML must not abort cold-tier lookup
-                logger.warning("cold_tier_file_unreadable", path=str(yaml_file), exc_info=True)
-                continue
-            if str(data.get("id", "")) != entry_id:
-                continue
-
-            # Found — update last_accessed_at and move to warm
-            data["last_accessed_at"] = datetime.now(tz=timezone.utc).date().isoformat()
-            # Write back updated data before warm_add
-            try:
-                self._writer.write_yaml(yaml_file, data)
-                self.warm_add(entry_id, data, None)
-                yaml_file.unlink(missing_ok=True)
-                logger.debug("cold_promote", entry_id=entry_id, src=str(yaml_file))
-                return data
-            except (OSError, RuntimeError, ValueError, TypeError):
-                logger.warning(
-                    "cold_promote_failed",
-                    entry_id=entry_id,
-                    path=str(yaml_file),
-                    exc_info=True,
-                )
-                return None
-
-        return None
 
     def cold_search(self, query_tokens: list[str]) -> list[dict[str, object]]:
         """Linear scan of the cold archive for keyword matches.

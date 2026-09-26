@@ -478,8 +478,8 @@ def _existing_operation_refusal(result: ClaimResult, delivery_id: str) -> Delive
     if not terminal_success:
         message = (
             "delivery operation already exists and this process holds no resume grant; query "
-            "trw_delivery_status, then call trw_delivery_recover with action='resume' to finish "
-            "it under the same delivery_id instead of replaying effects"
+            "trw_status(delivery=...), then run `trw-mcp delivery recover --action resume` with its "
+            "resume_pid as --new-pid to finish it under the same delivery_id instead of replaying effects"
         )
         out["delivery_blocked"] = message
         out["errors"] = [message]

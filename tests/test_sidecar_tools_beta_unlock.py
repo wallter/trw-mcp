@@ -22,7 +22,6 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
-from trw_mcp.tools.before_edit_hint_batch import compute_before_edit_hint_batch
 from trw_mcp.tools.codebase_risk_report import compute_codebase_risk_report
 
 
@@ -40,11 +39,14 @@ def _write_entitlement(trw_dir: Path, tier: str) -> None:
 #
 # `entity_risk_map` was the third member until 2026-07-29, when UF-011 was
 # resolved by removing the tool: it consumed a sidecar no producer emits, so it
-# could never return data at any tier. The two that remain exercise the same
-# gate on the same path, so the beta-unlock property stays covered in both
-# directions.
+# could never return data at any tier. `before_edit_hint_batch` was the fourth
+# until PRD-CORE-300 deleted the whole-sidecar batch dump outright — its
+# successor, ``trw_code(mode="hint")``, requires ``file_path``/``files`` and so
+# is no longer reachable from ``repo_root`` alone, breaking this dict's uniform
+# shape. `codebase_risk_report` is the sole member left on this gate/path; the
+# beta-unlock property still needs at least one live case, so it stays covered
+# rather than the whole module being deleted.
 _UNIFORM_TOOLS = {
-    "before_edit_hint_batch": compute_before_edit_hint_batch,
     "codebase_risk_report": compute_codebase_risk_report,
 }
 

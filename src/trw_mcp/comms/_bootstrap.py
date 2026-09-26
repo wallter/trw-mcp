@@ -67,7 +67,7 @@ def bootstrap(action: str, ctx: Context | None, config: TRWConfig, *, cursor: st
     call_context = build_call_context(ctx)
     run_path = get_pinned_run(context=call_context)
     if run_path is None:
-        return _refused("no_pinned_run", "pin a run first: trw_init, or trw_adopt_run to resume one")
+        return _refused("no_pinned_run", "pin a run first: trw_init, or `trw-mcp run adopt` to resume one")
     root = bootstrap_root()
     try:
         if action == "announce":
@@ -228,7 +228,7 @@ def _discover(root: CoordinationRoot, ctx: Context | None, config: TRWConfig, *,
             result["next_cursor"] = None
         if remaining and not result["candidates"]:
             return _refused("response_too_large", "one candidate does not fit the configured response cap")
-    # Reserve framing/guidance room added by the public trw_peers adapter.
+    # Reserve framing/guidance room added by the public trw_inbox adapter.
     budget = max(0, config.comms_response_max_bytes - 1024)
     if not fits(result, budget):
         return _refused("response_too_large", "formation listing exceeds the configured response cap")

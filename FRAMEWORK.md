@@ -1,15 +1,15 @@
-v27.3_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v27.4_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
-Version date: 2026-09-23 | Model policy: capability-based, never provider-bound
+Version date: 2026-09-25 | Model policy: capability-based, never provider-bound
 
-> **v27.3 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 was a generation-integrity release: the compact core defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. It was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`. v27.1 and v27.2 moved the version stamp forward on that same generation with no obligation changed. The compact core/reference views have since been retired: this document is the single installed canon.
+> **v27.4 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 was a generation-integrity release: the compact core defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. It was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`. v27.1 and v27.2 moved the version stamp forward on that same generation with no obligation changed. The compact core/reference views have since been retired: this document is the single installed canon.
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v27.3_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
+**v27.4_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
 Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
 **Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`; (2) a durable acceptable-failure record naming the failed check, residual risk, owner, and expiry, passed through `allow_unverified=true` + `unverified_reason`; or (3) an authorized operator/config override recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.
@@ -214,7 +214,7 @@ Rigid obligations apply within scope; flexible tools MUST run when triggered. Ne
 
 **Flexible (triggered):**
 - `trw_checkpoint()` — at milestones and before risky context changes
-- `trw_pre_compact_checkpoint()` — when context compaction is imminent; persists a recovery directive the next `trw_session_start` surfaces for you to apply (admin-preset tool — when not exposed, fall back to `trw_checkpoint` with resume notes)
+- `trw_checkpoint(pre_compact=True, directive=..., context_anchor=...)` — when context compaction is imminent; persists a recovery directive the next `trw_session_start` surfaces for you to apply
 - `trw_learn()` — on non-obvious discoveries, gotchas, or validated patterns
 - `trw_learn(learning_id=...)` — when a prior learning is stale or wrong; correct it in place instead of stacking duplicates
 - `trw_recall(query)` — at start or before unfamiliar/high-risk areas; prefer narrow queries over wildcard dumps
@@ -296,18 +296,18 @@ The method is canonical; MCP is its preferred TRW realization. If MCP is unavail
 | `trw_learn(summary, detail, impact?)` | Any | SHOULD | Persist reusable discoveries |
 | `trw_learn(learning_id=...)` | Any | SHOULD | Correct or refresh a stale learning instead of duplicating it |
 | `trw_checkpoint(message?)` | Any | SHOULD | Atomic progress snapshot |
-| `trw_pre_compact_checkpoint()` | Any | SHOULD before compaction † | Persist a recovery directive surfaced by the next session start |
+| `trw_checkpoint(pre_compact=True)` | Any | SHOULD before compaction | Persist a recovery directive surfaced by the next session start |
 | `trw_init(task_name, prd_scope?)` | RESEARCH | TASK-DEPENDENT | Bootstrap a run; classifies the ceremony tier |
-| `trw_adopt_run(run_path)` | Any | HANDOFF † | Take ownership of an existing run (pipeline/map-reduce handoffs, session recovery) |
-| `trw_heartbeat()` | Any | PARALLEL † | Keep this session's run pin alive during long parallel work |
+| `trw-mcp run adopt --run-path=... --session-id=...` (CLI) | Any | HANDOFF † | Take ownership of an existing run (pipeline/map-reduce handoffs, session recovery) |
+| `trw_checkpoint(heartbeat=True)` | Any | PARALLEL | Keep this session's run pin alive during long parallel work |
 | `trw_status(run_path?)` | Any | SHOULD | Inspect run state and ceremony health |
-| `trw_prd_create(input_text)` | PLAN | TASK-DEPENDENT | Create PRD when feature work needs one |
+| `trw-mcp prd create --input-text ...` (CLI) | PLAN | TASK-DEPENDENT | Create PRD when feature work needs one |
 | `trw_prd_validate(prd_path)` | PLAN | TASK-DEPENDENT | Validate PRD structure/readiness |
 | `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` | VALIDATE | MUST after validation | Record the observed project-native build/test/type/lint/security outcome; does not run checks |
 | `trw_review()` | REVIEW | STANDARD+ | Record the review artifact (auto mode is a limited marker scan; manual/no-arg pass is not substantive evidence; pair with an independent reviewer) |
-| `trw_instructions_sync()` | DELIVER | SHOULD † | Refresh the client instruction file (also called automatically inside trw_deliver) |
+| `trw-mcp instructions sync` (CLI) | DELIVER | SHOULD † | Refresh the client instruction file (also called automatically inside trw_deliver) |
 
-† Admin-preset tools: light-client profiles expose a reduced `standard` preset that omits these — when a tool is not exposed, use the fallback (`trw_checkpoint` for compaction recovery; `trw_deliver` covers instruction sync) and record the gap. The live tool surface is larger still (security, observability, code-intelligence); discover it through the client's tool list. Fewer tool definitions consume less context and can improve tool selection accuracy — reduced presets are deliberate.
+† Admin-preset tools: light-client profiles expose a reduced `standard` preset that omits these — when a tool is not exposed, use the fallback (`trw_deliver` covers instruction sync) and record the gap. The live tool surface is larger still (security, observability, code-intelligence); discover it through the client's tool list. Fewer tool definitions consume less context and can improve tool selection accuracy — reduced presets are deliberate.
 
 Lifecycle: `trw_session_start → research/plan as needed → implement + checkpoint/learn → validate with project-native checks + trw_build_check → review when needed → trw_deliver`.
 
@@ -405,7 +405,7 @@ File ownership rules for delegated write work:
 - Delegates MUST report changed paths, validation run, and unresolved risks.
 - ORC integrates, verifies, and owns the final result.
 
-Ceremony lifecycle under delegation: each session/connection gets its own run pin — a delegate that needs the parent's run adopts it explicitly (`trw_adopt_run`); long-lived parallel sessions keep pins alive with `trw_heartbeat`. Hand delegates condensed briefs (goal, constraints, output contract, paths to inspect — roughly a few hundred to 2k tokens), never full transcripts: focused context outperforms inherited context, and a reviewer fed a raw trajectory inherits its drift — reviewers get structured summaries plus the diff, not the producer's transcript.
+Ceremony lifecycle under delegation: each session/connection gets its own run pin — a delegate that needs the parent's run adopts it explicitly (`trw-mcp run adopt`); long-lived parallel sessions keep pins alive with `trw_checkpoint(heartbeat=True)`. Hand delegates condensed briefs (goal, constraints, output contract, paths to inspect — roughly a few hundred to 2k tokens), never full transcripts: focused context outperforms inherited context, and a reviewer fed a raw trajectory inherits its drift — reviewers get structured summaries plus the diff, not the producer's transcript.
 
 ---
 
@@ -459,7 +459,7 @@ Rules:
 - Sub-agents get condensed briefs, not inherited transcripts (see DELEGATION).
 - Prefer narrow `trw_recall` queries over wildcard dumps; recall is token-budgeted by design.
 - Tool-definition sprawl measurably costs accuracy — reduced tool presets on small-context clients are a feature, not a limitation.
-- Before compaction: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes). After compaction: reload this framework + the client instruction file, `trw_session_start`, resume from persisted state — never from memory of what you were doing.
+- Before compaction: `trw_checkpoint(pre_compact=True)`. After compaction: reload this framework + the client instruction file, `trw_session_start`, resume from persisted state — never from memory of what you were doing.
 
 ---
 
@@ -685,7 +685,7 @@ Delegate prompts SHOULD include: context, task, constraints, output contract, an
 | Before delegation | Re-read Delegation and File Ownership |
 | Before delivery | Re-read Rigid Tools, Gates, Requirements, and Git |
 
-On compact: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes) → commit green work when safe → reload the execution summary + relevant phase/gate sections + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state. Reload the full framework when explicitly required; do not pull 40KB of unrelated detail into a narrow continuation by reflex.
+On compact: `trw_checkpoint(pre_compact=True)` → commit green work when safe → reload the execution summary + relevant phase/gate sections + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state. Reload the full framework when explicitly required; do not pull 40KB of unrelated detail into a narrow continuation by reflex.
 
 ### Mid-Stream User Input
 

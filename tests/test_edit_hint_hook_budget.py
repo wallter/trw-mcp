@@ -46,6 +46,8 @@ from pathlib import Path
 
 import pytest
 
+import trw_mcp
+
 _DATA_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data"
 
 #: The knob under test. A misspelling here is silent — pydantic-settings ignores
@@ -206,12 +208,15 @@ def test_hint_path_loads_no_embedding_model_when_disabled(tmp_path: Path) -> Non
     """
     program = (
         "import os, sys\n"
-        "from trw_mcp.tools.before_edit_hint import compute_before_edit_hint\n"
+        "from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint\n"
         "r = compute_before_edit_hint(file_path='a.py', repo_root=os.environ['REPO'])\n"
         "print(r.distill_status, 'torch' in sys.modules, 'sentence_transformers' in sys.modules)\n"
     )
+    # The child must import the trw_mcp under test, not whatever the interpreter's
+    # site-packages holds (a dev venv's editable install can point at another checkout).
     env = {
         "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(Path(trw_mcp.__file__).resolve().parents[1]),
         "HOME": str(tmp_path),
         "REPO": str(tmp_path),
         "TRW_PROJECT_DIR": str(tmp_path),

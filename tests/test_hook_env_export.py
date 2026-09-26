@@ -126,3 +126,77 @@ def test_file_permissions_are_readable(tmp_path: Path) -> None:
     # 0o644 = rw-r--r--
     mode = written.stat().st_mode & 0o777
     assert mode == 0o644
+
+
+def _reads_during_publish(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[str]:
+    """What a concurrent reader sees at *target* while the new bytes are being synced."""
+    import os
+
+    from trw_mcp.state import persistence
+
+    seen: list[str] = []
+    real_fsync = os.fsync
+
+    def _fsync_and_peek(fd: int) -> None:
+        seen.append(target.read_text(encoding="utf-8"))
+        real_fsync(fd)
+
+    monkeypatch.setattr(persistence.os, "fsync", _fsync_and_peek)
+    return seen
+
+
+def test_a_sourcing_hook_never_sees_a_partial_hook_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trw_dir = tmp_path / ".trw"
+    path = _write_hook_env_file(trw_dir, resolve_client_profile("claude-code"))
+    before = _read(path)
+    seen = _reads_during_publish(monkeypatch, path)
+
+    _write_hook_env_file(trw_dir, resolve_client_profile("opencode"))
+
+    assert seen[0] == before  # the old script stays whole until the replace (later peeks: config, flags)
+    assert "export NUDGE_ENABLED=false" in _read(path)
+    assert (path.stat().st_mode & 0o777) == 0o644
+    assert sorted(p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")) == []
+
+
+def test_config_seed_is_published_whole_and_keeps_its_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.bootstrap._file_ops import _seed_config_default
+
+    config = tmp_path / "config.yaml"
+    config.write_text("# operator note\ntask_type: coding\n", encoding="utf-8")
+    config.chmod(0o600)
+    seen = _reads_during_publish(monkeypatch, config)
+
+    _seed_config_default(config, "hooks_enabled", False)
+
+    assert seen == ["# operator note\ntask_type: coding\n"]
+    assert _read(config) == "# operator note\ntask_type: coding\nhooks_enabled: false\n"
+    assert (config.stat().st_mode & 0o777) == 0o600
+
+
+def test_config_seed_writes_through_a_symlinked_config(tmp_path: Path) -> None:
+    """A config.yaml symlinked to a shared file is updated at its target; the link itself is kept."""
+    from trw_mcp.bootstrap._file_ops import _seed_config_default
+
+    shared = tmp_path / "shared" / "config.yaml"
+    shared.parent.mkdir()
+    shared.write_text("task_type: coding\n", encoding="utf-8")
+    link = tmp_path / ".trw" / "config.yaml"
+    link.parent.mkdir()
+    link.symlink_to(shared)
+
+    _seed_config_default(link, "hooks_enabled", False)
+
+    assert link.is_symlink()
+    assert _read(shared) == "task_type: coding\nhooks_enabled: false\n"
+
+
+def test_hook_env_is_published_where_os_has_no_fchmod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no ``os.fchmod`` before Python 3.13; the atomic publish must not depend on it."""
+    import os
+
+    monkeypatch.delattr(os, "fchmod", raising=False)
+    written = _write_hook_env_file(tmp_path / ".trw", resolve_client_profile("claude-code"))
+
+    assert "export NUDGE_ENABLED=true" in _read(written)
+    assert (written.stat().st_mode & 0o777) == 0o644

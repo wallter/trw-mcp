@@ -60,7 +60,7 @@ def _resolve(*, client: str = "claude", role: str | None = None, **kw: Any) -> D
         ("low", "high", "adversarial-audit", "low", "request"),  # request beats config and table
         ("low", None, "adversarial-audit", "low", "request"),  # request beats table
         (None, "low", "adversarial-audit", "low", "config"),  # config beats table
-        (None, None, "adversarial-audit", "high", "table"),  # security row
+        (None, None, "adversarial-audit", "medium", "table"),  # security row
         (None, None, "code-review", "medium", "table"),  # review row
         (None, None, None, None, "none"),  # unclassified prompt: nothing invented
         (None, "low", None, "low", "config"),  # config applies without a role
@@ -115,9 +115,9 @@ def test_the_result_records_requested_versus_applied_effort() -> None:
     claude = _resolve(role="adversarial-audit")
     codex = _resolve(client="codex", role="adversarial-audit")
 
-    assert policy_record(claude)["effort"] == {"requested": "high", "applied": "high", "source": "table"}
+    assert policy_record(claude)["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
     # codex documents no effort flag: the intent is recorded, and nothing was applied
-    assert policy_record(codex)["effort"] == {"requested": "high", "applied": None, "source": "table"}
+    assert policy_record(codex)["effort"] == {"requested": "medium", "applied": None, "source": "table"}
     assert policy_record(codex)["model"] == {"requested": None, "applied": None, "source": "unsupported"}
 
 

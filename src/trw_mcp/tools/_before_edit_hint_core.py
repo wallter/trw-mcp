@@ -1,10 +1,16 @@
-"""Compute path of ``trw_before_edit_hint``, kept free of server imports.
+"""Compute path of ``trw_code(mode="hint")``, kept free of server imports.
 
 The PreToolUse hooks (claude_code, cursor, copilot) spawn a fresh interpreter
 per edit and import this module inside a 2.5 s budget. ``fastmcp`` alone costs
 0.76 s to import on macOS (measured 2026-09-17) and is only needed to register
-the tool, so registration lives in ``before_edit_hint`` and everything the hook
-needs lives here. ``before_edit_hint`` re-exports every name below.
+the tool, so registration lives in ``tools/code.py`` and everything the hook
+needs lives here.
+
+IP boundary (trw-distill is PROPRIETARY; trw-mcp is PUBLIC): this module never
+imports the proprietary package. The cross-package contract is the sidecar
+envelope ``risk-report-sidecar/v0``, mirrored field by field in
+:class:`BeforeYouEditHintPayload`. The learnings half always returns, with or
+without a sidecar.
 """
 
 from __future__ import annotations
@@ -13,6 +19,8 @@ from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
+
+from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
 
 # c749 (PRD-DIST-2002): LearningSummary extracted to shared
 # `_learnings_collector` module. Re-exported here for backward
@@ -28,7 +36,7 @@ _logger = structlog.get_logger(__name__)
 _SCHEMA_VERSION_ACCEPTED: str = _sidecar_substrate.SCHEMA_VERSION_ACCEPTED
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
 _ARTIFACT_NAME_BATCH: str = "before-edit-batch"
-_TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
+_TIER_FEATURE: str = DISTILL_SIDECAR_FEATURE
 
 #: Statuses in which the substrate returned BEFORE consulting any artifact, so
 #: a second lookup would repeat the same negative at the cost of two more git
@@ -228,10 +236,9 @@ def _record_exposure(file_path: str, learnings: list[LearningSummary]) -> None:
     shown. Rows hold ids and the repo-relative path only (NFR04). Fail-open: a
     write failure never changes the hint.
 
-    Deliberately NOT role-conditional: PRD-SEC-015 FR03/FR04 keeps this module's
-    appends unsuppressed, because telemetry that goes quiet under the reviewer
-    role blinds the measurement of the reviewer bound itself. These rows carry no
-    agent-authored content, so recording them under every role is safe.
+    The caller skips this under the reviewer role: PRD-CORE-300-FR12 makes the
+    reviewer's hint write nothing, superseding PRD-SEC-015 NFR03's acknowledged
+    residual telemetry write.
     """
     if not learnings:
         return
@@ -267,7 +274,14 @@ def compute_before_edit_hint(
     repo_root: str | None = None,
     cache_dir: str | None = None,
 ) -> BeforeEditHintResult:
-    """Pure-Python entry point used by the MCP tool registrar + tests."""
+    """Pure-Python entry point for ``trw_code(mode="hint")``, the edit hooks and tests.
+
+    Under the reviewer role it writes nothing: no delivery telemetry and no
+    exposure rows (PRD-CORE-300-FR12).
+    """
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    reviewer = reviewer_role_active()
     learnings = _collect_learnings(file_path)
 
     # Repo root, entitlement gate, HEAD sha, envelope + schema + sha checks all
@@ -330,7 +344,7 @@ def compute_before_edit_hint(
     # never produced an answer, and `eligible: True` there would be a fabricated
     # one. This is the single emission point shared by the CC-03 hook subprocess
     # and the direct MCP-tool path.
-    if distill_status not in _ELIGIBILITY_UNDETERMINED:
+    if distill_status not in _ELIGIBILITY_UNDETERMINED and not reviewer:
         from trw_mcp.channels._distill_telemetry import emit_hint_delivered
 
         emit_hint_delivered(
@@ -339,7 +353,8 @@ def compute_before_edit_hint(
             file_path=file_path,
         )
 
-    _record_exposure(file_path, learnings)
+    if not reviewer:
+        _record_exposure(file_path, learnings)
 
     return BeforeEditHintResult(
         file_path=file_path,

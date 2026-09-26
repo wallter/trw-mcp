@@ -45,7 +45,9 @@ field lists, resilience/mechanism notes, PRD ids, or examples that restate the
 schema.
 
 ON "See Also": PRD-FIX-065 FR04 REQUIRES it on trw_learn, trw_recall,
-trw_session_start, trw_deliver and trw_prd_create, and that requirement wins.
+trw_session_start and trw_deliver, and that requirement wins. (PRD creation
+moved to the `trw-mcp prd create` CLI under PRD-CORE-300-FR07 and dropped out
+of this set with it — a CLI verb has no docstring for this floor to check.)
 This campaign briefly dropped those lines on the reasoning that a chain is
 unfollowable; they were restored the same day, because ~60 chars per tool
 against ~25k saved is not a trade worth retiring a delivered requirement for.
@@ -90,9 +92,10 @@ pytestmark = pytest.mark.unit
 # consequence, a parameter-semantics clause, three missing output contracts —
 # and it was restored. Correctness over the number.
 #
-# 2026-09-15 (PRD-CORE-274 slice 1): 38,500 -> 38,650. ``trw_peers`` added one
-# tool, measured at 549 chars (394 description + 155 schema), taking the full
-# surface to 38,599 across 49 tools. The first draft measured 678; the 129-char
+# 2026-09-15 (PRD-CORE-274 slice 1): 38,500 -> 38,650. The since-removed
+# standalone peer-enrollment tool (S8), added one tool, measured at 549 chars
+# (394 description + 155 schema), taking the full surface to 38,599 across 49
+# tools. The first draft measured 678; the 129-char
 # cut removed mechanism prose that now lives in a body comment. What remains is
 # the three actions a caller chooses between, the fact that identity cannot be
 # passed in (which is why the signature has no member_id to reach for), and the
@@ -120,10 +123,11 @@ pytestmark = pytest.mark.unit
 #
 # 2026-09-17: measured 40,132 across the same 51 tools — 182 over. The ceiling
 # was NOT raised. Prose was re-tightened in five definitions (trw_learn,
-# trw_learn_update, trw_deliver, trw_delivery_recover, trw_instructions_sync)
+# trw_learn_update, trw_deliver, the since-moved delivery recovery tool (S1), the since-CLI-moved instructions-sync tool (S6b))
 # plus two advanced-knob parameter descriptions (trw_prd_validate.fast/verbose)
-# and the deprecated trw_claude_md_sync alias: wording only, no clause and no
-# required header removed. SIX shortenings were REVERTED because other tests pin
+# and the (since-deleted, S6c) deprecated instructions-sync alias: wording
+# only, no clause and no required header removed. SIX shortenings were
+# REVERTED because other tests pin
 # the exact phrases they touched ("structured acceptable-failure", "with all
 # four of", "Free text and review-verdict labels are", "manufacture a learning",
 # "unknown keys are rejected", "Learnings are not promoted into the instruction
@@ -154,14 +158,15 @@ pytestmark = pytest.mark.unit
 # obtained for this specific bump -- see PR description).
 #
 # 2026-09-19: PRD-CORE-274 Amendment 02 (FR18) adds three values to the
-# trw_peers `action` enum (announce, withdraw, discover) and no prose: the
-# actions are taught by the once-per-change guidance block, not by the
-# definition. Measured after merging main: 40,170 across 51 tools, 70 over.
-# Raised by 100 to 40,200 for exactly that enum growth; the definition's prose
-# is owned by the root compact-wrapper change and is not lengthened here.
+# (since-removed, S8) standalone peer-enrollment tool's `action` enum
+# (announce, withdraw, discover) and no prose: the actions are taught by the
+# once-per-change guidance block, not by the definition. Measured after
+# merging main: 40,170 across 51 tools, 70 over. Raised by 100 to 40,200 for
+# exactly that enum growth; the definition's prose is owned by the root
+# compact-wrapper change and is not lengthened here.
 #
 # 2026-09-19 (merge of the two entries above): trw_assess plus the three
-# trw_peers enum values measure 40,832 across 52 tools together. Set to 40,900:
+# enum values above measure 40,832 across 52 tools together. Set to 40,900:
 # exactly the two measured growths, nothing else.
 #
 # 2026-09-22 (6.0.0, lead): ratcheted DOWN. The J1 docstring trim freed 1,240 chars and the
@@ -173,8 +178,16 @@ pytestmark = pytest.mark.unit
 # into trw_learn; trw_recall, trw_build_check and trw_review moved their rarely-set
 # parameters into one `options` argument. Measured 36,843 across 51 tools (core preset
 # 13,274 across 12). Set to 36,900 / 13,300: the measurement plus under 60 chars.
-FULL_SURFACE_CEILING_CHARS: Final[int] = 36_900
-CORE_PRESET_CEILING_CHARS: Final[int] = 13_300
+#
+# 2026-09-24 (PRD-CORE-300 slice S1): full surface ratcheted DOWN, core preset UP.
+# Wave 1 (S2, S4, S7, S6c) left the full surface at 30,922 across 38 tools, never
+# ratcheted; S1 removes the two delivery tools, measured 29,611 across 36 -> 29,700.
+# The core preset measured 13,298 before S1 and 13,361 after: trw_status gained the
+# delivery=<id> mode, the MCP-side owner status locator FR03 requires for transport-
+# loss recovery. 47 of the 63 chars are that parameter's schema, which no edit
+# moves; the prose half was trimmed to 16. Set to 13,370.
+FULL_SURFACE_CEILING_CHARS: Final[int] = 29_700
+CORE_PRESET_CEILING_CHARS: Final[int] = 13_370
 
 # A tool definition has two independently-governed halves, and conflating them
 # produces an untunable test:
@@ -215,7 +228,13 @@ CORE_PRESET_CEILING_CHARS: Final[int] = 13_300
 # new measurement and a justification for why the growth is load-bearing, in
 # the same change that causes it.
 PER_TOOL_PROSE_CEILING_CHARS: Final[int] = 1_150
-PER_TOOL_SIGNATURE_CEILING_CHARS: Final[int] = 1_000
+# RAISED 2026-09-24 (PRD-CORE-300-FR09, slice S7), 1,000 -> 1,075. S7 folds the
+# three dispatch helper tools (job status 169, evidence export 259, evidence
+# validation 145) into trw_dispatch modes, so trw_dispatch
+# grows 969 -> 1,056 while the four definitions together shrink 1,542 -> 1,056.
+# The growth is the cut's design, fewer tools with modes. The modes share one
+# ``target`` string rather than typed arguments, to keep the growth to +87.
+PER_TOOL_SIGNATURE_CEILING_CHARS: Final[int] = 1_075
 
 # Aggregate signature floor across the whole registered surface — the fourth
 # ceiling PRD-CORE-234-FR08 asks for, added 2026-07-28.
@@ -318,7 +337,9 @@ def _report(measured: dict[str, tuple[int, int]], limit: int = 10) -> str:
 
 # The tools exposed to a default coding client. Kept explicit rather than
 # derived so a preset change that widens the default surface is a visible diff
-# here, not a silent budget increase.
+# here, not a silent budget increase. PRD-CORE-300 S11b: this is the kernel
+# (surface_v2.POST_CUT_KERNEL, trw_code included since S10); the three meta
+# tools (skill discovery, the tool-access grant, profile explain) are deleted.
 CORE_PRESET: Final[frozenset[str]] = frozenset(
     {
         "trw_session_start",
@@ -329,10 +350,9 @@ CORE_PRESET: Final[frozenset[str]] = frozenset(
         "trw_recall",
         "trw_build_check",
         "trw_review",
+        "trw_prd_validate",
         "trw_deliver",
-        "trw_profile_explain",
-        "trw_skill_discovery",
-        "trw_request_tool_access",
+        "trw_code",
     }
 )
 
@@ -421,7 +441,7 @@ async def test_parameter_prose_does_not_dwarf_the_description() -> None:
     the schema includes the signature floor, so a tool with many arguments and
     a tight description would look like an offender when it is in fact the
     well-written case. Ratios computed against the raw schema flagged
-    trw_dispatch and trw_meta_tune_propose purely for having many arguments.
+    trw_dispatch purely for having many arguments.
     """
     offenders: dict[str, tuple[int, int]] = {}
     from trw_mcp.server._app import mcp

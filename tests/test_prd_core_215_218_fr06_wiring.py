@@ -4,9 +4,10 @@ The transport-loss retry protocol and the three-class capability listing are
 rendered by ``bootstrap/_client_integrations.py``. These tests prove the
 renderers are WIRED into the production instruction-generation path: they run
 the real AGENTS.md writer (``execute_claude_md_sync`` — the entrypoint
-``trw_instructions_sync`` drives) into ``tmp_path`` and assert the generated
+``instructions sync`` drives) into ``tmp_path`` and assert the generated
 file on disk carries both markers, all four transport-loss boundaries, and the
-three capability classes. The sync result must also surface the capability
+two capability classes (PRD-CORE-300 S11b flattened the former three-tier
+listing to available/gated). The sync result must also surface the capability
 parity check so lifecycle/count drift fails loudly.
 """
 
@@ -23,11 +24,11 @@ _FOUR_BOUNDARIES = (
     "Server restarted",
 )
 
-# Three capability classes (PRD-CORE-218-FR06).
-_THREE_CLASSES = (
-    "Available now (kernel + selected packs)",
-    "Discoverable via trw_skill_discovery / trw_request_tool_access",
-    "Operator-grant only",
+# Two capability classes (PRD-CORE-218-FR06, flattened by PRD-CORE-300 S11b:
+# the former "discoverable" tier and its two meta tools are gone).
+_TWO_CLASSES = (
+    "Available in every session",
+    "Behind a config flag",
 )
 
 
@@ -86,7 +87,7 @@ def test_generated_agents_md_carries_transport_loss_and_capabilities(tmp_path: P
 
     # PRD-CORE-218-FR06: capabilities marker + all three classes.
     assert "<!-- trw:capabilities:agents -->" in content
-    for label in _THREE_CLASSES:
+    for label in _TWO_CLASSES:
         assert label in content, f"missing capability class: {label}"
     # Derived from the LIVE surface manifest: a kernel tool appears "available".
     assert "trw_session_start" in content
@@ -126,7 +127,7 @@ def test_generated_codex_carrier_carries_both_blocks(tmp_path: Path) -> None:
     assert "<!-- trw:capabilities:codex -->" in content
     for boundary in _FOUR_BOUNDARIES:
         assert boundary in content
-    for label in _THREE_CLASSES:
+    for label in _TWO_CLASSES:
         assert label in content
 
 

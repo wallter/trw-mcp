@@ -1,7 +1,7 @@
 """Fail-open tool-return telemetry emitter for distill MCP tools.
 
-Called by trw_before_edit_hint and trw_codebase_risk_report
-before returning their results.
+Called by trw_code's hint mode before returning its results (the sibling
+risk-report consumer moved to the trw-mcp code risk CLI in PRD-CORE-300 slice S4).
 
 Thin wrapper over append_channel_event() from _telemetry.py with
 tool-call-specific tagging.  Detects client from TRW_CLIENT_PROFILE env var
@@ -72,7 +72,7 @@ def emit_tool_call(
 
     Args:
         tool_name: Name of the MCP tool being called
-            (e.g. ``"trw_before_edit_hint"``).
+            (e.g. ``"trw_code"``).
         file_path: Optional repo-relative file path the tool acted on.
         client: Client profile string.  Resolved from env var if not given.
         tier: Tier string used by the tool (default ``"T2"``).

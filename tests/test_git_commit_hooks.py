@@ -174,7 +174,23 @@ _HOOKS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks"
 #: trigger/session_id reads (``_json_str_field``, jq-only by contract)
 #: correctly come back empty without jq, rather than falling through to some
 #: hand-rolled parse.
-_NO_JQ_TOOLS = ("sh", "date", "grep", "sed", "tr", "cat", "tail", "wc", "mkdir", "dirname", "expr", "awk")
+_NO_JQ_TOOLS = (
+    "sh",
+    "date",
+    "grep",
+    "sed",
+    "tr",
+    "cat",
+    "tail",
+    "wc",
+    "mkdir",
+    "dirname",
+    "expr",
+    "awk",
+    "mv",
+    "rm",
+    "find",
+)
 
 
 def _no_jq_bin_dir(tmp_path: Path) -> Path:

@@ -57,10 +57,10 @@ def _persist_deferred_results(
         # promotion, and no trw_meta_tune() tool ships), so the signal was
         # computed, written, and silently dropped. The arrays also ballooned
         # legacy run.yaml files to multiple MB and dominated boot-time YAML
-        # parsing (see state/_run_gc.py). Wiring them into trw_instructions_sync
+        # parsing (see state/_run_gc.py). Wiring them into instructions sync
         # would re-introduce exactly the CLAUDE.md promotion CORE-093 deleted, so
-        # the honest fix is to stop persisting the dead signal. The consolidation
-        # step's status still flows through ``deferred_results`` above for audit.
+        # the honest fix is to stop persisting the dead signal. PRD-CORE-302 FR03
+        # then deleted the detector and its step (2.6) outright.
 
         if update_run_yaml(resolved_run, lambda data: data.update(deferred_results=dict(results))):
             logger.info("deferred_results_persisted", path=str(run_yaml_path(resolved_run)))

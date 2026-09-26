@@ -360,88 +360,99 @@ def _write_compact_instructions(
     return instructions_path
 
 
+def execute_pre_compact_checkpoint(
+    ctx: Context | None,
+    directive: str = "",
+    context_anchor: str = "",
+) -> PreCompactResultDict:
+    """Capture a safety checkpoint before the context window compacts.
+
+    Extracted from a former standalone pre-compact-checkpoint tool (PRD-CORE-300
+    S6a): the MCP surface is now ``trw_checkpoint(pre_compact=True, ...)``; this
+    function is the implementation both that mode and any other caller can share.
+
+    ``directive`` and ``context_anchor`` (what the caller is mid-flight on, and
+    where) cannot be derived from run state; the next ``trw_session_start``
+    surfaces them so the session resumes exactly.
+
+    Returns a dict with ``status`` ("success"/"skipped"/"failed"), ``reason`` or
+    ``error``, run path, and artifact paths.
+    """
+    # Best-effort by design: sub-step failures land in ``status`` rather than
+    # raising, so an imminent compaction is never made worse by an exception.
+    # Both caller-supplied fields are optional and backward-compatible.
+    cfg = get_config()
+    if not cfg.auto_checkpoint_pre_compact:
+        return {"status": "skipped", "reason": "auto_checkpoint_pre_compact disabled"}
+
+    try:
+        # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run suppresses
+        # scan fallback for fresh sessions.
+        run_dir = find_active_run(context=_build_call_context(ctx))
+        if run_dir is None:
+            return {"status": "skipped", "reason": "no_active_run"}
+
+        _do_checkpoint(run_dir, "pre-compaction safety checkpoint")
+
+        project_root = resolve_project_root()
+        events_path = run_dir / "meta" / "events.jsonl"
+
+        # Read state snapshots
+        state_dict = _read_pre_compact_state(run_dir, project_root)
+        prd_scope: list[str] = cast("list[str]", state_dict["prd_scope"])
+        phase: str = cast("str", state_dict["phase"])
+        formation: str = cast("str", state_dict["formation"])
+
+        failing_tests = _read_failing_tests(project_root)
+        ceremony_state = _read_ceremony_state(project_root)
+
+        # Write artifacts
+        _write_compact_state(
+            project_root,
+            run_dir,
+            events_path,
+            prd_scope,
+            phase,
+            formation,
+            failing_tests,
+            ceremony_state,
+            directive=directive,
+            context_anchor=context_anchor,
+        )
+        instructions_path = _write_compact_instructions(
+            cfg,
+            project_root,
+            run_dir,
+            phase,
+            prd_scope,
+            formation,
+            failing_tests,
+            ceremony_state,
+        )
+
+        result: PreCompactResultDict = {
+            "status": "success",
+            "run_path": str(run_dir),
+            "compact_instructions_path": str(instructions_path),
+            "prd_scope": prd_scope,
+            "failing_tests": failing_tests,
+        }
+        if directive:
+            result["directive"] = directive
+        if context_anchor:
+            result["context_anchor"] = context_anchor
+        return result
+    except Exception as exc:  # justified: boundary, compact instructions generation may fail on I/O
+        return {"status": "failed", "error": str(exc)}
+
+
 def register_checkpoint_tools(server: FastMCP) -> None:
-    """Register checkpoint tools on the MCP server."""
+    """No-op registrar — the standalone pre-compact-checkpoint tool this module
+    backed was removed by PRD-CORE-300 S6a.
 
-    @server.tool(output_schema=None)
-    def trw_pre_compact_checkpoint(
-        directive: str = "",
-        context_anchor: str = "",
-        ctx: Context | None = None,
-    ) -> PreCompactResultDict:
-        """Capture a safety checkpoint before the context window compacts.
-
-        Use when the PreCompact hook fires or compaction looks near. directive and
-        context_anchor (what you are mid-flight on, and where) cannot be derived
-        from run state; the next trw_session_start surfaces them so the session
-        resumes exactly.
-
-        Output: status ("success"/"skipped"/"failed"), reason or error, run path,
-        artifact paths.
-        """
-        # Best-effort by design: sub-step failures land in ``status`` rather than
-        # raising, so an imminent compaction is never made worse by an exception.
-        # Both caller-supplied fields are optional and backward-compatible.
-        cfg = get_config()
-        if not cfg.auto_checkpoint_pre_compact:
-            return {"status": "skipped", "reason": "auto_checkpoint_pre_compact disabled"}
-
-        try:
-            # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run suppresses
-            # scan fallback for fresh sessions.
-            run_dir = find_active_run(context=_build_call_context(ctx))
-            if run_dir is None:
-                return {"status": "skipped", "reason": "no_active_run"}
-
-            _do_checkpoint(run_dir, "pre-compaction safety checkpoint")
-
-            project_root = resolve_project_root()
-            events_path = run_dir / "meta" / "events.jsonl"
-
-            # Read state snapshots
-            state_dict = _read_pre_compact_state(run_dir, project_root)
-            prd_scope: list[str] = cast("list[str]", state_dict["prd_scope"])
-            phase: str = cast("str", state_dict["phase"])
-            formation: str = cast("str", state_dict["formation"])
-
-            failing_tests = _read_failing_tests(project_root)
-            ceremony_state = _read_ceremony_state(project_root)
-
-            # Write artifacts
-            _write_compact_state(
-                project_root,
-                run_dir,
-                events_path,
-                prd_scope,
-                phase,
-                formation,
-                failing_tests,
-                ceremony_state,
-                directive=directive,
-                context_anchor=context_anchor,
-            )
-            instructions_path = _write_compact_instructions(
-                cfg,
-                project_root,
-                run_dir,
-                phase,
-                prd_scope,
-                formation,
-                failing_tests,
-                ceremony_state,
-            )
-
-            result: PreCompactResultDict = {
-                "status": "success",
-                "run_path": str(run_dir),
-                "compact_instructions_path": str(instructions_path),
-                "prd_scope": prd_scope,
-                "failing_tests": failing_tests,
-            }
-            if directive:
-                result["directive"] = directive
-            if context_anchor:
-                result["context_anchor"] = context_anchor
-            return result
-        except Exception as exc:  # justified: boundary, compact instructions generation may fail on I/O
-            return {"status": "failed", "error": str(exc)}
+    Its implementation lives on as :func:`execute_pre_compact_checkpoint`, called
+    by ``trw_checkpoint(pre_compact=True, ...)`` (``tools/orchestration.py``).
+    Kept as a no-op so ``server/_tools.py`` and the conftest tool-group registry
+    do not need a call-site change (same pattern as
+    ``ceremony_feedback.register_ceremony_feedback_tools``).
+    """

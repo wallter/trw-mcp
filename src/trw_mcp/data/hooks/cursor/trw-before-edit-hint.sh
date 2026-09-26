@@ -87,21 +87,19 @@ _debounce_dir="${_repo}/.trw/context/cur06-debounce"
     _safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
     _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
     _safe_name="${_safe_name}-${_path_ck}"
-if [ -d "$_debounce_dir" ]; then
-    _debounce_file="${_debounce_dir}/${_safe_name}.ts"
-    if [ -f "$_debounce_file" ]; then
-        _now=$(date +%s 2>/dev/null) || _now=0
-        _last=$(cat "$_debounce_file" 2>/dev/null) || _last=0
-        _diff=$(( _now - _last ))
-        if [ "$_diff" -lt 180 ] 2>/dev/null; then
-            _allow_and_exit
-        fi
+_debounce_file="${_debounce_dir}/${_safe_name}.ts"
+# PRD-SEC/RC8: _trw_safe_read/_trw_safe_write (lib-distill-hint.sh, sourced
+# above) treat a symlinked debounce marker as absent and never write through
+# one.
+_last=$(_trw_safe_read "$_debounce_file") || _last=0
+if [ -n "$_last" ]; then
+    _now=$(date +%s 2>/dev/null) || _now=0
+    _diff=$(( _now - _last ))
+    if [ "$_diff" -lt 180 ] 2>/dev/null; then
+        _allow_and_exit
     fi
-    date +%s > "$_debounce_file" 2>/dev/null || true
-else
-    mkdir -p "$_debounce_dir" 2>/dev/null || true
-    date +%s > "${_debounce_dir}/${_safe_name}.ts" 2>/dev/null || true
 fi
+date +%s | _trw_safe_write "$_debounce_file" || true
 
 # --- Resolve Python path; no python => plain allow (still advisory) ---
 _py=$(_get_python_path 2>/dev/null) || _allow_and_exit
@@ -217,7 +215,7 @@ try:
         text = format_t0_beacon()
     if text:
         if len(text) > 9400:
-            text = text[:9400] + "\n... (truncated — run trw_before_edit_hint for full context)"
+            text = text[:9400] + "\n... (truncated — run trw_code(mode=\"hint\") for full context)"
         print(json.dumps({"permission": "allow", "agent_message": text}))
     else:
         print(json.dumps(_fallback))
@@ -229,6 +227,17 @@ except Exception:
     # Timeout or error: fall back to the plain allow envelope (never blocks).
     _allow_and_exit
 }
+
+# --- Session-scoped identical-hint dedup (PRD-CORE-301 cut 2) ---
+# The 180s debounce above bounds frequency; this bounds REPEATED, unchanged
+# agent_message content once the debounce window has lapsed. Never suppresses
+# a hint that changed, or the first hint for a file.
+if [ -n "$_response" ]; then
+    _dedup_text=$(printf '%s' "$_response" | jq -r '.agent_message // empty' 2>/dev/null) || _dedup_text=""
+    if [ -n "$_dedup_text" ] && _distill_hint_already_seen "$_repo" "$_file_path" "$_dedup_text"; then
+        _response='{"permission": "allow"}'
+    fi
+fi
 
 # --- Emit the JSON response; empty (e.g. python crashed) => plain allow ---
 trap - EXIT

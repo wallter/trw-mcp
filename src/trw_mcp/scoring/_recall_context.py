@@ -1,4 +1,4 @@
-"""RecallContext and the intel-cache protocol for recall scoring.
+"""RecallContext for recall scoring.
 
 PRD-CORE-102: Enhanced recall scoring with contextual boosts.
 PRD-CORE-116: Multi-dimensional boost factors and client-aware context.
@@ -11,17 +11,10 @@ to work.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 import structlog
 
 _logger = structlog.get_logger(__name__)
-
-
-class _IntelCacheProtocol(Protocol):
-    """Minimal cache protocol used by recall scoring."""
-
-    def get_bandit_params(self) -> dict[str, float] | None: ...
 
 
 @dataclass(frozen=True, init=False)
@@ -42,7 +35,6 @@ class RecallContext:
     modified_files: list[str]
     client_profile: str
     model_family: str
-    intel_cache: _IntelCacheProtocol | None
 
     def __init__(
         self,
@@ -54,7 +46,6 @@ class RecallContext:
         modified_files: list[str] | None = None,
         client_profile: str = "",
         model_family: str = "",
-        intel_cache: _IntelCacheProtocol | None = None,
         # Deprecated aliases (backward compat)
         active_domains: list[str] | set[str] | None = None,
         team_id: str | None = None,
@@ -81,7 +72,6 @@ class RecallContext:
         object.__setattr__(self, "modified_files", modified_files if modified_files is not None else [])
         object.__setattr__(self, "client_profile", client_profile)
         object.__setattr__(self, "model_family", model_family)
-        object.__setattr__(self, "intel_cache", intel_cache)
 
     @property
     def active_domains(self) -> set[str]:

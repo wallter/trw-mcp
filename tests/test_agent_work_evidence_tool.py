@@ -1,7 +1,8 @@
-"""Tests for AgentWorkEvidence v1 state assembly and MCP export tool."""
+"""Tests for AgentWorkEvidence v1 state assembly and the trw_dispatch evidence modes."""
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -12,14 +13,14 @@ from tests.conftest import get_tools_sync
 from trw_mcp.models.agent_work_evidence import AgentWorkEvidence
 from trw_mcp.state.agent_work_evidence import assemble_agent_work_evidence
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
+from trw_mcp.tools.dispatch import register_dispatch_tools
 
 
 @pytest.fixture
 def evidence_server() -> FastMCP:
-    """Create a FastMCP server with only the evidence export tool registered."""
+    """A FastMCP server with only trw_dispatch, whose evidence modes replaced the two tools."""
     server = FastMCP("agent-work-evidence-test")
-    register_agent_work_evidence_tools(server)
+    register_dispatch_tools(server)
     return server
 
 
@@ -247,11 +248,11 @@ def test_tool_defaults_to_active_run_and_optionally_includes_json_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR-4: MCP tool defaults to active run and includes JSON Schema only on request."""
-    tool = get_tools_sync(evidence_server)["trw_agent_work_evidence"]
+    tool = get_tools_sync(evidence_server)["trw_dispatch"]
     monkeypatch.setattr("trw_mcp.tools.agent_work_evidence.resolve_run_path", lambda run_path=None, **_: evidence_run)
 
-    without_schema = tool.fn(run_path=None, include_events=False, include_schema=False)
-    with_schema = tool.fn(run_path=None, include_events=True, include_schema=True)
+    without_schema = tool.fn(action="evidence", verbose=False)
+    with_schema = tool.fn(action="evidence", verbose=True)
 
     assert without_schema["evidence"]["identity"]["run_id"] == "20260520T033353Z-abc123"
     assert "schema" not in without_schema
@@ -262,9 +263,11 @@ def test_tool_defaults_to_active_run_and_optionally_includes_json_schema(
 
 def test_tool_validation_helper_returns_structured_errors(evidence_server: FastMCP) -> None:
     """FR-5: tool exposes pure validator with machine-readable errors."""
-    tool = get_tools_sync(evidence_server)["trw_validate_agent_work_evidence"]
+    tool = get_tools_sync(evidence_server)["trw_dispatch"]
 
-    result = tool.fn(data={"schema_version": "agent-work-evidence/v1", "extra": True})
+    result = tool.fn(
+        action="validate_evidence", target=json.dumps({"schema_version": "agent-work-evidence/v1", "extra": True})
+    )
 
     assert result["valid"] is False
     assert {"loc": ["identity"], "type": "missing", "message": "Field required"} in result["errors"]
@@ -277,13 +280,13 @@ def test_tool_returns_structured_failure_for_expected_assembly_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Public evidence export boundary returns structured failures for expected state errors."""
-    tool = get_tools_sync(evidence_server)["trw_agent_work_evidence"]
+    tool = get_tools_sync(evidence_server)["trw_dispatch"]
     monkeypatch.setattr("trw_mcp.tools.agent_work_evidence.resolve_run_path", lambda run_path=None, **_: evidence_run)
     monkeypatch.setattr(
         "trw_mcp.tools.agent_work_evidence.assemble_agent_work_evidence",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("invalid evidence fixture")),
     )
 
-    result = tool.fn(run_path=None, include_events=False, include_schema=False)
+    result = tool.fn(action="evidence", verbose=False)
 
     assert result == {"error": "invalid evidence fixture", "status": "failed"}

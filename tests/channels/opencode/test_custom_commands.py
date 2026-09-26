@@ -14,13 +14,13 @@ from unittest.mock import patch
 
 
 def test_before_edit_command_has_required_fields() -> None:
-    """FR10-FR11: before-edit command has name, $1, trw_before_edit_hint, distill_status."""
+    """FR10-FR11: before-edit command has name, $1, trw_code, distill_status."""
     from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
     assert "name: trw-before-edit" in content
     assert "$1" in content
-    assert "trw_before_edit_hint" in content
+    assert "trw_code" in content
     assert "distill_status" in content
 
 
@@ -46,7 +46,7 @@ def test_before_edit_command_uses_public_mcp_fallback() -> None:
     from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
-    assert "trw_codebase_risk_report" in content
+    assert "trw-mcp code risk" in content
     assert "trw-distill self-improve" not in content
 
 
@@ -67,7 +67,7 @@ def test_hotspots_command_table_columns() -> None:
     for col in ("composite_score", "fanin", "churn", "untested"):
         assert col in content.lower() or col in content, f"Missing column: {col}"
     assert "name: trw-distill-hotspots" in content
-    assert "trw_codebase_risk_report" in content
+    assert "trw-mcp code risk" in content
 
 
 def test_hotspots_command_high_risk_label() -> None:

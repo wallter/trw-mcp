@@ -9,7 +9,8 @@ Defines the hierarchical-composition surface: a single ``Profile`` layer
 contributing overrides), and the ``ResolvedProfile`` (the composition of all
 active layers plus per-field attribution).
 
-The model is the FR-1 surface: exactly 10 optional override keys, ``extra=
+The model is the FR-1 surface: the optional override keys in
+``PROFILE_SURFACE_KEYS``, ``extra=
 "forbid"`` so unknown keys raise ``ValidationError``.
 """
 
@@ -27,11 +28,11 @@ PhaseName = Literal["RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELI
 #: A field set to this string is dropped from the resolved profile.
 UNSET_SENTINEL = "__unset__"
 
-#: The exact 10 override keys the Profile surface accepts (FR-1).
+#: The override keys the Profile surface accepts (FR-1). ``allowed_tools_by_phase``
+#: was removed with phase exposure (PRD-CORE-300 S11a).
 PROFILE_SURFACE_KEYS: tuple[str, ...] = (
     "ceremony_tier",
     "phase_enabled_set",
-    "allowed_tools_by_phase",
     "recall_policy",
     "checkpoint_cadence",
     "review_threshold",
@@ -40,6 +41,15 @@ PROFILE_SURFACE_KEYS: tuple[str, ...] = (
     "cost_budget_usd",
     "token_budget",
 )
+
+#: Profile keys removed in a major release, each with the remedy a layer that still
+#: sets one is refused with. There is no shim: the layer fails, but names the key.
+RETIRED_PROFILE_KEYS: dict[str, str] = {
+    "allowed_tools_by_phase": (
+        "removed in trw-mcp 7.0.0 with phase exposure (PRD-CORE-300 S11a): no TRW tool is "
+        "hidden by run phase any more, so there is no replacement. Delete the key"
+    ),
+}
 
 #: The persistent layer names that contribute to ``surface_snapshot_id``
 #: (FR-13 / §7.2.1). ``session`` is intentionally excluded.
@@ -97,7 +107,6 @@ class Profile(BaseModel):
 
     ceremony_tier: Literal["MINIMAL", "STANDARD", "COMPREHENSIVE"] | None = None
     phase_enabled_set: list[PhaseName] | None = None
-    allowed_tools_by_phase: dict[PhaseName, list[str]] | None = None
     recall_policy: RecallPolicy | None = None
     checkpoint_cadence: Literal["minimal", "standard", "aggressive"] | None = None
     review_threshold: Literal["NONE", "MINIMAL", "STANDARD", "COMPREHENSIVE"] | None = None
@@ -107,9 +116,21 @@ class Profile(BaseModel):
     token_budget: int | None = None
     # FR-9 invariant input: a profile may declare its environment so the
     # ``env=dev`` escape hatches (build_check_scope=none, review NONE) are
-    # only honored in dev. Not part of the 10 override surface keys — it is a
+    # only honored in dev. Not one of the override surface keys — it is a
     # validation-context field, kept off PROFILE_SURFACE_KEYS deliberately.
     env: Literal["dev", "prod"] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_keys(cls, data: Any) -> Any:
+        """Name each retired key and its remedy, rather than a bare extra-field error."""
+        if isinstance(data, dict):
+            retired = [key for key in RETIRED_PROFILE_KEYS if key in data]
+            if retired:
+                raise ValueError(
+                    "; ".join(f"profile key {key!r} is retired: {RETIRED_PROFILE_KEYS[key]}" for key in retired)
+                )
+        return data
 
 
 class ProfileLayer(BaseModel):
@@ -165,7 +186,7 @@ class ProfileLayer(BaseModel):
 
 
 class LayerAttribution(BaseModel):
-    """Per-field origin record for ``trw_profile_explain`` (FR-11)."""
+    """Per-field origin record for the profile explanation (FR-11)."""
 
     model_config = ConfigDict(extra="forbid")
 

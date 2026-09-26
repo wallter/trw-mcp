@@ -51,6 +51,7 @@ _REQUIRED_RULES: tuple[tuple[str, str], ...] = (
         "runtime/memory-token",
         "# Secret: this checkout's memory daemon grant (mode 0600) — never track it (PRD-CORE-280).",
     ),
+    ("code-index/", "# The rebuildable code index a reviewer dispatch builds — never track it (PRD-CORE-300)."),
 )
 
 

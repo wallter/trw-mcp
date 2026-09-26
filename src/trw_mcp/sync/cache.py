@@ -29,15 +29,6 @@ class IntelligenceCache:
         self._cache_path = trw_dir / _CACHE_FILE
         self._ttl_seconds = ttl_seconds
 
-    def get_bandit_params(self) -> dict[str, float] | None:
-        """Read cached bandit arm parameters. Returns None if expired/missing."""
-        raw = self._read_cached_field("bandit_params")
-        if not isinstance(raw, dict):
-            if raw is not None:
-                self._log_validation_error(field_name="bandit_params", reason="invalid_type")
-            return None
-        return raw
-
     def get_attribution_results(self) -> dict[str, dict[str, Any]] | None:
         """Read cached attribution results."""
         raw = self._read_cached_field("attribution_results")

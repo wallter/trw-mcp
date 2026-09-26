@@ -48,40 +48,18 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     the parity fixture can never drift apart. Registration order is not
     significant to tool availability.
     """
-    from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
-    from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
     from trw_mcp.tools.assess import register_assess_tools
-    from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
-    from trw_mcp.tools.before_edit_hint_batch import (
-        register_before_edit_hint_batch_tools,
-    )
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.ceremony_feedback import register_ceremony_feedback_tools
-    from trw_mcp.tools.channel_stats import register_channel_stats_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
-    from trw_mcp.tools.code_index import register_code_index_tools
-    from trw_mcp.tools.code_search import register_code_search_tools
-    from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
-    from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
-    from trw_mcp.tools.delivery_ops import register_delivery_tools
+    from trw_mcp.tools.code import register_code_tools
     from trw_mcp.tools.dispatch import register_dispatch_tools
-    from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
-    from trw_mcp.tools.mcp_security_status import register_mcp_security_status
-    from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
     from trw_mcp.tools.orchestration import register_orchestration_tools
-    from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
-    from trw_mcp.tools.phase_overrides import register_phase_override_tools
-    from trw_mcp.tools.query_tools import register_query_tools
-    from trw_mcp.tools.replay import register_replay_tools
     from trw_mcp.tools.requirements import register_requirements_tools
     from trw_mcp.tools.review import register_review_tools
-    from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
-    from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
     from trw_mcp.tools.swarm_comms import register_swarm_comms_tools
-    from trw_mcp.tools.trw_probe import register_probe_tools
-    from trw_mcp.tools.trw_profile_explain import register_trw_profile_explain_tools
 
     return (
         register_build_tools,
@@ -91,8 +69,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         register_ceremony_feedback_tools,
         register_checkpoint_tools,
         register_learning_tools,
-        register_meta_tune_tools,
-        register_knowledge_tools,
         register_orchestration_tools,
         # PRD-CORE-274 slice 1: cross-harness peer presence. Registered
         # unconditionally; execution is gated by comms_enabled=false.
@@ -101,49 +77,15 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         # execution is gated by assess_enabled=false (PRD-CORE-288).
         register_assess_tools,
         register_requirements_tools,
-        register_replay_tools,
         register_review_tools,
-        # PRD-HPO-MEAS-001 FR-7 + FR-8: cross-session event query + surface diff
-        register_query_tools,
-        # PRD-INFRA-SEC-001 FR-5: operator status tool for MCP security layer
-        register_mcp_security_status,
-        # PRD-DIST-1983 (c746): trw-distill before-edit hint consumer (tier-gated)
-        register_before_edit_hint_tools,
-        # PRD-DIST-1989 (c747): batch sibling of trw_before_edit_hint
-        register_before_edit_hint_batch_tools,
-        # PRD-DIST-1990 (c747): trw-distill ranked risk report consumer
-        register_codebase_risk_report_tools,
-        # PRD-DIST-1994 (c748): trw-distill ordering-compare consumer (4th wire)
-        register_ordering_compare_tools,
-        # PRD-DIST-1995 (c748): trw-distill cross-repo-ordering consumer (5th wire)
-        register_cross_repo_ordering_tools,
-        # PRD-CORE-171: local SHA-256 code-index manifest update tool
-        register_code_index_tools,
-        # PRD-CORE-172: local indexed lexical/symbol code search
-        register_code_search_tools,
-        # PRD-CORE-167: public entity-risk sidecar consumer
-        # PRD-CORE-168: privacy-safe canonical agent work evidence export
-        register_agent_work_evidence_tools,
-        # PRD-CORE-170: read-only skill manifest discovery helper
-        register_skill_discovery_tools,
-        # PRD-CORE-182 + PRD-INFRA-132 FR04: backend submission portal client
-        # (PII redaction added in-place per PRD-INFRA-132 FR04a)
-        register_submit_feedback_tools,
-        # PRD-DIST-2400 FR17: channel manifest render MCP tool
-        # PRD-DIST-2400 §meta-tune: channel correlation + throttle stats MCP tool
-        register_channel_stats_tools,
-        # PRD-FIX-COMPOUNDING-6 FR02: unified compounding-pipeline health probe
-        register_pipeline_health_tools,
-        # PRD-CORE-144: empirical probe harness (trw_probe + budget status).
-        register_probe_tools,
-        # PRD-HPO-PROF-001 FR-4/FR-11: hierarchical profile explain tool
-        register_trw_profile_explain_tools,
-        # PRD-INTENT-002 FR06: phase-exposure override (trw_request_tool_access)
-        register_phase_override_tools,
+        # PRD-CORE-300-FR12: trw_code — code search, symbol lookup and
+        # before-edit hints in one tool, registered in every install.
+        register_code_tools,
+        # Sibling MCP tools moved to `trw-mcp telemetry channel-stats` and
+        # `pipeline-health` (PRD-CORE-300 slices S3a, S3b).
         # Cross-client dispatch Phase 3: dispatch launcher MCP tools.
         register_dispatch_tools,
         # PRD-CORE-208 FR04/FR05: read-only delivery status + guarded recovery.
-        register_delivery_tools,
     )
 
 
@@ -271,28 +213,27 @@ def _register_tools() -> None:
     # PRD-INFRA-SEC-001 FR-9 (sprint-96 carry-forward a): wire
     # consult_mcp_security into per-tool dispatch. FastMCP's tool-manager
     # internals (``_tools`` / ``_tool_manager._tools``) vary across
-    # releases, so the rewrap here is best-effort. The authoritative
-    # consult path is the inner-body call added directly to the sprint-96
-    # tools (``trw_query_events``, ``trw_surface_diff``,
-    # ``trw_mcp_security_status``) in their registrars. This pass attempts
-    # to extend the same coverage to any other tool whose underlying
-    # callable we can resolve — silently skipping if the FastMCP version
-    # does not expose a rewrap point.
+    # releases, so the rewrap here is best-effort: it covers every tool whose
+    # underlying callable we can resolve and silently skips if the FastMCP
+    # version does not expose a rewrap point. (The sprint-96 tools that also
+    # consulted from their own bodies became CLI verbs in PRD-CORE-300.)
     _apply_security_consult_wrapping()
 
 
 def _apply_always_load_meta() -> None:
-    """Apply the deferral opt-out to the ceremony floor (fail-open at boot).
+    """Apply the deferral opt-out to the always-on kernel (fail-open at boot).
 
-    See ``server/_always_load.py`` for which tools qualify and why the set is
-    capped at five (plus ``trw_assess`` when ``assess_enabled``). Failure here costs a ToolSearch round-trip, never a boot.
+    See ``server/_always_load.py`` for which tools qualify: the kernel, plus each
+    flag-gated tool whose config flag is on. Failure here costs a ToolSearch
+    round-trip, never a boot.
     """
     try:
         from trw_mcp.models.config import get_config
-        from trw_mcp.server._always_load import apply_always_load_meta
+        from trw_mcp.server._always_load import GATING_FLAGS, apply_always_load_meta
 
-        assess_enabled = bool(getattr(get_config(), "assess_enabled", False))
-        applied = _run_async(apply_always_load_meta(mcp, assess_enabled=assess_enabled))
+        config = get_config()
+        flags = {flag: bool(getattr(config, flag, False)) for flag in GATING_FLAGS}
+        applied = _run_async(apply_always_load_meta(mcp, flags=flags))
         logger.debug("always_load_meta_applied", tools=list(applied))
     except Exception:  # justified: fail-open, deferral metadata is an optimization
         logger.info("always_load_meta_failed", reason="deferral opt-out not applied")
@@ -351,22 +292,16 @@ def _apply_security_consult_wrapping() -> None:
 # ---------------------------------------------------------------------------
 # PRD-CORE-218 FR06 seam: the generated-instructions renderer consumes the
 # FR01 manifest through these two exports (see bootstrap/_client_integrations
-# ``resolved_profile_from_manifest_seam``). capability_class here is the
-# STATIC admission view: kernel is always available, high-risk packs are
-# operator-gated, every other pack is discoverable via skill discovery /
-# request_tool_access. Task-scoped availability is layered on top by FR03.
+# ``resolved_profile_from_manifest_seam``). capability_class is the flag view
+# (PRD-CORE-300 S11b): a tool in a flag-gated pack is "gated" (on only when its
+# config flag is), every other registered tool is "available".
 # ---------------------------------------------------------------------------
 
 
-def _static_capability_class(name: str, pack: str) -> str:
-    from trw_mcp.models.config._defaults import HIGH_RISK_PACKS
-    from trw_mcp.server._surface_manifest_registry import _KERNEL_TOOLS
+def _static_capability_class(pack: str) -> str:
+    from trw_mcp.models.surface_packs import FLAG_GATED_PACKS
 
-    if name in _KERNEL_TOOLS:
-        return "available"
-    if pack in HIGH_RISK_PACKS:
-        return "gated"
-    return "discoverable"
+    return "gated" if pack in FLAG_GATED_PACKS else "available"
 
 
 def _build_surface_manifest_export() -> tuple[dict[str, str], ...]:
@@ -376,7 +311,7 @@ def _build_surface_manifest_export() -> tuple[dict[str, str], ...]:
         {
             "tool_id": entry.name,
             "pack": entry.pack,
-            "capability_class": _static_capability_class(entry.name, entry.pack),
+            "capability_class": _static_capability_class(entry.pack),
             "lifecycle": str(entry.lifecycle.value if hasattr(entry.lifecycle, "value") else entry.lifecycle),
         }
         for entry in TOOL_MANIFEST

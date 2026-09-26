@@ -462,8 +462,8 @@ class TestCodexEnabledToolsCompleteness:
         full_surface = {n for n in eligible_tool_names() if n.startswith("trw_")}
         missing = full_surface - set(names)
         assert not missing, f"Codex enabled_tools dropped tools under a masked server: {missing}"
-        # Sanity: privileged admin tools (e.g. trw_meta_tune_rollback) are included.
-        assert "trw_meta_tune_rollback" in names
+        # Sanity: a state-changing tool that records acceptance is included.
+        assert "trw_deliver" in names
 
 
 class TestCodexNoReviewerProfile:
@@ -581,7 +581,7 @@ class TestCodexToolApprovals:
 
     def test_the_consequential_tools_stay_gated(self, tmp_path: Path) -> None:
         tools = self._trw_tools(tmp_path)
-        for tool_name in ("trw_deliver", "trw_dispatch", "trw_instructions_sync", "trw_claude_md_sync"):
+        for tool_name in ("trw_deliver", "trw_dispatch"):
             assert tool_name not in tools, f"{tool_name} was granted an approval mode"
 
     def test_no_blanket_default_approval(self, tmp_path: Path) -> None:

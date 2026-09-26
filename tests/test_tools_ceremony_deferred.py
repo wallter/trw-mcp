@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._deferred_delivery import (
     _launch_deferred,
     _log_deferred_result,
@@ -14,23 +16,6 @@ from trw_mcp.tools._deferred_delivery import (
     _run_deferred_steps,
     _try_acquire_deferred_lock,
 )
-
-
-def test_deferred_consolidation_forbids_cold_embedder_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Delivery maintenance must not cold-load heavy embedding runtimes in-server."""
-    from trw_mcp.tools import _deferred_steps_memory as memory_steps
-
-    captured: dict[str, object] = {}
-
-    def fake_consolidate_cycle(*args: object, **kwargs: object) -> dict[str, object]:
-        captured.update(kwargs)
-        return {"status": "no_clusters"}
-
-    monkeypatch.setattr("trw_mcp.state.consolidation.consolidate_cycle", fake_consolidate_cycle)
-    result = memory_steps._step_consolidation(tmp_path / ".trw")
-
-    assert result["status"] == "no_clusters"
-    assert captured["allow_cold_embedder_load"] is False
 
 
 class TestDeferredLock:
@@ -139,7 +124,6 @@ class TestRunDeferredSteps:
 
         step_names = [
             "_step_auto_prune",
-            "_step_consolidation",
             "_step_tier_sweep",
             "_do_index_sync",
             "_step_auto_progress",
@@ -178,7 +162,6 @@ class TestLaunchDeferred:
 
         step_names = [
             "_step_auto_prune",
-            "_step_consolidation",
             "_step_tier_sweep",
             "_do_index_sync",
             "_step_auto_progress",
@@ -328,22 +311,70 @@ class TestDeferredAtexitJoin:
 class TestMemoryDecayStep:
     """PRD-CORE-244 FR09 — importance decay has a production caller.
 
-    PRD-CORE-280 slice e (batch 23b): the four tests that drove
-    ``_step_memory_decay`` against a directly-seeded ``get_backend`` were
-    DELETED. ``_step_memory_decay`` now calls ``selected_store(trw_dir)`` and
-    reads ``store.maintain(namespace)["passes"]["decay"]`` -- the decay pass
-    itself runs INSIDE the memory daemon's own process (``FakeMemoryStore``'s
-    ``maintain()`` deliberately returns a fixed no-op result: "the fake has no
-    importance to decay"), so neither a fake store nor this process can
-    exercise the real predicate/batch-size/cutoff-day logic; a
-    ``daemon_checkout`` round trip would only prove the daemon's own
-    ``memory_decay_pass`` works, which trw-memory's ``test_graph_decay.py``
-    already covers directly and more thoroughly (batch clamping, floor-at-zero,
-    the ``cross_validated`` predicate change, 50k-row memory bound). What
-    remains trw-mcp's own claim -- that a real deferred-delivery pass reaches
-    the step at all -- is ``test_decay_is_wired_into_the_deferred_roster``
-    below, which asserts on the production step table and needs no store.
+    ``memory_decay_pass`` was once hardened and tested with ZERO production
+    callers. The step now runs the store's ``maintain`` (PRD-CORE-280), so what
+    the pass decays -- aged rows only, whatever their ``cross_validated``, at
+    most a batch -- is trw-memory's to test (``tests/test_graph_decay.py``).
+    These pin how the step reports the pass it asked for.
     """
+
+    def test_the_decay_pass_counts_are_the_step_result(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        consolidation = {"status": "ok", "scope": "namespace", "clusters_found": 1, "entries_consolidated": 3}
+        passes = {"decay": {"status": "ok", "processed": 2, "remaining": 1}, "consolidation": consolidation}
+        monkeypatch.setattr(
+            fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "ok", "passes": passes}
+        )
+
+        result = _step_memory_decay(tmp_path / ".trw")
+
+        # Consolidation runs in the daemon's maintain; the delivery reports it (PRD-CORE-302 FR03).
+        assert result == {
+            "status": "success",
+            "reason": "",
+            "processed": 2,
+            "remaining": 1,
+            "consolidation": consolidation,
+        }
+
+    def test_a_decay_pass_the_store_skipped_is_a_skipped_step(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        passes = {"decay": {"status": "skipped", "reason": "locked"}}
+        monkeypatch.setattr(
+            fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "ok", "passes": passes}
+        )
+
+        result = _step_memory_decay(tmp_path / ".trw")
+
+        assert (result["status"], result["reason"], result["processed"]) == ("skipped", "locked", 0)
+
+    def test_the_step_maintains_the_checkouts_namespace_under_its_policy(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tests._memory_fixtures import FAKE_NAMESPACE
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        monkeypatch.setattr(
+            "trw_mcp.models.config.get_config",
+            lambda: TRWConfig(
+                memory_consolidation_enabled=False,
+                memory_consolidation_similarity_threshold=0.9,
+                memory_consolidation_min_cluster=4,
+                memory_consolidation_max_per_cycle=7,
+            ),
+        )
+
+        _step_memory_decay(tmp_path / ".trw")
+
+        # The daemon's config serves every project, so this project's policy travels with the request.
+        policy = {"enabled": False, "similarity_threshold": 0.9, "min_cluster": 4, "max_per_cycle": 7}
+        assert ("maintain", (FAKE_NAMESPACE, policy)) in fake_memory_store.calls
 
     def test_decay_is_wired_into_the_deferred_roster(self) -> None:
         """FR09 half one: a real production call site, not a library function."""
@@ -364,8 +395,55 @@ def test_a_failed_maintenance_pass_is_an_error_even_when_decay_succeeds(
     from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
 
     passes = {"decay": {"status": "ok", "processed": 2, "remaining": 0}, "consolidation": {"status": "error"}}
-    monkeypatch.setattr(fake_memory_store, "maintain", lambda _namespace: {"status": "error", "passes": passes})
+    monkeypatch.setattr(
+        fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "error", "passes": passes}
+    )
 
     result = _step_memory_decay(tmp_path / ".trw")
 
     assert (result["status"], result["reason"]) == ("error", "failed passes: consolidation")
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (
+            {
+                "status": "ok",
+                "passes": {"decay": {"status": "ok"}, "verification": {"status": "ok", "complete": False}},
+            },
+            ("success", "verification continues next delivery"),
+        ),
+        ({"status": "busy", "error": "memory_maintain is already running for ns"}, ("skipped", "busy")),
+    ],
+    ids=["partial-sweep", "busy"],
+)
+def test_a_bounded_or_busy_maintain_is_reported_as_such(
+    tmp_path: Path, fake_memory_store: object, monkeypatch: pytest.MonkeyPatch, answer, expected
+) -> None:
+    """rc9: the daemon's maintain verifies a large namespace over several calls, and refuses a second
+    concurrent maintain of one namespace; neither is a completed maintenance, neither is a failure."""
+    from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+    monkeypatch.setattr(fake_memory_store, "maintain", lambda _namespace, _policy: answer)
+
+    result = _step_memory_decay(tmp_path / ".trw")
+
+    assert (result["status"], result["reason"]) == expected
+
+
+def test_a_capped_decay_count_is_reported_as_a_lower_bound(
+    tmp_path: Path, fake_memory_store: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rc9: the store counts qualifying rows only up to a cap; the step says so rather than reporting
+    the capped number as exact."""
+    from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+    decay = {"status": "ok", "processed": 1000, "remaining": 9000, "remaining_capped": True}
+    monkeypatch.setattr(
+        fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "ok", "passes": {"decay": decay}}
+    )
+
+    result = _step_memory_decay(tmp_path / ".trw")
+
+    assert (result["remaining"], result.get("remaining_capped")) == (9000, True)

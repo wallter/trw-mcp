@@ -106,10 +106,15 @@ def test_the_documented_posture_claims_only_what_was_measured() -> None:
 
 
 def test_changelog_entry_remains_in_its_2_0_0_release_section() -> None:
+    """FR11's original entry stays under [2.0.0] even as later PRD-SEC-015 work
+    (e.g. FR10's host-tool-surface fix) adds its own [Unreleased] entry — the
+    marker anchors on the FR11-specific sentence, not the bare PRD id, since a
+    PRD can legitimately carry more than one changelog entry over time."""
     text = _text(_CHANGELOG)
-    assert "PRD-SEC-015" in text
+    fr11_marker = "nine read-report tools"
+    assert fr11_marker in text
     two_oh = text.index("## [2.0.0]")
-    entry = text.index("PRD-SEC-015")
+    entry = text.index(fr11_marker)
     # SEC015 FR11 amendment: later releases must not invalidate this history.
     assert two_oh < entry, "the entry must remain under its [2.0.0] release header"
     next_header = text.index("\n## [", two_oh + 1)

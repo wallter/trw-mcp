@@ -55,10 +55,11 @@ _COPILOT_SKILLS = frozenset(
 )
 #: Readiness phases a client ships inside ``trw-prd-ready`` as ``<phase>-contract.md``
 #: instead of as skills of their own. Codex renders each contract like a SKILL.md;
-#: opencode ships the canonical bytes.
+#: opencode ships the canonical bytes. ``trw-prd-ready`` is never its own contract:
+#: that file would be a byte copy of the ``SKILL.md`` beside it that nothing names.
 PRD_READY_CONTRACTS: dict[str, tuple[str, ...]] = {
     "codex": ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"),
-    "opencode": ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"),
+    "opencode": ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"),
 }
 _KEY_LINE = re.compile(r"^([A-Za-z][\w-]*):")
 

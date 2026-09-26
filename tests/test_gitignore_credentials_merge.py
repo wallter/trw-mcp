@@ -150,3 +150,15 @@ def test_noop_when_no_trw_dir(tmp_path: Path) -> None:
     _ensure_credentials_gitignored(tmp_path, result)
     assert result["errors"] == []
     assert not (tmp_path / ".trw" / ".gitignore").exists()
+
+
+def test_code_index_is_ignored_on_fresh_and_brownfield_installs() -> None:
+    """PRD-CORE-300 S10: the dispatcher builds ``.trw/code-index/`` in the
+    reviewed checkout before a reviewer lane launches (FR15 section 2). The
+    live NFR02 probe measured it arriving as untracked files, so a read-only
+    review dirtied the tree. It is a rebuildable runtime artifact: never tracked."""
+    bundled = (Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "gitignore.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "code-index/" in bundled.splitlines()
+    assert "code-index/" in {rule for rule, _comment in _REQUIRED_RULES}

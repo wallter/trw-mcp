@@ -1,95 +1,101 @@
-"""Learn-time dedup when the KNN window cannot support a dense verdict (batch 2026-09-19 X3-4).
+"""Learn-time dedup is the daemon's verdict over text; trw-mcp encodes nothing (PRD-CORE-302 FR01, C1/C4).
 
-The daemon's ``memory_similar`` decides whether a window is complete: an
-other-space or unknown-provenance hit, or a namespace its census cannot prove to
-be in the loaded space, makes it incomplete (``trw-memory/tests/
-test_comparable_neighbours.py``). trw-mcp's part, pinned here: an incomplete
-window defers to the exhaustive YAML scan, which re-embeds every entry in the
-loaded space and so finds a duplicate the window could not; a complete window's
-verdict stands; with no loaded space nothing is compared and nothing defers.
+The daemon decides KNN versus exhaustive and the skip/merge/store boundaries
+(``trw-memory/tests/test_tools_similar.py``). trw-mcp's part, pinned here: it
+sends the learning's text with this project's reference-scale thresholds, takes
+the verdict as given, stores when the daemon has no embedder, never loads a
+model to decide, and lets any other refusal raise rather than read it as "no
+duplicate".
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
+from trw_memory.lifecycle.dedup import DedupResult
 
-from tests._dedup_test_support import write_entry
-from tests._embedding_space_support import NEW_SPACE, SpaceProvider
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state._store_selection import SimilarHit, SimilarWindow
-from trw_mcp.state.dedup import _check_duplicate_via_backend, dedup_verdict
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-_LOADED = "trw_mcp.state._memory_connection.get_initialized_embedder"
+from trw_mcp.state.dedup import dedup_verdict
 
 
-class _WindowStore:
-    """The store seam answering one KNN window; no row is an exact-content duplicate."""
+class _VerdictStore:
+    """The store seam answering one daemon verdict; no row is an exact-content duplicate."""
 
-    def __init__(self, window: SimilarWindow) -> None:
-        self.window = window
-        self.spaces: list[object] = []
+    def __init__(self, verdict: DedupResult | None | Exception) -> None:
+        self.verdict = verdict
+        self.asked: list[tuple[str, str, float, float, int]] = []
 
-    def similar(self, namespace: str, vector: list[float], space: object, top_k: int) -> SimilarWindow:
-        self.spaces.append(space)
-        return self.window
+    def similar(
+        self, namespace: str, text: str, skip_threshold: float, merge_threshold: float, top_k: int
+    ) -> DedupResult | None:
+        self.asked.append((namespace, text, skip_threshold, merge_threshold, top_k))
+        if isinstance(self.verdict, Exception):
+            raise self.verdict
+        return self.verdict
 
     def find_duplicate(self, namespace: str, summary: str, detail: str) -> str | None:
         return None
 
 
-def _serve(monkeypatch: pytest.MonkeyPatch, window: SimilarWindow) -> _WindowStore:
-    store = _WindowStore(window)
+@pytest.fixture(autouse=True)
+def _no_model_in_this_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Any trw-memory embedder construction in the trw-mcp process fails the test."""
+
+    def _refuse(*_a: object, **_k: object) -> None:
+        raise AssertionError("trw-mcp constructed an embedder")
+
+    monkeypatch.setattr("trw_memory.embeddings.local.LocalEmbeddingProvider.__init__", _refuse)
+    monkeypatch.setattr("trw_memory.embeddings.get_local_embedder", _refuse)
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, verdict: DedupResult | None | Exception) -> _VerdictStore:
+    store = _VerdictStore(verdict)
     monkeypatch.setattr("trw_mcp.state._store_selection.selected_store", lambda _trw_dir: (store, "project:t"))
     return store
 
 
-@pytest.mark.parametrize("window_size", [10, 2, 1], ids=["all-other-space", "mixed", "unproven-census"])
-def test_an_incomplete_window_defers_to_the_scan_that_finds_the_duplicate(
-    tmp_path: Path, reader: FileStateReader, writer: FileStateWriter, monkeypatch: pytest.MonkeyPatch, window_size: int
-) -> None:
+def _entries(tmp_path: Path) -> Path:
     entries_dir = tmp_path / ".trw" / "learnings" / "entries"
     entries_dir.mkdir(parents=True)
-    write_entry(entries_dir, writer, "L-dup", "cache warmup races the pin", "same finding, other words")
-    write_entry(entries_dir, writer, "L-unrelated", "ruff format drift", "nothing alike")
-    _serve(monkeypatch, SimilarWindow(window_size, None))
-
-    def embed(text: str) -> list[float]:
-        return [0.0, 1.0] if text.startswith("ruff") else [1.0, 0.0]
-
-    with (
-        patch(_LOADED, return_value=SpaceProvider(NEW_SPACE)),
-        patch("trw_mcp.state.dedup.embed", side_effect=embed),
-        patch("trw_mcp.state.dedup._validated_thresholds", return_value=(0.95, 0.85)),
-    ):
-        result = dedup_verdict(
-            "pin races cache warmup", "a rephrasing", entries_dir, reader, config=TRWConfig(embeddings_enabled=True)
-        )
-
-    assert (result.action, result.existing_id) == ("skip", "L-dup")
+    return entries_dir
 
 
-def test_a_complete_window_keeps_the_store_verdict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Regression: with every hit comparable the fast path answers, no fallback."""
-    store = _serve(monkeypatch, SimilarWindow(1, [SimilarHit("L-new", 1.0, True)]))
-    with patch(_LOADED, return_value=SpaceProvider(NEW_SPACE)):
-        result = _check_duplicate_via_backend([1.0, 0.0], tmp_path, 0.95, 0.85)
+@pytest.mark.parametrize("action", ["skip", "merge", "store"])
+def test_the_daemons_verdict_is_the_learns_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    verdict = DedupResult(action, "L1" if action != "store" else None, 0.97)  # type: ignore[arg-type]
+    store = _serve(monkeypatch, verdict)
+    config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.97, dedup_merge_threshold=0.8)
 
-    assert result is not None
-    assert (result.action, result.existing_id) == ("skip", "L-new")
-    assert store.spaces == [NEW_SPACE]
+    result = dedup_verdict("pin races cache warmup", "a rephrasing", _entries(tmp_path), config=config)
+
+    assert result == verdict
+    # The project's own policy travels with the text: the daemon's config is process-wide.
+    assert store.asked == [("project:t", "pin races cache warmup a rephrasing", 0.97, 0.8, 10)]
 
 
-def test_without_a_loaded_space_nothing_is_compared_and_nothing_defers(
+def test_no_daemon_embedder_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _serve(monkeypatch, None)
+
+    result = dedup_verdict("s", "d", _entries(tmp_path), config=TRWConfig(embeddings_enabled=True))
+
+    assert (result.action, result.existing_id) == ("store", None)
+
+
+def test_a_daemon_refusal_raises_instead_of_reading_as_no_duplicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = _serve(monkeypatch, SimilarWindow(10, []))  # the daemon reports only the window's size
-    with patch(_LOADED, return_value=None):
-        result = _check_duplicate_via_backend([1.0, 0.0], tmp_path, 0.95, 0.85)
+    _serve(monkeypatch, ValueError("memory_similar refused: bad_thresholds"))
 
-    assert result is not None
-    assert (result.action, result.existing_id) == ("store", None)
-    assert store.spaces == [None]
+    with pytest.raises(ValueError, match="bad_thresholds"):
+        dedup_verdict("s", "d", _entries(tmp_path), config=TRWConfig(embeddings_enabled=True))
+
+
+def test_embeddings_disabled_never_asks_the_daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _serve(monkeypatch, DedupResult("skip", "L1", 1.0))
+
+    result = dedup_verdict("s", "d", _entries(tmp_path), config=TRWConfig(embeddings_enabled=False))
+
+    assert (result.action, store.asked) == ("store", [])

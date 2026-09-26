@@ -306,7 +306,7 @@ def test_pre_change_payload_keys_are_a_subset_of_the_post_change_ones() -> None:
     pre_change = _make_results(3)
     post_change = cast("dict[str, object]", dict(cast("dict[str, object]", _make_results(3))))
     post_change["pipeline_health"] = {"degraded": False, "advisory": "", "sync_push": {"measured": True}}
-    post_change["wal_checkpoint"] = {"checkpointed": True}
+    post_change["pending_learns_replayed"] = {"pending": 1, "replayed": 1}
 
     before = trim_session_start_payload(pre_change, verbose=True)
     after = trim_session_start_payload(cast("SessionStartResultDict", post_change), verbose=True)

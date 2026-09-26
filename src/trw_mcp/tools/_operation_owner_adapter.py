@@ -18,9 +18,8 @@ FR05 — CORE-208 delivery adapter and status routing
     :func:`hard_budget_stop_envelope` project CORE-208 results into the common
     :class:`ToolResultEnvelope` WITHOUT changing their semantics — every state
     keeps its exact CORE-208 label in ``diagnostics`` so the projection is
-    lossless. :func:`route_status_query` routes a delivery status read only to
-    the declared operation owner and refuses (typed) a non-owner tool. No second
-    delivery status or recovery authority is created here.
+    lossless. The one delivery status read is ``trw_status(delivery=...)``
+    (``tools/delivery_ops.py``); no second status or recovery authority exists here.
 """
 
 from __future__ import annotations
@@ -61,13 +60,12 @@ __all__ = [
     "register_owner",
     "require_operation_backed",
     "reset_registry",
-    "route_status_query",
     "status_envelope",
     "validate_operation_backed_claim",
 ]
 
 #: The exact delivery tools that PRD-CORE-208 owns (§4 inventory).
-DELIVERY_TOOL_NAMES: tuple[str, ...] = ("trw_deliver", "trw_delivery_status", "trw_delivery_recover")
+DELIVERY_TOOL_NAMES: tuple[str, ...] = ("trw_deliver",)
 
 
 class UnownedOperationError(RuntimeError):
@@ -93,7 +91,7 @@ class DeliveryOperationOwner:
 
     Wraps :class:`DeliveryCoordinator`; it never opens a second journal. A
     ``coordinator_factory`` is injectable for tests — production resolves the same
-    coordinator ``trw_delivery_status`` uses via ``delivery_ops._coordinator``.
+    coordinator ``trw_status(delivery=...)`` uses via ``delivery_ops._coordinator``.
     """
 
     execution_class: CeremonyExecutionClass = CeremonyExecutionClass.OPERATION_BACKED
@@ -333,38 +331,6 @@ def hard_budget_stop_envelope(
         retry_safety=RetrySafety.SAFE_EXACT_RETRY,
         truncation_state=TruncationState.HARD_BUDGET_STOPPED,
         hard_budget_stop_reason=reason[:128],
-        safe_reproduction_hint="retry trw_delivery_status with the same delivery_id",
+        safe_reproduction_hint="retry trw_status(delivery=...) with the same delivery_id",
         diagnostics={"budget": "hard"},
     )
-
-
-def route_status_query(
-    owner_tool: str,
-    *,
-    delivery_id: str,
-    coordinator_factory: Callable[[], DeliveryCoordinator] | None = None,
-    verbose: bool = False,
-) -> dict[str, object]:
-    """Route a delivery status read only to the declared operation owner (FR05).
-
-    A non-owner tool is refused (typed) — no second delivery status authority
-    exists. The owner's status projection is returned with an ``envelope`` field.
-    """
-    owner = _OWNER_REGISTRY.get(owner_tool)
-    if owner is None or owner.execution_class is not CeremonyExecutionClass.OPERATION_BACKED:
-        return {
-            "result": "owner_routing_refused",
-            "reason_code": "not_delivery_owner",
-            "tool": owner_tool,
-        }
-    if coordinator_factory is not None:
-        coord = coordinator_factory()
-    elif isinstance(owner, DeliveryOperationOwner):
-        coord = owner.coordinator()
-    else:  # pragma: no cover - registry only maps delivery tools to the delivery owner
-        from trw_mcp.tools.delivery_ops import _coordinator
-
-        coord = _coordinator()
-    status = coord.project_status(delivery_id, verbose=verbose)
-    status["envelope"] = status_envelope(status, request_id=delivery_id).model_dump(mode="json")
-    return status

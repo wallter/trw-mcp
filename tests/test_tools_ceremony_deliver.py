@@ -136,7 +136,6 @@ class TestDeliverPartialFailure:
                 side_effect=Exception("index_sync boom"),
             ),
             patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value={"status": "skipped"}),
-            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value={"status": "skipped"}),
             patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value={"status": "skipped"}),
             patch(
                 "trw_mcp.tools._deferred_delivery._step_auto_progress",
@@ -241,7 +240,6 @@ class TestDeliverPartialFailure:
         noop = {"status": "skipped"}
         with (
             patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value=noop),
-            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_memory_decay", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),

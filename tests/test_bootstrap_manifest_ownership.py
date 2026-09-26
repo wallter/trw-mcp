@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._daemon_reaper import reap_daemons_under
 from trw_mcp.bootstrap import init_project, update_project
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,11 @@ IMMUNE_CONTROL_SURFACES: dict[str, str] = {
 ALL_SURFACES: dict[str, str] = {**DESTROYED_SURFACES, **IMMUNE_CONTROL_SURFACES}
 
 _EDIT_MARKER = "trw-fix-121 user edit — must survive every update"
+
+
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 
 def _user_edit(original: bytes, suffix: str) -> bytes:
@@ -145,13 +151,17 @@ def two_run_project(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[
     pair of runs is exactly the situation the defect occurs in, and rebuilding a
     full multi-client install per surface would cost minutes for no extra signal.
     """
-    repo = _init_all_clients(tmp_path_factory.mktemp("two-run"))
+    root = tmp_path_factory.mktemp("two-run")
+    repo = _init_all_clients(root)
     edits = _apply_user_edits(repo)
     first = update_project(repo)
     assert not first["errors"], first["errors"]
     second = update_project(repo)
     assert not second["errors"], second["errors"]
     yield repo, edits
+    # update_project auto-starts a daemon from inside this module fixture, before any
+    # per-test reap or spawn recorder exists; it runs with its cwd under ``root``.
+    reap_daemons_under(root, wait=True, by_process=True)
 
 
 class TestTwoRunPreservation:
@@ -1207,7 +1217,7 @@ def _committed_install(root: Path, *, exclude: str | None = None) -> Path:
     assert not init_project(root, ide="claude-code")["errors"]
     assert not update_project(root)["errors"]
     _git(root, "add", "-A", "--", ".", *([f":!{exclude}"] if exclude else []))
-    _git(root, "commit", "-qm", "installed")
+    _git(root, *_NO_HOOKS, "commit", "-qm", "installed")
     return root
 
 

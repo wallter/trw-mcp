@@ -1,6 +1,6 @@
 """Every client profile is either sync-driven or explicitly excluded.
 
-``trw_instructions_sync`` is the call the TRW protocol mandates at delivery. It
+``trw-mcp instructions sync`` is the call the TRW protocol mandates at delivery. It
 dispatches through ``_INSTRUCTION_SYNC_GENERATORS``, a table that named three of
 the seven client profiles with no companion exclusion set and no totality test.
 A profile missing from the table takes the same code path as "nothing to do", so
@@ -34,7 +34,7 @@ class TestClientCoverageIsTotal:
         assert not unaccounted, (
             f"client profile(s) {sorted(unaccounted)} are neither driven by "
             "_INSTRUCTION_SYNC_GENERATORS nor listed in _INSTRUCTION_SYNC_EXCLUSIONS. "
-            "A profile in neither set is skipped silently by trw_instructions_sync."
+            "A profile in neither set is skipped silently by instructions sync."
         )
 
     def test_driven_and_excluded_sets_are_disjoint(self) -> None:

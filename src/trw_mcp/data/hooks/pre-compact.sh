@@ -19,7 +19,7 @@ _context_dir="$_project_root/.trw/context"
 _injected_file="$_context_dir/injected_learning_ids.txt"
 
 # PRD-CORE-095 FR17: clear injected-learning dedup state before compaction.
-: > "$_injected_file" 2>/dev/null || true
+printf '' | _trw_safe_write "$_injected_file" || true
 
 # Determine trigger type from stdin
 _payload=$(cat) || exit 0
@@ -116,27 +116,22 @@ fi
 
 # Write state snapshot -- to THIS session's marker, never a shared one.
 _state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || exit 0
-mkdir -p "${_state_file%/*}" 2>/dev/null || exit 0
-if command -v jq >/dev/null 2>&1; then
-  jq -n \
-    --arg ts "$_ts" \
-    --arg trigger "$_trigger" \
-    --arg run_path "$_run_path" \
-    --arg phase "$_phase" \
-    --argjson event_count "${_event_count:-0}" \
-    --arg last_checkpoint "$_last_checkpoint" \
-    --arg wave_manifest "$_wave_manifest" \
-    --argjson active_tasks "${_active_tasks:-0}" \
-    --arg pending_decisions "$_pending_decisions" \
-    --arg ownership "$_ownership" \
-    '{ts: $ts, trigger: $trigger, run_path: $run_path, phase: $phase, events_logged: $event_count, last_checkpoint: $last_checkpoint, wave_manifest: $wave_manifest, active_tasks: $active_tasks, pending_decisions: $pending_decisions, ownership: $ownership}' \
-    > "$_state_file" 2>/dev/null
-else
-  # Fallback: minimal JSON (no user-controlled strings to avoid injection)
-  printf '{"ts":"%s","trigger":"%s","run_path":"%s","phase":"%s","events_logged":%s,"ownership":"%s"}\n' \
-    "$_ts" "$_trigger" "$_run_path" "$_phase" "${_event_count:-0}" "$_ownership" \
-    > "$_state_file" 2>/dev/null
-fi
+# PRD-FIX-154 FR02: _json_object builds this snapshot on both the jq and the
+# jq-less path, so an operator without jq no longer loses last_checkpoint,
+# wave_manifest, active_tasks and pending_decisions, and run_path/phase are
+# always escaped (they are unowned-session data, not trusted literals).
+_json_object \
+  --str ts "$_ts" \
+  --str trigger "$_trigger" \
+  --str run_path "$_run_path" \
+  --str phase "$_phase" \
+  --int events_logged "${_event_count:-0}" \
+  --str last_checkpoint "$_last_checkpoint" \
+  --str wave_manifest "$_wave_manifest" \
+  --int active_tasks "${_active_tasks:-0}" \
+  --str pending_decisions "$_pending_decisions" \
+  --str ownership "$_ownership" \
+  | _trw_safe_write "$_state_file" 2>/dev/null
 
 # PRD-FIX-149 FR06: one explicit diagnostic when neither jq nor python3 could read the
 # trigger/session_id fields above -- never a silently degraded event.

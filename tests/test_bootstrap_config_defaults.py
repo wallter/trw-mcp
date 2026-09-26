@@ -16,6 +16,11 @@ from trw_mcp.state._store_migration import _pin
 pytestmark = pytest.mark.integration
 
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
@@ -126,7 +131,7 @@ def test_a_git_worktree_of_a_pinned_checkout_gets_its_missing_grant(tmp_path: Pa
     _git(main, "init", "-q")
     assert not init_project(main, ide="claude-code")["errors"]
     _git(main, "add", "-A")
-    _git(main, "commit", "-q", "-m", "install")
+    _git(main, *_NO_HOOKS, "commit", "-q", "-m", "install")
     worktree = tmp_path / "wt"
     _git(main, "worktree", "add", "-q", str(worktree))
     assert _pin(worktree / ".trw") == _derived(main), "the pin is tracked, so the worktree inherits it"

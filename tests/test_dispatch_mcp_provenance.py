@@ -62,7 +62,21 @@ TRW_SURFACE_ROLE="reviewer"
 """)
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(parent))
     spec = client_spec_for("codex")
-    argv = render_reviewer_argv(spec) if reviewer else render_trw_access_argv(spec)
+    full_argv = render_reviewer_argv(spec) if reviewer else render_trw_access_argv(spec)
+    # PRD-SEC-015-FR10: under posture='reviewer' the rendered argv now carries
+    # --ignore-user-config/--disable apps AFTER the -c transport pairs
+    # (reviewer_extra_argv) — flags `codex exec` accepts but the `codex mcp`
+    # introspection subcommand this test uses does not ("unexpected argument").
+    # This test probes the -c TRANSPORT alone, so only the leading "-c value"
+    # pairs are kept; the host-tool-surface hardening is exercised separately
+    # by tests/test_dispatch_reviewer_posture.py against the real `exec` argv.
+    argv: list[str] = []
+    it = iter(full_argv)
+    for token in it:
+        if token != "-c":
+            break
+        argv.append(token)
+        argv.append(next(it))
     env = build_subprocess_env("codex", with_trw=not reviewer)
     env["CODEX_HOME"] = str(home)
     result = subprocess.run(

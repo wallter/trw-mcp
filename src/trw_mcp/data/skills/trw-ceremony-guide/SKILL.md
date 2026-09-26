@@ -33,7 +33,7 @@ VALIDATE is never skipped. Match evidence to the requirement: tests for executab
 | `trw_recall(query)` | Before unfamiliar or high-risk work | Retrieve focused prior knowledge. |
 | `trw_checkpoint(message)` | After meaningful milestones or before context risk | Persist resumable progress. |
 | `trw_learn(...)` (add `learning_id` to correct one) | On a durable discovery or stale entry | Record or correct reusable knowledge, not routine status. |
-| `trw_prd_create` / `trw_prd_validate` | When requirements need a durable contract | Create and validate AARE-F requirements before implementation. |
+| `trw-mcp prd create` / `trw_prd_validate` | When requirements need a durable contract | Create and validate AARE-F requirements before implementation. |
 | `trw_build_check(...)` | After project-native checks | Record only observed results; include `options={"command_results": [...]}` when evidence enforcement requires it. It does not run tests, lint, types, builds, or coverage. |
 | `trw_review(...)` | Before delivery at STANDARD+ | Record a substantive review; use an independent reviewer when available, otherwise label a cold-context self-review. |
 | `trw_deliver(...)` | Last TRW action | Persist delivery state and sync supported instruction surfaces. It does not promote learnings into `AGENTS.md`. |

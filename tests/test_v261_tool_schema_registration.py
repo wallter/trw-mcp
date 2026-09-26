@@ -121,11 +121,4 @@ def test_fresh_production_process_exposes_v261_evidence_and_recovery_schema(tmp_
     assert "reviewer_source" in reviewer_identity_desc
     assert "reviewer_receipt_id" in reviewer_identity_desc
     assert {"delivery_id", "capability_token"} <= schemas["trw_deliver"]
-    assert {"delivery_id"} <= schemas["trw_delivery_status"]
-    assert {
-        "delivery_id",
-        "action",
-        "capability_token",
-        "expected_revision",
-        "evidence_ref",
-    } <= schemas["trw_delivery_recover"]
+    assert "delivery" in schemas["trw_status"]

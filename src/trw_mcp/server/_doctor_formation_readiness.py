@@ -45,7 +45,6 @@ probe's own output — never an environment value.
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 from typing import TYPE_CHECKING
@@ -67,35 +66,6 @@ __all__ = ["ReadinessRow", "formation_readiness_report"]
 #: json payload; the first line past this length is truncated, and truncation is
 #: visible rather than silent.
 _MAX_VERSION_CHARS = 200
-
-
-#: Oldest client version TRW's CURRENT defaults assume, with why. Below it the
-#: client still dispatches -- its verdict stays ``ready`` -- but the row carries an
-#: advisory and the report escalates to WARN, because the operator has to act.
-#: Claude Code 2.1.280 is the first release that runs Claude Opus 5.5, which is
-#: Claude Code's default model since 2026-09-22.
-_MIN_VERSIONS: dict[str, tuple[tuple[int, int, int], str]] = {
-    "claude": ((2, 1, 280), "the first Claude Code release that runs Claude Opus 5.5, its default model"),
-}
-_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-
-
-def _below_minimum(client: str, version: str) -> str | None:
-    """An advisory when *version* is older than the client's floor, else ``None``.
-
-    An unparseable version yields ``None``, never a warning: claiming "outdated"
-    about a string TRW could not read would be a guess presented as a finding.
-    """
-    floor = _MIN_VERSIONS.get(client)
-    match = _SEMVER.search(version)
-    if floor is None or match is None:
-        return None
-    found = tuple(int(part) for part in match.groups())
-    minimum, why = floor
-    if found >= minimum:
-        return None
-    wanted = ".".join(map(str, minimum))
-    return f"{client} {'.'.join(map(str, found))} is older than {wanted}, {why}; upgrade it"
 
 
 class ReadinessRow(dict[str, object]):
@@ -121,7 +91,7 @@ def _resolve_binary(spec: ClientSpec) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _probe_version(binary: str, spec: ClientSpec, timeout_s: int) -> tuple[str | None, str | None]:
+def probe_version(binary: str, spec: ClientSpec, timeout_s: int) -> tuple[str | None, str | None]:
     """Run the entry's own version argv. Returns ``(version, failure_reason)``.
 
     Exactly one of the two is non-None. Every failure mode — binary vanished
@@ -194,16 +164,13 @@ def _readiness_row(client: str, timeout_s: int) -> ReadinessRow:
     row["binary_resolved"] = resolved
     row["binary_path"] = path
     row["probe_argv"] = [resolved, *spec.version_argv]
-    version, failure = _probe_version(resolved, spec, timeout_s)
+    version, failure = probe_version(resolved, spec, timeout_s)
     if failure is not None:
         row["verdict"] = "not_measured"
         row["reason"] = failure
         return row
     row["version"] = version
     row["verdict"] = "ready"
-    advisory = _below_minimum(client, version or "")
-    if advisory is not None:
-        row["advisory"] = advisory
     return row
 
 
@@ -216,9 +183,9 @@ def formation_readiness_report(config: TRWConfig) -> tuple[str, str, list[Readin
 
     Returns:
         ``(status, message, rows)`` where status is ``PASS`` (at least one
-        enabled client is ready), ``WARN`` (none is, OR a ready client is older
-        than its ``_MIN_VERSIONS`` floor) or ``SKIP`` (none is enabled) — never
-        ``FAIL``.
+        enabled client is ready), ``WARN`` (none is) or ``SKIP`` (none is
+        enabled) — never ``FAIL``. The Claude Code version floor is the
+        separate ``claude_code_version`` row (PRD-CORE-289 FR07).
     """
     dispatch_cfg = config.dispatch
     enabled = list(dispatch_cfg.dispatch_enabled_clients)
@@ -257,12 +224,6 @@ def formation_readiness_report(config: TRWConfig) -> tuple[str, str, list[Readin
     # make PASS unreachable for every real install. A row that always warns is a
     # row operators learn to ignore, which destroys the signal the check exists
     # to carry — the per-client verdicts below stay exact either way.
-    # An outdated client is the one other WARN: it is actionable, and it is rare
-    # enough (only until the operator upgrades) that it cannot become the
-    # always-on warning the paragraph above rules out.
-    advisories = [str(row["advisory"]) for row in rows if row.get("advisory")]
     if not ready:
         return ("WARN", f"{summary}: no dispatch target is usable", rows)
-    if advisories:
-        return ("WARN", f"{summary}; " + "; ".join(advisories), rows)
     return ("PASS", summary, rows)

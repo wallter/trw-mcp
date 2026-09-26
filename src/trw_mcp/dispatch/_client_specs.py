@@ -141,6 +141,21 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             '"env":{"TRW_SURFACE_ROLE":"reviewer"}}}}',
         ),
         reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
+        # NFR02 host-tool-surface bound (PRD-SEC-015-FR10). --strict-mcp-config
+        # already limits the child's MCP surface to the one trw entry above,
+        # but its BUILT-IN tool set is untouched by that flag — a live probe of
+        # an unrestricted claude reviewer answered "SHELL: yes" with no
+        # --allowedTools/--disallowedTools on the argv, so shell/edit access
+        # depended entirely on the user's own settings.json. `claude --help`
+        # (2.1.280, 2026-09-22) documents --tools as a full REPLACEMENT of the
+        # built-in tool set ("Use \"\" to disable all tools ... or specify tool
+        # names"), distinct from --allowedTools/--allowed-tools (forbidden in
+        # _FORBIDDEN_EXTRA_ARG_TOKENS: that flag PRE-AUTHORISES tool use rather
+        # than restricting the set, so it stays off the reviewer argv too).
+        # Read/Grep/Glob is the read-only subset a reviewer needs; Bash, Edit,
+        # Write and WebFetch are simply absent from the list rather than denied
+        # by a prompt.
+        reviewer_extra_argv=("--tools", "Read,Grep,Glob"),
         # with_trw POSTURE (PRD-CORE-281-FR02). The reviewer template above minus
         # the role marking: same three flags, same evidence, same documented
         # per-server key names — only the env payload is dropped, so the child
@@ -227,21 +242,23 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # measured to reach dotted mcp_servers.trw.* sub-keys, so this composes two
         # verified facts rather than inventing a flag.
         #
-        # NO --ignore-user-config under this posture, deliberately (L-VupD): probe 2
-        # showed it drops project MCP servers outright and probe 3 showed the -c
-        # overrides failed beside it with "invalid transport in mcp_servers.trw" —
-        # measured when only enabled_tools/env were overridden and no transport
-        # existed anywhere. Supplying command/args here is what removes that
-        # dependency, but the combination has NOT been run, so the flag stays off
-        # until the live FR-12 probe settles it.
-        # TRUST RESIDUE, recorded rather than absorbed: the child therefore still
-        # READS the reviewed repo's .codex/config.toml. Our -c flags win for the trw
-        # server only after _posture renames it to an unpredictable per-launch
-        # table and disables the legacy trw entry: dotted -c leaves otherwise
-        # MERGE with inherited enabled/cwd/env/tool filters. The surface does not come from
-        # that file; but OTHER servers declared there still load. posture="reviewer"
-        # bounds the TRW surface, not the child's whole tool inventory — do not
-        # report it as full config isolation.
+        # FR-12 RESOLVED (PRD-SEC-015-FR10, 2026-09-24): the L-VupD refusal above
+        # was measured on a template that overrode only enabled_tools/env with NO
+        # transport anywhere on the command line ("invalid transport in
+        # mcp_servers.trw"). This template supplies mcp_servers.trw's full
+        # command/args via -c, so there is no longer a dependency on the config
+        # file --ignore-user-config removes. Re-probed live 2026-09-24
+        # (codex-cli 0.156.0): `codex exec --ignore-user-config --disable apps
+        # -c mcp_servers.trw.command=... -c mcp_servers.trw.args=...` ran clean
+        # end-to-end, and a follow-up prompt asking the child to enumerate every
+        # visible MCP server/tool/app/connector answered "No app or connector
+        # tools are exposed" with no user-configured server (this box's own
+        # ~/.codex/config.toml carries mcp_servers.node_repl/diy_doctor/computer-use
+        # and the `apps` feature, both absent from the child's own answer under
+        # these flags). --ignore-user-config and --disable apps are emitted via
+        # reviewer_extra_argv below, AFTER this template's rendered -c tokens,
+        # not inline here: they are plain flags, not part of the dotted
+        # transport contract _render_mcp_template's structural check enforces.
         reviewer_argv_template=(
             "-c",
             'mcp_servers.trw.command="{mcp_command}"',
@@ -251,8 +268,25 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             'mcp_servers.trw.env.TRW_SURFACE_ROLE="reviewer"',
             "-c",
             "mcp_servers.trw.enabled_tools={reviewer_tools}",
+            # codex exec runs with approval policy "never", which refuses any MCP
+            # call needing approval; this server is already bounded to the
+            # read-only reviewer set, so its tools are pre-approved (NFR02 probe).
+            "-c",
+            'mcp_servers.trw.default_tools_approval_mode="approve"',
         ),
         reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
+        # NFR02 host-tool-surface bound (PRD-SEC-015-FR10/FR11). See the FR-12
+        # comment above the template this follows for the live evidence.
+        # --ignore-user-config: drops EVERY user- and project-configured MCP
+        # server (safe here only because the template above already supplies
+        # mcp_servers.trw's own transport via -c — the exact condition L-VupD's
+        # probe 3 lacked). --disable apps: turns off ChatGPT connectors/plugins
+        # (codex-cli 0.156.0 `codex features list` reports `apps  stable  true`;
+        # a live probe without this flag exposed a GitHub connector's
+        # create_commit/create_pull_request/delete_file write tools, 182 tools
+        # total, to a nominally read-only reviewer lane — the NFR02 gap this
+        # field closes).
+        reviewer_extra_argv=("--ignore-user-config", "--disable", "apps"),
         # with_trw POSTURE (PRD-CORE-281-FR02). The reviewer template minus the
         # role env and minus the enabled_tools allowlist: the child gets an
         # ORDINARY TRW session. ``-c mcp_servers.trw.command``/``args`` are the
@@ -326,6 +360,24 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # Isolation limitation: agy exposes no host-config/MCP isolation flag in this
     # version, so TRW MCP recursion is NOT mitigated for agy. isolation_argv is
     # empty because there is nothing to emit, not because isolation was skipped.
+    #
+    # W32 (2026-09-24): NO reviewer_argv_template, deliberately, and confined_read_only_argv
+    # above is NOT a substitute -- it is host-level sandbox-exec write-denial, orthogonal to
+    # the OD-6 posture channel this field feeds (an argv-rendered trw-mcp server marked
+    # TRW_SURFACE_ROLE=reviewer). agy has no such channel at all: its ONLY MCP config surface
+    # is `~/.gemini/config/mcp_config.json`, a GLOBAL, cross-project, deep-merged file with no
+    # per-invocation or per-repo override and no CLI flag to point at an alternate one --
+    # confirmed against the vendor's own bundled doc and a scratch-HOME `agy mcp add` probe
+    # (TRW's antigravity-cli provider notes §3, "MCP config is a GLOBAL file, not
+    # repo-scoped"; PRD-FIX-133). A `reviewer_argv_template` renders INTO ARGV
+    # (``_posture.py`` module docstring); there is no argv slot here to render into, so
+    # faking one would mean either mutating a machine-wide file per dispatch (races every
+    # other agy session on the box) or silently falling back to whatever mcp_config.json
+    # already contains -- exactly the prompt-only "reviewer" `_posture.py` exists to refuse.
+    # The isolated_review CHILD-MCP-SERVER alternative (PRD-CORE-297-FR05) was probed live
+    # 2026-09-23 against agy 1.2.8 and also failed: the lane's isolated temp HOME holds no
+    # agy credentials, so agy starts an OAuth login and exits 1 before reading anything.
+    # Left unset rather than filled with either.
     "agy": ClientSpec(
         client_id="agy",
         binary="agy",
@@ -582,6 +634,22 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # headless default denies writes — rather than a flag that cannot boot.
     # `--always-approve` / `--yolo` stay forbidden. Reviewer / with_trw stay
     # refused: GROK_CONFIG overlay drops mcp_servers (OQ-1 closed).
+    #
+    # W32 (2026-09-24): NO reviewer_argv_template, still, re-confirmed this pass. grok's
+    # per-invocation env-overlay channel (`GROK_CONFIG`) drops the `mcp_servers` table
+    # entirely before the child reads it -- proven closed 2026-09-19 (OQ-1) -- so there is
+    # no argv/env path today that renders TRW's server into the child's command line the way
+    # OD-6 requires (``_posture.py`` module docstring: "argv, not a sentence"). The one
+    # candidate mechanism identified is UNVERIFIED, not merely unimplemented: a generated
+    # `.grok/config.toml` in a throwaway `--cwd` (never the reviewed tree) setting
+    # `[mcp_servers.trw.env] TRW_SURFACE_ROLE="reviewer"`, PROVIDED grok forwards that `env`
+    # table -- nobody has run this probe (TRW's grok provider notes, FUTURE-WORK §"3.
+    # Reviewer / with_trw argv", and the compatibility plan's "Must-fix before the unverified
+    # bit flips"). Filling this field on an unverified guess is exactly the defect `_posture.py`
+    # exists to prevent: a caller who asked for a bounded reviewer receiving a silently
+    # unbounded one because the template compiled but was never proven to confine anything.
+    # Left unset until that probe runs and is recorded; see grok.md §"TRW dispatch" for the
+    # standing "reviewer/with_trw argv templates still absent (refused)" status line.
     "grok": ClientSpec(
         client_id="grok",
         binary="grok",

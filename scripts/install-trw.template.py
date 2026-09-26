@@ -1270,15 +1270,16 @@ def _run_python_smoke(cmd: list[str], target_dir: str = "", timeout: int = 120) 
 #   * it probes the interpreter TRW will actually run under (the ``python``
 #     returned by ``phase_install_packages``, which may be a fallback venv), not
 #     this script's own ``sys.executable``;
-#   * the model is the project's configured ``retrieval_embedding_model``, read
-#     through trw-mcp's own config loader in that interpreter — never a second
-#     hard-coded name — and the probe is trw-mcp's own retrieval-capability
-#     probe, so the installer and ``trw-mcp doctor`` cannot disagree;
-#   * the weights are fetched the way the embedder loads them
-#     (``SentenceTransformer(model)``, revision ``main``), which also records
-#     the cache's ``refs/main`` — a commit-pinned ``snapshot_download`` writes no
-#     ref, so the runtime's cache-first load and an offline first embed could
-#     not find the snapshot it had just downloaded.
+#   * the model is the one the memory daemon loads, trw-memory's
+#     ``MemoryConfig().embedding_model`` (``MEMORY_EMBEDDING_MODEL``, daemon-wide)
+#     read in that interpreter — never a second hard-coded name — and the probe is
+#     trw-mcp's own retrieval-capability probe, so the installer and
+#     ``trw-mcp doctor`` cannot disagree;
+#   * the weights are fetched the way the embedder loads them: through
+#     ``SentenceTransformer``, at the revision trw-memory's ``model_revision``
+#     names in the target interpreter (PRD-CORE-302 FR06). The runtime's cache
+#     probe asks for that same revision; a pinned commit writes no ``refs/main``,
+#     so a probe that resolved ``main`` would not find what was just downloaded.
 
 # The extra that carries sentence-transformers + torch (trw-memory/pyproject.toml
 # [project.optional-dependencies].embeddings). Named once; every message and the
@@ -1302,15 +1303,11 @@ _SEMANTIC_EXIT_UNKNOWN = 12
 # The one line of stdout the model resolver's verdict is read from.
 _MODEL_LINE_PREFIX = "TRW_EMBEDDING_MODEL="
 
-# Run in the TARGET interpreter with the project directory as argv[1]: the same
-# config cascade the embedder reads (project config.yaml, then TRW_* env).
-_CONFIGURED_MODEL_SOURCE = (
-    "import sys\n"
-    "from pathlib import Path\n"
-    "from trw_mcp.models.config import TRWConfig\n"
-    "from trw_mcp.models.config._loader import resolve_config_overrides\n"
-    "config = TRWConfig(**resolve_config_overrides(Path(sys.argv[1]) / '.trw' / 'config.yaml'))\n"
-    f"print({_MODEL_LINE_PREFIX!r} + config.retrieval_embedding_model)\n"
+# Run in the TARGET interpreter: the model the daemon loads, from the environment
+# the daemon inherits (MEMORY_EMBEDDING_MODEL, else trw-memory's default).
+_DAEMON_MODEL_SOURCE = (
+    "from trw_memory.models.config import MemoryConfig\n"
+    f"print({_MODEL_LINE_PREFIX!r} + MemoryConfig().embedding_model)\n"
 )
 
 # argv[1] is the model. trw-mcp's retrieval probe: find_spec and a cache walk,
@@ -1329,9 +1326,9 @@ _SEMANTIC_PROBE_SOURCE = (
     "raise SystemExit(0)\n"
 )
 
-# argv[1] is the model: load it exactly as the embedder does, which downloads it.
+# argv[1] is the model: the one fetch path `trw-mcp models fetch` also uses (runtime loads never download).
 _SEMANTIC_DOWNLOAD_SOURCE = (
-    "import sys\nfrom sentence_transformers import SentenceTransformer\nSentenceTransformer(sys.argv[1])\n"
+    "import sys\nfrom trw_memory.embeddings import fetch_models\nfetch_models(embedding_model=sys.argv[1])\n"
 )
 
 
@@ -1368,11 +1365,9 @@ def _run_python_probe(cmd: list[str], target_dir: str = "", timeout: int = 60) -
     return _run_python_output(cmd, target_dir=target_dir, timeout=timeout)[0]
 
 
-def configured_embedding_model(python: str, project_dir: Path, target_dir: str = "") -> str:
-    """The project's ``retrieval_embedding_model`` as trw-mcp in *python* resolves it; ``""`` if unknown."""
-    code, out = _run_python_output(
-        [python, "-B", "-c", _CONFIGURED_MODEL_SOURCE, str(project_dir)], target_dir=target_dir, timeout=60
-    )
+def daemon_embedding_model(python: str, target_dir: str = "") -> str:
+    """The embedding model the memory daemon in *python* loads; ``""`` if unknown."""
+    code, out = _run_python_output([python, "-B", "-c", _DAEMON_MODEL_SOURCE], target_dir=target_dir, timeout=60)
     if code != 0:
         return ""
     lines = [line[len(_MODEL_LINE_PREFIX) :] for line in out.splitlines() if line.startswith(_MODEL_LINE_PREFIX)]
@@ -1399,7 +1394,7 @@ def probe_semantic_stack(python: str, model: str, target_dir: str = "") -> str:
 
 
 def download_semantic_model(python: str, model: str, target_dir: str = "", timeout: int = 900) -> bool:
-    """Cache *model* the way the embedder loads it (``SentenceTransformer(model)``, revision ``main``)."""
+    """Cache *model* and the re-ranker through trw-memory's ``fetch_models``, at the pinned revisions."""
     return _run_python_smoke(
         [python, "-B", "-c", _SEMANTIC_DOWNLOAD_SOURCE, model], target_dir=target_dir, timeout=timeout
     )
@@ -4384,7 +4379,6 @@ def phase_semantic_readiness(
     ui: UI,
     python: str,
     *,
-    project_dir: Path,
     interactive: bool,
     pip_target: str = "",
     offline: bool = False,
@@ -4405,7 +4399,7 @@ def phase_semantic_readiness(
     Returns the FINAL status after any repair attempt.
     """
     validated_target = validate_pip_target(pip_target)
-    model = configured_embedding_model(python, project_dir, target_dir=validated_target)
+    model = daemon_embedding_model(python, target_dir=validated_target)
     status = probe_semantic_stack(python, model, target_dir=validated_target)
     if status == SEMANTIC_OK:
         # Idempotent: a healthy re-run prints one calm line and changes nothing.
@@ -4418,9 +4412,8 @@ def phase_semantic_readiness(
         ui.step_warn("  Check it with: trw-mcp doctor   (the 'retrieval' row names the fix)")
         return status
 
-    download_fix = (
-        f"{python} -c \"from sentence_transformers import SentenceTransformer; SentenceTransformer('{model}')\""
-    )
+    # The one fetch path, at the pinned revision the runtime loads (PRD-CORE-302 FR06, W46).
+    download_fix = f"{python} -m trw_mcp.server models fetch"
     if status == SEMANTIC_MISSING_LIBRARY:
         ui.step_warn("Semantic retrieval is NOT active: sentence-transformers / torch are missing.")
         fix = f"{python} -m pip install '{SEMANTIC_EXTRA_SPEC}'  &&  {download_fix}"
@@ -4917,6 +4910,12 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        # The memory store's file-safety checks need POSIX; WSL2 is Linux and works.
+        sys.exit(
+            "TRW: native Windows is not supported in this release. Install and run TRW inside "
+            "WSL2 (https://learn.microsoft.com/windows/wsl/install), which it treats as Linux."
+        )
     parser = argparse.ArgumentParser(
         description="Install TRW Framework in a project directory.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -5314,7 +5313,6 @@ def main() -> None:
             semantic = phase_semantic_readiness(
                 ui,
                 python,
-                project_dir=target_dir,
                 interactive=interactive,
                 pip_target=args.pip_target,
                 offline=args.offline,

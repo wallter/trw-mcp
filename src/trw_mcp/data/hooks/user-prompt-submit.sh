@@ -86,12 +86,14 @@ fi
 _phase_cache="$_context_dir/last_ups_phase"
 _injected_file="$_context_dir/injected_learning_ids.txt"
 
-# FR04: "none" phase always emits (agent needs session_start reminder)
+# FR04: "none" phase has no phase-CHANGE to suppress on (it is one value, not
+# a transition), so it falls through to a cadence cap instead (PRD-CORE-301
+# cut 1): the phase-change suppressor below never fires for it, and without a
+# cap a session that never calls trw_session_start re-prints this line on
+# every single prompt for the rest of the session.
+_NONE_PHASE_CADENCE=5
 if [ "$_phase" != "none" ]; then
-  _cached_phase=""
-  if [ -f "$_phase_cache" ]; then
-    _cached_phase=$(cat "$_phase_cache" 2>/dev/null) || true
-  fi
+  _cached_phase=$(_trw_safe_read "$_phase_cache") || _cached_phase=""
   # FR02: Same-phase suppression — skip PHASE OUTPUT if unchanged. PRD-FIX-124
   # FR04 narrows this to the guidance limb; auto-recall below never reads it.
   if [ "$_cached_phase" = "$_phase" ]; then
@@ -99,10 +101,29 @@ if [ "$_phase" != "none" ]; then
   else
     _phase_suppressed=0
   fi
-  # FR01: Write current phase to cache (atomic write)
-  printf '%s' "$_phase" > "$_phase_cache" 2>/dev/null || true
+  # FR01: Write current phase to cache (atomic write, never through a symlink)
+  printf '%s' "$_phase" | _trw_safe_write "$_phase_cache" || true
+  # A later prompt can return to "none" (e.g. a delivered run's pin retired),
+  # so the cadence counter below must not still read as "mid-run" the next
+  # time the phase goes back to "none". Clearing it here keeps the cadence
+  # cap counting THIS "none" streak, not a stale one from earlier in the
+  # session.
+  rm -f "$_context_dir/none_phase_prompt_count" 2>/dev/null || true
 else
-  _phase_suppressed=0
+  # PRD-CORE-301 cut 1: emit on the first "none" prompt, then at most once
+  # every _NONE_PHASE_CADENCE prompts after that — never a hard silence,
+  # because the agent still needs the reminder eventually, and never every
+  # prompt, because that is the leak this cut removes.
+  _none_counter_file="$_context_dir/none_phase_prompt_count"
+  _none_count=$(_trw_safe_read "$_none_counter_file") || _none_count=0
+  case "$_none_count" in ''|*[!0-9]*) _none_count=0 ;; esac
+  _none_count=$((_none_count + 1))
+  printf '%s' "$_none_count" | _trw_safe_write "$_none_counter_file" || true
+  if [ $(( (_none_count - 1) % _NONE_PHASE_CADENCE )) -eq 0 ]; then
+    _phase_suppressed=0
+  else
+    _phase_suppressed=1
+  fi
 fi
 
 # Emit phase guidance if not suppressed

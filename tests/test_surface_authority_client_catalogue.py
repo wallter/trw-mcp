@@ -1,12 +1,9 @@
 """PRD-FIX-119 FR06 — assert the CLIENT-visible catalogue, not the server's answer.
 
-The pre-existing surface e2e (``test_surface_authority_middleware.py``:339)
-drives its own notification by calling ``on_list_tools`` three times with
-``task_type`` mutated in between, and asserts on the value the server returned
-the third time. A real MCP client issues *tools/list* ONCE at connect and then
-relies on *notifications/tools/list_changed*; it never re-asks on its own. That
-gap is why learning L-8rUJ recorded "coding init widens to 16" as verified while
-every live session sat frozen at the kernel-only surface.
+The pre-existing surface e2e (``test_surface_authority_middleware.py``) drives
+the real ``on_list_tools`` / ``on_call_tool`` hooks and asserts on the value the
+server returns. A real MCP client issues *tools/list* ONCE at connect and then
+relies on *notifications/tools/list_changed*; it never re-asks on its own.
 
 This module models the client instead of the server:
 
@@ -18,13 +15,10 @@ This module models the client instead of the server:
   fresh server list.
 
 The load-bearing FR01 consequence is therefore stated in client terms: a client
-that connects with no pinned run has ``trw_review`` in its very first catalogue
-and can dispatch it with no grant, no reconnect and no second listing.
-
-``test_client_catalogue_does_not_learn_about_a_widened_surface`` is the control
-that makes the rest non-vacuous: after ``trw_init(task_type="coding")`` the
-SERVER's surface genuinely contains ``trw_code_search``, and the client's
-catalogue genuinely does not. A test that re-listed server-side would fail it.
+that connects has ``trw_review`` in its very first catalogue and can dispatch it
+with no reconnect and no second listing (PRD-CORE-300 S11b: ``trw_review`` is now
+a plain kernel member, so this is unconditional — the surface no longer depends
+on the task or run state at all).
 """
 
 from __future__ import annotations
@@ -40,10 +34,9 @@ import pytest
 from trw_mcp.middleware.surface_authority import (
     SurfaceAuthorityMiddleware,
     reset_surface_authority_state,
-    resolve_task_type,
 )
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS
 from trw_mcp.server._surface_manifest_registry import eligible_tool_names
-from trw_mcp.tools import phase_overrides
 
 pytestmark = pytest.mark.integration
 
@@ -133,13 +126,9 @@ class _FakeMcpClient:
         """Refresh the cache IFF the server pushed ``list_changed``; return the
         number of notification-driven re-lists performed.
 
-        A client with no notification has no reason to re-list — which is the
-        whole point of FR06. This is the ONLY path that can update the cache
-        after connect. The count of PENDING notifications is snapshotted before
-        any fetch, so a re-list cannot manufacture its own justification: the
-        LIST path itself emits ``list_changed`` when the surface moved, and
-        reading ``notifications_received`` after fetching would let a stray
-        re-list retroactively look notification-driven.
+        A client with no notification has no reason to re-list. The count of
+        PENDING notifications is snapshotted before any fetch, so a re-list
+        cannot manufacture its own justification.
         """
         pending = self.notifications_received - self.notification_refreshes
         refreshed = 0
@@ -177,31 +166,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _reset_config()
     _pinned_runs.clear()
     pin_store_mod.invalidate_pin_store_cache()
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
     yield tmp_path
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
-
-
-def _init_coding_run(project_root: Path, session_id: str) -> Path:
-    """Run the REAL ``trw_init(task_type='coding')`` and pin it to ``session_id``.
-
-    The pin is written explicitly because this client's context is a test
-    double, not a FastMCP request context, so ``trw_init`` cannot resolve the
-    per-connection pin key itself (PRD-CORE-141). Every test that uses this
-    helper asserts the resulting server-side ``task_type`` as a precondition, so
-    the stand-in is verified rather than assumed.
-    """
-    from tests.conftest import extract_tool_fn, make_test_server
-    from trw_mcp.state._pin_store import upsert_pin_entry
-
-    trw_init = extract_tool_fn(make_test_server("orchestration"), "trw_init")
-    result = trw_init(task_name="fix119-client-catalogue", objective="prove FR06", task_type="coding")
-    run_dir = Path(str(result["run_path"]))
-    assert run_dir.is_absolute() or (project_root / run_dir).exists()
-    upsert_pin_entry(session_id, run_dir)
-    return run_dir
 
 
 # ── FR06 / Acceptance 1: the connect-time catalogue ─────────────────────
@@ -209,34 +176,31 @@ def _init_coding_run(project_root: Path, session_id: str) -> Path:
 
 @pytest.mark.asyncio
 async def test_client_catalogue_contains_review_at_connect(project: Path) -> None:
-    """FR01 stated in client terms: the FIRST catalogue a client ever receives —
-    no pin, no run, no grant — already contains ``trw_review``."""
+    """FR01 stated in client terms: the FIRST catalogue a client ever receives
+    already contains ``trw_review`` (S11b: it is a plain kernel member now, so
+    this holds with no pin and no run)."""
     client = _FakeMcpClient(middleware=SurfaceAuthorityMiddleware())
     await client.connect()
 
     assert client.list_requests == 1, "a real client lists once at connect"
     assert "trw_review" in client.first_catalogue
-    # The catalogue is genuinely BOUNDED at this point — this is a kernel-only
-    # session, not a full-surface fail-open, so the line above means something.
-    assert "trw_code_search" not in client.first_catalogue
-    # 14 since PRD-CORE-246: the ``unknown`` fallback DECLARES verification
-    # (FR05) and ``trw_submit_feedback`` joined the bootstrap never-hide set
-    # (FR06), so a tooling-gap report is reachable from the first catalogue too.
-    # The 2026-09-04 wiring-defect fix added a third bootstrap tool
-    # (``trw_prd_validate``), 13 -> 14, so a coding-task session (and any
-    # sub-agent it dispatches) can reach the requirement-quality validator.
-    # CORE218 CA1 moves existing memory correction into kernel v2: 14 -> 15.
-    # PRD-CORE-274 NFR07 makes comms default-on: trw_peers/trw_send/trw_inbox, 15 -> 18.
-    assert len(client.first_catalogue) == 17  # trw_learn_update merged into trw_learn (PRD-CORE-291)
-    assert {"trw_peers", "trw_send", "trw_inbox"} <= set(client.first_catalogue)
-    assert "trw_submit_feedback" in client.first_catalogue
+    # The catalogue is genuinely BOUNDED at this point — a flag-gated pack
+    # whose flag is off (dispatch_tools_exposed default False) stays masked, so
+    # the line above means something.
+    assert "trw_dispatch" not in client.first_catalogue
+    # Derived from the live source (ALWAYS_ON_TOOLS, real config comms default
+    # on) rather than a hand-picked literal — comments state why each surface
+    # moved historically; a future change to either derives a new value here.
+    expected = ALWAYS_ON_TOOLS | {"trw_send", "trw_inbox"}
+    assert client.first_catalogue == expected & set(eligible_tool_names())
+    assert {"trw_send", "trw_inbox"} <= set(client.first_catalogue)
 
 
 @pytest.mark.asyncio
 async def test_client_can_dispatch_review_it_can_see(project: Path) -> None:
     """FR01 / Acceptance 1: the client dispatches ``trw_review`` straight out of
     its own connect-time catalogue — no second listing, no notification, no
-    ``trw_request_tool_access`` grant, no reconnect."""
+    reconnect."""
     client = _FakeMcpClient(middleware=SurfaceAuthorityMiddleware())
     await client.connect()
 
@@ -244,70 +208,6 @@ async def test_client_can_dispatch_review_it_can_see(project: Path) -> None:
     assert await client.dispatch("trw_review") is _DISPATCHED
     assert client.list_requests == 1
     assert client.notifications_received == 0
-    assert not phase_overrides._overrides, "no grant was needed"
-
-
-@pytest.mark.asyncio
-async def test_client_catalogue_survives_init_without_a_second_listing(project: Path) -> None:
-    """FR06: after ``trw_init(task_type='coding')`` the client still holds
-    ``trw_review`` — and it holds it because the connect-time catalogue already
-    had it, not because anything re-listed."""
-    client = _FakeMcpClient(middleware=SurfaceAuthorityMiddleware())
-    await client.connect()
-
-    _init_coding_run(project, client.session_id)
-    # Precondition: the SERVER's view genuinely widened (task_type now resolves).
-    assert resolve_task_type(session_id=client.session_id, fastmcp_context=client.ctx) == "coding"
-
-    refreshed = await client.drain_notifications()
-
-    assert "trw_review" in client.catalogue
-    assert await client.dispatch("trw_review") is _DISPATCHED
-    # The client never issued an unsolicited list: every list beyond the connect
-    # one is accounted for by a notification it had already received.
-    assert client.list_requests == 1 + refreshed
-
-
-@pytest.mark.asyncio
-async def test_client_catalogue_does_not_learn_about_a_widened_surface(project: Path) -> None:
-    """The control that makes this module non-vacuous.
-
-    After ``trw_init(task_type='coding')`` the SERVER would answer *tools/list*
-    with 17 tools including ``trw_code_search``. The CLIENT's catalogue is the
-    13-tool connect-time snapshot, because this helper drives ``trw_init``
-    directly rather than through the middleware, so PRD-CORE-246-FR07's
-    call-path push never fires for it. A test
-    that asserted the server's answer under a client-shaped name would find
-    ``trw_code_search`` and pass; this one must not.
-
-    When Slice B (FR03) lands, a push arrives on the CALL path, ``drain`` does a
-    notification-driven re-list, and the second branch takes over — so this
-    assertion tracks the real contract in both worlds rather than pinning
-    today's gap. The branch keys on the number of refreshes ``drain`` actually
-    performed, never on the post-fetch notification counter, because the LIST
-    path emits ``list_changed`` itself: a stray server-side re-list would
-    otherwise trigger a notification and then hide behind it.
-    """
-    client = _FakeMcpClient(middleware=SurfaceAuthorityMiddleware())
-    await client.connect()
-
-    _init_coding_run(project, client.session_id)
-    assert resolve_task_type(session_id=client.session_id, fastmcp_context=client.ctx) == "coding"
-
-    refreshed = await client.drain_notifications()
-    assert client.list_requests == 1 + refreshed, "the client issued an unsolicited tools/list"
-
-    if refreshed == 0:
-        # No push happened → the client's view is provably frozen at connect.
-        assert client.catalogue == client.first_catalogue
-        assert "trw_code_search" not in client.catalogue, (
-            "this assertion is reading the SERVER's answer, not the client's cache"
-        )
-    else:
-        # A push happened → the client re-listed and learned the wider surface.
-        assert "trw_code_search" in client.catalogue
-    # Either way, the FIX-119 invariant holds without any propagation at all.
-    assert "trw_review" in client.catalogue
 
 
 # ── Acceptance 9: no client-surface claim rests on an extra server list ──

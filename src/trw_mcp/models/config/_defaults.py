@@ -43,9 +43,6 @@ from trw_mcp.models.surface_packs import (
 from trw_mcp.models.surface_packs import (
     KERNEL_TOOLS as _KERNEL_TOOLS,
 )
-from trw_mcp.models.surface_packs import (
-    STANDARD_TASK_PACKS as _STANDARD_TASK_PACKS,
-)
 
 # -- Build --
 # DEFAULT_MUTATION_TIMEOUT_SECS removed under PRD-CORE-291 (slice 2) with the
@@ -91,35 +88,12 @@ DEFAULT_NUDGE_BUDGET_CHARS: int = 600
 DEFAULT_LEARNING_PREVIEW_CHARS: int = 500
 
 # -- PRD-CORE-218-FR03 capability-pack fixture (derived, NOT a second table) --
-# The pack membership (kernel + the 11 non-kernel packs + the standard task
-# mapping) has ONE source of truth: ``trw_mcp.models.surface_packs``. The
-# authoritative registry (``server/_surface_manifest_registry.py``) reads the
-# SAME module, so ``_defaults`` and the registry can never diverge again (the
-# prior duplicate tables silently disagreed on run_maintenance / experimentation
-# / telemetry_security / memory_management membership). ``_profiles`` consumes
-# these re-exports for FR03 standard-task resolution.
+# The pack membership (kernel + the non-kernel packs) has ONE source of truth:
+# ``trw_mcp.models.surface_packs``. The authoritative registry
+# (``server/_surface_manifest_registry.py``) reads the SAME module, so
+# ``_defaults`` and the registry can never diverge again.
 KERNEL_TOOLS = _KERNEL_TOOLS
 CAPABILITY_PACKS = _CAPABILITY_PACKS
-STANDARD_TASK_PACKS = _STANDARD_TASK_PACKS
-
-#: High-risk packs may be granted ONLY by an explicit phase rule or operator
-#: grant — never by provider identity or a vague keyword (FR03 guard). This is
-#: FR03 authorization policy (not surface membership), so it stays here.
-HIGH_RISK_PACKS: frozenset[str] = frozenset(
-    {"dispatch", "experimentation", "run_maintenance", "code_risk", "delivery_operations", "telemetry_security"}
-)
-
-#: Vague keyword -> pack hint. Vague keywords may only grant LOW-risk packs; any
-#: high-risk suggestion is refused so keyword text can never widen exposure.
-KEYWORD_PACK_HINTS: dict[str, str] = {
-    "search": "code_navigation",
-    "navigate": "code_navigation",
-    "review": "verification",
-    "dispatch": "dispatch",
-    "experiment": "experimentation",
-    "maintain": "run_maintenance",
-}
-
 
 # trw_recall response projection (tools/_recall_projection.py): internal
 # ranking/telemetry state stripped from RESPONSE entries at the MCP boundary

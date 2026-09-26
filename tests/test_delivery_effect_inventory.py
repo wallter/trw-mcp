@@ -29,7 +29,11 @@ from trw_mcp.tools._delivery_effect_registry import (
 # outcome-correlation roster steps; D26 (the meta-tune rollout linkage event
 # append) was retired with the event in trw-mcp 6.1.0 -- the D-range below
 # excludes all three.
-_EXPECTED_IDS = frozenset([f"S{n:02d}" for n in range(1, 24)] + [f"D{n:02d}" for n in range(26) if n not in (9, 10)])
+# D02 (the consolidation step) retired by PRD-CORE-302 FR03; D09/D10 by PRD-CORE-293.
+_RETIRED_DEFERRED = (2, 9, 10)
+_EXPECTED_IDS = frozenset(
+    [f"S{n:02d}" for n in range(1, 24)] + [f"D{n:02d}" for n in range(26) if n not in _RETIRED_DEFERRED]
+)
 
 # Every ``owner_call_point`` value that appears in the census, mapped to the
 # fully-qualified module it is DEFINED in (verified 2026-09-03, diagnostic
@@ -64,7 +68,6 @@ _OWNER_MODULES: dict[str, str] = {
     "log_deliver_complete": "trw_mcp.tools._ceremony_deliver_steps",
     "_try_acquire_deferred_lock": "trw_mcp.tools._deferred_delivery",
     "_step_auto_prune": "trw_mcp.tools._deferred_steps_memory",
-    "_step_consolidation": "trw_mcp.tools._deferred_steps_memory",
     "_step_tier_sweep": "trw_mcp.tools._deferred_steps_memory",
     "_do_index_sync": "trw_mcp.tools._deferred_steps_learning",
     "_step_auto_progress": "trw_mcp.tools._deferred_steps_learning",
@@ -119,7 +122,7 @@ def _resolve_owner_symbol(owner_call_point: str) -> object:
 def test_current_delivery_side_effect_inventory_is_exhaustive() -> None:
     """FR03: registry equals the approved §6.6 census with no gaps or duplicates."""
     assert all_effect_ids() == _EXPECTED_IDS
-    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 47
+    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 46
     # Every descriptor's own effect_id matches its dict key (no duplicate/orphan).
     for effect_id, descriptor in DELIVERY_EFFECT_REGISTRY.items():
         assert descriptor.effect_id == effect_id
@@ -169,10 +172,10 @@ def test_owner_call_point_is_never_a_top_level_tool_entry_point() -> None:
 
 def test_thirteen_deferred_roster_and_post_batch_ids_present() -> None:
     """FR03 acceptance: 11 roster entries + post-batch + D00 lock are represented."""
-    # D01-D08 and D11-D13 roster (D09/D10 retired by PRD-CORE-293), D14-D24
-    # post-batch/nested, D25 memory decay, D00 lock.
+    # D01-D08 and D11-D13 roster (D09/D10 retired by PRD-CORE-293, D02 by
+    # PRD-CORE-302 FR03), D14-D24 post-batch/nested, D25 memory decay, D00 lock.
     for n in range(26):
-        if n in (9, 10):
+        if n in _RETIRED_DEFERRED:
             continue
         assert f"D{n:02d}" in DEFERRED_ROSTER_IDS
 

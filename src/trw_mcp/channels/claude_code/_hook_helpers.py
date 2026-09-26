@@ -121,7 +121,7 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
 
 def format_t0_beacon() -> str:
     """Format T0 presence beacon output (≤ 20 tokens)."""
-    return "[TRW] Distill intelligence available — run trw_before_edit_hint for details."
+    return '[TRW] Distill intelligence available — run trw_code(mode="hint") for details.'
 
 
 def format_t1_hint(learnings: list[dict[str, Any]]) -> str:
@@ -134,14 +134,14 @@ def format_t1_hint(learnings: list[dict[str, Any]]) -> str:
         Formatted hint string ≤ 60 tokens.
     """
     if not learnings:
-        return "[TRW] No learnings found. Call trw_before_edit_hint for more context."
+        return '[TRW] No learnings found. Call trw_code(mode="hint") for more context.'
 
     lines: list[str] = ["[TRW Distill Hint — T1]"]
     for learning in learnings[:2]:
         summary = str(learning.get("summary", ""))
         if summary:
             lines.append(f"  - {summary[:80]}")
-    lines.append("  Call trw_before_edit_hint for full context.")
+    lines.append('  Call trw_code(mode="hint") for full context.')
 
     return "\n".join(lines)
 

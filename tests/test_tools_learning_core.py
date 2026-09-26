@@ -44,19 +44,28 @@ class TestToolDocstrings:
         # Write-tier vocabulary (scope) still callable from the docstring alone.
         assert "scope" in doc
 
-    def test_trw_instructions_sync_docstring_matches_post_093_behavior(self) -> None:
-        tools = _get_tools()
-        doc = tools["trw_instructions_sync"].fn.__doc__ or ""
+    def test_instructions_sync_cli_help_matches_post_093_behavior(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """PRD-CORE-300 S6b folded the tool into ``trw-mcp instructions sync``;
+        its subparser help preserves the pre-093 guidance the tool docstring
+        used to carry."""
+        import argparse
 
-        assert "Sync TRW protocol and ceremony guidance" in doc
-        assert "Learnings are not promoted into the instruction file" in doc
-        assert "trw_session_start()" in doc
+        from trw_mcp.tools._instructions_cli import add_instructions_subcommands
 
-    def test_trw_claude_md_sync_alias_still_registered(self) -> None:
-        """The deprecated trw_claude_md_sync alias must remain registered for backward compat."""
+        parser = argparse.ArgumentParser(prog="trw-mcp")
+        subparsers = parser.add_subparsers(dest="command")
+        add_instructions_subcommands(subparsers)
+        with pytest.raises(SystemExit):
+            parser.parse_args(["instructions", "--help"])
+        help_text = capsys.readouterr().out
+        assert "ceremony guidance" in help_text
+
+    def test_trw_claude_md_sync_alias_and_instructions_sync_tool_removed(self) -> None:
+        """S6c (PRD-CORE-300) deleted the deprecated alias outright; S6b folded
+        the canonical name into the CLI, so neither is a registered MCP tool."""
         tools = _get_tools()
-        assert "trw_claude_md_sync" in tools, "trw_claude_md_sync alias must remain for backward compatibility"
-        assert "trw_instructions_sync" in tools, "canonical name trw_instructions_sync must be registered"
+        assert "trw_claude_md_sync" not in tools
+        assert "trw_instructions_sync" not in tools
 
 
 class TestTrwLearn:

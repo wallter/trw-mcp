@@ -121,6 +121,6 @@ def test_code_search_skill_still_tells_the_agent_what_to_verify() -> None:
     # semantic-mode fallback returned. 2.0.0 removed the mode (UF-031: the branch
     # could not return a result), so that literal now pins a behaviour the tool
     # does not have. The replacement asserts a check the agent can still RUN.
-    assert "trw_code_index_update" in body, "the re-index check was dropped"
+    assert "trw-mcp code index" in body, "the re-index check was dropped"
     for manifest in ("Makefile", "pyproject.toml", "package.json", "go.mod", "Cargo.toml"):
         assert manifest in body, f"the project-neutral command source no longer mentions {manifest}"

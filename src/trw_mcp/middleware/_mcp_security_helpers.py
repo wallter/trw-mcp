@@ -28,6 +28,9 @@ from trw_mcp.telemetry.unified_events import emit as emit_unified_event
 
 logger = structlog.get_logger(__name__)
 
+#: The phase reported when a session has no readable pinned run.
+_DEFAULT_PHASE = "RESEARCH"
+
 Transport = Literal["stdio", "streamable-http", "sse"]
 TRANSPORTS: tuple[Transport, ...] = ("stdio", "streamable-http", "sse")
 CLAUDE_CODE_PREFIX = "mcp__trw__"
@@ -357,6 +360,58 @@ def resolve_run_context(
         fastmcp_context=fastmcp_context,
     )
     return run_dir, _resolve_run_id(run_dir)
+
+
+def resolve_run_dir_for_session(
+    *,
+    session_id: str = "",
+    fastmcp_context: object | None = None,
+) -> Path | None:
+    """Return the session's pinned run directory, or ``None`` (fail-open).
+
+    Pin-only: the same :func:`resolve_run_context` resolution the security
+    middleware uses, so every layer of the chain reads one run per session.
+    """
+    try:
+        run_dir, _ = resolve_run_context(
+            configured_run_dir=None,
+            session_id=session_id,
+            fastmcp_context=fastmcp_context,
+        )
+        return run_dir
+    except Exception:  # trw-fail-silent-allow: no pinned run is a valid answer here; the fault is logged and a middleware must never raise into the chain
+        logger.warning("session_run_dir_resolution_failed", exc_info=True)
+        return None
+
+
+def resolve_active_phase(
+    *,
+    session_id: str = "",
+    fastmcp_context: object | None = None,
+) -> str:
+    """Return the pinned run's phase (uppercase) for registry phase scoping.
+
+    Read from ``run_dir/meta/run.yaml``. ``RESEARCH`` when there is no run or
+    the file is unreadable. Fail-open: never raises. The phase scopes EXTERNAL
+    MCP server allowlist entries (``security/mcp_registry``); no TRW tool is
+    hidden by phase (PRD-CORE-300 S11a deleted phase exposure).
+    """
+    try:
+        run_dir = resolve_run_dir_for_session(session_id=session_id, fastmcp_context=fastmcp_context)
+        if run_dir is None:
+            return _DEFAULT_PHASE
+        from trw_mcp.models.run import RunState
+        from trw_mcp.state.persistence import FileStateReader
+
+        run_yaml = Path(run_dir) / "meta" / "run.yaml"
+        if not run_yaml.exists():
+            return _DEFAULT_PHASE
+        state = RunState.model_validate(FileStateReader().read_yaml(run_yaml))
+        # use_enum_values=True: state.phase is the lowercase string value.
+        return str(state.phase).strip().upper() or _DEFAULT_PHASE
+    except Exception:  # justified: fail-open — default phase, never raise
+        logger.warning("phase_resolution_failed", outcome="default_research", exc_info=True)
+        return _DEFAULT_PHASE
 
 
 def resolve_scope_with_fallback(

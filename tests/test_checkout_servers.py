@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.state._checkout_servers import live_servers
+from trw_mcp.state._checkout_servers import live_servers, stray_servers
 from trw_mcp.state._process_identity import read_process_start_time
 
 pytestmark = pytest.mark.unit
@@ -102,3 +102,41 @@ def test_no_readable_pins_means_no_servers_listed(tmp_path: Path, content: str |
         (tmp_path / "runtime" / "pins.json").write_text(content, encoding="utf-8")
 
     assert live_servers(tmp_path) == []
+
+
+def test_stray_servers_are_orphans_and_every_server_but_the_newest_under_one_client(
+    tmp_path: Path, server: subprocess.Popen[bytes]
+) -> None:
+    newer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    try:
+        me, now = os.getpid(), datetime.now(timezone.utc)
+        mine = read_process_start_time(me)
+        _write_pins(
+            tmp_path,
+            {
+                "old": _record(server.pid, me, mine, now),
+                "new": _record(newer.pid, me, mine, now + timedelta(seconds=1)),
+                "orphan": _record(orphan.pid, gone.pid, "1", now),
+            },
+        )
+
+        lines = stray_servers(tmp_path)
+
+        assert len(lines) == 2, lines
+        assert any(f"trw-mcp pid {server.pid}" in line and "superseded" in line for line in lines)
+        assert any(f"trw-mcp pid {orphan.pid}" in line and "orphaned" in line for line in lines)
+        assert not any(f"trw-mcp pid {newer.pid}" in line for line in lines)
+    finally:
+        for proc in (newer, orphan):
+            proc.kill()
+            proc.wait()
+
+
+def test_one_server_per_live_client_is_not_stray(tmp_path: Path, server: subprocess.Popen[bytes]) -> None:
+    me = os.getpid()
+    _write_pins(tmp_path, {"s": _record(server.pid, me, read_process_start_time(me), datetime.now(timezone.utc))})
+
+    assert stray_servers(tmp_path) == []

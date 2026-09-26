@@ -16,6 +16,7 @@ import structlog
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import BatchSendResult
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -113,6 +114,12 @@ class BatchSender:
         # suppresses only the network transmission.
         if not self._platform_telemetry_enabled:
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "platform_telemetry_disabled"}
+
+        # P1-C follow-up: platform_contact_enabled is the global egress kill
+        # switch, on top of the per-purpose consent flag above. No request is
+        # attempted; the local JSONL queue is left untouched.
+        if not platform_contact_enabled():
+            return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "platform_contact_disabled"}
 
         if not self._platform_urls:
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "offline_mode"}
@@ -231,14 +238,18 @@ class BatchSender:
 
         PRD-DIST-124 (2026-04-30): migrated from urllib to httpx for
         consistency with sync/. httpx is a transitive dependency via
-        fastmcp, so no new package install required. URL is the
-        platform_url from TRW config (operator-configured, not user input).
+        fastmcp, so no new package install required. URL is one of
+        ``effective_platform_urls``, which a project's tracked
+        ``.trw/config.yaml`` CAN set — the bearer is attached only through
+        ``platform_auth_headers`` (trw_mcp.state._platform_trust), which
+        withholds it from anything off the trusted-host allowlist.
         """
         import httpx
 
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if self._platform_api_key:
-            headers["Authorization"] = f"Bearer {self._platform_api_key}"
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+            **platform_auth_headers(url, self._platform_api_key),
+        }
 
         try:
             with httpx.Client(timeout=30.0) as client:

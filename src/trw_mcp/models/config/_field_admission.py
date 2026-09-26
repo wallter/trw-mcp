@@ -100,7 +100,10 @@ def _legacy_admission(field_name: str) -> ConfigAdmission:
 #: activation, less the two more (``nudge_urgency_mode`` /
 #: ``nudge_dedup_enabled``) removed in 2.0.0 by WD-02, and less 44 further
 #: fields removed under PRD-CORE-291 (slice 2) per
-#: ``.trw/compliance/config-field-consumers-baseline.json`` — each a net
+#: ``.trw/compliance/config-field-consumers-baseline.json``, and less
+#: ``phase_exposure_enabled`` (PRD-CORE-300 S11a deleted phase exposure),
+#: ``retrieval_embedding_dim`` (unread since PRD-CORE-302 FR05) and
+#: ``retrieval_embedding_model`` (the daemon's MEMORY_EMBEDDING_MODEL chooses) — each a net
 #: surface REDUCTION, not a new admission. A field NOT in this
 #: set and NOT in :data:`FIELD_ADMISSIONS` is a NEW public field that must pay
 #: the full admission budget. This is a committed receipt, NOT derived from the
@@ -119,7 +122,6 @@ agents_md_learning_min_impact
 ambiguity_rate_max
 assertion_failure_penalty
 assertion_stale_threshold_days
-audit_pattern_promotion_threshold
 auto_checkpoint_enabled
 auto_checkpoint_pre_compact
 auto_checkpoint_tool_interval
@@ -240,7 +242,6 @@ llm_usage_log_enabled
 llm_usage_log_file
 logs_dir
 max_auto_lines
-max_cluster_size
 max_consolidated_tags
 memory_cold_threshold_days
 memory_consolidation_enabled
@@ -253,7 +254,6 @@ memory_retention_days
 memory_score_w1
 memory_score_w2
 memory_score_w3
-memory_store_path
 meta_tune
 meta_tune_enabled
 migration_gate_enabled
@@ -274,11 +274,8 @@ path_index_exclude_dirs
 path_index_max_files
 path_index_max_seconds
 patterns_dir
-phase_exposure_enabled
 phase_gate_enforcement
 pin_ttl_hours
-pipeline_health_bandit_probe_enabled
-pipeline_health_bandit_stale_days
 pipeline_health_gate_enabled
 pipeline_health_gate_failure_threshold
 pipeline_health_gate_graph_min_corpus
@@ -307,8 +304,6 @@ receipts_dir
 reflect_max_success_patterns
 reflections_dir
 response_format
-retrieval_embedding_dim
-retrieval_embedding_model
 reversion_rate_concerning
 reversion_rate_elevated
 review_confidence_threshold
@@ -329,13 +324,6 @@ security
 self_review_blocking
 semantic_checks_enabled
 session_start_recall_enabled
-skill_contribution_cold_start
-skill_contribution_half_life_days
-skill_duplicate_max_skills
-skill_duplicate_similarity_threshold
-skill_retirement_floor
-skill_retirement_windows
-skill_surface_tracking_enabled
 skills_enabled
 source_human_utility_boost
 strict_input_criteria

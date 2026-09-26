@@ -56,6 +56,19 @@ DEFAULT_MAX_ARG_HASHES_PER_PAIR = 1024
 # Roll the baseline store file once it exceeds this many lines, keeping the
 # most recent tail. Prevents unbounded disk growth from the append-only log.
 DEFAULT_MAX_BASELINE_STORE_LINES = 100_000
+# W41-6 re-baseline (measured against a replay of `.trw/context/tool_call_events.jsonl`,
+# 2026-09-24): a full-content arg-hash has no ceiling for a free-text-bearing tool
+# (trw_assess/trw_learn/trw_checkpoint state/summary text is ~never byte-identical twice),
+# so "fire on every hash not seen before" fired on 44.9-46.0% of calls to those tools and
+# 37.7% of that day's traffic overall -- 456 of 457 anomalies emitted that day were
+# novel_arg_pattern, and rate_spike/namespace_mismatch fired zero times across all 9 days
+# of replayed traffic (2026-09-16 to 2026-09-24), so nothing with genuine signal was lost.
+# Capping emission to the first N distinct argument shapes ever observed per (server, tool)
+# pair -- reusing the ALREADY-persisted `_baseline_arg_hashes` count, no new state -- drops
+# the simulated 2026-09-24 replay rate to 0.90% (11 of 1227 calls) while still catching a
+# genuinely new SHAPE during the tool's early life, which is what FR-4's threat model
+# (tool-squatting / argument-swapping) actually needs.
+DEFAULT_MAX_NOVEL_ARG_SHAPES_PER_PAIR = 25
 
 
 class AnomalyObservation(BaseModel):
@@ -86,6 +99,7 @@ class AnomalyDetectorConfig(BaseModel):
     baseline_store_path: Path | None = None
     max_arg_hashes_per_pair: int = Field(default=DEFAULT_MAX_ARG_HASHES_PER_PAIR, gt=0)
     max_baseline_store_lines: int = Field(default=DEFAULT_MAX_BASELINE_STORE_LINES, gt=0)
+    max_novel_arg_shapes_per_pair: int = Field(default=DEFAULT_MAX_NOVEL_ARG_SHAPES_PER_PAIR, gt=0)
 
 
 def _hash_args(args: dict[str, Any]) -> str:
@@ -429,19 +443,32 @@ class AnomalyDetector:
             )
             fired.append("namespace_mismatch")
         if obs.args_hash and obs.args_hash not in self._baseline_arg_hashes[(obs.server, obs.tool)]:
-            self._remember_arg_hash((obs.server, obs.tool), obs.args_hash)
+            key = (obs.server, obs.tool)
+            # W41-6: only the first `max_novel_arg_shapes_per_pair` distinct argument shapes
+            # EVER observed for this pair are worth a signal -- past that, on a free-text tool
+            # every call is a "novel" hash forever, and the emission degenerates into pure
+            # per-call noise (measured 44.9-46.0% of trw_assess/trw_learn/trw_checkpoint calls
+            # flagged with zero true positives). `len(...)` reuses the already-persisted,
+            # already-bounded arg-hash baseline as the shape count -- no new persisted state.
+            prior_shape_count = len(self._baseline_arg_hashes[key])
+            self._remember_arg_hash(key, obs.args_hash)
             self._persist_arg_hash_baseline(obs)
-            _emit_anomaly(
-                anomaly_type="novel_arg_pattern",
-                server=obs.server,
-                tool=obs.tool,
-                session_id=obs.session_id,
-                run_id=obs.run_id,
-                run_dir=self._run_dir,
-                fallback_dir=self._fallback_dir,
-                extra={"args_hash": obs.args_hash, "novel_arg_pattern": True},
-            )
-            fired.append("novel_arg_pattern")
+            if prior_shape_count < self._config.max_novel_arg_shapes_per_pair:
+                _emit_anomaly(
+                    anomaly_type="novel_arg_pattern",
+                    server=obs.server,
+                    tool=obs.tool,
+                    session_id=obs.session_id,
+                    run_id=obs.run_id,
+                    run_dir=self._run_dir,
+                    fallback_dir=self._fallback_dir,
+                    extra={
+                        "args_hash": obs.args_hash,
+                        "novel_arg_pattern": True,
+                        "arg_shape_count": prior_shape_count + 1,
+                    },
+                )
+                fired.append("novel_arg_pattern")
         return fired
 
 

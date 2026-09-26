@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._daemon_reaper import reap_daemons_under
 from trw_mcp.bootstrap._update_transaction import _is_surface_path
 from trw_mcp.bootstrap._utils import _DATA_DIR
 
@@ -61,6 +62,11 @@ _RUNTIME_PREFIXES = (
     ".trw/security/",
     ".trw/frameworks/.rollback/",
 )
+
+
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 
 def _run(target: Path, mode: str, home: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
@@ -116,6 +122,8 @@ def _reported(result: dict[str, list[str]]) -> set[str]:
 def workspace(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     root = tmp_path_factory.mktemp("determinism")
     yield root
+    # The CLI runs auto-start a daemon under ``root/home``; no per-test reap covers a module tree.
+    reap_daemons_under(root, wait=True, by_process=True)
     shutil.rmtree(root, ignore_errors=True)
 
 
@@ -134,7 +142,7 @@ def committed_project(workspace: Path) -> Path:
     for _ in range(2):
         _run(project, "real", home)
         _git(project, "add", "-A")
-        _git(project, "commit", "-qm", "installed", "--allow-empty")
+        _git(project, *_NO_HOOKS, "commit", "-qm", "installed", "--allow-empty")
     return project
 
 
@@ -211,7 +219,7 @@ def test_scenario_4_client_hook_json_with_unsorted_keys(workspace: Path, committ
     data = json.loads(hooks_json.read_text(encoding="utf-8"))
     reordered = dict(reversed(list(data.items())))
     hooks_json.write_text(json.dumps(reordered, indent=2) + "\n", encoding="utf-8")
-    _git(project, "commit", "-qam", "reorder hooks.json keys")
+    _git(project, *_NO_HOOKS, "commit", "-qam", "reorder hooks.json keys")
 
     _dry_equals_real(workspace, project, "unsorted")
 
@@ -227,7 +235,7 @@ def test_second_real_run_changes_nothing(workspace: Path, committed_project: Pat
     first = _run(project, "real", home, bundle)
     assert ".claude/hooks/session-start.sh" in first["updated"]
     _git(project, "add", "-A")
-    _git(project, "commit", "-qm", "first update")
+    _git(project, *_NO_HOOKS, "commit", "-qm", "first update")
 
     before = _tree(project)
     second = _run(project, "real", home, bundle)
@@ -256,7 +264,7 @@ def test_scenario_5_symlinked_destinations_are_never_written_through(workspace: 
     instructions.unlink(missing_ok=True)
     instructions.symlink_to(Path("..") / "shared" / "copilot-instructions.md")
     _git(project, "add", "-A")
-    _git(project, "commit", "-qm", "symlinked destinations")
+    _git(project, *_NO_HOOKS, "commit", "-qm", "symlinked destinations")
 
     changed, real = _dry_equals_real(workspace, project, "linked")
 

@@ -81,7 +81,6 @@ def _stub_non_target_steps() -> dict[str, Any]:
     noop: dict[str, object] = {"status": "skipped"}
     names = [
         "_step_auto_prune",
-        "_step_consolidation",
         "_step_tier_sweep",
         "_do_index_sync",
         "_step_auto_progress",

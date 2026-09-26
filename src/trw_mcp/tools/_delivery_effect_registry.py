@@ -160,7 +160,6 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
     ),
     ("D00", "deferred lock-holder record", "_try_acquire_deferred_lock", _O, _CO, "lock/lease owner + liveness"),
     ("D01", "learning auto-prune mutations/audit", "_step_auto_prune", _O, _NR, "per-action proof"),
-    ("D02", "learning consolidation mutations", "_step_consolidation", _O, _NR, "keyed actions"),
     ("D03", "tier sweep, impact assignment, purge", "_step_tier_sweep", _O, _NR, "stable per-transition proof"),
     ("D04", "requirements INDEX projection", "_do_index_sync", _O, _PP, "generated digest"),
     ("D05", "requirements ROADMAP projection", "_do_index_sync", _O, _PP, "generated digest"),
@@ -300,7 +299,8 @@ DELIVERY_EFFECT_REGISTRY: dict[str, EffectDescriptor] = _build_registry()
 
 #: Deferred roster IDs that FR03 requires to be represented (D01-D08 and D11-D13
 #: roster entries -- D09/D10 retired by PRD-CORE-293, the dead outcome/Q
-#: correlation and recall positive-outcome roster steps -- plus post-batch
+#: correlation and recall positive-outcome roster steps, and D02 by PRD-CORE-302
+#: FR03 when consolidation moved into the daemon's memory_maintain -- plus post-batch
 #: D14-D25 and the D00 coordination lock; D26 retired with the meta-tune
 #: rollout linkage event it journaled).
 DEFERRED_ROSTER_IDS: frozenset[str] = frozenset(

@@ -3,7 +3,7 @@
 Covers:
   - FR13: client parameter routes writes to CLAUDE.md and/or AGENTS.md
   - FR13: auto-detection via detect_ide() drives default behavior
-  - FR13: backward compatibility — trw_claude_md_sync still writes CLAUDE.md
+  - FR13: backward compatibility — instructions sync still writes CLAUDE.md
   - FR13: AGENTS.md uses same markers and identical TRW section content
 """
 
@@ -368,20 +368,13 @@ class TestInstructionsSync:
         assert result["agents_md_path"] is None
 
     def test_fr13_tool_accepts_client_parameter(self, tmp_path: Path) -> None:
-        """The MCP tool trw_claude_md_sync accepts a client parameter."""
-        from tests.conftest import get_tools_sync, make_test_server
-
-        server = make_test_server("learning")
-        tools = get_tools_sync(server)
-
-        assert "trw_claude_md_sync" in tools, "trw_claude_md_sync must still be registered"
-
-        tool = tools["trw_claude_md_sync"]
-        # The tool schema should expose the client parameter
+        """``execute_claude_md_sync`` (PRD-CORE-300 S6b: ``trw-mcp instructions sync``) accepts a client parameter."""
         import inspect
 
-        sig = inspect.signature(tool.fn)
-        assert "client" in sig.parameters, "trw_claude_md_sync must accept a 'client' parameter"
+        from trw_mcp.state.claude_md import execute_claude_md_sync
+
+        sig = inspect.signature(execute_claude_md_sync)
+        assert "client" in sig.parameters, "execute_claude_md_sync must accept a 'client' parameter"
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +518,7 @@ class TestOpencodeParity:
 
 
 class TestCanonicalEditPropagates:
-    """US-002 acceptance: edits to canonical docs propagate via trw_instructions_sync.
+    """US-002 acceptance: edits to canonical docs propagate via instructions sync.
 
     Per exec plan W2: the renderer does NOT currently read canonical files; it
     renders from static strings. This test documents the expected future
@@ -575,6 +568,7 @@ class TestCanonicalEditPropagates:
 # ---------------------------------------------------------------------------
 
 
+@requires_monorepo
 def test_deliver_gate_text_uses_real_fields() -> None:
     """The deliver-gate condition names real trw_build_check response fields.
 

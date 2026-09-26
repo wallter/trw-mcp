@@ -25,6 +25,9 @@ _REQUIRED_KEYS = {
     "total",
 }
 
+#: Calls whose smallest total-minus-parts gap is checked: an untimed step shows up in each.
+_SUM_OF_PARTS_CALLS = 3
+
 
 def test_step_durations_ms_present_on_success(
     build_check_invoke: Any,
@@ -80,25 +83,30 @@ def test_step_durations_total_is_sum_of_parts(
 
     A divergence >5 ms indicates an instrumented gap (a step that runs
     but is not measured), which is the precise failure mode this
-    telemetry guards against.
+    telemetry guards against. An untimed step widens the gap on every call;
+    a scheduler stall widens one call's gap (the 6.1.0 PyPI action failed once
+    at 5.60 ms), so the bound applies to the smallest gap of a few calls.
     """
     from trw_mcp.models.config import get_config
 
     # The server loads config at boot, so a real call never pays for it inside ``total``; the fixture
     # calls the bare tool with a freshly reset singleton (the removed decorator used to warm it).
     get_config()
-    result = build_check_invoke()
+    gaps: list[float] = []
+    for _ in range(_SUM_OF_PARTS_CALLS):
+        durations = build_check_invoke()["step_durations_ms"]
+        assert isinstance(durations, dict)
+        parts = sum(float(v) for k, v in durations.items() if k != "total")
+        total = float(durations["total"])
+        # Each part is rounded to 0.01 ms, so the parts may exceed the total by that much each.
+        assert total >= parts - 0.01 * len(durations), f"steps overlap: total={total}ms < parts={parts}ms"
+        gaps.append(total - parts)
 
-    durations = result["step_durations_ms"]
-    assert isinstance(durations, dict)
-
-    parts = sum(float(v) for k, v in durations.items() if k != "total")
-    total = float(durations["total"])
-
-    assert abs(total - parts) < 5.0, (
-        f"FR03 sum-of-parts: total={total}ms, parts={parts}ms, diff={abs(total - parts):.2f}ms. "
+    assert min(gaps) < 5.0, (
+        f"FR03 sum-of-parts: the smallest of {_SUM_OF_PARTS_CALLS} gaps is {min(gaps):.2f}ms "
+        f"(all: {', '.join(f'{gap:.2f}' for gap in gaps)}). "
         f"Tolerance is ±5 ms (allows un-instrumented init overhead). "
-        f"A larger gap indicates a step is running but not being recorded."
+        f"A larger gap on every call indicates a step is running but not being recorded."
     )
 
 

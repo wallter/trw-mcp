@@ -251,15 +251,13 @@ def _ss_counter(sctx: SessionStartContext) -> None:
 #: Every key ``run_auto_maintenance()`` can produce that reaches the payload.
 #:
 #: PRD-CORE-263-FR04. This list once omitted keys ``AutoMaintenanceDict``
-#: declared — ``wal_checkpoint`` among them — which were computed on the hot path of every session and then dropped here. The WAL checkpoint in particular is called
-#: unconditionally, so the work was paid for on every session start and its
-#: outcome was unobservable.
+#: declared, which were computed on the hot path of every session and then
+#: dropped here, so the work was paid for and its outcome was unobservable.
 MAINTENANCE_PROPAGATED_KEYS: tuple[str, ...] = (
     "update_advisory",
     "auto_upgrade",
     "stale_runs_closed",
     # PRD-CORE-263-FR04: the ones that were computed and dropped.
-    "wal_checkpoint",
     "pending_learns_replayed",
 )
 
@@ -360,10 +358,10 @@ def _ss_retrieval(sctx: SessionStartContext) -> None:
     Always set: a healthy session pays one word for it, and an absent key could
     not be told apart from a probe that never ran.
     """
-    from trw_mcp.state._retrieval_capability import probe_retrieval, retrieval_summary
+    from trw_mcp.state._retrieval_capability import daemon_embedding_model, probe_retrieval, retrieval_summary
 
     sctx.results["retrieval"] = retrieval_summary(
-        probe_retrieval(sctx.config.retrieval_embedding_model, embeddings_enabled=sctx.config.embeddings_enabled)
+        probe_retrieval(daemon_embedding_model(), embeddings_enabled=sctx.config.embeddings_enabled)
     )
 
 

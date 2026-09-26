@@ -46,7 +46,7 @@ def test_dual_surface_install_keeps_the_cursor_ide_appendix(tmp_path: Path) -> N
     content = _rules_path(tmp_path).read_text(encoding="utf-8")
     assert "TRW Trigger Phrases" in content
     assert "Verification Pass" in content
-    assert "trw_pre_compact_checkpoint" in content
+    assert "trw_checkpoint(pre_compact=True)" in content
     # The measured regression was 50 lines where 158 belonged; assert the
     # appendix arrived whole rather than pinning a line count that legitimate
     # protocol edits would churn.

@@ -17,15 +17,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._tools_learning_shared import _get_tools, no_machine_wide_ide_detection  # noqa: F401
+from tests._tools_learning_shared import instructions_sync_fn, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.models.config import get_config
 
 _USER_LINES = 40
 
 
 def _sync_sub(sub_dir: Path) -> dict[str, object]:
-    result = _get_tools()["trw_instructions_sync"].fn(scope="sub", target_dir=str(sub_dir))
-    return dict(result)
+    return instructions_sync_fn(scope="sub", target_dir=str(sub_dir))
 
 
 class TestSubScopeSectionBudget:

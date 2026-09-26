@@ -87,13 +87,6 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     ),
     CeremonyTool(
         "PLAN",
-        "trw_prd_create",
-        "When defining requirements for a new feature or fix",
-        "Ambiguous requirements are the cheapest defect to fix in spec and the most expensive in code",
-        "trw_prd_create(input_text='...')",
-    ),
-    CeremonyTool(
-        "PLAN",
         "trw_prd_validate",
         "Before implementation begins",
         "Catches requirement gaps before they become code bugs \u2014 cheaper to fix in spec than in code",
@@ -115,10 +108,10 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     ),
     CeremonyTool(
         "DELIVER",
-        "trw_instructions_sync",
+        "trw-mcp instructions sync",
         "At delivery",
         "Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights",
-        "trw_instructions_sync()",
+        "trw-mcp instructions sync",
     ),
     CeremonyTool(
         "DELIVER",

@@ -18,10 +18,29 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the daemon-store resolver at this test's tmp_path, not the real ``~/.trw``.
+
+    Since the 6.0.0 daemon migration ``memory_wal_row`` reads
+    ``resolve_user_memory_dir()`` (``TRW_USER_DIR`` > ``XDG_DATA_HOME`` >
+    ``~/.trw``), never a per-project ``.trw/memory/memory.db`` — without this,
+    every test in this file would read the developer's real machine-local
+    store instead of a fixture.
+    """
+    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+
+def _user_db_path(tmp_path: Path) -> Path:
+    """The resolved daemon-store ``memory.db`` path under the isolated ``TRW_USER_DIR``."""
+    return tmp_path / "memory" / "memory.db"
+
+
 def _seed_project(tmp_path: Path, *, wal_bytes: int) -> Path:
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "memory").mkdir(parents=True)
-    db_path = trw_dir / "memory" / "memory.db"
+    (tmp_path / ".trw").mkdir(parents=True, exist_ok=True)
+    db_path = _user_db_path(tmp_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     db_path.write_bytes(b"")
     db_path.with_suffix(".db-wal").write_bytes(b"\x00" * wal_bytes)
     return tmp_path
@@ -44,7 +63,7 @@ def test_memory_wal_row_reports_size_and_checkpoint_age(tmp_path: Path) -> None:
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
-    db_path = target / ".trw" / "memory" / "memory.db"
+    db_path = _user_db_path(target)
     record_checkpoint_attempt(db_path, now=time.time())
     record_effective_checkpoint(db_path, now=time.time() - cfg.wal_checkpoint_max_age_seconds - 60)
 
@@ -82,7 +101,7 @@ def test_oversized_but_freshly_checkpointed_and_reclaimed_is_pass(tmp_path: Path
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
-    db = target / ".trw" / "memory" / "memory.db"
+    db = _user_db_path(target)
     record_effective_checkpoint(db, now=time.time())
     record_reset_checkpoint(db, now=time.time())
 
@@ -91,13 +110,35 @@ def test_oversized_but_freshly_checkpointed_and_reclaimed_is_pass(tmp_path: Path
 
 def test_no_wal_file_reports_zero_and_passes(tmp_path: Path) -> None:
     """Negative case: a store with no WAL reports zero size and PASSes."""
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "memory").mkdir(parents=True)
+    (tmp_path / ".trw").mkdir(parents=True)
 
     row = _row(tmp_path)
 
     assert row.status == "PASS"
     assert "WAL 0.0 MiB" in row.message
+
+
+def test_memory_wal_row_ignores_a_project_local_wal(tmp_path: Path) -> None:
+    """The row must read the resolved daemon store, never a project's own .trw/memory/memory.db.
+
+    A stray oversized WAL sitting in the project checkout (e.g. a pre-6.0.0
+    layout) must not be reported: since PRD-CORE-298 FR01 it is not the store
+    the daemon writes to, and reporting it would point an operator at a file
+    that reclaiming does nothing for.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+
+    project_trw_dir = tmp_path / ".trw" / "memory"
+    project_trw_dir.mkdir(parents=True)
+    project_db = project_trw_dir / "memory.db"
+    project_db.write_bytes(b"")
+    project_db.with_suffix(".db-wal").write_bytes(b"\x00" * 50 * 1024 * 1024)
+
+    status, message = memory_wal_row(tmp_path, TRWConfig())
+
+    assert status == "PASS", "the project-local WAL must not be measured"
+    assert "WAL 0.0 MiB" in message
 
 
 def test_memory_wal_check_opens_no_sqlite_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,7 +175,7 @@ def test_warn_reads_the_effective_clock_not_the_attempt_clock(tmp_path: Path) ->
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
-    db_path = target / ".trw" / "memory" / "memory.db"
+    db_path = _user_db_path(target)
     # Attempted seconds ago; last actually accomplished anything, long ago.
     record_checkpoint_attempt(db_path, now=time.time() - 5)
     record_effective_checkpoint(db_path, now=time.time() - cfg.wal_checkpoint_max_age_seconds - 600)
@@ -164,7 +205,7 @@ def _unsafe_engine_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tu
     monkeypatch.setattr(_dbapi, "sqlite_version", lambda: "3.50.4")
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
-    record_effective_checkpoint(target / ".trw" / "memory" / "memory.db", now=_time.time())
+    record_effective_checkpoint(_user_db_path(target), now=_time.time())
     return target, cfg
 
 
@@ -232,7 +273,7 @@ def test_a_safe_engine_probes_no_interpreters(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(_doctor_memory_wal, "qualifying_interpreters", lambda: calls.append(1) or [])
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
-    record_effective_checkpoint(target / ".trw" / "memory" / "memory.db", now=_time.time())
+    record_effective_checkpoint(_user_db_path(target), now=_time.time())
 
     status, _message = memory_wal_row(target, cfg)
 
@@ -371,7 +412,7 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
     # advice has a FRESH backlog clock and no reset, which is exactly the
     # unsafe-engine steady state. Telling a behind store to upgrade SQLite would
     # be advice that cannot clear what it is warning about.
-    record_effective_checkpoint(target / ".trw" / "memory" / "memory.db", now=time.time())
+    record_effective_checkpoint(_user_db_path(target), now=time.time())
 
     status, message = memory_wal_row(target, cfg)
 
@@ -387,7 +428,7 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
 # deleted (PRD-CORE-280 slice e1): both drove the WARN through a directly
 # constructed in-process SQLite backend wired onto the `_memory_connection`
 # module singleton (`mc._backend = backend`) so that `maybe_checkpoint_wal`
-# would checkpoint an in-process connection pool it owns. That singleton and
+# (itself deleted in e3) would checkpoint an in-process connection pool it owns. That singleton and
 # direct-construction pattern is exactly the SQLite connection-pool/recovery
 # machinery the fixture contract says to delete rather than port -- there is
 # no fake-store or daemon-checkout route that can stand in for driving the

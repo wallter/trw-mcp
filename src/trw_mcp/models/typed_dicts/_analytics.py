@@ -93,11 +93,3 @@ class AnalyticsReport(TypedDict):
     generated_at: str
     runs_scanned: int
     parse_errors: list[str]
-
-
-class EmbedHealthStatus(TypedDict):
-    """Return shape of ``check_embeddings_status()``."""
-
-    enabled: bool
-    available: bool
-    advisory: str

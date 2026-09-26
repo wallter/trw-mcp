@@ -4,9 +4,8 @@ Belongs to the ``tools/_delivery_operations.py`` facade. Pure projection logic
 over a read-only :class:`JournalStore` connection: it opens ``mode=ro``, never
 creates the database, refreshes a lease, sweeps retention, or appends an audit
 event, and never exposes the capability hash/salt, full request digest, absolute
-paths, or raw exception traces (FR05 acceptance). The public ``trw_delivery_status``
-MCP tool (readOnlyHint/idempotentHint annotations) is a later wave that simply
-calls :func:`build_status_projection`.
+paths, or raw exception traces (FR05 acceptance). ``trw_status(delivery=...)``
+reaches it through ``tools/delivery_ops.py::delivery_status``.
 """
 
 from __future__ import annotations

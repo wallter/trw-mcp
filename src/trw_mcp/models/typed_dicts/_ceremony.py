@@ -7,84 +7,6 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 
-class WalCheckpointResultDict(TypedDict, total=False):
-    """Return shape of ``maybe_checkpoint_wal()`` (PRD-QUAL-050-FR05, PRD-CORE-248-FR04).
-
-    Exactly one of three outcomes is populated, distinguished by which key is
-    present:
-
-    * **Skipped** — ``skipped=True`` plus ``reason`` (``"no_wal_file"`` or
-      ``"under_threshold"``). No checkpoint ran.
-    * **Checkpointed** — ``checkpointed=True`` plus the size/mode telemetry
-      (``mode``/``wal_size_before_mb``/``wal_size_after_mb``/
-      ``pages_checkpointed``/``backlog_cleared``/``reclaimed``/``busy``).
-      ``mode`` is the lowercase mode that actually ran
-      (``"truncate"``/``"passive"``; ``"error"`` is mapped from the backend's
-      error sentinel). ``markers_persisted`` reports whether the checkpoint
-      timestamp actually reached disk; when it is ``False`` the checkpoint ran
-      but its clock did not, so ``reason`` and ``advisory`` are populated and
-      the success is a PARTIAL one.
-
-      **Read ``checkpointed`` narrowly.** It means the operation RAN, not that
-      it accomplished anything — it is a hardcoded ``True`` on every non-error
-      path, and ``pages_checkpointed`` counts frames written back, which PASSIVE
-      does on every run of a busy store. ``backlog_cleared`` is the health
-      field; ``reclaimed``/``reclaimed_mb`` are disk facts. When the backlog was
-      NOT cleared, ``advisory`` says so in frames and carries the remedy when
-      there is one.
-
-      **Do not re-derive health from file size.** That was tried and it was
-      wrong in the other direction: SQLite reuses a fully checkpointed WAL's
-      allocation instead of shrinking it, so a healthy store that clears its
-      entire backlog reports no size change at all. Reporting the operation as
-      the outcome is what let a WAL climb from 16 MB to 24 MB across four days
-      of green checkpoints (``sub_RDVsKkpVeG5nDHoE`` / ``sub_alqafW7Pst40zAIK``,
-      2026-09-07); reporting file size as the outcome would have WARNed forever
-      on stores that were fine.
-    * **Errored** — ``error=True`` plus ``reason="checkpoint_failed"`` (fail-open:
-      the WAL checkpoint must never block session start).
-
-    **What is deliberately NOT here, and why this docstring says so.** The frame
-    counts (``wal_frames``), the reclaimed byte delta (``reclaimed_mb``) and the
-    four-state ``truncate_state`` classification are emitted on the
-    ``wal_checkpoint_complete`` structlog event and are NOT returned. This shape
-    is paid on every ``trw_session_start`` by every calling agent; carrying all
-    of them measured 76 tokens against this repo's 60-token hot-path budget
-    (``test_session_start_step_latency``), so per the standing rule the bloat was
-    cut rather than the ceiling raised. A maintainer reads them in the log, where
-    they are free.
-
-    They were declared here for a while after being cut from the implementation.
-    Because this is ``total=False``, mypy could not see that nothing populated
-    them, so the contract promised a consumer three keys that ``.get()`` would
-    always answer ``None`` for — the same we-checked-versus-we-never-checked
-    collapse the checkpoint reporting itself was being fixed for. Do not re-add
-    a field here without a line in ``maybe_checkpoint_wal`` that sets it.
-    """
-
-    skipped: bool
-    reason: str
-    advisory: str
-    markers_persisted: bool
-    checkpointed: bool
-    mode: str
-    wal_size_before_mb: float
-    wal_size_after_mb: float
-    pages_checkpointed: int
-    #: Whether this checkpoint caught up with the WAL backlog
-    #: (``pages_checkpointed >= wal_frames`` and not busy). THIS is checkpoint
-    #: effectiveness. File size is not: SQLite REUSES a fully checkpointed
-    #: WAL's allocation rather than shrinking it, so a perfectly healthy store
-    #: clears its whole backlog and leaves the file exactly as large.
-    backlog_cleared: bool
-    #: Whether the WAL file got smaller on disk. Read this as a disk fact only,
-    #: and read ``backlog_cleared`` for health: a retained allocation is NORMAL
-    #: and is not a fault.
-    reclaimed: bool
-    busy: int
-    error: bool
-
-
 class AutoMaintenanceDict(TypedDict, total=False):
     """Return shape of ``run_auto_maintenance()``.
 
@@ -95,7 +17,6 @@ class AutoMaintenanceDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
-    wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
     # Learn write-ahead-journal recovery: only present when a prior interrupted
     # session left accepted-but-unstored learnings to replay (omit-when-empty).
     pending_learns_replayed: dict[str, object]
@@ -514,7 +435,8 @@ class FinalizeRunResult(TypedDict, total=False):
 
 
 class TrwHeartbeatResultDict(TypedDict, total=False):
-    """Return shape of ``trw_heartbeat`` (PRD-CORE-141 FR07).
+    """Return shape of ``trw_checkpoint(heartbeat=True)`` (PRD-CORE-141 FR07;
+    folded from a formerly standalone heartbeat tool by PRD-CORE-300 S6a).
 
     All fields optional: the success path populates
     ``run_id``/``last_heartbeat_ts``/``stale_after_ts``/``age_hours``/
@@ -537,7 +459,7 @@ class TrwHeartbeatResultDict(TypedDict, total=False):
 
 
 class TrwAdoptRunResultDict(TypedDict):
-    """Return shape of ``trw_adopt_run`` (PRD-CORE-141 FR08).
+    """Return shape of ``adopt_run`` (PRD-CORE-141 FR08), invoked via ``trw-mcp run adopt`` since PRD-CORE-300 S6b.
 
     All keys are present on the success path; failures raise ``StateError``.
     ``previous_pin_key`` is ``None`` when the target run had no prior pin.

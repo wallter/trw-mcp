@@ -311,8 +311,8 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
     question, and on 2026-09-16 they disagreed on the same store in the same
     second (learning L-Rikf). It asks
     :func:`trw_mcp.tools._pipeline_health.probe_graph_edges` now — the one place
-    that decides — so this advisory, ``trw_pipeline_health`` and the fail-closed
-    gate cannot drift apart again.
+    that decides — so this advisory, the pipeline-health CLI verb and the
+    fail-closed gate cannot drift apart again.
 
     Returns ``None`` (advisory omitted) when the graph holds a relation, when the
     corpus is below the configured minimum, when the probe could not read the

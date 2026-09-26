@@ -386,9 +386,8 @@ def test_no_owned_handler_swallows_without_a_degradation_entry() -> None:
     about the catch-everything shape, and a ``except ValueError`` that sets a
     variable the next line degrades on is not that shape.
 
-    Attribution: restoring any converted swallow (for example
-    ``_bandit_probe_config``'s ``return True, _BANDIT_STALE_DAYS``) turns this
-    red naming the file and line.
+    Attribution: restoring any converted swallow turns this red naming the
+    file and line.
     """
     import ast
     from pathlib import Path

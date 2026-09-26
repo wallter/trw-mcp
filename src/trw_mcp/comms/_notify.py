@@ -183,7 +183,9 @@ def notify(
         if peer.member_id in not_delivered_to:
             skipped[peer.member_id] = NOT_RETAINED
             continue
-        envelope = Envelope(peer.member_id, shard_key(request_key, scope, peer.member_id), body, kind, delivery_class)
+        envelope = Envelope(
+            peer.member_id, shard_key(request_key, scope, peer.member_id), body, kind, delivery_class, derived_key=True
+        )
         try:
             receipts[peer.member_id] = admit(conn, snapshot, envelope, now, ttl_seconds=ttl_seconds, require_live=True)
         except AdmissionError as exc:

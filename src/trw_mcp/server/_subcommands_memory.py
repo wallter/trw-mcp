@@ -92,6 +92,16 @@ def _run_memory_token(args: argparse.Namespace) -> None:
     print(f"memory token: granted {sorted(requested)}; token stored at {written}")
 
 
+def _reembed_line(answer: dict[str, object]) -> str:
+    if answer.get("status") != "ok":
+        fix = f"; fix: {answer['fix']}" if answer.get("fix") else ""
+        return f"vectors not re-embedded ({answer.get('reason') or answer.get('error')}){fix}"
+    return (
+        f"re-embedded {answer['reembedded']} of {answer['examined']} rows; "
+        f"{answer['outside_active_space']} still outside the active space"
+    )
+
+
 def _run_memory_migrate(args: argparse.Namespace) -> None:
     import json
 
@@ -101,6 +111,7 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
         MigrationRetryError,
         apply_migration,
         preview_migration,
+        reembed_checkout,
         rollback_migration,
     )
 
@@ -109,8 +120,15 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
         if args.rollback:
             restored = rollback_migration(trw_dir, Path(args.rollback))
             print(f"memory migrate: rolled back; {restored} rows restored under default")
+            if missing := json.loads(Path(args.rollback).read_text(encoding="utf-8")).get("rollback_vectors_missing"):
+                print(
+                    f"memory migrate: {len(missing)} rows came back without vectors (another embedding space, "
+                    f"never re-embedded): run `trw-mcp memory reembed` to rebuild them: {', '.join(missing)}"
+                )
         elif args.apply:
-            print(f"memory migrate: migrated; manifest {apply_migration(trw_dir)}")
+            manifest = apply_migration(trw_dir)
+            print(f"memory migrate: migrated; manifest {manifest}")
+            print(f"memory migrate: {_reembed_line(reembed_checkout(trw_dir))}")
             for line in _checkout_servers.live_servers(trw_dir):
                 print(f"memory migrate: still running on the old store, reconnect: {line}")
         else:
@@ -124,15 +142,28 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
         sys.exit(2 if retry else 1)
 
 
+def _run_memory_reembed(args: argparse.Namespace) -> None:
+    """Exit 1 only when the daemon refused the request as invalid; other outcomes are the ``status``."""
+    import json
+
+    from trw_mcp.state._store_migration import reembed_checkout
+
+    answer = reembed_checkout(Path(args.target_dir).resolve() / ".trw")
+    print(json.dumps(answer, default=str) if args.as_json else f"memory reembed: {_reembed_line(answer)}")
+    sys.exit(1 if answer.get("status") == "invalid" else 0)
+
+
 def run_memory(args: argparse.Namespace) -> None:
     """Dispatch ``memory <subcommand>``."""
     command = getattr(args, "memory_command", None)
-    if command in {"token", "migrate"}:
-        (_run_memory_token if command == "token" else _run_memory_migrate)(args)
+    handlers = {"token": _run_memory_token, "migrate": _run_memory_migrate, "reembed": _run_memory_reembed}
+    if command in handlers:
+        handlers[command](args)
         return
     print(
         "Usage: trw-mcp memory token [--namespace PINNED] [--grant NAMESPACE]... [--migrate]\n"
-        "       trw-mcp memory migrate --to user [--apply | --rollback MANIFEST]",
+        "       trw-mcp memory migrate --to user [--apply | --rollback MANIFEST]\n"
+        "       trw-mcp memory reembed [--json]",
         file=sys.stderr,
     )
     sys.exit(2)

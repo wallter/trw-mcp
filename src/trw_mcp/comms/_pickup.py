@@ -9,7 +9,7 @@ same re-validation against the CURRENT manifest:
 1. the manifest join under the manifest lock, recording the candidate's
    server-side pin and run (``formation.join`` with the candidate handle);
 2. the run stamp (written by that join, after its lock);
-3. the enrollment transaction (the caller's ``trw_peers`` then enrolls).
+3. the enrollment transaction (the caller's ``trw_inbox`` then enrolls).
 
 Re-validation: the slot still names this candidate, the candidate is live (not
 expired, withdrawn or revoked) and the caller presents its recorded pin AND run.
@@ -106,7 +106,7 @@ def advance(ctx: Context | None) -> Pickup | None:
         # A corrupt registry must not break enrolled members (C review, S1); a caller whose
         # candidate is in it simply cannot be picked up until it is repaired.
         _logger.warning("comms_candidate_registry_unreadable")
-        # trw-fail-silent-allow: logged above; "no pick-up" keeps every member's trw_peers working
+        # trw-fail-silent-allow: logged above; "no pick-up" keeps every member.s trw_inbox working
         return None
     if mine is None or mine.state not in LIVE_CANDIDATE_STATES:
         return None

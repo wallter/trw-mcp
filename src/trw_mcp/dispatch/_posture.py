@@ -167,6 +167,7 @@ def _render_mcp_template(spec: ClientSpec, template: tuple[str, ...], values: di
         required |= {
             'mcp_servers.trw.env.TRW_SURFACE_ROLE="reviewer"',
             "mcp_servers.trw.enabled_tools={reviewer_tools}",
+            'mcp_servers.trw.default_tools_approval_mode="approve"',
         }
     else:
         required |= {
@@ -226,7 +227,13 @@ def render_reviewer_argv(spec: ClientSpec) -> list[str]:
             "server into that client's argv, so a reviewer dispatch to it would be bounded only "
             "by the prompt. No substitute posture was applied."
         )
-    return _render_mcp_template(spec, spec.reviewer_argv_template, _substitutions())
+    # reviewer_extra_argv (PRD-SEC-015-FR10/FR11) is appended AFTER the rendered
+    # MCP transport, never merged into it: these tokens bound the CHILD
+    # PROCESS's own tool/config surface (codex --ignore-user-config/--disable
+    # apps, claude --tools) rather than the trw-mcp transport the template
+    # above renders, so they carry no placeholders and skip the codex
+    # fresh-mcp-table structural check entirely.
+    return _render_mcp_template(spec, spec.reviewer_argv_template, _substitutions()) + list(spec.reviewer_extra_argv)
 
 
 class TrwAccessError(ValueError):

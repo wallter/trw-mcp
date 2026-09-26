@@ -63,7 +63,7 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     )
     admit_parser = verbs.add_parser("admit", help="Admit an announced candidate to a pending slot")
     admit_parser.add_argument("member_id", help="Pending member slot")
-    admit_parser.add_argument("candidate_id", help="Handle the candidate got from trw_peers(action='announce')")
+    admit_parser.add_argument("candidate_id", help="Handle the candidate got from trw_inbox(action='announce')")
     admit_parser.add_argument(
         "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
     )
@@ -80,7 +80,7 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     )
 
     # Next batch P0: formation pause/resume with per-member ack (PAUSE-RESUME-DESIGN rev 2).
-    pause_parser = verbs.add_parser("pause", help="Pause the formation; members ack with trw_peers(action='ack_pause')")
+    pause_parser = verbs.add_parser("pause", help="Pause the formation; members ack with trw_inbox(action='ack_pause')")
     pause_parser.add_argument("--reason", required=True, help="Shown to members (first 200 chars)")
     pause_parser.add_argument("--until", default=None, help="Advisory ISO-8601 end; resume is always explicit")
     pause_parser.add_argument(

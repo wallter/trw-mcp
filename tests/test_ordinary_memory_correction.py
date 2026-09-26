@@ -11,13 +11,14 @@ from trw_mcp.server._app import create_app
 from trw_mcp.server._tools import _tool_registrars
 
 
-@pytest.mark.parametrize("task_type", [None, "coding", "research", "docs", "eval", "rca", "planning", "unknown"])
 async def test_fresh_catalog_can_correct_and_retire_memory(
-    memory_daemon: MemoryDaemon, tmp_path: Path, monkeypatch, task_type, request: pytest.FixtureRequest
+    memory_daemon: MemoryDaemon, tmp_path: Path, monkeypatch, request: pytest.FixtureRequest
 ):
+    # PRD-CORE-300 S11b: the surface no longer depends on task_type at all, so
+    # there is nothing left to force here; trw_learn is an unconditional kernel
+    # member and must be reachable on the flat surface regardless.
     monkeypatch.setenv("TRW_TOOL_RESOLUTION_MODE", "standard")
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
-    monkeypatch.setattr("trw_mcp.middleware.surface_authority.resolve_task_type", lambda **kwargs: task_type)
     # The server/tool path resolves ``trw_dir`` through the test suite's own
     # path-isolation stand-in (``tests/_path_isolation.py``), which always
     # answers ``<the test's tmp_path>/.trw`` regardless of TRW_PROJECT_ROOT —

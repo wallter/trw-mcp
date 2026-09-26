@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from trw_memory.namespaces.identity import resolve_project_identity
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from tests._memory_fixtures import MemoryDaemon
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import reload_config
 from trw_mcp.state import _store_migration
 from trw_mcp.state._store_migration import (
@@ -516,6 +518,70 @@ def test_the_verb_exits_2_while_a_client_holds_the_store_and_names_it(
     assert "trw-mcp pid 7, launched by claude (pid 6)" in err
 
 
+@contextlib.contextmanager
+def _file_writes_fail_after_the_swap(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Once the rollback swaps its store in, every file write past 64 bytes fails as a full disk would."""
+    resource = pytest.importorskip("resource")
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    swap = _store_migration._swap
+
+    def swap_then_limit(trw_dir: Path, restored: Path) -> None:
+        swap(trw_dir, restored)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (64, hard))
+
+    previous = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    monkeypatch.setattr(_store_migration, "_swap", swap_then_limit)
+    try:
+        yield
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        signal.signal(signal.SIGXFSZ, previous)
+        monkeypatch.setattr(_store_migration, "_swap", swap)
+
+
+def test_vectors_from_another_embedding_space_cut_over_and_are_named_again_on_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C9: the daemon moves the rows and names the vectors it cannot hold. The count check refused that
+    cutover; a rollback before any re-embed brings the rows back without vectors, and says so."""
+    from tests._memory_daemon import running_daemon
+
+    root = tmp_path / "narrow"
+    (root / ".trw" / "memory").mkdir(parents=True)
+    (root / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+    store = SQLiteBackend(root / ".trw" / "memory" / "memory.db", dim=8)
+    try:
+        for index, entry_id in enumerate(_IDS):
+            store.store(MemoryEntry(id=entry_id, content=f"learning {entry_id}", namespace="default", sync_seq=index))
+            store.upsert_vector(entry_id, [1.0 if i == index else 0.0 for i in range(8)], namespace="default")
+    finally:
+        store.close()
+    user_dir = tmp_path / "userhome"
+    monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", lambda _paths: None)
+    reload_config()
+    try:
+        with running_daemon(user_dir):
+            manifest_path = apply_migration(root / ".trw")
+            assert _served(root, _namespace(root)) == (3, 0, 0)
+        assert json.loads(manifest_path.read_text(encoding="utf-8"))["vectors_not_carried"] == sorted(_IDS)
+
+        # A stop while the rollback publishes that note: the file-size limit fails the write part-way.
+        # The pin stays, the manifest stays readable, and the rerun finishes the rollback.
+        with pytest.raises(StateError), _file_writes_fail_after_the_swap(monkeypatch):
+            rollback_migration(root / ".trw", manifest_path)
+        assert _store_migration._pin(root / ".trw") == _namespace(root)
+        assert "rollback_vectors_missing" not in json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        assert rollback_migration(root / ".trw", manifest_path) == 3
+    finally:
+        reload_config()
+
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["rollback_vectors_missing"] == sorted(_IDS)
+    ids, vectors, _edges = _project(root)
+    assert (ids, vectors) == (sorted(_IDS), {})
+
+
 def test_a_completed_apply_names_the_clients_to_reconnect(
     checkout: Path, daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -535,3 +601,108 @@ def test_a_completed_apply_names_the_clients_to_reconnect(
     assert "memory migrate: migrated; manifest " in out
     assert "reconnect" in out
     assert "trw-mcp pid 7, launched by claude (pid 6)" in out
+
+
+# -- PRD-CORE-302 FR07: the daemon re-embeds migrated rows and reports what is left ----------
+
+#: The space the old store's vectors were written in, before the daemon owned embedding.
+_OLD_SPACE_ROWS = {
+    "L-clean": "clean summary",
+    "L-trailing": "summary with trailing space ",
+    "L-newline": "summary\nwith a newline",
+    "L-legacy": "written before provenance",
+}
+
+
+def _old_space_checkout(root: Path, rows: dict[str, str]) -> Path:
+    """A project store as an in-process embedder left it: proofs over stripped text, one row with none."""
+    from trw_memory.embeddings.provenance import EmbeddingSpace, VectorProvenance
+
+    (root / ".trw" / "memory").mkdir(parents=True)
+    (root / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+    store = SQLiteBackend(root / ".trw" / "memory" / "memory.db")
+    try:
+        old = EmbeddingSpace("a" * 64, "trw-declared-encoder-v1:all-MiniLM-L6-v2", store._dim)
+        for index, (entry_id, content) in enumerate(rows.items()):
+            store.store(MemoryEntry(id=entry_id, content=content, namespace="default", sync_seq=index))
+            vector = [0.0] * store._dim
+            vector[index] = 1.0
+            proof = None if entry_id == "L-legacy" else VectorProvenance.for_vector(old, content.strip(), vector)
+            store.upsert_vector(entry_id, vector, namespace="default", provenance=proof)
+    finally:
+        store.close()
+    return root
+
+
+@pytest.fixture
+def embedding_daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """A daemon that can encode (a hash stand-in for the model), which a migrated checkout attaches to."""
+    from tests._memory_daemon import running_daemon
+
+    user_dir = tmp_path / "embedding-user"
+    monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", lambda _paths: None)
+    reload_config()
+    with running_daemon(user_dir, hash_embedder=True):
+        yield user_dir
+    reload_config()
+
+
+def test_the_re_embed_admits_every_migrated_row_in_the_active_space_once(
+    tmp_path: Path, embedding_daemon: Path
+) -> None:
+    root = _old_space_checkout(tmp_path / "repo", _OLD_SPACE_ROWS)
+    ids = list(_OLD_SPACE_ROWS)
+    apply_migration(root / ".trw")
+    namespace = _namespace(root)
+    before = asyncio.run(_client(root).vectors(namespace, ids))
+    assert before["status"] == "ok" and before["vectors"] == {}
+
+    first = _store_migration.reembed_checkout(root / ".trw")
+    assert (first["status"], first["reembedded"], first["outside_active_space"]) == ("ok", 4, 0)
+    after = asyncio.run(_client(root).vectors(namespace, ids))
+    assert set(after["vectors"]) == set(ids)
+
+    second = _store_migration.reembed_checkout(root / ".trw")
+    assert (second["reembedded"], second["already_current"]) == (0, 4)
+
+
+def test_rows_left_outside_are_counted_by_the_verb_the_status_and_doctor(
+    tmp_path: Path, embedding_daemon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+    from trw_mcp.state._retrieval_capability import outside_active_space_note
+
+    root = _old_space_checkout(tmp_path / "repo", {**_OLD_SPACE_ROWS, "L-stuck": "an unencodable row"})
+    args = _build_arg_parser().parse_args(["memory", "migrate", "--to", "user", "--target-dir", str(root), "--apply"])
+    SUBCOMMAND_HANDLERS[args.command](args)
+
+    assert "re-embedded 4 of 5 rows; 1 still outside the active space" in capsys.readouterr().out
+    coverage = asyncio.run(_client(root).status(_namespace(root)))["coverage"]
+    assert coverage["outside_active_space"] == 1
+    assert outside_active_space_note(root / ".trw") == (
+        "; 1 stored vector(s) outside the active space (dense recall skips them)"
+    )
+
+
+def test_the_reembed_verb_reports_one_json_document_and_a_rerun_changes_nothing(
+    tmp_path: Path, embedding_daemon: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+
+    root = _old_space_checkout(tmp_path / "repo", _OLD_SPACE_ROWS)
+    apply_migration(root / ".trw")
+
+    def run(*argv: str) -> dict[str, object]:
+        args = _build_arg_parser().parse_args(["memory", "reembed", "--target-dir", str(root), *argv])
+        with pytest.raises(SystemExit) as exited:
+            SUBCOMMAND_HANDLERS[args.command](args)
+        assert exited.value.code == 0
+        answer: dict[str, object] = json.loads(capsys.readouterr().out)
+        return answer
+
+    first = run("--json")
+    assert (first["status"], first["reembedded"], first["outside_active_space"]) == ("ok", 4, 0)
+    assert run("--json")["reembedded"] == 0

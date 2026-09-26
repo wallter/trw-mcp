@@ -26,23 +26,24 @@ class TestToolDelegationIntact:
     """Verify all learning tool functions remain registered and callable."""
 
     def test_all_learning_tools_registered(self) -> None:
-        """All learning tools (incl. deprecated alias) should be registered on a test server.
+        """All learning tools should be registered on a test server.
 
         PRD-CORE-291 merged ``trw_learn_update`` into ``trw_learn``'s update
         mode (``learning_id`` set); it is no longer a separate registration.
+        S6c (PRD-CORE-300) deleted the deprecated ``trw_claude_md_sync`` alias,
+        and S6b moved instruction sync to ``trw-mcp instructions sync``.
         """
         srv = make_test_server("learning")
         tool_names = set(get_tools_sync(srv).keys())
         expected = {
             "trw_learn",
             "trw_recall",
-            "trw_instructions_sync",
-            # Deprecated alias retained for backward compat.
-            "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
         assert "trw_learn_update" not in tool_names
-        assert len(tool_names) == 4, f"Expected 4 tools, got {len(tool_names)}: {tool_names}"
+        assert "trw_claude_md_sync" not in tool_names
+        assert "trw_instructions_sync" not in tool_names
+        assert len(tool_names) == 2, f"Expected 2 tools, got {len(tool_names)}: {tool_names}"
 
 
 class TestRemoteRecallWiring:

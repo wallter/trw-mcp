@@ -155,7 +155,7 @@ def test_fix_verification_session_end_to_end(
     (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
     (trw_dir / "context").mkdir(exist_ok=True)
     logs = trw_dir / "logs"
-    server = make_test_server("ceremony", "learning", "before_edit_hint", "build")
+    server = make_test_server("ceremony", "learning", "code", "build")
 
     def tool(name: str) -> Any:
         return extract_tool_fn(server, name)
@@ -170,7 +170,7 @@ def test_fix_verification_session_end_to_end(
     before = {lid: _memory_fields(fake_memory_store, lid) for lid in (lid_a, lid_b)}
 
     tool("trw_recall")(query="app.py")
-    hint = tool("trw_before_edit_hint")(file_path="app.py")
+    hint = tool("trw_code")(mode="hint", files="app.py")["hints"][0]
     assert {lid_a, lid_b} <= {item["id"] for item in hint["learnings"]}
     tool("trw_build_check")(tests_passed=False, test_count=3, failure_count=1)
     tool("trw_build_check")(tests_passed=True, test_count=3)

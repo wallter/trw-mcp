@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_paths, redact_secrets
 
@@ -414,6 +415,17 @@ class TelemetryPipeline:
                 "skipped_reason": "platform_telemetry_disabled",
             }
 
+        # P1-C follow-up: platform_contact_enabled is the global egress kill
+        # switch, on top of the per-purpose consent flag above. No request is
+        # attempted; the local JSONL durable write is unaffected.
+        if not platform_contact_enabled():
+            return {
+                "sent": 0,
+                "failed": 0,
+                "overflow": self._overflow_count,
+                "skipped_reason": "platform_contact_disabled",
+            }
+
         urls = cfg.effective_platform_urls
         if not urls:
             return {
@@ -483,11 +495,15 @@ class TelemetryPipeline:
             endpoint = f"{url.rstrip('/')}/v1/telemetry"
             for attempt in range(self._max_retries):
                 try:
-                    headers: dict[str, str] = {"Content-Type": "application/json"}
-                    if api_key:
-                        headers["Authorization"] = f"Bearer {api_key}"
-                    # endpoint is built from cfg.effective_platform_urls
-                    # (operator config, not user input).
+                    # endpoint is built from cfg.effective_platform_urls,
+                    # which a project's tracked .trw/config.yaml can set —
+                    # platform_auth_headers is the ONE function that may
+                    # build the Authorization header, and it withholds the
+                    # bearer from anything off the trusted-host allowlist.
+                    headers: dict[str, str] = {
+                        "Content-Type": "application/json",
+                        **platform_auth_headers(endpoint, api_key),
+                    }
                     payload = json.loads(json.dumps({"events": events}, default=str))
                     with httpx.Client(timeout=30.0) as client:
                         response = client.post(endpoint, json=payload, headers=headers)

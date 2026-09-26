@@ -279,25 +279,9 @@ def _schedule_background_drain(
     return True
 
 
-def _run_wal_maintenance(
-    trw_dir: Path,
-    maintenance: AutoMaintenanceDict,
-) -> None:
-    """Run the WAL checkpoint without coupling its failures to other maintenance."""
-    try:
-        from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
-        wal_result = maybe_checkpoint_wal(trw_dir)
-        if wal_result.get("checkpointed"):
-            maintenance["wal_checkpoint"] = wal_result
-    except Exception:  # justified: fail-open, WAL checkpoint must not block session start
-        _facade_logger().warning("maintenance_wal_checkpoint_failed", exc_info=True)
-
-
 __all__ = [
     "_check_version_sentinel",
     "_finish_drain_sweep",
     "_run_learn_journal_drain",
-    "_run_wal_maintenance",
     "_schedule_background_drain",
 ]

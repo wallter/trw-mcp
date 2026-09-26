@@ -146,6 +146,7 @@ __all__ = [
     "ack_pause",
     "add_slots",
     "announce_candidate",
+    "authority_trw_dir",
     "begin_call",
     "bootstrap_root",
     "brief",
@@ -244,9 +245,33 @@ def _project_root() -> Path:
     return resolve_project_root()
 
 
+def authority_trw_dir(run_path: Path | None, trw_dir: Path | None = None) -> Path | None:
+    """The store that holds *run_path*'s formation: *trw_dir* when given, else
+    the main root's store for a recorded linked-worktree member, else ``None``
+    (the caller's own store). A worktree's own index never lists the main
+    root's formation; an orchestrator run, or a formation the own index does
+    list, stays on the own store.
+    """
+    if trw_dir is not None or run_path is None or manifest_path_for_run(run_path).is_file():
+        return trw_dir
+    shared = shared_authority_root()
+    if shared is None:
+        return None
+    root, record = shared
+    if stamped_ids(run_path) != (record.formation_id, record.member_id):
+        return None
+    try:
+        listed_locally = record.formation_id in registered_formations(_trw_dir())
+    except (
+        FormationError
+    ):  # trw-fail-silent-allow: an unreadable own index cannot hold the formation; the main root is the only candidate
+        listed_locally = False
+    return None if listed_locally else root.trw_dir
+
+
 def load(run_path: Path | None, *, trw_dir: Path | None = None) -> FormationContext | None:
     """The formation *run_path* belongs to, or ``None`` when it belongs to none."""
-    return resolve_active(trw_dir or _trw_dir(), run_path)
+    return resolve_active(authority_trw_dir(run_path, trw_dir) or _trw_dir(), run_path)
 
 
 def validate(data: dict[str, object]) -> FormationManifest:
@@ -402,7 +427,7 @@ def ack_pause(manifest_path: Path, member_id: str, member_run_path: Path, pause_
 
 def mark_member_delivered(run_path: Path, *, trw_dir: Path | None = None) -> FormationManifest | None:
     """A member self-reports its own delivery (FR11). ``None`` when not a member."""
-    resolved_trw_dir = trw_dir or _trw_dir()
+    resolved_trw_dir = authority_trw_dir(run_path, trw_dir) or _trw_dir()
     context = resolve_active(resolved_trw_dir, run_path)
     if context is None or context.member_id is None:
         return None

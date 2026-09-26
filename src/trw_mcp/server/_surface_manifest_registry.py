@@ -32,9 +32,8 @@ from pydantic import BaseModel, ConfigDict
 # remains the authoritative surface AUTHORITY (manifest schema, owner mapping,
 # lifecycle/public status, versioned kernel digest, and resolution) — it just no
 # longer keeps a private copy of the membership data.
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, OPERATOR_ONLY_TOOLS
+from trw_mcp.models.surface_packs import FLAG_GATED_PACKS, KERNEL_TOOLS, enabled_packs
 from trw_mcp.models.surface_packs import PACK_TOOLS as PACK_TOOLS
-from trw_mcp.models.surface_packs import STANDARD_TASK_PACKS as STANDARD_TASK_PACKS
 
 # Private module alias consumed internally and re-exported to server/_tools.py.
 # A module-level assignment (vs. an ``as _KERNEL_TOOLS`` import) makes the name
@@ -80,7 +79,6 @@ class SurfaceManifestEntry(BaseModel):
     owner: str
     pack: str
     lifecycle: SurfaceLifecycle = SurfaceLifecycle.ACTIVE
-    public: bool = True
     validation_reference: str
 
 
@@ -88,79 +86,35 @@ class SurfaceManifestEntry(BaseModel):
 # FR02: exact stable minimal kernel + capability packs
 # =====================================================================
 #
-# ``_KERNEL_TOOLS`` (the exact ten-tool kernel), ``PACK_TOOLS`` (the 12-pack /
-# 50-tool membership), and ``STANDARD_TASK_PACKS`` are imported at the top of
-# this module from ``trw_mcp.models.surface_packs`` — the single source of truth
-# both this registry and ``models/config/_defaults`` read. Kernel changes are a
-# versioned event enforced by the pinned digest below.
+# ``_KERNEL_TOOLS``, ``PACK_TOOLS`` and ``FLAG_GATED_PACKS`` are imported at the
+# top of this module from ``trw_mcp.models.surface_packs`` — the single source of
+# truth both this registry and ``models/config/_defaults`` read. Kernel changes
+# are a versioned event enforced by the pinned digest below.
 
 #: Owning module (single-writer authority) per tool, from the live
 #: registrar-to-tool mapping in ``server/_tools.py``.
 _TOOL_OWNER: dict[str, str] = {
-    "trw_peers": "tools.swarm_comms",
     "trw_send": "tools.swarm_comms",
     "trw_inbox": "tools.swarm_comms",
     "trw_assess": "tools.decision",
     "trw_session_start": "tools.ceremony",
     "trw_deliver": "tools.ceremony",
-    "trw_heartbeat": "tools.ceremony",
-    "trw_adopt_run": "tools.ceremony",
     "trw_status": "tools.orchestration",
     "trw_init": "tools.orchestration",
     "trw_checkpoint": "tools.orchestration",
     "trw_recall": "tools.learning",
     "trw_learn": "tools.learning",
-    "trw_instructions_sync": "tools.learning",
-    "trw_claude_md_sync": "tools.learning",
-    "trw_skill_discovery": "tools.skill_discovery",
-    "trw_request_tool_access": "tools.phase_overrides",
-    "trw_profile_explain": "tools.trw_profile_explain",
     "trw_build_check": "tools.build",
     "trw_review": "tools.review",
-    "trw_prd_create": "tools.requirements",
     "trw_prd_validate": "tools.requirements",
-    "trw_prd_diff": "tools.query_tools",
-    "trw_query_events": "tools.query_tools",
-    "trw_surface_diff": "tools.query_tools",
-    "trw_code_search": "tools.code_search",
-    "trw_code_symbol": "tools.code_search",
-    "trw_before_edit_hint": "tools.before_edit_hint",
-    "trw_before_edit_hint_batch": "tools.before_edit_hint_batch",
-    "trw_code_index_update": "tools.code_index",
-    "trw_codebase_risk_report": "tools.codebase_risk_report",
-    "trw_ordering_compare": "tools.ordering_compare",
-    "trw_cross_repo_ordering": "tools.cross_repo_ordering",
-    "trw_delivery_status": "tools.delivery_ops",
-    "trw_delivery_recover": "tools.delivery_ops",
-    "trw_pre_compact_checkpoint": "tools.checkpoint",
-    "trw_replay_outcomes": "tools.replay",
+    "trw_code": "tools.code",
     "trw_dispatch": "tools.dispatch",
-    "trw_dispatch_status": "tools.dispatch",
-    "trw_agent_work_evidence": "tools.agent_work_evidence",
-    "trw_validate_agent_work_evidence": "tools.agent_work_evidence",
-    "trw_probe": "tools.trw_probe",
-    "trw_probe_budget_status": "tools.trw_probe",
-    "trw_meta_tune_rollback": "tools.meta_tune_ops",
-    "trw_meta_tune_propose": "tools.meta_tune_ops",
-    "trw_surface_classify": "tools.meta_tune_ops",
-    "trw_mcp_security_status": "tools.mcp_security_status",
-    "trw_pipeline_health": "tools._pipeline_health_tool",
-    "trw_channel_stats": "tools.channel_stats",
-    "trw_graph_related": "tools.knowledge",
-    "trw_submit_feedback": "tools.submit_feedback",
 }
 
-#: Deprecated tools (still registered, in the removal queue). ``trw_claude_md_sync``
-#: is the deprecated alias of ``trw_instructions_sync`` (PRD-CORE-218 §4).
-_DEPRECATED_TOOLS: frozenset[str] = frozenset({"trw_claude_md_sync"})
-
-#: Operator-only / internal surfaces: registered but not part of the advertised
-#: agent surface. Excluded from ``standard`` and ``all`` resolution; reached only
-#: via explicit operator grant. Sourced from the pure ``surface_packs``
-#: single-source-of-truth (the former ``_defaults.INTENTIONALLY_UNBRIDGED_TOOLS``
-#: mirror was removed with the CORE-125 preset vocabulary — this is now the only
-#: operator-only authority; the FR01 test asserts manifest non-public == this).
-_OPERATOR_ONLY_TOOLS = OPERATOR_ONLY_TOOLS
+#: Deprecated tools (still registered, in the removal queue). Empty since the
+#: former deprecated alias of the instructions-sync tool (PRD-CORE-218 §4) was
+#: deleted outright (PRD-CORE-300 S6c) rather than merely marked deprecated.
+_DEPRECATED_TOOLS: frozenset[str] = frozenset()
 
 _MANIFEST_VALIDATION_REF = "trw-mcp/tests/test_tool_presets.py::test_prd_core_218_fr01"
 
@@ -173,7 +127,6 @@ def _build_tool_manifest() -> tuple[SurfaceManifestEntry, ...]:
             owner=_TOOL_OWNER[name],
             pack=pack,
             lifecycle=(SurfaceLifecycle.DEPRECATED if name in _DEPRECATED_TOOLS else SurfaceLifecycle.ACTIVE),
-            public=name not in _OPERATOR_ONLY_TOOLS,
             validation_reference=_MANIFEST_VALIDATION_REF,
         )
         for pack, tools in PACK_TOOLS.items()
@@ -194,7 +147,7 @@ MANIFEST_BY_NAME: dict[str, SurfaceManifestEntry] = {e.name: e for e in TOOL_MAN
 #: here plus a new pinned digest in ``KERNEL_VERSION_DIGESTS`` — otherwise the
 #: FR02 acceptance test fails, forcing the versioned manifest diff the PRD
 #: mandates (task-corpus regression + security review happen out of band).
-KERNEL_VERSION: int = 3
+KERNEL_VERSION: int = 4
 
 
 def kernel_digest() -> str:
@@ -211,14 +164,19 @@ KERNEL_VERSION_DIGESTS: dict[int, str] = {
     # PRD-CORE-291-FR02: trw_learn_update merged into trw_learn, so the kernel is
     # back to version 1's membership (same digest, new version).
     3: "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7",
+    # PRD-CORE-300 S11b: the kernel becomes surface_v2.POST_CUT_KERNEL. It gains
+    # trw_init, trw_build_check, trw_review, trw_prd_validate and trw_code, and
+    # loses the three meta tools (skill discovery, the access grant, profile explain).
+    # The only re-pin of the 7.0.0 cut; the digest covers trw_code before S10
+    # registers it, so S10 does not move the kernel again.
+    4: "89ad3b388deaced1502e2d7eed347a4b3f83537d03bf58ce9654df6ae8484dce",
 }
 
 # =====================================================================
 # FR04: standard default / explicit all resolution
 # =====================================================================
-# ``STANDARD_TASK_PACKS`` is imported from ``surface_packs`` (single source of
-# truth). ``kernel`` is always implied; a task absent from the mapping — or
-# mapped to no packs (``unknown``) — resolves to kernel only.
+# The surface is flat (PRD-CORE-300 S11b): kernel plus every pack whose config
+# flag is on. There is no per-task resolution.
 
 
 class ToolResolution(BaseModel):
@@ -227,7 +185,6 @@ class ToolResolution(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     mode: Literal["standard", "all"]
-    task_type: str | None
     packs: tuple[str, ...]
     tools: tuple[str, ...]
     decision: str
@@ -235,99 +192,46 @@ class ToolResolution(BaseModel):
 
 
 def eligible_tool_names() -> tuple[str, ...]:
-    """The full eligible (public) tool surface — what ``all`` mode exposes."""
-    return tuple(e.name for e in TOOL_MANIFEST if e.public)
+    """Every registered tool: the manifest, whatever the mode or flags."""
+    return tuple(e.name for e in TOOL_MANIFEST)
 
 
 def resolve_tool_surface(
-    task_type: str | None,
     mode: str = "standard",
     *,
     comms_enabled: bool = False,
     dispatch_enabled: bool = False,
     assess_enabled: bool = False,
 ) -> ToolResolution:
-    """Resolve the tool surface for a task under a resolution mode (FR04).
+    """Resolve the tool surface under a resolution mode (FR04).
 
-    ``standard`` is the default and is bounded: a mapped task gets kernel plus
-    its standard packs. A missing (``None``/empty) or UNMAPPED task type falls
-    back to the ``unknown`` entry of :data:`STANDARD_TASK_PACKS` — kernel plus
-    verification — rather than to kernel only, so an unclassified session still
-    declares the tools its delivery gates name as their remedy
-    (PRD-CORE-246-FR05); the ``decision`` string names the fallback, so the
-    substitution is visible rather than silent. Only an EXPLICIT ``all`` mode
-    returns the full eligible surface, and the decision is recorded so the
-    choice is visible. Any other mode value degrades to ``standard`` (never
-    silently widens to full). Explicit ``comms_enabled`` adds only the peer
-    comms pack to this bounded resolution; default task packs remain unchanged.
-
-    ``dispatch_enabled`` is the same shape of opt-in for the ``dispatch`` pack
-    (PRD-CORE-281). Like ``peer_comms`` that pack is named by NO entry of
-    :data:`STANDARD_TASK_PACKS` — deliberately, because it is a HIGH-RISK pack
-    (``models/config/_defaults.HIGH_RISK_PACKS``) whose tools launch another
-    agent process. The opt-in exists because before it the ONLY way to reach
-    ``trw_dispatch`` was ``tool_resolution_mode='all'`` (every tool) or a
-    single-use ``trw_request_tool_access`` grant PER CALL — unusable for the
-    launch-then-poll loop the bundled ``trw-delegate`` skill prescribes, which
-    is how a shipped skill came to name two tools no default session could see.
-
-    ``assess_enabled`` is the same shape of opt-in for the ``assess_support``
-    pack (trw-jev slice 1, PRD-CORE-288). Named by NO entry
-    of :data:`STANDARD_TASK_PACKS` and excluded from ``REVIEWER_TOOLS`` for the
-    same reason ``peer_comms`` is: it can reach a third-party network backend
-    (the Jev judge) when an operator has ALSO set ``TRW_JEV_ENABLED`` and
-    ``OPENROUTER_API_KEY``, and admitting it into a task pack or the reviewer
-    surface would grant that reach to every session of that type rather than
-    the ones an operator explicitly opted in.
+    ``standard`` (the default) is every pack except a flag-gated pack whose flag
+    is off (:data:`FLAG_GATED_PACKS`: ``comms_enabled`` -> ``peer_comms``,
+    ``dispatch_tools_exposed`` -> ``dispatch``, ``assess_enabled`` ->
+    ``assess_support``). It does not depend on the task or the phase. An
+    EXPLICIT ``all`` also turns on the comms and assess packs, but never the
+    dispatch pack: process launching needs ``dispatch_tools_exposed`` in every
+    mode (PRD-CORE-300 FR09). Any other mode value degrades to ``standard``.
     """
-    if mode == "all":
-        tools = eligible_tool_names()
-        packs = tuple(PACK_TOOLS.keys())
-        return ToolResolution(
-            mode="all",
-            task_type=task_type,
-            packs=packs,
-            tools=tools,
-            decision=(
-                "explicit_all: operator selected the full eligible public "
-                f"surface ({len(tools)} tools), subject to policy"
-            ),
-            explanation=(
-                f"mode=all exposes every public tool ({len(tools)}); "
-                "operator-only surfaces still require explicit grants",
-            ),
-        )
-
-    requested = task_type or "unknown"
-    fallback = STANDARD_TASK_PACKS["unknown"]
-    selected = STANDARD_TASK_PACKS.get(requested)
-    packs = ("kernel", *(selected if selected is not None else fallback))
-    if comms_enabled and "peer_comms" not in packs:
-        packs = (*packs, "peer_comms")
-    if dispatch_enabled and "dispatch" not in packs:
-        packs = (*packs, "dispatch")
-    if assess_enabled and "assess_support" not in packs:
-        packs = (*packs, "assess_support")
-    tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
-    if selected is None:
-        decision = (
-            f"standard: task '{task_type}' unmapped -> unknown fallback: kernel + {', '.join(fallback) or 'no packs'}"
-        )
-    elif selected:
-        decision = f"standard: task '{requested}' -> kernel + {', '.join(selected)}"
-    else:
-        decision = f"standard: task '{requested}' -> kernel only"
-    if comms_enabled:
-        decision += "; opt_in: comms_enabled -> peer_comms"
-    if dispatch_enabled:
-        decision += "; opt_in: dispatch_tools_exposed -> dispatch"
-    if assess_enabled:
-        decision += "; opt_in: assess_enabled -> assess_support"
+    resolved_mode: Literal["standard", "all"] = "all" if mode == "all" else "standard"
+    packs = enabled_packs(
+        resolved_mode,
+        comms_enabled=comms_enabled,
+        dispatch_enabled=dispatch_enabled,
+        assess_enabled=assess_enabled,
+    )
+    off = tuple(pack for pack in PACK_TOOLS if pack not in packs)
+    decision = (
+        "explicit_all: every registered tool except packs still off"
+        if resolved_mode == "all"
+        else "standard: kernel + every pack whose flag is on"
+    )
+    if off:
+        decision += "; off: " + ", ".join(f"{pack} ({FLAG_GATED_PACKS[pack]}=false)" for pack in off)
     return ToolResolution(
-        mode="standard",
-        task_type=task_type,
+        mode=resolved_mode,
         packs=packs,
-        tools=tuple(tools_list),
+        tools=tuple(tool for pack in packs for tool in PACK_TOOLS[pack]),
         decision=decision,
         explanation=tuple(f"{pack}={len(PACK_TOOLS[pack])} tools" for pack in packs),
     )
@@ -386,30 +290,6 @@ class SurfaceReductionException(BaseModel):
 #: because of new *unbounded* growth, so a fresh 90-day exception is the honest
 #: record rather than a retroactive one. Owner + review cadence unchanged.
 SURFACE_REDUCTION_EXCEPTIONS: dict[str, SurfaceReductionException] = {
-    "tools": SurfaceReductionException(
-        metric="tools",
-        baseline=45,
-        target=36,
-        measured=48,
-        owner="framework-consolidation",
-        rationale=(
-            "CORE-218 phase-3 subtraction (FR07 skill/tool retirement queue) is "
-            "not yet scheduled; kernel + pack classification landed but pack "
-            "tools are still fully registered. The 2026-09-03 feedback-triage "
-            "campaign net +/-2 vs the prior 50-tool measurement (some pack "
-            "tools retired elsewhere in the same window) while adding "
-            "trw_submit_feedback, which is always exposed by design (it is the "
-            "feedback capture path a session must reach in every phase, not a "
-            "task-scoped pack tool) and confirming trw_review / trw_build_check "
-            "as RIGID_TOOLS (models/phase_policy.py) -- the never-hide deliver-"
-            "gate verification pair. All +N tools this campaign touches are "
-            "kernel/verification/feedback-required, not discretionary pack "
-            "growth, so none are candidates for the FR07 queue; net reduction "
-            "still depends on that queue landing."
-        ),
-        expiry_iso="2026-12-02",
-        reduction_plan_ref="docs/requirements-aare-f/prds/PRD-CORE-218.md#8-rollout-plan",
-    ),
     "skills": SurfaceReductionException(
         metric="skills",
         baseline=29,

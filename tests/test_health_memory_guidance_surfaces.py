@@ -95,9 +95,9 @@ def test_memory_optimization_uses_confirmed_tool_mutations_not_instruction_sync(
         # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
         assert "Prefer `trw_learn(learning_id=...)`" in content, relative
         assert "do not hard-delete learning storage" in content, relative
-        assert "Do not call it for that purpose" in content, relative
+        assert "Do not run it for that purpose" in content, relative
         assert "entries-per-domain formula" in content, relative
-        assert "ALWAYS run `trw_instructions_sync`" not in content, relative
+        assert "ALWAYS run `trw-mcp instructions sync`" not in content, relative
         assert "Use it for planning only" in content, relative
         assert "Do not invoke `trw-distill maintain optimize --apply`" in content, relative
         assert "applying an immutable reviewed receipt" in content, relative

@@ -50,11 +50,11 @@ _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 OWNED_CALL_SITE_MODULES = (
     _SRC / "tools" / "_orchestration_lifecycle.py",
     _SRC / "tools" / "_ceremony_helpers.py",
-    _SRC / "tools" / "requirements.py",
     # trw_prd_validate's registration was extracted from requirements.py for the
-    # 350-eLOC gate (2026-09-11). Its ceremony-status call site moved with it, so
-    # this module must be enumerated too — otherwise the count silently drops and
-    # the call site stops being covered by the very gate that guards it.
+    # 350-eLOC gate (2026-09-11). Its ceremony-status call site moved with it.
+    # requirements.py itself dropped its last call site (prd_create's, moved to
+    # the `trw-mcp prd create` CLI — PRD-CORE-300-FR07) and is no longer listed
+    # here.
     _SRC / "tools" / "_prd_validate_tool.py",
     _SRC / "tools" / "review.py",
     _SRC / "tools" / "_learn_impl.py",
@@ -109,7 +109,6 @@ def _only_context(seen: list[NudgeContext | None]) -> NudgeContext:
         ("session_start", "session_start"),
         ("review", "review"),
         ("learn", "learn"),
-        ("prd_create", "prd_create"),
         ("prd_validate", "prd_validate"),
     ],
 )
@@ -187,41 +186,14 @@ def test_step_ceremony_status_passes_session_start_context(
 
 
 # ---------------------------------------------------------------------------
-# Call sites 5-6: trw_prd_create / trw_prd_validate
+# Call site 5: trw_prd_validate
+#
+# PRD-CORE-300-FR07 (slice S5) moved PRD creation to the `trw-mcp prd create`
+# CLI. A CLI invocation is a one-shot process with no live MCP session for the
+# ceremony nudge pool to react to, so `create_prd` dropped the
+# `append_ceremony_status_for_tool` call along with the tool registration —
+# there is no longer a "prd_create" call site to cover here.
 # ---------------------------------------------------------------------------
-
-
-def test_prd_create_passes_prd_create_context(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    status_spy: list[NudgeContext | None],
-) -> None:
-    from unittest.mock import patch
-
-    from trw_mcp.tools.requirements import register_requirements_tools
-
-    server = make_test_server()
-    register_requirements_tools(server)
-    (tmp_path / "docs" / "requirements-aare-f" / "prds").mkdir(parents=True)
-
-    with (
-        patch("trw_mcp.tools.requirements.resolve_project_root", return_value=tmp_path),
-        patch("trw_mcp.tools.requirements.next_prd_sequence", return_value=901),
-        patch("trw_mcp.tools.requirements.get_config") as mock_cfg,
-    ):
-        mock_cfg.return_value.prds_relative_path = "docs/requirements-aare-f/prds"
-        mock_cfg.return_value.trw_dir = ".trw"
-        mock_cfg.return_value.index_auto_sync_on_status_change = False
-        mock_cfg.return_value.ambiguity_rate_max = 0.3
-        mock_cfg.return_value.completeness_min = 0.7
-        mock_cfg.return_value.traceability_coverage_min = 0.5
-        extract_tool_fn(server, "trw_prd_create")(
-            input_text="UF-006 nudge context wiring",
-            category="CORE",
-            priority="P1",
-        )
-
-    assert _only_context(status_spy).tool_name == "prd_create"
 
 
 def test_prd_validate_passes_prd_validate_context(
@@ -351,7 +323,7 @@ def test_every_owned_call_site_supplies_a_nudge_context() -> None:
             if not supplies_context:
                 offenders.append(f"{module_path.name}:{call.lineno}")
 
-    assert total >= 9, f"expected at least 9 owned call sites, found {total}"
+    assert total >= 8, f"expected at least 8 owned call sites, found {total}"
     assert not offenders, f"ceremony-status call sites without a nudge context: {offenders}"
 
 

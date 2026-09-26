@@ -42,10 +42,6 @@ log = structlog.get_logger(__name__)
 
 __all__ = ["distill_artifacts_entitled"]
 
-#: The same feature id the runtime sidecar tools gate on, so the install
-#: surface and the runtime surface can never disagree about who is entitled.
-_TIER_FEATURE = "trw_before_edit_hint:distill_sidecar"
-
 
 def distill_artifacts_entitled(*, artifact: str, repo_root: Path | None = None) -> bool:
     """Whether distill-dependent install artifacts should be written.
@@ -77,9 +73,12 @@ def distill_artifacts_entitled(*, artifact: str, repo_root: Path | None = None) 
     unlicensed user's repo is a false statement that persists in their VCS.
     """
     try:
+        # The same feature id the runtime sidecar consumers gate on, so the
+        # install surface and the runtime surface never disagree.
+        from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
         from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
 
-        gate = check_tier_for_feature(repo_root, _TIER_FEATURE)
+        gate = check_tier_for_feature(repo_root, DISTILL_SIDECAR_FEATURE)
         entitled = bool(gate.allowed)
     except Exception:  # justified: probe failure must not break init-project
         log.warning(

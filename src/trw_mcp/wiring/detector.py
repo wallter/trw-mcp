@@ -2,10 +2,10 @@
 
 Nothing here builds a call graph. Measured on this codebase, static reachability
 recalls roughly 1 specimen in 8, because the specimens are *reachable* code that
-produces nothing — ``register_channel_stats_tools`` IS called at boot through
-the registrar tuple, and ``trw_channel_stats`` IS registered and callable.
-Reachability cannot distinguish "registered and callable" from "actually
-produces anything". Artifact existence can.
+produces nothing — a ``register_*_tools`` function IS called at boot through the
+registrar tuple, and the tool it registers IS reachable and callable. Reachability
+cannot distinguish "registered and callable" from "actually produces anything".
+Artifact existence can.
 """
 
 from __future__ import annotations

@@ -311,7 +311,7 @@ def _restarted_server_resumes(
     resume()
     store = json.loads(pins_path.read_text(encoding="utf-8"))
     resumed = dict(store["managed-peer"])
-    # Hours of tool calls pass with no trw_heartbeat: only the stored heartbeat ages.
+    # Hours of tool calls pass with no heartbeat mode call: only the stored heartbeat ages.
     store["managed-peer"]["last_heartbeat_ts"] = _iso(72)
     pins_path.write_text(json.dumps(store), encoding="utf-8")
     invalidate_pin_store_cache()

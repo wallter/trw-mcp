@@ -254,7 +254,7 @@ def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_p
     a changelog line, a README paragraph — would have had the protocol
     suppressed and been handed a pointer to a section that does not exist, on
     exactly the events where an agent has least context. The predicate now
-    requires the managed-block marker that only trw_instructions_sync writes.
+    requires the managed-block marker that only instructions sync writes.
     """
     for source in ("resume", "compact", "clear"):
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / f"mention-{source}", hook_path)

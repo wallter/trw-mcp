@@ -18,7 +18,22 @@ import structlog
 from ruamel.yaml import YAML
 
 logger = structlog.get_logger(__name__)
-_RNG = random.SystemRandom()
+_RNG: random.Random = random.SystemRandom()
+
+
+def set_rng(rng: random.Random) -> None:
+    """Override the pool-selection RNG. Test/measurement seam only.
+
+    Production keeps ``random.SystemRandom()`` (anti-habituation nudge
+    variety, unchanged). ``scripts/_context_cost_probe.py`` calls this with a
+    seeded ``random.Random`` so repeated context-cost measurements of
+    identical code are reproducible — SystemRandom nudge selection otherwise
+    made ``response_tails`` swing 100+ tokens run to run with no code change
+    (7.0.0 C14 determinism fix).
+    """
+    global _RNG
+    _RNG = rng
+
 
 _yaml = YAML(typ="safe")
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "surfaces"

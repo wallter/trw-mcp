@@ -240,6 +240,69 @@ _json_escape() {
     | tr -d '\000-\010\013\014\016-\037\177'
 }
 
+# _json_object: Print one JSON object, on one line, built from `--str KEY VALUE`
+# and `--int KEY VALUE` pairs (PRD-FIX-154 FR01). This is the write-side
+# counterpart to _json_get: the hooks' `jq -n` builders had no fallback, so a
+# jq-less host silently dropped fields (pre-compact) or wrote "unknown"
+# placeholders (telemetry) instead of the real payload.
+#
+# With jq on PATH it builds the object with `jq -cn`. Without jq it writes the
+# object in shell, passing every string through _json_escape -- the SAME
+# escaper post-tool-event.sh already uses and test_post_tool_event_json_escape.sh
+# already pins. It needs neither jq nor python3 (NFR03: the jq path spawns no
+# new interpreter; the jq-less path spawns none at all).
+#
+# Usage: _json_object [--str KEY VALUE | --int KEY VALUE]...
+#   KEY must match [A-Za-z0-9_]+ (a fixed literal in the calling hook); an
+#     invalid key returns 2 and prints nothing.
+#   An --int VALUE that is not all digits (an optional leading minus allowed)
+#     is written as 0 on both paths -- the same coercion session-start.sh
+#     already applies to argjson counts.
+#   The shell path drops C0 control characters other than tab and newline,
+#     because _json_escape does; this is the one documented parity gap and the
+#     parity test covers it explicitly (PRD-FIX-154 NFR01).
+_json_object() {
+  _jo_filter="{"
+  _jo_shell="{"
+  _jo_sep=""
+  _jo_jqargs=""
+  while [ $# -gt 0 ]; do
+    [ $# -ge 3 ] || return 2
+    case "$1" in
+      --str) _jo_kind=str ;;
+      --int) _jo_kind=int ;;
+      *) return 2 ;;
+    esac
+    _jo_key="$2"
+    _jo_val="$3"
+    case "$_jo_key" in
+      '' | *[!A-Za-z0-9_]*) return 2 ;;
+    esac
+    if [ "$_jo_kind" = int ]; then
+      _jo_digits="$_jo_val"
+      case "$_jo_digits" in -*) _jo_digits="${_jo_digits#-}" ;; esac
+      case "$_jo_digits" in '' | *[!0-9]*) _jo_val=0 ;; esac
+      _jo_filter="${_jo_filter}${_jo_sep}\"$_jo_key\":$_jo_val"
+      _jo_shell="${_jo_shell}${_jo_sep}\"$_jo_key\":$_jo_val"
+    else
+      _jo_filter="${_jo_filter}${_jo_sep}\"$_jo_key\":\$v_$_jo_key"
+      _jo_q=$(printf '%s' "$_jo_val" | sed "s/'/'\\\\''/g")
+      _jo_jqargs="$_jo_jqargs --arg v_$_jo_key '$_jo_q'"
+      _jo_esc=$(_json_escape "$_jo_val")
+      _jo_shell="${_jo_shell}${_jo_sep}\"$_jo_key\":\"$_jo_esc\""
+    fi
+    _jo_sep=","
+    shift 3
+  done
+  _jo_filter="${_jo_filter}}"
+  _jo_shell="${_jo_shell}}"
+  if command -v jq >/dev/null 2>&1; then
+    eval "jq -cn $_jo_jqargs '$_jo_filter'" 2>/dev/null
+  else
+    printf '%s\n' "$_jo_shell"
+  fi
+}
+
 # _json_get: Print what `jq -r '<P1> // <P2> // ... // <default|empty>'` prints
 # for the JSON document on stdin (or in --file FILE), using jq when it is on PATH
 # and python3's json module otherwise -- two real parsers, never a shell one
@@ -381,6 +444,97 @@ _json_str_field() {
   printf '%s' "$1" | _json_get --strings ".$2"
 }
 
+# _trw_ancestor_symlinked: True (0) when $1 (a directory), or any existing
+# ancestor of it up to and including a `.trw` path component, is a symlink.
+# Only components that already exist on disk are inspected -- a directory
+# `mkdir -p` is about to create fresh cannot be a symlink yet.
+#
+# PRD-SEC/RC8: a crafted checkout can ship `.trw/context` (or a leaf state
+# file under it) as a symlink to an arbitrary path outside the repo. Every
+# writer below refuses rather than following it -- see `_trw_safe_write`.
+_trw_ancestor_symlinked() {
+  _tas_walk="$1"
+  while [ -n "$_tas_walk" ] && [ "$_tas_walk" != "/" ] && [ "$_tas_walk" != "." ]; do
+    [ -L "$_tas_walk" ] && return 0
+    case "$_tas_walk" in
+      */.trw | .trw) return 1 ;;
+    esac
+    _tas_next=$(dirname "$_tas_walk")
+    [ "$_tas_next" = "$_tas_walk" ] && return 1
+    _tas_walk="$_tas_next"
+  done
+  return 1
+}
+
+# _trw_safe_write: Atomically write stdin to a checkout-controlled path
+# without ever writing THROUGH a symlink (PRD-SEC/RC8). A plain `>`/`>>`
+# follows a symlinked leaf and truncates or appends to whatever it points
+# at -- no race required, since a crafted checkout can ship the symlink
+# ahead of time. `mkdir -p`/`cat` follow one in the parent chain too.
+#
+# Refuses (returns 1, writes nothing) when the destination's directory, or
+# any ancestor of it up to `.trw`, is a symlink (`_trw_ancestor_symlinked`).
+#
+# A replace creates a fresh temp file IN the destination directory (named
+# `<dest>.trw-safe-write.$$`, the same PID-suffixed convention already used
+# by post-tool-degenerate-result.sh's `_dr_write_state` -- deliberately NOT
+# `mktemp`, which is absent from some minimal/restricted-PATH environments
+# these hooks otherwise run in), under noclobber so a name planted after the
+# `rm -f` is refused rather than opened, and `mv -f`s it into place. An
+# append is a plain `>>` (O_APPEND): it keeps every line when hooks run
+# concurrently, as parallel tool calls do, where a read-copy-rename would drop
+# all but the last. Either way the destination must be absent or a regular
+# file; a symlink (which `>>` follows and `mv` moves into when it names a
+# directory), a directory or a FIFO (which would block the hook) is refused.
+#
+# Every caller must treat a non-zero return as "the write did not happen,
+# and that is fine" -- hooks fail open, never abort on a lost state write.
+#
+# Args: $1=destination path. $2="append" to append stdin; anything else
+#       (default) replaces the destination with it.
+# Reads: stdin = the new content.
+_trw_safe_write() {
+  _tsw_dest="$1"
+  _tsw_dir=$(dirname "$_tsw_dest")
+
+  _trw_ancestor_symlinked "$_tsw_dir" && return 1
+
+  [ -d "$_tsw_dir" ] || mkdir -p "$_tsw_dir" 2>/dev/null || return 1
+  # mkdir -p may have just walked through a TOCTOU-planted symlink in a
+  # component that did not exist a moment ago; the ancestor walk above only
+  # vetted what already existed. Re-check the immediate directory.
+  [ -L "$_tsw_dir" ] && return 1
+  # The leaf must be absent or a regular file: `>>` would follow a symlink,
+  # `mv` would move INTO a symlinked (or real) directory, a FIFO would block.
+  [ -L "$_tsw_dest" ] && return 1
+  [ ! -e "$_tsw_dest" ] || [ -f "$_tsw_dest" ] || return 1
+
+  if [ "${2:-}" = "append" ]; then
+    # `>>` writes the inode: a second hard link may name a file outside.
+    [ -z "$(find "$_tsw_dest" -prune -links +1 2>/dev/null)" ] || return 1
+    cat >> "$_tsw_dest" 2>/dev/null
+    return
+  fi
+
+  _tsw_tmp="${_tsw_dest}.trw-safe-write.$$"
+  rm -f "$_tsw_tmp" 2>/dev/null
+  (set -C; cat > "$_tsw_tmp") 2>/dev/null || { rm -f "$_tsw_tmp" 2>/dev/null; return 1; }
+  mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
+  rm -f "$_tsw_tmp" 2>/dev/null
+  return 1
+}
+
+# _trw_safe_read: Print a state file's content, treating a symlinked path as
+# absent (PRD-SEC/RC8) -- a plain `cat` follows it and reads whatever it
+# points at as if it were trusted, process-written state. Returns 1 (nothing
+# printed) when the path is missing, a symlink, or not a regular file.
+# Args: $1=path.
+_trw_safe_read() {
+  [ -L "$1" ] && return 1
+  [ -f "$1" ] || return 1
+  cat "$1" 2>/dev/null
+}
+
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
 # Requires: date, printf. No jq: $3 arrives already escaped, so there is
@@ -393,7 +547,8 @@ append_event() {
   _event_type="$(_json_escape "$2")"
   _extra="${3:+,$3}"
   _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
-  printf '{"ts":"%s","event":"%s"%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
+  printf '{"ts":"%s","event":"%s"%s}\n' "$_ts" "$_event_type" "$_extra" \
+    | _trw_safe_write "$_events_path" append || true
 }
 
 # has_event: Check if events.jsonl contains an event of a given type.
@@ -698,23 +853,20 @@ log_hook_execution() {
   if [ -n "$_le_detail" ]; then
     printf '%s event=%s matcher=%s exit=%s duration=%ss %s\n' \
       "$_le_ts" "$_le_event" "$_le_matcher" "$_le_exit" "$_le_duration" "$_le_detail" \
-      >> "$_le_log" 2>/dev/null || return 0
+      | _trw_safe_write "$_le_log" append || return 0
   else
     printf '%s event=%s matcher=%s exit=%s duration=%ss\n' \
       "$_le_ts" "$_le_event" "$_le_matcher" "$_le_exit" "$_le_duration" \
-      >> "$_le_log" 2>/dev/null || return 0
+      | _trw_safe_write "$_le_log" append || return 0
   fi
 
-  # Rotate: cap at 1000 lines
-  if [ -f "$_le_log" ]; then
-    _le_lines=$(wc -l < "$_le_log" 2>/dev/null | tr -d ' ') || _le_lines=0
+  # Rotate: cap at 1000 lines. `_trw_safe_read` treats a symlinked log as
+  # absent, so a rotation attempt on one no-ops instead of following it.
+  _le_content=$(_trw_safe_read "$_le_log") || _le_content=""
+  if [ -n "$_le_content" ]; then
+    _le_lines=$(printf '%s\n' "$_le_content" | wc -l 2>/dev/null | tr -d ' ') || _le_lines=0
     if [ "$_le_lines" -gt 1000 ] 2>/dev/null; then
-      _le_tmp="${_le_log}.tmp"
-      if tail -500 "$_le_log" > "$_le_tmp" 2>/dev/null; then
-        mv "$_le_tmp" "$_le_log" 2>/dev/null || rm -f "$_le_tmp" 2>/dev/null
-      else
-        rm -f "$_le_tmp" 2>/dev/null
-      fi
+      printf '%s\n' "$_le_content" | tail -500 | _trw_safe_write "$_le_log" || true
     fi
   fi
 }
@@ -1009,7 +1161,7 @@ trw_write_session_epoch() {
   [ -n "$_twse_ts" ] || return 0
   _twse_path=$(trw_degraded_marker_path epoch "${1:-}") || return 0
   _trw_degraded_marker_dir_ready "$_twse_path" || return 0
-  printf '%s\n0\n' "$_twse_ts" > "$_twse_path" 2>/dev/null || return 0
+  printf '%s\n0\n' "$_twse_ts" | _trw_safe_write "$_twse_path" || return 0
   # FR08: reclaim siblings AFTER this session's own marker exists, so its fresh
   # mtime is what the sweep sees. The sweep skips this key explicitly anyway.
   trw_degraded_sweep_markers "${_twse_path##*/}"
@@ -1226,6 +1378,7 @@ trw_clear_degraded_latch() {
 # framework directive, so no session is silently deprived of it by a peer.
 trw_degraded_latched() {
   _tdl_path=$(trw_degraded_marker_path latch "${1:-}") || return 1
+  [ -L "$_tdl_path" ] && return 1
   [ -f "$_tdl_path" ]
 }
 
@@ -1239,14 +1392,14 @@ trw_degraded_latched() {
 # first prompt.
 trw_bump_session_prompt_index() {
   _tbspi_path=$(trw_degraded_marker_path epoch "${1:-}") || { printf '0'; return; }
-  [ -r "$_tbspi_path" ] || { printf '0'; return; }
-  _tbspi_ts=$(sed -n '1p' "$_tbspi_path" 2>/dev/null) || { printf '0'; return; }
-  _tbspi_idx=$(sed -n '2p' "$_tbspi_path" 2>/dev/null) || _tbspi_idx=""
+  _tbspi_content=$(_trw_safe_read "$_tbspi_path") || { printf '0'; return; }
+  _tbspi_ts=$(printf '%s\n' "$_tbspi_content" | sed -n '1p') || { printf '0'; return; }
+  _tbspi_idx=$(printf '%s\n' "$_tbspi_content" | sed -n '2p') || _tbspi_idx=""
   case "$_tbspi_idx" in
     '' | *[!0-9]*) printf '0'; return ;;
   esac
   _tbspi_next=$((_tbspi_idx + 1))
-  printf '%s\n%s\n' "$_tbspi_ts" "$_tbspi_next" > "$_tbspi_path" 2>/dev/null || { printf '0'; return; }
+  printf '%s\n%s\n' "$_tbspi_ts" "$_tbspi_next" | _trw_safe_write "$_tbspi_path" || { printf '0'; return; }
   printf '%s' "$_tbspi_next"
 }
 
@@ -1257,8 +1410,8 @@ trw_bump_session_prompt_index() {
 # Args: $1=optional payload session id (PRD-FIX-128-FR02).
 trw_session_epoch_ts() {
   _tset_path=$(trw_degraded_marker_path epoch "${1:-}") || return 1
-  [ -r "$_tset_path" ] || return 1
-  _tset_ts=$(sed -n '1p' "$_tset_path" 2>/dev/null) || return 1
+  _tset_content=$(_trw_safe_read "$_tset_path") || return 1
+  _tset_ts=$(printf '%s\n' "$_tset_content" | sed -n '1p') || return 1
   case "$_tset_ts" in
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
     *) return 1 ;;
@@ -1593,7 +1746,7 @@ trw_emit_offline_protocol_block() {
   # is nothing to latch, and the block above was not emitted either.
   _teopb_latch=$(trw_degraded_marker_path latch "${2:-}") || return 0
   _trw_degraded_marker_dir_ready "$_teopb_latch" || return 0
-  : > "$_teopb_latch" 2>/dev/null || true
+  printf '' | _trw_safe_write "$_teopb_latch" || true
 }
 
 # trw_degenerate_result_setting: resolve one PRD-CORE-250-FR10 tunable.

@@ -2,7 +2,7 @@
 
 PRD-CORE-278 FR08/FR09. On 2026-09-16 this repository's store held 1,343 rows, of
 which 1,330 had been pulled from other projects by team sync. Session-start
-recall, the ``trw://learnings/summary`` resource, ``trw_before_edit_hint`` and the
+recall, the ``trw://learnings/summary`` resource, ``trw_code``'s hint mode and the
 nudge line all presented them as THIS repository's knowledge — a path-keyed hint
 for ``models/config/_loader.py`` returned five learnings about a different
 codebase, and the session's single most prominent nudge quoted a claim about a
@@ -124,8 +124,8 @@ def nudge_eligible_pool(candidates: Sequence[_Row]) -> list[_Row]:
     """Narrow a nudge pool to the most defensible tier present (FR09).
 
     The nudge is the single most prominent thing a session is told, so the pool
-    is narrowed BEFORE selection — a sort cannot constrain the contextual and
-    bandit selection that runs after it.
+    is narrowed BEFORE selection — a sort cannot constrain the contextual
+    selection that runs after it.
 
     Precedence, stated because the two rules can conflict (a local unverified
     candidate against a foreign verified one):

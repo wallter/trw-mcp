@@ -23,12 +23,17 @@ from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 _T2_CLIENTS = ("opencode", "codex")
 
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
 def _commit_all(root: Path) -> None:
     import subprocess
 
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True)
     subprocess.run(
-        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"],
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *_NO_HOOKS, "commit", "-qm", "fixture"],
         check=True,
         capture_output=True,
     )
@@ -515,7 +520,7 @@ class TestReviewerFoundReinjection:
 
     @pytest.mark.parametrize("client", ["codex", "opencode", "cursor-cli"])
     def test_instructions_sync_defaults_do_not_reinject(self, tmp_path: Path, client: str) -> None:
-        """`trw_instructions_sync()` client="auto" is what the protocol tells agents to call.
+        """``trw-mcp instructions sync`` client="auto" is what the protocol tells agents to call.
 
         PRD-CORE-262-FR05: a codex-only ``init_project`` no longer scaffolds a
         root CLAUDE.md at all, so there is nothing for the sync to reinject

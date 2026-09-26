@@ -1,0 +1,7 @@
+revision: a2366f665e5f4337a368ab280a2adfa11feb8f01
+seed: 7
+sizes: [1000, 5000, 20000]
+entries: [recall, session-start]
+harness: trw-mcp/benchmarks/engmem_mcp.py
+imported: trw_mcp=trw-mcp/src/trw_mcp/__init__.py, trw_memory=trw-memory/src/trw_memory/__init__.py
+note: W16 -- the 6.1.0 candidate baseline C11 diffs against (PRD-QUAL-141/CORE-292 successor)

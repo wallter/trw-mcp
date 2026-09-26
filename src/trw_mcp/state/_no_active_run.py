@@ -8,10 +8,10 @@ different options for the same condition depending on entry point.
 
 Why the ordering matters: the first remedy is the ONLY one a delegated
 sub-agent can execute. Seven bundled agents grant ``trw_checkpoint`` without
-``trw_init`` or ``trw_adopt_run``; the pre-FR03 message named only those two
-tools, so the printed fix was unexecutable for exactly the callers who hit it.
-``run_path=`` needs no additional grant — ``resolve_run_path`` short-circuits
-on an explicit in-project path before any pin lookup.
+``trw_init`` or the run-adoption CLI verb; the pre-FR03 message named only
+those two tools, so the printed fix was unexecutable for exactly the callers
+who hit it. ``run_path=`` needs no additional grant — ``resolve_run_path``
+short-circuits on an explicit in-project path before any pin lookup.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ NO_ACTIVE_RUN_REASON = "no_active_run_for_session"
 NO_ACTIVE_RUN_REMEDIES: tuple[str, ...] = (
     "pass run_path=<run directory> to a tool that accepts it, such as trw_checkpoint",
     "call trw_init() to create a run",
-    "call trw_adopt_run(run_path=...) to resume one",
+    "run `trw-mcp run adopt --run-path=... --session-id=...` to resume one",
 )
 
 

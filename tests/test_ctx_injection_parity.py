@@ -160,7 +160,6 @@ def _all_registered_tools() -> dict[str, Any]:
         "ceremony",
         "ceremony_feedback",
         "checkpoint",
-        "knowledge",
         "learning",
         "orchestration",
         "requirements",

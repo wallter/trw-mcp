@@ -73,10 +73,6 @@ def _stub_all_deferred_steps() -> dict[str, Any]:
             "trw_mcp.tools._deferred_delivery._step_auto_prune",
             return_value=noop,
         ),
-        "_step_consolidation": patch(
-            "trw_mcp.tools._deferred_delivery._step_consolidation",
-            return_value=noop,
-        ),
         "_step_tier_sweep": patch(
             "trw_mcp.tools._deferred_delivery._step_tier_sweep",
             return_value=noop,

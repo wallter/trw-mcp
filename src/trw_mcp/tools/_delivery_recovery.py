@@ -2,7 +2,7 @@
 
 Belongs to the ``tools/_delivery_operations.py`` facade. Pure state-machine logic
 over a :class:`JournalStore` connection; it never registers an MCP tool (the
-public ``trw_delivery_recover`` wiring is a separate wave). Two invariants are
+public wiring is ``trw-mcp delivery recover``, in ``tools/delivery_ops.py``). Two invariants are
 load-bearing and must never soften:
 
 - **Never blindly replay a ``NON_REPLAYABLE`` started step.** On crash recovery it

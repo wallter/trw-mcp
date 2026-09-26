@@ -42,8 +42,8 @@ def test_recall_context_returns_none_when_empty(tmp_path: Path) -> None:
     assert ctx is None
 
 
-def test_build_recall_context_returns_cache_only_context(tmp_path: Path) -> None:
-    """A populated intel cache keeps recall-context wiring alive without phase/domain hints."""
+def test_build_recall_context_ignores_a_cache_with_bandit_params(tmp_path: Path) -> None:
+    """PRD-CORE-303 FR02: no phase, domains or PRD ids means no context, cache or not."""
     from trw_mcp.sync.cache import IntelligenceCache
     from trw_mcp.tools._recall_impl import build_recall_context
 
@@ -55,8 +55,7 @@ def test_build_recall_context_returns_cache_only_context(tmp_path: Path) -> None
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         ctx = build_recall_context(trw_dir, "src")
 
-    assert ctx is not None
-    assert ctx.intel_cache is not None
+    assert ctx is None
 
 
 def test_recall_context_git_failure_graceful(tmp_path: Path) -> None:

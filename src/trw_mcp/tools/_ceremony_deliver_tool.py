@@ -66,7 +66,7 @@ def run_trw_deliver(
     bound to a durable, crash-safe delivery operation. ``delivery_id`` +
     ``capability_token`` (optional, NFR01-additive) let a caller supply a
     UUIDv7 + >=128-bit recovery capability so a timed-out response is
-    recoverable via ``trw_delivery_status`` / ``trw_delivery_recover``; a
+    recoverable via ``trw_status(delivery=...)`` / ``trw-mcp delivery recover``; a
     conflicting explicit ID returns ``delivery_request_conflict`` with zero
     effects. Omitting them keeps the legacy path (server-generated ID,
     ``caller_recoverable=false``).

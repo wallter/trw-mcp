@@ -240,7 +240,7 @@ def crash_proof(scene: SendScene, factory: Any, operation: str, phase: str, muta
         }
     else:
         child = factory("pin-b")
-        assert child.call("trw_peers", action="enroll")["status"] == "ok"
+        assert child.call("trw_inbox", action="enroll")["status"] == "ok"
         scene.actor("impl-1")
         receipt = scene.send("seed", "body")["receipt"]
         args = {} if operation == "fetch" else {"action": "ack", "message_ids": [receipt["message_id"]]}

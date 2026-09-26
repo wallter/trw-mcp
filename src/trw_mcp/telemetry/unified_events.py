@@ -2,8 +2,9 @@
 
 Every :class:`HPOTelemetryEvent` subclass emits here in parallel with its
 legacy CORE-031 counterpart during Phase 1 rollout. The unified file is
-the **single source of truth** for H1 substrate queries (``trw_query_events``
-in Wave 2c) and H4 meta-tune correlation. Selected event types also mirror
+the **single source of truth** for H1 substrate queries (``trw-mcp telemetry
+events``, moved off the MCP surface by PRD-CORE-300 slice S3a; born in Wave
+2c) and H4 meta-tune correlation. Selected event types also mirror
 into legacy projection files (for example ``tool_call_events.jsonl``) so
 older consumers keep working while unified events remain authoritative.
 

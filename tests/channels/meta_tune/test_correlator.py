@@ -126,7 +126,9 @@ def test_correlate_no_outcome_events_at_all_is_unmeasured_not_zero(
     measured, and the answer is none". Nothing in the codebase has ever emitted
     any member of ``OUTCOME_EVENT_TYPES``, so this branch was not an edge case —
     it was every call, in every project, and the 0.0 it produced was surfaced
-    through ``trw_channel_stats`` and ``channel-doctor stats`` as "0.0%".
+    through `trw-mcp telemetry channel-stats` (a former MCP tool, moved off
+    the MCP surface by PRD-CORE-300 slice S3a) and ``channel-doctor stats``
+    as "0.0%".
     """
     events = [_push_event()]
     results = correlate(events, window_seconds=3600)

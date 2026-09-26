@@ -42,6 +42,17 @@ def add_dispatch_subcommand(
         ),
     )
     dispatch_parser.add_argument(
+        "--fallback-clients",
+        dest="fallback_clients",
+        default=None,
+        help=(
+            "Comma list of clients to try in order when the previous one reports quota_exhausted, "
+            "an unsupported flag or a launch failure (e.g. codex,claude). Default: "
+            "dispatch_fallback_clients; '' disables. Only listed clients run, never the host's own implicitly; "
+            "a client that cannot run the request's posture is skipped (posture_unsupported)."
+        ),
+    )
+    dispatch_parser.add_argument(
         "--prompt",
         default=None,
         help="The prompt/instruction for the child agent (or use --prompt-file).",
@@ -57,6 +68,18 @@ def add_dispatch_subcommand(
         default=None,
         choices=sorted(ROLE_TABLE),
         help="Prepend a read-only second-opinion audit role preamble to the prompt.",
+    )
+    dispatch_parser.add_argument(
+        "--posture",
+        choices=("default", "reviewer"),
+        default=None,
+        help=(
+            "Confinement posture for the child. A --role that is a review/audit role "
+            "(e.g. adversarial-audit, code-review) auto-derives posture=reviewer, fail-closed, "
+            "so a review role never runs unbounded by omission. Pass --posture default to "
+            "override that derivation (a warning is printed, since the child then runs "
+            "unbounded). Maps to the same posture machinery trw_dispatch uses."
+        ),
     )
     dispatch_parser.add_argument(
         "--model",

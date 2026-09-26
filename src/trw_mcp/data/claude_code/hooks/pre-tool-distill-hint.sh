@@ -78,18 +78,19 @@ if [ -d "$_debounce_dir" ]; then
     _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
     _safe_name="${_safe_name}-${_path_ck}"
     _debounce_file="${_debounce_dir}/${_safe_name}.ts"
-    if [ -f "$_debounce_file" ]; then
+    # PRD-SEC/RC8: _trw_safe_read treats a symlinked debounce marker as absent
+    # and _trw_safe_write refuses to write through one (lib-trw.sh, sourced
+    # below alongside lib-distill-hint.sh).
+    _last=$(_trw_safe_read "$_debounce_file") || _last=0
+    if [ -n "$_last" ]; then
         _now=$(date +%s 2>/dev/null) || _now=0
-        _last=$(cat "$_debounce_file" 2>/dev/null) || _last=0
         _diff=$(( _now - _last ))
         if [ "$_diff" -lt 180 ] 2>/dev/null; then
             exit 0
         fi
     fi
-    mkdir -p "$_debounce_dir" 2>/dev/null || true
-    date +%s > "$_debounce_file" 2>/dev/null || true
+    date +%s | _trw_safe_write "$_debounce_file" || true
 else
-    mkdir -p "$_debounce_dir" 2>/dev/null || true
     # Sanitized name PLUS a checksum of the exact path. The sanitizer alone is
     # lossy -- it deletes every character outside [A-Za-z0-9_.-], so 'src/a.py'
     # and 'src/\u03b1.py' both collapse to 'src_.py'-ish forms and the second file
@@ -98,7 +99,7 @@ else
     _safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
     _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
     _safe_name="${_safe_name}-${_path_ck}"
-    date +%s > "${_debounce_dir}/${_safe_name}.ts" 2>/dev/null || true
+    date +%s | _trw_safe_write "${_debounce_dir}/${_safe_name}.ts" || true
 fi
 
 # --- Resolve Python path ---
@@ -325,7 +326,7 @@ except Exception:
             }), encoding="utf-8")
     except Exception:
         pass
-    print("[TRW] Distill intelligence available — run trw_before_edit_hint for details.")
+    print("[TRW] Distill intelligence available — run trw_code(mode=\"hint\") for details.")
 ' 2>/dev/null
 ) || {
     # Timeout or error: fall back to T0 beacon (FR30, FR31)
@@ -345,13 +346,21 @@ case "$_hint_output" in
         ;;
 esac
 
+# --- Session-scoped identical-hint dedup (PRD-CORE-301 cut 2) ---
+# The 180s debounce above bounds frequency; this bounds REPEATED, unchanged
+# content once the debounce window has lapsed. Never suppresses a hint that
+# changed, or the first hint for a file.
+if [ -n "$_hint_output" ] && _distill_hint_already_seen "$_repo" "$_file_path" "$_hint_output"; then
+    _hint_output=""
+fi
+
 # --- Output cap enforcement (FR32: 9500 char soft limit) ---
 if [ -n "$_hint_output" ]; then
     _len=$(printf '%s' "$_hint_output" | wc -c) || _len=0
     if [ "$_len" -gt 9500 ] 2>/dev/null; then
         _hint_output=$(printf '%s' "$_hint_output" | head -c 9400)
         _hint_output="${_hint_output}
-... (truncated — run trw_before_edit_hint for full context)"
+... (truncated — run trw_code(mode=\"hint\") for full context)"
     fi
     printf '%s\n' "$_hint_output"
 fi

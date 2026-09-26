@@ -46,7 +46,7 @@ def _refuse_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a migrated checkout opened a SQLite connection")
 
     monkeypatch.setattr(sqlite3, "connect", _refuse)
-    # The backend's own factory, whichever DB-API driver (sqlite3 or SQLCipher) it resolved.
+    # The backend's own factory, whichever DB-API driver (sqlite3 or pysqlite3) it resolved.
     monkeypatch.setattr("trw_memory.storage._connection.connect", _refuse)
 
 

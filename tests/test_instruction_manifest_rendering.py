@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.models.surface_packs import KERNEL_TOOLS
 from trw_mcp.state.claude_md._tool_manifest import (
     _ELIGIBLE_TOOLS,
     TOOL_DESCRIPTIONS,
@@ -91,22 +90,24 @@ class TestResolveExposedTools:
         assert resolve_exposed_tools("all") == set(_ELIGIBLE_TOOLS)
 
     def test_standard_mode_is_kernel_plus_the_never_hide_set(self) -> None:
-        """'standard' (default) → kernel + RIGID_TOOLS (PRD-FIX-140-FR08).
+        """'standard' (default) -> ALWAYS_ON_TOOLS (PRD-CORE-300 S11b).
 
-        The kernel alone UNDER-reported the guarantee: both middleware layers
-        union RIGID_TOOLS at the point of use, so trw_build_check/trw_review are
-        callable in every agent session — and check-instructions was flagging the
-        Deliver Gate section for naming the very tool it prescribes.
+        The surface is flat now: every tool no config flag gates (the kernel
+        plus every always-on pack) is callable in every agent session,
+        whatever the task.
         """
-        from trw_mcp.models.phase_policy import RIGID_TOOLS
+        from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, PACK_TOOLS
 
-        assert resolve_exposed_tools("standard") == set(KERNEL_TOOLS) | set(RIGID_TOOLS)
+        assert resolve_exposed_tools("standard") == set(ALWAYS_ON_TOOLS)
+        # The REGISTERED kernel (trw_code is pending, so excluded) is a subset
+        # of the always-on baseline.
+        assert set(PACK_TOOLS["kernel"]) <= set(ALWAYS_ON_TOOLS)
 
     def test_unknown_mode_falls_back_to_the_same_baseline(self) -> None:
         """Any non-'all' value degrades to the agent baseline, never full."""
-        from trw_mcp.models.phase_policy import RIGID_TOOLS
+        from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS
 
-        assert resolve_exposed_tools("nonexistent") == set(KERNEL_TOOLS) | set(RIGID_TOOLS)
+        assert resolve_exposed_tools("nonexistent") == set(ALWAYS_ON_TOOLS)
 
 
 class TestRenderToolList:
@@ -220,10 +221,10 @@ class TestResolveExposedToolsFrozenset:
         assert isinstance(result, frozenset)
 
     def test_standard_mode(self) -> None:
-        from trw_mcp.models.phase_policy import RIGID_TOOLS
+        from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS
 
         result = resolve_exposed_tools("standard")
-        assert result == frozenset(KERNEL_TOOLS) | RIGID_TOOLS
+        assert result == frozenset(ALWAYS_ON_TOOLS)
 
 
 class TestAgentsSectionToolFiltering:

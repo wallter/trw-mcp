@@ -66,16 +66,25 @@ _BASELINE_BLOCK_CHARS = {
 # well as accurate.
 # PRD-CORE-291-FR03 (+13 on the light-mode blocks): trw_recall's include_tiers moved
 # into options, so memory-routing now spells options={"include_tiers": ["project"]}.
+# PRD-CORE-300 S5 (-214 on the light-mode blocks): the PRD-create tool left the
+# ceremony tool table when it moved to `trw-mcp prd create`.
+# PRD-CORE-300 S6b (+6 on the light-mode blocks): the DELIVER row names the
+# `trw-mcp instructions sync` verb in place of the removed sync tool.
+# PRD-CORE-300 S11b (-3 full; light-mode blocks unchanged): the pointer names trw_status(detail="surface")
+# instead of the deleted discovery tool, and the lifecycle text states the flat,
+# flag-gated surface instead of the kernel-plus-grant description.
 _MEASURED_BLOCK_CHARS = {
-    "claude-code": 6374,
-    "cursor-ide": 6374,
-    "copilot": 6374,
-    "antigravity-cli": 6374,
-    "grok": 6374,
-    "codex": 8736,
-    "cursor-cli": 7649,
-    "opencode": 7649,
+    "claude-code": 6371,
+    "cursor-ide": 6371,
+    "copilot": 6371,
+    "antigravity-cli": 6371,
+    "grok": 6371,
+    "codex": 8528,
+    "cursor-cli": 7441,
+    "opencode": 7441,
 }
+#: The call the full-mode pointer names for the live surface (PRD-CORE-300 S11b).
+_SURFACE_CALL = 'trw_status(detail="surface")'
 _FULL_MODE = ("claude-code", "cursor-ide", "copilot", "antigravity-cli", "grok")
 _LIGHT_MODE = ("codex", "cursor-cli", "opencode")
 _MIN_REDUCTION = 0.40
@@ -135,7 +144,7 @@ def test_catalogue_becomes_a_pointer_for_full_mode_only(client_id: str) -> None:
         return
 
     assert "| Phase | Tool | When to Use |" not in block, "the verbatim catalogue must be gone for full mode"
-    assert "trw_skill_discovery" in block, "the pointer must name how to enumerate the live surface"
+    assert _SURFACE_CALL in block, "the pointer must name how to enumerate the live surface"
     assert "trw_status" in block
 
     saved = len(verbatim_table) - len(CEREMONY_POINTER)
@@ -211,7 +220,7 @@ def test_generate_behavioral_protocol_md_is_the_production_writer() -> None:
     """Wiring assertion: the function that writes the file the hook reads.
 
     Asserted through ``generate_behavioral_protocol_md`` — the real entry point
-    ``trw_instructions_sync`` calls — rather than through ``ProtocolRenderer``,
+    instructions sync calls — rather than through ``ProtocolRenderer``,
     because asserting a renderer's return value while no consumer received it is
     precisely how PRD-FIX-073-FR03 passed its own test and reached 0 of 6
     surfaces.
@@ -221,7 +230,7 @@ def test_generate_behavioral_protocol_md_is_the_production_writer() -> None:
     written = generate_behavioral_protocol_md()
     assert written.count(_FULL_GATE_MARKER) == 1
     assert "trw-mcp local recall --query" in written
-    assert "trw_skill_discovery" in written
+    assert _SURFACE_CALL in written
 
 
 def test_light_mode_keeps_the_catalogue_even_with_the_pointer_mode_configured(
@@ -249,7 +258,7 @@ def test_verbatim_mode_restores_the_catalogue_for_full_profiles(monkeypatch: pyt
     for client_id in _FULL_MODE:
         block = _block(client_id)
         assert "| Phase | Tool | When to Use |" in block
-        assert "trw_skill_discovery" not in block
+        assert _SURFACE_CALL not in block
 
 
 # ---------------------------------------------------------------------------

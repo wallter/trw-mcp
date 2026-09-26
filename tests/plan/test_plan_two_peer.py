@@ -57,7 +57,7 @@ def peers(scene: Scene, monkeypatch: pytest.MonkeyPatch) -> Any:
         return payload
 
     for member in ("alpha", "beta"):
-        assert call(member, "trw_peers", action="enroll")["status"] == "ok"
+        assert call(member, "trw_inbox", action="enroll")["status"] == "ok"
     yield call
     _endpoints._reset_process_incarnations_for_test()
 
@@ -187,7 +187,7 @@ def test_an_unrelated_tool_call_carries_no_message(peers: Any) -> None:
         delivery_class="on_demand",
     )
 
-    listed = peers("beta", "trw_peers", action="list")
+    listed = peers("beta", "trw_inbox", action="list")
 
     assert "items" not in listed
     assert not any("plan-review" in str(value) for value in listed.values())

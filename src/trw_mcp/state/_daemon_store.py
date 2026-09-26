@@ -11,36 +11,45 @@ unreachable daemon or a missing grant fails closed as
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import dataclasses
 import functools
 import json
+import os
 import threading
 from collections.abc import Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+import structlog
 from pydantic_core import to_jsonable_python
 
 from trw_mcp.state._store_selection import (
+    EmbedderStatus,
     NamespaceHealth,
     RecallSpec,
-    SimilarWindow,
     StoreRequest,
     StoreUnavailableError,
-    similar_window,
+    VectorCoverage,
+    VectorSet,
+    dedup_answer,
 )
 from trw_mcp.state._tier_routing import USER_NAMESPACE
 
 if TYPE_CHECKING:
     from trw_memory.daemon.client import DaemonClient
-    from trw_memory.embeddings.provenance import EmbeddingSpace
     from trw_memory.lifecycle.correction import LearningPatch
+    from trw_memory.lifecycle.dedup import DedupResult
     from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings
     from trw_memory.models.memory import MemoryEntry
     from trw_memory.sync import AdmissionOutcome
 
+logger = structlog.get_logger(__name__)
+
 #: The daemon's ``memory_list_page`` bound (``trw_memory.tools.listing.LIST_PAGE_MAX``).
 _LIST_PAGE_MAX = 1000
+#: The per-pass counts ``memory_reembed`` returns, summed across a run's passes.
+_REEMBED_COUNTS = ("examined", "reembedded", "already_current", "skipped", "warm_examined", "warm_reembedded")
 
 #: One client per grant, bound to the daemon that answered its check, with the local settings it passed for.
 _clients: dict[str, tuple[DaemonClient, tuple[tuple[int, str], str]]] = {}
@@ -67,10 +76,29 @@ def daemon_store_for(trw_dir: Path, project_namespace: str) -> DaemonMemoryStore
         # A restarted daemon or a changed local setting is checked again. The cached
         # client is bound to the daemon that ANSWERED, and refuses to call any other.
         answered_by = _require_matching_security(DaemonClient(token), project_namespace, local)
-        client = DaemonClient(token, instance=answered_by)
+        client = DaemonClient(token, instance=answered_by, keep_session=True)
         with _clients_lock:
+            replaced, _ = _clients.get(token, (None, None))
             _clients[token] = (client, (answered_by, wanted[1]))
+        if replaced is not None and replaced is not client:
+            _retire(replaced)
     return DaemonMemoryStore(client, project_namespace)
+
+
+def _retire(client: DaemonClient) -> None:
+    """Close a replaced client's held session on the loop that owns it, without waiting (RES-01).
+
+    ``retire`` waits for the client's in-flight calls, and a close against a dead
+    daemon must not block the caller that just attached to the new one.
+    """
+    loop, _thread = _daemon_loop()
+    future = asyncio.run_coroutine_threadsafe(client.retire(), loop)
+    future.add_done_callback(_log_retire_failure)
+
+
+def _log_retire_failure(future: concurrent.futures.Future[None]) -> None:
+    if not future.cancelled() and future.exception() is not None:
+        logger.debug("daemon_client_retire_failed", error=repr(future.exception()))
 
 
 def _daemon_instance() -> tuple[int, str] | None:
@@ -115,27 +143,39 @@ def _require_matching_security(client: DaemonClient, namespace: str, local: dict
     return (answered_by[0], answered_by[1])
 
 
+#: The one loop every daemon call runs on, with the pid that started it (a fork starts its own).
+_loop: tuple[int, asyncio.AbstractEventLoop, threading.Thread] | None = None
+_loop_lock = threading.Lock()
+
+
+def _daemon_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
+    """The process's daemon-call loop, running on its own thread; started on first use.
+
+    One long-lived loop is what lets a ``DaemonClient`` keep its MCP session open
+    across calls (W27): a loop per call made every call open a session.
+    """
+    global _loop
+    with _loop_lock:
+        if _loop is None or _loop[0] != os.getpid() or not _loop[2].is_alive():
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(target=loop.run_forever, name="trw-mcp-daemon-store", daemon=True)
+            thread.start()
+            _loop = (os.getpid(), loop, thread)
+        return _loop[1], _loop[2]
+
+
 def _run(coro: Coroutine[Any, Any, Any]) -> Any:
-    """Run *coro* on a private loop in a worker thread; tool handlers may already own a running loop."""
+    """Run *coro* on the daemon-call loop and wait; tool handlers may already own a running loop."""
     from trw_memory.exceptions import DaemonAuthError, DaemonRecordInvalidError, DaemonUnreachableError
 
-    outcome: list[Any] = []
-
-    def _worker() -> None:
-        try:
-            outcome.append(asyncio.run(coro))
-        except BaseException as exc:  # re-raised on the calling thread below
-            outcome.append(exc)
-
-    thread = threading.Thread(target=_worker, name="trw-mcp-daemon-store")
-    thread.start()
-    thread.join()
-    result = outcome[0]
-    if isinstance(result, (DaemonUnreachableError, DaemonAuthError, DaemonRecordInvalidError)):
-        raise StoreUnavailableError(f"{result} Run trw-mcp doctor.") from result
-    if isinstance(result, BaseException):
-        raise result
-    return result
+    loop, thread = _daemon_loop()
+    if threading.current_thread() is thread:
+        coro.close()
+        raise RuntimeError("a daemon call waited on the daemon-call loop from inside it")
+    try:
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+    except (DaemonUnreachableError, DaemonAuthError, DaemonRecordInvalidError) as exc:
+        raise StoreUnavailableError(f"{exc} Run trw-mcp doctor.") from exc
 
 
 class DaemonMemoryStore:
@@ -181,8 +221,7 @@ class DaemonMemoryStore:
     def count(self, namespace: str) -> int:
         # memory_status scopes the count to the one namespace named (PRD-CORE-298 FR02:
         # no store-wide count reaches a granted caller).
-        status = _run(self._client.status(namespace))
-        return int(status["total_entries"])
+        return int(_run(self._client.status(namespace))["total_entries"])
 
     def health(self, namespace: str) -> NamespaceHealth:
         status = _run(self._client.status(namespace))
@@ -190,6 +229,33 @@ class DaemonMemoryStore:
             raise ValueError(f"memory_status measured no health for {namespace}: {status.get('error')}")
         health: NamespaceHealth = status["health"]
         return health
+
+    def embedder_status(self, namespace: str) -> EmbedderStatus:
+        status = _run(self._client.status(namespace))
+        if "embedder" not in status:
+            raise ValueError(f"memory_status reported no embedder for {namespace}: {status.get('error')}")
+        embedder: EmbedderStatus = status["embedder"]
+        return embedder
+
+    def reembed(self, namespace: str) -> dict[str, object]:
+        """Every bounded pass of ``memory_reembed``, its counts summed (the daemon does one per call)."""
+        totals: dict[str, int] = {}
+        cursor: str | None = None
+        while True:
+            answer: dict[str, object] = _run(self._client.reembed(namespace, cursor))
+            if answer.get("status") != "ok":
+                return answer
+            for key in _REEMBED_COUNTS:
+                totals[key] = totals.get(key, 0) + int(cast("int", answer.get(key) or 0))
+            sent, cursor = cursor, cast("str | None", answer.get("cursor"))
+            if cursor is None:
+                return {**answer, **totals}
+            if cursor == sent:  # every pass consumes a row, so a repeat would loop forever
+                return {"status": "unavailable", "reason": "reembed_stalled", "error": f"no progress past {cursor}"}
+
+    def coverage(self, namespace: str) -> VectorCoverage | None:
+        coverage: VectorCoverage | None = _run(self._client.status(namespace)).get("coverage")
+        return coverage
 
     def list_entries(
         self, namespace: str, *, status: str | None = None, tags: list[str] | None = None, limit: int
@@ -240,22 +306,34 @@ class DaemonMemoryStore:
             raise ValueError(f"memory_admit_shared refused: {answer.get('error')}")
         return AdmissionOutcome(list(answer["admitted"]), int(answer["refused"]), int(answer["gate_errors"]))
 
-    def vectors(self, ids: list[str], space: EmbeddingSpace) -> dict[str, list[float]]:
-        if not ids:
-            return {}
-        answer = _run(self._client.vectors(self._namespaces[0], list(ids), dataclasses.asdict(space)))
+    def vectors(self, ids: list[str]) -> VectorSet | None:
+        answer = _run(self._client.vectors(self._namespaces[0], list(ids)))
+        if answer.get("status") == "unavailable":
+            return None
         if answer.get("status") != "ok":
             raise ValueError(f"memory_vectors refused: {answer.get('error')}")
-        return {str(entry_id): [float(x) for x in vector] for entry_id, vector in answer["vectors"].items()}
+        vectors = {str(entry_id): [float(x) for x in vector] for entry_id, vector in answer["vectors"].items()}
+        return VectorSet(vectors, float(answer["dup_threshold"]))
 
     def verify(self, namespace: str, project_root: Path | None, settings: VerifySettings) -> MaintainVerifySummary:
         from trw_memory.lifecycle.verification_pass import MaintainVerifySummary
+        from trw_memory.tools._maintain_sweep import add_sweep_counts
 
         root = str(project_root) if project_root is not None else None
-        answer = _run(self._client.verify(namespace, root, dataclasses.asdict(settings)))
-        if answer.get("status") != "ok":
-            raise ValueError(f"memory_verify refused {namespace}: {answer.get('error')}")
-        return MaintainVerifySummary(**answer["summary"])
+        summary: dict[str, object] = {}
+        reached: list[str] = []
+        # One daemon call verifies a bounded part of the namespace and resumes where the last stopped;
+        # call until it is done, and refuse a daemon whose position does not move forward.
+        while True:
+            answer = _run(self._client.verify(namespace, root, dataclasses.asdict(settings)))
+            if answer.get("status") != "ok":
+                raise ValueError(f"memory_verify refused {namespace}: {answer.get('error')}")
+            summary = add_sweep_counts(summary, answer["summary"]) if summary else answer["summary"]
+            if not isinstance(position := answer.get("next"), list):
+                return MaintainVerifySummary(**summary)
+            if reached and position <= reached:
+                raise ValueError(f"memory_verify of {namespace} did not advance past {reached}")
+            reached = position
 
     def assertion_health(self, namespace: str, stale_days: int) -> dict[str, int] | None:
         answer = _run(self._client.assertion_health(namespace, stale_days))
@@ -294,22 +372,35 @@ class DaemonMemoryStore:
             raise ValueError(f"memory_graph_related refused {namespace}: {answer.get('error')}")
         return answer["related"], bool(answer["truncated"])
 
-    def maintain(self, namespace: str) -> dict[str, Any]:
-        answer: dict[str, Any] = _run(self._client.maintain(namespace))
-        if "passes" not in answer:
+    def maintain(self, namespace: str, consolidation: dict[str, object]) -> dict[str, Any]:
+        answer: dict[str, Any] = _run(self._client.maintain(namespace, consolidation))
+        if "passes" not in answer and answer.get("status") != "busy":
             raise ValueError(f"memory_maintain refused {namespace}: {answer.get('error')}")
         return answer
 
-    def similar(self, namespace: str, vector: list[float], space: EmbeddingSpace | None, top_k: int) -> SimilarWindow:
-        wanted = dataclasses.asdict(space) if space is not None else None
-        return similar_window(_run(self._client.similar(namespace, vector, wanted, top_k)))
+    def similar(
+        self, namespace: str, text: str, skip_threshold: float, merge_threshold: float, top_k: int
+    ) -> DedupResult | None:
+        answer = _run(self._client.similar(namespace, text, skip_threshold, merge_threshold, top_k))
+        logger.debug(
+            "dedup_daemon_verdict",
+            status=answer.get("status"),
+            mode=answer.get("mode"),
+            examined=answer.get("examined"),
+            elapsed_ms=answer.get("elapsed_ms"),
+            reason=answer.get("reason"),
+        )
+        return dedup_answer(answer)
 
     def _row(self, namespace: str, entry_id: str) -> MemoryEntry | None:
         found = _run(self._client.get(entry_id, namespace))
         return _entry(found["entry"]) if found.get("status") == "ok" else None
 
     def _page(self, spec: RecallSpec, namespace: str, limit: int) -> list[MemoryEntry]:
-        # The namespace's first *limit* candidates in the requested status, not yet admitted.
+        # The namespace's first *limit* candidates in the requested status, not yet admitted; at most
+        # the daemon's recall ceiling, which a local recall's DEFAULT_LIST_LIMIT scan also stops at.
+        from trw_memory.retrieval.recall_policy import MAX_RECALL_LIMIT
+
         status = spec.admission.mem_status
         wanted = str(status.value) if status is not None else None
         if spec.query.strip() in ("*", ""):
@@ -318,7 +409,7 @@ class DaemonMemoryStore:
             self._client.recall(
                 spec.query,
                 namespace,
-                limit=limit,
+                limit=min(limit, MAX_RECALL_LIMIT),
                 tags=spec.tags,
                 status=wanted,
                 include_org_memories=False,

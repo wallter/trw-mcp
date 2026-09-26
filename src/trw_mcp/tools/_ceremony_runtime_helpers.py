@@ -147,7 +147,7 @@ def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
         if expired:
             continue
         # No per-entry adopt_command — it just repeats run_path; the
-        # accompanying hint states the trw_adopt_run(run_path=...) convention.
+        # accompanying hint states the `trw-mcp run adopt` convention.
         candidates.append(
             {
                 "run_path": run_path,

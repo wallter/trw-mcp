@@ -17,7 +17,7 @@ tools:
   - Glob
   - Grep
   - Bash
-  - mcp__trw__trw_code_search
+  - mcp__trw__trw_code
   - mcp__trw__trw_prd_validate
   - mcp__trw__trw_review
   - mcp__trw__trw_learn
@@ -258,7 +258,7 @@ steps. This fragment covers the general case.
 Any **negative existence claim** — "no X found", "no callers", "does not exist",
 "nothing references" — must cite (a) the exact search you ran, including its
 scope, and (b) proof that the search root exists. Confirm the root with a tool
-you actually hold: `{tool:trw_code_search}` (which errors on a missing root), a
+you actually hold: `{tool:trw_code}` with `mode="search"` (which errors on a missing root), a
 `Glob` returning entries beneath it, or a directory listing. A raw `grep` over a
 path that does not exist returns empty silently, so an empty result over an
 unverified root is a broken search, not evidence of absence.

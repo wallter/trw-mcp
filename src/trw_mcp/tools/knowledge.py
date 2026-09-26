@@ -1,13 +1,17 @@
-"""Agent-facing knowledge-graph traversal tools.
+"""Knowledge-graph traversal — backs ``trw_recall``'s graph mode.
 
 Knowledge synchronization remains an internal delivery operation. This module
 exposes only bounded, read-only traversal from a known learning ID.
+
+PRD-CORE-300-FR11 (S9) folded the standalone graph-related MCP tool
+into ``trw_recall(graph_id=...)`` (``tools/learning.py``); :func:`graph_related`
+is the surviving callable both the recall tool and the trw-memory tests call
+directly.
 """
 
 from __future__ import annotations
 
 import structlog
-from fastmcp import FastMCP
 from trw_memory.graph import MAX_TRAVERSAL_DEPTH, VALID_EDGE_TYPES
 from typing_extensions import TypedDict
 
@@ -116,25 +120,4 @@ def graph_related(
     }
 
 
-def register_knowledge_tools(server: FastMCP) -> None:
-    """Register bounded read-only knowledge-graph traversal."""
-
-    @server.tool(output_schema=None)
-    def trw_graph_related(
-        learning_id: str,
-        depth: int = 1,
-        edge_types: list[str] | None = None,
-        limit: int = _DEFAULT_RELATED_LIMIT,
-    ) -> GraphRelatedResult:
-        """Find active learnings connected to one via the knowledge graph.
-
-        Use when: a recalled learning looks useful and you want related
-        neighbours. Depth capped at 3 hops; unknown IDs return found=false.
-
-        Args:
-            edge_types: restrict traversal to these edge types; None = all.
-        """
-        return graph_related(learning_id, depth=depth, edge_types=edge_types, limit=limit)
-
-
-__all__ = ["GraphRelatedItem", "GraphRelatedResult", "graph_related", "register_knowledge_tools"]
+__all__ = ["GraphRelatedItem", "GraphRelatedResult", "graph_related"]

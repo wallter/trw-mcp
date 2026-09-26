@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests._test_tools_requirements_support import _get_tools, set_project_root  # noqa: F401
+from trw_mcp.tools.requirements import create_prd
 
 
 class TestIntegration:
     """Integration tests for the full template-driven pipeline."""
 
     def test_full_structure_has_all_sections(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Implement template-driven PRD generation",
             category="CORE",
             priority="P1",
@@ -41,8 +41,7 @@ class TestIntegration:
             assert f"## {i}. {section}" in content, f"Missing section {i}. {section}"
 
     def test_nfr03_security_present(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Security-relevant feature",
             category="CORE",
             title="Secure Feature",
@@ -50,8 +49,7 @@ class TestIntegration:
         assert "NFR03: Security" in result["content"]
 
     def test_appendix_present(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Feature with appendix",
             category="CORE",
             title="Appendix Test",
@@ -59,8 +57,7 @@ class TestIntegration:
         assert "## Appendix" in result["content"]
 
     def test_quality_checklist_present(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Feature with checklist",
             category="CORE",
             title="Checklist Test",
@@ -68,8 +65,7 @@ class TestIntegration:
         assert "Quality Checklist" in result["content"]
 
     def test_template_version_in_frontmatter(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Version check",
             category="CORE",
             title="Version Test",
@@ -78,8 +74,7 @@ class TestIntegration:
         assert "3.2" in result["content"]
 
     def test_backward_compat_return_schema(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Schema check",
             category="CORE",
             title="Schema Test",
@@ -94,8 +89,7 @@ class TestIntegration:
         assert result["sections_generated"] == 12
 
     def test_prefill_with_file_refs_and_deps(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Modify tools/requirements.py. Depends on PRD-FIX-006.",
             category="CORE",
             title="Prefill Test",
@@ -105,8 +99,7 @@ class TestIntegration:
         assert "PRD-FIX-006" in content
 
     def test_slos_in_frontmatter(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="SLO: latency under 200ms for all API calls",
             category="CORE",
             title="SLO Test",
@@ -116,18 +109,14 @@ class TestIntegration:
 
 
 class TestCeremonyNudgeWiringRequirements:
-    """Verify ceremony_status is injected into PRD tool responses."""
+    """Verify ceremony_status is injected into PRD tool responses.
 
-    def test_trw_prd_create_includes_ceremony_status(self, tmp_path: Path) -> None:
-        """trw_prd_create response must contain 'ceremony_status' after nudge injection."""
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
-            input_text="Test feature for nudge wiring verification",
-            category="CORE",
-            title="Nudge Wiring PRD",
-        )
-        assert "ceremony_status" in result, "trw_prd_create did not inject ceremony_status — nudge wiring is broken"
-        assert isinstance(result["ceremony_status"], str)
+    ``create_prd`` (PRD-CORE-300-FR07, called from ``trw-mcp prd create``) is
+    no longer an MCP tool — it runs in a one-shot CLI process with no live
+    session for the ceremony nudge pool to react to, so it dropped the
+    injection along with the tool registration. ``trw_prd_validate`` still
+    runs inside a session and keeps it.
+    """
 
     def test_trw_prd_validate_includes_ceremony_status(self, tmp_path: Path) -> None:
         """trw_prd_validate response must contain 'ceremony_status' after nudge injection."""

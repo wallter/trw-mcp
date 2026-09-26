@@ -10,7 +10,7 @@ category set by listing additional names in `.trw/config.yaml`:
       - INTENT
       - SCALE
 
-The union of built-in + extra categories is what `trw_prd_create` and
+The union of built-in + extra categories is what `trw-mcp prd create` and
 `trw_prd_validate` accept.
 
 See also: `trw_mcp.state.validation.prd_integrity.allowed_prd_categories()`.

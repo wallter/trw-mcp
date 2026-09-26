@@ -2,7 +2,11 @@
 
 These are source-renderer and disposable instruction-generation checks, not
 proof that a running host has refreshed its cached tools. The manifest seam
-projects static admission; task labels do not imply runtime pack resolution.
+projects static admission; PRD-CORE-300 S11b deleted per-task pack resolution
+entirely, so ``task_type`` is now a vestigial default-value parameter on the
+appendix builder — the capability projection it renders no longer varies by
+task, so this file no longer parametrizes over the deleted
+``STANDARD_TASK_PACKS`` vocabulary.
 """
 
 from pathlib import Path
@@ -11,7 +15,6 @@ import pytest
 
 from trw_mcp.bootstrap._client_integration_appendix import build_client_integration_appendix
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
-from trw_mcp.models.surface_packs import STANDARD_TASK_PACKS
 
 
 def _assert_correction_available(text: str) -> None:
@@ -20,25 +23,25 @@ def _assert_correction_available(text: str) -> None:
     ``dde1c6fb6`` (PRD-FIX-140-FR08) stopped enumerating the discoverable and
     operator-gated classes and collapsed them into a single counts-only bullet.
     PRD-CORE-291 then merged ``trw_learn_update`` into ``trw_learn``'s
-    update mode, so the assertion is now: the AVAILABLE bullet names
-    ``trw_learn`` (the correction path), and ``trw_learn_update`` is named
-    nowhere in either bullet — it no longer exists as a separate tool.
+    update mode. PRD-CORE-300 S11b then deleted the discoverable tier
+    outright, flattening the listing to available/gated. The assertion is now:
+    the AVAILABLE bullet names ``trw_learn`` (the correction path, always
+    on — it is in the kernel), and ``trw_learn_update`` is named nowhere in
+    either bullet — it no longer exists as a separate tool.
     """
-    available = next(line for line in text.splitlines() if line.startswith("- **Available now"))
-    not_callable = next(line for line in text.splitlines() if line.startswith("- **Discoverable via"))
-    assert "**Operator-grant only**" in not_callable
+    available = next(line for line in text.splitlines() if line.startswith("- **Available in every session**"))
+    gated = next(line for line in text.splitlines() if line.startswith("- **Behind a config flag**"))
     assert "trw_learn" in available
     assert "trw_learn_update" not in available
-    assert "trw_learn_update" not in not_callable
+    assert "trw_learn_update" not in gated
 
 
 @pytest.mark.parametrize("client_id", SUPPORTED_IDES)
-@pytest.mark.parametrize("task_type", tuple(STANDARD_TASK_PACKS))
-def test_correction_available_in_native_projection(client_id: str, task_type: str) -> None:
-    appendix = build_client_integration_appendix(client_id, task_type=task_type)
+def test_correction_available_in_native_projection(client_id: str) -> None:
+    appendix = build_client_integration_appendix(client_id)
     assert not appendix.parity_failures
     assert f"<!-- trw:capabilities:{client_id} -->" in appendix.text
-    assert f"## Resolved capabilities ({task_type})" in appendix.text
+    assert "## Resolved capabilities" in appendix.text
     _assert_correction_available(appendix.text)
 
 

@@ -50,10 +50,12 @@ from trw_mcp.middleware._mcp_security_helpers import (
     normalize_transport as normalize_transport,
 )
 from trw_mcp.middleware._mcp_security_helpers import (
+    resolve_active_phase as resolve_active_phase,
+)
+from trw_mcp.middleware._mcp_security_helpers import (
     resolve_runtime_peer_metadata as resolve_runtime_peer_metadata,
 )
 from trw_mcp.middleware._mcp_security_list_tools import filter_listed_tools, safe_session_id
-from trw_mcp.middleware.phase_exposure import resolve_active_phase
 from trw_mcp.security.anomaly_detector import (
     AnomalyDetector,
     AnomalyObservation,

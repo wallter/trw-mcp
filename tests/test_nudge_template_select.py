@@ -273,9 +273,6 @@ def test_context_reactive_static_tool_messages() -> None:
         ToolName.INIT: "Run bootstrapped. Begin the planned work; checkpoint at the first milestone.",
         ToolName.RECALL: "Learnings recalled. Review them for relevant patterns before proceeding.",
         ToolName.STATUS: "Run status loaded. Resume from last checkpoint rather than re-implementing.",
-        ToolName.PRD_CREATE: (
-            "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before the work starts."
-        ),
         ToolName.PRD_VALIDATE: "PRD validated. NEXT: trw_init() to bootstrap the governed run.",
     }
     for tool, expected in cases.items():

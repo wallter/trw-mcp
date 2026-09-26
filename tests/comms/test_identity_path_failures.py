@@ -31,7 +31,7 @@ def test_manifest_path_resolution_stays_typed_and_nonmutating(
         assert isinstance(payload, dict)
         return payload
 
-    assert call("trw_peers", action="enroll")["status"] == "ok"
+    assert call("trw_inbox", action="enroll")["status"] == "ok"
     target = run.parent / "unavailable-peer"
     if broken == "loop":
         target.symlink_to(target)
@@ -45,12 +45,12 @@ def test_manifest_path_resolution_stays_typed_and_nonmutating(
     before = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()}
     if broken == "missing":
         # Canonical identity is not a new existence requirement for EVERY peer.
-        assert call("trw_peers", action="list")["status"] == "ok"
+        assert call("trw_inbox", action="list")["status"] == "ok"
         manifest.write_bytes(original)
-        assert call("trw_peers", action="list")["status"] == "ok"
+        assert call("trw_inbox", action="list")["status"] == "ok"
         return
     for tool, arguments in (
-        ("trw_peers", {"action": "list"}),
+        ("trw_inbox", {"action": "list"}),
         ("trw_send", {"recipient_member_id": "impl-2", "request_key": "bad-path", "body": "hello"}),
         ("trw_inbox", {"action": "status"}),
     ):
@@ -61,4 +61,4 @@ def test_manifest_path_resolution_stays_typed_and_nonmutating(
         assert result["detail"] == "the formation store is unreadable; ask the operator to repair it"
         assert {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()} == before
     manifest.write_bytes(original)
-    assert call("trw_peers", action="list")["status"] == "ok"
+    assert call("trw_inbox", action="list")["status"] == "ok"

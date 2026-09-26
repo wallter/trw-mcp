@@ -22,7 +22,6 @@ from trw_mcp.models.surface_packs import (
     KERNEL_TOOLS,
     PACK_TOOLS,
     REVIEWER_TOOLS,
-    STANDARD_TASK_PACKS,
 )
 from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 from trw_mcp.server._tools import raw_registered_tool_names
@@ -52,6 +51,40 @@ def decision_server() -> FastMCP:
     server = FastMCP("decision-test")
     register_assess_tools(server)
     return server
+
+
+# -- Description token budget (W41-1, 7.0.0) --------------------------------
+
+#: chars/4 of the pre-7.0.0 docstring (measured, see the 7.0.0 usage-shape rewrite): 388 chars.
+_PRE_7_0_0_DESCRIPTION_TOKENS = 388 / 4
+
+#: The rewritten description must state instructions/criteria-per-type/items= with one compact
+#: noul+choice+score example, but every field in a tool description is paid on every session of
+#: every client that loads it — cap the growth, don't let a "helpful" rewrite become unbounded.
+_DESCRIPTION_GROWTH_CEILING_TOKENS = 120
+
+
+async def test_description_covers_the_required_shape_within_the_token_growth_budget() -> None:
+    server = FastMCP("decision-test")
+    register_assess_tools(server)
+    tool = await server.get_tool("trw_assess")
+    description = tool.description or ""
+
+    tokens = len(description) / 4
+    growth = tokens - _PRE_7_0_0_DESCRIPTION_TOKENS
+    assert growth <= _DESCRIPTION_GROWTH_CEILING_TOKENS, (
+        f"trw_assess description grew {growth:.0f} tokens (~{tokens:.0f} total); "
+        f"ceiling is {_DESCRIPTION_GROWTH_CEILING_TOKENS} tokens of growth over the pre-7.0.0 baseline."
+    )
+    # Required content (W41-1): instructions field, criteria shape per type, items= for screening,
+    # and one example covering all three question types.
+    assert '"instructions"' in description
+    assert '"true"' in description and '"false"' in description  # noul
+    assert "criteria" in description  # choice/score criteria keys
+    assert "items=" in description
+    assert '"type": "noul"' in description and '"type": "choice"' in description and '"type": "score"' in description
+    # W41-3: the state guidance names operator preferences, within the same growth budget.
+    assert "operator pref" in description
 
 
 def _call(server: FastMCP, questions: dict[str, Any], state: Any) -> dict[str, Any]:
@@ -197,33 +230,101 @@ def test_invalid_question_type_is_rejected(decision_server: FastMCP, monkeypatch
         )
 
 
-def test_a_shape_error_names_each_field_by_path_and_shows_a_valid_payload(
+def test_a_shape_error_names_each_field_and_shows_a_valid_payload(
     decision_server: FastMCP, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The first-call mistake agents make ({question, options}) must be fixable from the message alone."""
+    """The recurring mistakes worker calls made (2026-09-24 usage audit) must be fixable from the
+    message alone: a renamed field, 'options' on a choice, and a 'screen' type each name the right
+    field or argument and show a one-line example — never a raw pydantic dump."""
     import json
 
     from fastmcp.exceptions import ToolError
 
     _enable(monkeypatch)
     monkeypatch.setattr("trw_memory.decisions._env.judge_from_env", lambda *args, **kwargs: _FakeJudge(None))
-    wrong = {"q": {"type": "choice", "question": "Which?", "options": ["a", "b"]}}
+
+    with pytest.raises(ToolError, match=r"use 'instructions', not 'question'"):
+        _call(decision_server, {"q": {"type": "choice", "question": "Which?", "options": ["a", "b"]}}, "s")
+
+    with pytest.raises(ToolError, match=r"'options' is not a field; choice options go in 'criteria'"):
+        _call(decision_server, {"q": {"type": "choice", "instructions": "Which?", "options": ["a", "b"]}}, "s")
+
+    with pytest.raises(ToolError, match=r"use 'criteria', not 'criterion'"):
+        _call(decision_server, {"q": {"type": "score", "instructions": "x", "criterion": ["lo", "hi"]}}, "s")
+
+    with pytest.raises(ToolError, match=r"'screen' is not a question type.*items="):
+        _call(decision_server, {"q": {"type": "screen", "instructions": "x"}}, "s")
 
     with pytest.raises(ToolError) as caught:
-        _call(decision_server, wrong, "s")
-    message = str(caught.value)
+        _call(decision_server, {"q": {"type": "noul", "instructions": "x", "criteria": {"yes": "a"}}}, "s")
+    assert "noul criteria keys must be exactly 'true'/'false'" in str(caught.value) and "yes" in str(caught.value)
+
+    # Missing 'type' entirely still fails the discriminated union itself (no field to rename).
     with pytest.raises(ToolError, match=r"questions\.q: Unable to extract tag using discriminator 'type'"):
-        _call(decision_server, {"q": {"question": "Which?"}}, "s")
-    with pytest.raises(ToolError, match=r"questions\.q\.instructions: Field required"):
+        _call(decision_server, {"q": {"instructions": "Which?"}}, "s")
+
+    # The items= path routes through the same parse and the same message.
+    with pytest.raises(ToolError, match=r"use 'instructions', not 'question'"):
         asyncio.run(
-            decision_server.call_tool("trw_assess", {"questions": wrong, "state": "s", "items": {"a": "x", "b": "y"}})
+            decision_server.call_tool(
+                "trw_assess",
+                {
+                    "questions": {"q": {"type": "choice", "question": "Which?", "options": ["a", "b"]}},
+                    "state": "s",
+                    "items": {"a": "x", "b": "y"},
+                },
+            )
         )
 
-    assert "invalid questions (4 error(s)): questions.q.instructions: Field required; " in message
-    assert "questions.q.criteria: Field required; questions.q.question: Extra inputs are not permitted." in message
-    # The example is a payload the tool accepts, not prose that merely looks like one.
-    example = json.loads(message.split("Valid example: ", 1)[1])
-    assert _call(decision_server, example["questions"], example["state"])["status"] == "failed"
+    # A generic (non-special-cased) mistake still gets the multi-error dump plus the one shared example
+    # — a question mapping the tool accepts, not prose that merely looks like one.
+    with pytest.raises(ToolError) as caught:
+        _call(decision_server, {"q": {"type": "choice", "instructions": "x", "criteria": {}}}, "s")
+    message = str(caught.value)
+    assert "Valid example: " in message
+    example_questions = json.loads(message.split("Valid example: ", 1)[1])
+    assert _call(decision_server, example_questions, "s")["status"] == "failed"
+
+
+def test_near_tie_choice_carries_advice_through_the_tool(
+    decision_server: FastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W19 / PRD-CORE-295: a near-tie answer surfaces 'advice' in the tool response, not just the toolkit."""
+    _enable(monkeypatch)
+    result = DecisionResult(
+        model="m",
+        answers={"route": {"type": "choice", "choice": "a", "probabilities": {"a": 0.52, "b": 0.48}}},
+        usage={},
+        backend="jev",
+        latency_ms=1.0,
+    )
+    monkeypatch.setattr("trw_memory.decisions._env.judge_from_env", lambda *args, **kwargs: _FakeJudge(result))
+
+    payload = _call(
+        decision_server, {"route": {"type": "choice", "instructions": "?", "criteria": {"a": "x", "b": "y"}}}, "s"
+    )
+
+    assert payload["outcomes"]["route"]["advice"] == "near-tie: take the safer or reversible option, or ask."
+
+
+def test_decisive_choice_carries_no_advice_through_the_tool(
+    decision_server: FastMCP, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable(monkeypatch)
+    result = DecisionResult(
+        model="m",
+        answers={"route": {"type": "choice", "choice": "a", "probabilities": {"a": 0.95, "b": 0.05}}},
+        usage={},
+        backend="jev",
+        latency_ms=1.0,
+    )
+    monkeypatch.setattr("trw_memory.decisions._env.judge_from_env", lambda *args, **kwargs: _FakeJudge(result))
+
+    payload = _call(
+        decision_server, {"route": {"type": "choice", "instructions": "?", "criteria": {"a": "x", "b": "y"}}}, "s"
+    )
+
+    assert "advice" not in payload["outcomes"]["route"]
 
 
 def test_state_is_redacted_before_reaching_the_judge(decision_server: FastMCP, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -345,11 +446,6 @@ def test_trw_assess_not_in_kernel() -> None:
     assert "trw_assess" not in KERNEL_TOOLS
 
 
-def test_trw_assess_not_in_any_standard_task_pack() -> None:
-    for task_type, packs in STANDARD_TASK_PACKS.items():
-        assert "assess_support" not in packs, f"assess_support leaked into task pack '{task_type}'"
-
-
 def test_trw_assess_not_in_reviewer_tools() -> None:
     """Negative test (spec-required): a reviewer lane must never reach a tool
     that can perform third-party network egress."""
@@ -357,12 +453,12 @@ def test_trw_assess_not_in_reviewer_tools() -> None:
 
 
 def test_assess_support_pack_not_admitted_without_opt_in() -> None:
-    resolution = resolve_tool_surface("coding", "standard")
+    resolution = resolve_tool_surface("standard")
     assert "trw_assess" not in resolution.tools
 
 
 def test_assess_support_pack_admitted_with_opt_in() -> None:
-    resolution = resolve_tool_surface("coding", "standard", assess_enabled=True)
+    resolution = resolve_tool_surface("standard", assess_enabled=True)
     assert "trw_assess" in resolution.tools
     assert "assess_support" in resolution.packs
 

@@ -296,3 +296,29 @@ class TestConfigDebugEndToEnd:
     ) -> None:
         log_dir = self._boot(tmp_path, monkeypatch, debug_yaml="false")
         assert not log_dir.exists(), "config debug:false must not open a file sink"
+
+
+@pytest.mark.unit
+def test_stderr_handler_follows_a_replaced_and_closed_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A root handler must not keep writing to the stderr it was built with.
+
+    ``StreamHandler(sys.stderr)`` pinned the stream current at ``configure_logging``
+    time; once that object was replaced and closed, every later record raised
+    ``I/O operation on closed file`` and stdlib ``handleError`` echoed a traceback
+    with the caller's source lines onto the new stderr.
+    """
+    import io
+    import sys
+
+    first = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", first)
+    configure_logging(json_output=True, package_name="trw-mcp", log_level="WARNING")
+    first.close()
+
+    second = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", second)
+    structlog.get_logger("trw_mcp.probe").warning("after_stderr_swap_probe")
+
+    written = second.getvalue()
+    assert "after_stderr_swap_probe" in written
+    assert "Logging error" not in written

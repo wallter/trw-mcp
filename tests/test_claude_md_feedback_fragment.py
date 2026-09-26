@@ -60,7 +60,7 @@ class TestFullBlockForFullMode:
 
     def test_full_block_names_mcp_tool_and_skill(self) -> None:
         out = render_feedback_reporting(_profile(ceremony_mode="full"))
-        assert "trw_submit_feedback" in out
+        assert "trw_status(feedback=" in out
         assert "/trw-feedback" in out
 
     def test_full_block_includes_auth_note(self) -> None:

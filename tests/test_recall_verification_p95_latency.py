@@ -6,7 +6,6 @@ no longer authorizes a verifier. This is not total recall latency or efficacy.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -27,7 +26,6 @@ def forbid_work(monkeypatch):
     monkeypatch.setattr("trw_memory.lifecycle.verification_pass.run_verification_pass", forbidden)
     monkeypatch.setattr("trw_memory.lifecycle.verification_pass.persist_verification_outcome", forbidden)
     monkeypatch.setattr("trw_mcp.tools._verification_cache.warm_verified_verdict", forbidden)
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", forbidden)
 
 
 def _build_evidence_entries(tmp_path: Path) -> list[dict]:
@@ -61,13 +59,6 @@ def _build_evidence_entries(tmp_path: Path) -> list[dict]:
         backend.close()
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: _build_evidence_entries seeds 10k+25 rows through a raw "
-    "SQLiteBackend and drives trw_memory.lifecycle.verification_pass.run_maintain_verify "
-    "on it directly -- a bulk maintenance pass below the MemoryStore protocol, with no "
-    "fake/daemon equivalent",
-)
 def test_recall_verification_is_evidence_only_and_correct(tmp_path: Path, monkeypatch):
     """CORE268: the qualified entries carry verification evidence, and a single
     evidence-only call (with verification/cache/write work forbidden) returns the

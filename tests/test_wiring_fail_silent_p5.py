@@ -114,62 +114,6 @@ def test_w07_a_marker_write_that_fails_is_reported(tmp_path: Path) -> None:
         blocked.chmod(stat.S_IRWXU)
 
 
-def test_w07_checkpoint_result_flags_a_lost_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``checkpointed: true`` alone asserted a hot-loop protection that is not in force.
-
-    Fails before: the result dict carried no marker field at all, so a checkpoint
-    whose clock never landed was reported as an unqualified success.
-    """
-    from trw_mcp.state import _memory_lookups
-    from trw_mcp.state._wal_triggers import WalTrigger
-
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "memory").mkdir(parents=True)
-    db_path = trw_dir / "memory" / "memory.db"
-    wal_path = db_path.with_suffix(".db-wal")
-    db_path.touch()
-    wal_path.write_bytes(b"x" * 2048)
-
-    monkeypatch.setattr(
-        _memory_lookups,
-        "_bare_passive_checkpoint",
-        lambda _path: {"busy": 0, "checkpointed": 4, "log_frames": 4, "mode": "PASSIVE"},
-    )
-    monkeypatch.setattr(
-        "trw_mcp.state._wal_triggers.evaluate_wal_trigger",
-        lambda *_a, **_k: WalTrigger(due=True, reason="size", wal_size_bytes=2048, age_seconds=None),
-    )
-    monkeypatch.setattr("trw_mcp.state._memory_connection.peek_backend", lambda: None)
-
-    healthy = _memory_lookups.maybe_checkpoint_wal(trw_dir)
-    assert healthy["checkpointed"] is True
-    assert healthy["markers_persisted"] is True
-    assert "advisory" not in healthy
-
-    monkeypatch.setattr("trw_mcp.state._wal_triggers.record_checkpoint_attempt", lambda *_a, **_k: False)
-    monkeypatch.setattr("trw_mcp.state._wal_triggers.record_effective_checkpoint", lambda *_a, **_k: False)
-
-    partial = _memory_lookups.maybe_checkpoint_wal(trw_dir)
-    assert partial["checkpointed"] is True
-    assert partial["markers_persisted"] is False
-    assert partial["reason"] == "checkpoint_marker_write_failed"
-    assert "age is unknown" in partial["advisory"]
-
-
-def test_w07_the_maintenance_step_carries_the_partial_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A field nobody reads is a new defect — the session-start payload must carry it."""
-    from trw_mcp.tools._ceremony_maintenance_steps import _run_wal_maintenance
-
-    monkeypatch.setattr(
-        "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",
-        lambda _dir: {"checkpointed": True, "markers_persisted": False, "advisory": "age is unknown"},
-    )
-    maintenance: dict[str, Any] = {}
-    _run_wal_maintenance(tmp_path, maintenance)
-
-    assert maintenance["wal_checkpoint"]["markers_persisted"] is False
-
-
 # ---------------------------------------------------------------------------
 # W08 / W09 — the doctor's agent-parity check
 # ---------------------------------------------------------------------------

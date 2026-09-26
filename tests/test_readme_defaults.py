@@ -1,12 +1,13 @@
 """PRD-QUAL-110-FR05/FR06: README disclosure + defaults match code.
 
 FR05 (regression guard): the trw-mcp README config block must keep the REAL
-defaults (``embeddings_enabled: true``, ``learning_max_entries: 500``) so the
-already-corrected docs do not drift back.
+default ``embeddings_enabled: true`` so the corrected docs do not drift back.
+(``learning_max_entries`` left the README in the 2026-09-24 rewrite: its only
+reader caps an analytics list, so presenting it as "auto-pruning" misled.)
 
-FR06: the README must carry the four disclosure surfaces — a "Telemetry &
-network behavior" section, an env-var inventory, a security-defaults table, and
-an enterprise hardening recipe.
+FR06: the README must carry the four disclosure surfaces — a "Network and
+security" section, an env-var inventory, a security-defaults table, and an
+air-gapped / compliance setup recipe.
 """
 
 from __future__ import annotations
@@ -31,15 +32,9 @@ def test_readme_embeddings_default_matches_code(readme_text: str) -> None:
     assert TRWConfig().embeddings_enabled is True
 
 
-def test_readme_learning_max_entries_matches_code(readme_text: str) -> None:
-    """FR05: README shows learning_max_entries: 500 (real default)."""
-    assert "learning_max_entries: 500" in readme_text
-    assert TRWConfig().learning_max_entries == 500
-
-
 def test_readme_has_telemetry_network_section(readme_text: str) -> None:
-    """FR06(a): the Telemetry & network behavior heading is present."""
-    assert "## Telemetry & network behavior" in readme_text
+    """FR06(a): the network disclosure heading is present."""
+    assert "## Network and security" in readme_text
 
 
 def test_readme_has_env_var_inventory(readme_text: str) -> None:
@@ -52,7 +47,6 @@ def test_readme_has_env_var_inventory(readme_text: str) -> None:
     the real, consumed env var (see ``_logging.py``) that replaced it.
     """
     for var in (
-        "TRW_OFFLINE",
         "TRW_PROBE_ENABLED",
         "TRW_LOG_LEVEL",
         "ENABLE_TOOL_SEARCH",
@@ -78,6 +72,8 @@ def test_readme_has_security_defaults_table(readme_text: str) -> None:
 
 
 def test_readme_has_hardening_recipe(readme_text: str) -> None:
-    """FR06(d): an enterprise hardening recipe referencing the offline switch."""
-    assert "hardening recipe" in readme_text.lower()
-    assert "TRW_OFFLINE=1" in readme_text
+    """FR06(d): an air-gapped / compliance setup recipe naming the real switches."""
+    assert "air-gapped or compliance-sensitive setup" in readme_text.lower()
+    assert "trw-mcp models fetch" in readme_text
+    assert "platform_contact_enabled: false" in readme_text
+    assert "TRW_OFFLINE" not in readme_text, "a retired switch is still documented"

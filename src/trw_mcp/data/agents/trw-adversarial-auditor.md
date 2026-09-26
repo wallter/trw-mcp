@@ -1,6 +1,6 @@
 ---
 name: trw-adversarial-auditor
-effort: high
+effort: medium
 description: >
   Read-only red-team adapter for the standard TRW audit protocol. Use when an
   independent pass after or alongside trw-auditor should challenge generous
@@ -13,7 +13,7 @@ tools:
   - Glob
   - Grep
   - LSP
-  - mcp__trw__trw_code_search
+  - mcp__trw__trw_code
   - mcp__trw__trw_learn
   - mcp__trw__trw_recall
   - mcp__trw__trw_checkpoint
@@ -63,7 +63,7 @@ when present; the packaged sibling agent is the standalone operational protocol.
 ## Negative-existence claims
 
 Beyond the shared rule below, a red-team absence claim requires **two
-independent searches** — `{tool:trw_code_search}` (or the available indexed
+independent searches** — `{tool:trw_code}` with `mode="search"` (or the available indexed
 search) plus a broad Glob/Grep — with both scopes recorded. If either is
 unavailable, label the result unverified rather than absent.
 
@@ -110,7 +110,7 @@ steps. This fragment covers the general case.
 Any **negative existence claim** — "no X found", "no callers", "does not exist",
 "nothing references" — must cite (a) the exact search you ran, including its
 scope, and (b) proof that the search root exists. Confirm the root with a tool
-you actually hold: `{tool:trw_code_search}` (which errors on a missing root), a
+you actually hold: `{tool:trw_code}` with `mode="search"` (which errors on a missing root), a
 `Glob` returning entries beneath it, or a directory listing. A raw `grep` over a
 path that does not exist returns empty silently, so an empty result over an
 unverified root is a broken search, not evidence of absence.

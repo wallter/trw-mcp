@@ -1,8 +1,13 @@
-"""Unit tests for :mod:`trw_mcp.tools.mcp_security_status` (FR-5 / FR-7)."""
+"""Unit tests for :mod:`trw_mcp.tools.mcp_security_status` (FR-5 / FR-7).
+
+PRD-CORE-300 slice S3a moved the MCP tool this used to register to
+``trw-mcp telemetry security`` (``tools/_telemetry_cli.py``).
+"""
 
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -100,18 +105,22 @@ def test_status_reads_legacy_tool_call_projection_for_recent_anomalies(tmp_path:
     ]
 
 
-def test_status_tool_registered_in_server() -> None:
-    """FR-7: tool is registered and produces the correct shape."""
-    # Register on a fresh FastMCP instance
-    from fastmcp import FastMCP
+def test_status_cli_command_produces_the_correct_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FR-7 (CLI form, PRD-CORE-300 slice S3a): ``trw-mcp telemetry security --json``."""
+    from trw_mcp.server._cli import main
 
-    from tests.conftest import extract_tool_fn, make_test_server
-    from trw_mcp.tools.mcp_security_status import register_mcp_security_status
-
-    srv = FastMCP("test")
-    register_mcp_security_status(srv)
-    fn = extract_tool_fn(srv, "trw_mcp_security_status")
-    result = fn()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["trw-mcp", "telemetry", "security", "--json"])
+    code = 0
+    try:
+        main()
+    except SystemExit as exc:
+        code = 0 if exc.code is None else int(exc.code) if isinstance(exc.code, int) else 1
+    out = capsys.readouterr().out
+    assert code == 0, out
+    result = json.loads(out)
     for key in (
         "registered_servers",
         "allowlist_hash",
@@ -121,4 +130,3 @@ def test_status_tool_registered_in_server() -> None:
         assert key in result
     validated = MCPSecurityStatus(**result)
     assert validated.quarantined_servers == []
-    _ = make_test_server  # imported for conftest side-effect parity

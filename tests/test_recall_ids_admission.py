@@ -89,8 +89,22 @@ def _seed_expired(checkout: DaemonCheckout, _daemon: MemoryDaemon, _tmp_path: Pa
     _store(checkout, "L-x", "expired row", expires="2022-01-01")
 
 
-def _seed_canary(checkout: DaemonCheckout, _daemon: MemoryDaemon, _tmp_path: Path) -> None:
-    _store(checkout, "L-x", "canary row", metadata={"system_canary": "true"})
+def _seed_canary(checkout: DaemonCheckout, daemon: MemoryDaemon, _tmp_path: Path) -> None:
+    # Written straight to the daemon's store, as trw-memory's own canary seeding does:
+    # intake strips a caller-set ``system_canary`` (mem-sec-q Q1), so a row stored
+    # through the client is an ordinary row, not a canary.
+    from trw_memory.models.memory import MemoryEntry
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    backend = SQLiteBackend(daemon.paths.store)
+    try:
+        backend.store(
+            MemoryEntry(
+                id="L-x", content="canary row", namespace=checkout.namespace, metadata={"system_canary": "true"}
+            )
+        )
+    finally:
+        backend.close()
 
 
 @pytest.mark.parametrize(

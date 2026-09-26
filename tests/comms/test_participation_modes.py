@@ -27,7 +27,7 @@ async def test_fetch_ack_renew_a_lapsed_lease_status_needs_no_endpoint(transport
         assert s.rows("SELECT lease_expires_at FROM endpoints WHERE member_id='impl-2'")[0][0] > lapsed
         acked = await invoke(client, "trw_inbox", action="ack", message_ids=[sent["receipt"]["message_id"]])
         assert acked["status"] == "ok"
-        assert (await invoke(client, "trw_peers", action="heartbeat"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox", action="heartbeat"))["status"] == "ok"
         assert (await invoke(client, "trw_inbox"))["items"] == []
 
 
@@ -52,7 +52,7 @@ async def test_old_incarnation_cursors_refuse_and_the_queue_survives_replacement
         old = dict(_endpoints._PROCESS_INCARNATIONS)
         s.rows("UPDATE groups SET group_time=group_time+1000")
         _endpoints._reset_process_incarnations_for_test()
-        assert (await invoke(client, "trw_peers", action="enroll"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox", action="enroll"))["status"] == "ok"
         assert (await invoke(client, "trw_inbox", cursor=cursor))["reason"] == "invalid_cursor"
         acked_again = await invoke(client, "trw_inbox", action="ack", message_ids=[sent[0]["message_id"]])
         assert acked_again["status"] == "ok", "a repeated ACK of the member's row is idempotent"

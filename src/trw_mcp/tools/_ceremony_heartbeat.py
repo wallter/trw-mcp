@@ -1,6 +1,8 @@
-"""trw_heartbeat impl — extracted from ceremony.py.
+"""Heartbeat-mode implementation — originally extracted from ceremony.py.
 
-Belongs to the ``ceremony.py`` facade. Re-exported there for back-compat.
+Consumed by ``trw_checkpoint(heartbeat=True, ...)`` (``tools/orchestration.py``,
+PRD-CORE-300 S6a) since the standalone heartbeat tool this module backed was
+removed from the MCP surface.
 
 Refresh the caller's pin heartbeat and append a heartbeat event with
 60s rate-limit guard (state lives in pins.json so it survives restart).
@@ -59,7 +61,7 @@ def compute_heartbeat_result(
         logger.warning("trw_heartbeat_no_pin", pin_key=pin_key)
         return {
             "error": "no_active_pin",
-            "hint": "call trw_init or trw_adopt_run first",
+            "hint": "call trw_init or `trw-mcp run adopt` first",
         }
 
     config = get_config()

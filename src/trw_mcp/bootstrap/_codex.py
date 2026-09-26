@@ -86,9 +86,9 @@ _TRW_TOOL_PREFIX = "trw_"
 #: a non-interactive session must call to start from prior context and leave a
 #: trace. Deliberately absent, and therefore still prompted for: ``trw_deliver``
 #: (records acceptance), ``trw_dispatch`` (launches another agent),
-#: ``trw_instructions_sync`` and ``trw_claude_md_sync`` (rewrite the operator's
-#: instruction files). ``default_tools_approval_mode`` is NOT emitted: a blanket
-#: grant would cover those four the moment a new one is registered.
+#: ``trw-mcp instructions sync`` (rewrites the operator's instruction files).
+#: ``default_tools_approval_mode`` is NOT emitted: a blanket grant would cover
+#: those three the moment a new one is registered.
 _CODEX_APPROVED_TOOLS: tuple[str, ...] = (
     "trw_session_start",
     "trw_init",
@@ -96,7 +96,6 @@ _CODEX_APPROVED_TOOLS: tuple[str, ...] = (
     "trw_checkpoint",
     "trw_recall",
     "trw_learn",
-    "trw_peers",
     "trw_send",
     "trw_inbox",
 )

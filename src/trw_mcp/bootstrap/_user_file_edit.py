@@ -134,46 +134,6 @@ def matching_sort_keys(data: object, raw_text: str) -> bool | None:
     return None
 
 
-def rewrite_json_if_canonical(
-    path: Path,
-    root: Path,
-    *,
-    raw_text: str,
-    original_data: object,
-    new_data: object,
-    file_label: str,
-    subject: str,
-    result: dict[str, list[str]],
-) -> bool:
-    """Rewrite *path* with *new_data* only when *raw_text* is TRW's canonical form.
-
-    Guards first. If the edited result equals the original, nothing is
-    written. If the original isn't canonical, nothing is written and a
-    warning is recorded instead (rule: never rewrite bytes TRW cannot prove
-    it wrote). Returns ``True`` when the file was rewritten.
-    """
-    refusal = guard_refusal(path, root)
-    if refusal:
-        result.setdefault("warnings", []).append(f"{file_label}: left untouched ({refusal})")
-        return False
-    if new_data == original_data:
-        return False
-    sort_keys = matching_sort_keys(original_data, raw_text)
-    if sort_keys is None:
-        result.setdefault("warnings", []).append(
-            f"{file_label}: TRW registration(s) for {subject} remain; the file has custom "
-            "formatting so TRW left it untouched — remove them by hand"
-        )
-        return False
-    atomic_write_text(path, json.dumps(new_data, indent=2, sort_keys=sort_keys) + "\n")
-    return True
-
-
-# ---------------------------------------------------------------------------
-# The one removal predicate (PRD-INFRA-192 FR09/FR10)
-# ---------------------------------------------------------------------------
-
-
 def is_generated_entry(entry: object, generated: Iterable[object]) -> bool:
     """True only when *entry* equals, in full, one entry TRW generates.
 
@@ -236,14 +196,12 @@ def drop_matching_hook_entries(
     is_trw_entry: TrwEntryPredicate,
     file_label: str,
     result: dict[str, list[str]],
-    *,
-    warn_subject: Callable[[str, object], str] | None = None,
 ) -> tuple[dict[str, object], bool]:
     """Remove every TRW-owned whole ENTRY for which *is_trw_entry* is True.
 
     Used for ``.claude/settings.json``, where one entry carries exactly one
     script's identity, so a whole-entry drop is safe. An entry with hook
-    commands that is not verified TRW is kept and (optionally) warned about.
+    commands that is not verified TRW is kept.
     """
     changed = False
     new_lists: dict[str, list[object]] = {}

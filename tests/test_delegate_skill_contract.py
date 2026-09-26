@@ -37,7 +37,7 @@ def test_delegate_prefers_background_mcp_and_preserves_safety() -> None:
     content = SKILL.read_text(encoding="utf-8")
     for phrase in (
         "trw_dispatch(prompt=..., role=..., client=..., wait=False)",
-        "trw_dispatch_status(job_id)",
+        'trw_dispatch(action="status", target=job_id)',
         "wait=True` only for short work",
         "read_only=True",
         "reduced isolation must be explicit",

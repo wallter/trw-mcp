@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.state._entitlements import (
+    DISTILL_SIDECAR_FEATURE,
     Entitlement,
     load_entitlement,
     sign_entitlement_for_dev,
@@ -82,9 +83,7 @@ def _run_tier_show(args: argparse.Namespace) -> None:
         print(f"expires:   {entitlement.expires_at_iso}")
     if entitlement.signed_payload_keys:
         print(f"payload:   {','.join(entitlement.signed_payload_keys)}")
-    features_enabled = [
-        feature for feature in ("trw_before_edit_hint:distill_sidecar",) if entitlement.has_feature(feature)
-    ]
+    features_enabled = [feature for feature in (DISTILL_SIDECAR_FEATURE,) if entitlement.has_feature(feature)]
     print(f"features:  {features_enabled or '(none)'}")
 
 

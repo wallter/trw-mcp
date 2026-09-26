@@ -85,7 +85,7 @@ def send_scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SendScene:
     register_swarm_comms_tools(server)
     scene = SendScene(root, runs["sender"], server, config, monkeypatch)
     # Group policy must be born HERE, not later when the sender first posts.
-    assert scene.call("receiver", "trw_peers", action="enroll")["status"] == "ok"
+    assert scene.call("receiver", "trw_inbox", action="enroll")["status"] == "ok"
     return scene
 
 
@@ -116,7 +116,7 @@ def test_unenrolled_sender_receipt_is_stable_after_recipient_binding_changes(sen
     assert changed["status"] == "refused"
     # PRD-CORE-274 FR13: the member is addressed, not its (now stale) endpoint binding.
     assert send_scene.send("new-key")["status"] == "ok"
-    peers = send_scene.call("sender", "trw_peers", action="list")
+    peers = send_scene.call("sender", "trw_inbox", action="list")
     assert {peer["member_id"] for peer in peers["peers"]} == {"receiver"}, "send implicitly enrolled sender"
 
 
@@ -170,7 +170,7 @@ def test_rebound_pin_takes_over_with_a_new_incarnation_never_the_old_one(send_sc
     pin_active_run(receiver_run, context=build_call_context(None))
     path = next(send_scene.root.rglob("comms.sqlite3"))
     before = send_scene_rows(path, "SELECT incarnation, generation FROM endpoints WHERE member_id='receiver'")
-    result = asyncio.run(send_scene.server.call_tool("trw_peers", {"action": "enroll"})).structured_content
+    result = asyncio.run(send_scene.server.call_tool("trw_inbox", {"action": "enroll"})).structured_content
     assert result is not None
     assert result["status"] == "ok", result
     after = send_scene_rows(path, "SELECT incarnation, generation FROM endpoints WHERE member_id='receiver'")

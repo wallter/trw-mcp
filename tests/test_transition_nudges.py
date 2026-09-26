@@ -9,8 +9,9 @@ adding zero bytes when it is false. Those wiring tests go through the real
 public seam, not private internals, per the task's real-path requirement.
 
 FR04 slice 2 adds learning-anchored candidates on the SAME selector, on THREE
-transitions -- a failed ``trw_build_check``, ``trw_before_edit_hint`` on a
-file with anchored learnings, and a ``trw_deliver`` whose session touched
+transitions -- a failed ``trw_build_check``, the before-edit hint (now
+``trw_code(mode="hint")``) on a file with anchored learnings, and a
+``trw_deliver`` whose session touched
 files anchored by learnings never shown this session -- all of which MUST
 work with Jev disabled (``_build_check_learning_candidates`` /
 ``_deliver_learning_candidates`` / ``maybe_attach_edit_hint_transition_nudge``
@@ -142,6 +143,7 @@ def test_select_transition_line_empty_inputs_return_none(tmp_path: Path) -> None
         ("build_check", {"build_passed": False}),
         ("review", {"review_verdict": "block", "review_p0_count": 2}),
         ("session_start", {}),
+        ("deliver", {"tool_success": False}),
     ],
 )
 def test_jev_off_adds_no_transition_nudge_bytes(
@@ -164,6 +166,7 @@ def test_jev_off_adds_no_transition_nudge_bytes(
         ("build_check", {"build_passed": False}, "Flaky or real?"),
         ("review", {"review_verdict": "block", "review_p0_count": 2}, "Blocker or follow-up?"),
         ("session_start", {}, "Jev is on"),
+        ("deliver", {"tool_success": False}, "fix first, override"),
     ],
 )
 def test_jev_on_emits_the_expected_line_per_transition(
@@ -193,6 +196,14 @@ def test_jev_on_review_pass_with_no_p0_adds_no_candidate(tmp_path: Path, monkeyp
     monkeypatch.setattr("trw_mcp.tools._assess_enablement.backend_enablement", lambda *_a, **_kw: (True, "env"))
     result = append_ceremony_status_for_tool({}, trw_dir, tool_name="review", review_verdict="pass", review_p0_count=0)
     assert "transition_nudge" not in result
+
+
+def test_jev_on_deliver_success_adds_no_jev_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """W41-5: a SUCCESSFUL deliver is not a go/no-go judgment call -- no jev:deliver_blocked line."""
+    trw_dir = _make_trw_dir(tmp_path)
+    monkeypatch.setattr("trw_mcp.tools._assess_enablement.backend_enablement", lambda *_a, **_kw: (True, "env"))
+    result = append_ceremony_status_for_tool({}, trw_dir, tool_name="deliver", tool_success=True)
+    assert "fix first, override" not in str(result.get("transition_nudge", ""))
 
 
 def test_jev_on_never_repeats_id_for_the_same_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

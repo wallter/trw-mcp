@@ -77,7 +77,7 @@ def send_refusal(snapshot: CallerSnapshot, recipient_member_id: str | None, kind
 
 
 def ack(binding: CallerBinding, pause_id: str | None) -> dict[str, Any]:
-    """``trw_peers(action='ack_pause')`` for an eligible bound member: its own ack only."""
+    """``trw_inbox(action='ack_pause')`` for an eligible bound member: its own ack only."""
     if not pause_id:
         return {"status": "refused", "reason": "pause_id_mismatch"}
     try:

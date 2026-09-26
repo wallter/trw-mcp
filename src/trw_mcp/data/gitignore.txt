@@ -26,3 +26,6 @@ knowledge.db
 # every instruction-file write. They mirror files that may hold private
 # project rules, so they are never tracked.
 backups/
+# The rebuildable code index (trw-mcp code index, and the reviewer-dispatch
+# prebuild of PRD-CORE-300 S10). Never tracked.
+code-index/

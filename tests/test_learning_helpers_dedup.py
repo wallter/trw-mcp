@@ -346,16 +346,16 @@ class TestCheckAndHandleDedup:
         assert "Merged from L-test030" in merged.detail
         assert len(merged.assertions) == 2
 
-    def test_fail_open_on_dedup_exception(self, tmp_path: Path) -> None:
-        """When dedup check throws, returns None (proceed to store)."""
+    def test_a_dedup_failure_raises_instead_of_storing_an_unchecked_copy(self, tmp_path: Path) -> None:
+        """PRD-CORE-302 C4: a daemon refusal is not "no duplicate"; storing anyway would skip the check."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir(parents=True)
 
-        with patch(
-            "trw_mcp.state.dedup.dedup_verdict",
-            side_effect=RuntimeError("dedup boom"),
+        with (
+            patch("trw_mcp.state.dedup.dedup_verdict", side_effect=RuntimeError("dedup boom")),
+            pytest.raises(RuntimeError, match="dedup boom"),
         ):
-            result = check_and_handle_dedup(
+            check_and_handle_dedup(
                 LearningParams(
                     summary="summary",
                     detail="detail",
@@ -371,7 +371,6 @@ class TestCheckAndHandleDedup:
                 FileStateWriter(),
                 _CFG,
             )
-            assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -547,3 +546,96 @@ class TestBoundedMergeResolution:
         with patch("trw_mcp.state.memory_adapter.find_entry_by_id", return_value=row):
             assert resolve_entry_path(entries_dir, "L-wantedid", FileStateReader(), trw_dir=trw_dir) is None
             assert resolve_entry_path(entries_dir, "L-otherid", FileStateReader(), trw_dir=trw_dir) is not None
+
+
+# ---------------------------------------------------------------------------
+# Release-verify R3: a failed merge leaves nothing behind, so a retry merges once
+# ---------------------------------------------------------------------------
+
+
+class _FlakyStore(FakeMemoryStore):
+    """A store whose ``correct`` fails as scripted: ``raise``, ``apply_then_raise`` or a refusal status."""
+
+    def __init__(self, script: list[str]) -> None:
+        super().__init__()
+        self.script = script
+
+    def correct(self, learning_id, patch):  # type: ignore[no-untyped-def]
+        step = self.script.pop(0) if self.script else "ok"
+        if step == "raise":
+            raise RuntimeError("daemon unreachable before the write was sent")
+        if step == "not_found":
+            return {"status": "not_found", "error": f"{learning_id} is gone"}
+        result = super().correct(learning_id, patch)
+        if step == "apply_then_raise":
+            raise RuntimeError("the connection failed after memory_update was sent, so it may have been applied")
+        return result
+
+
+class _FailingOnceWriter(FileStateWriter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next = True
+
+    def write_yaml(self, path: Path, data: dict[str, object]) -> None:  # type: ignore[override]
+        if self.fail_next:
+            self.fail_next = False
+            raise OSError("disk full")
+        super().write_yaml(path, data)
+
+
+def _merge_setup(tmp_path: Path, store: FakeMemoryStore) -> Path:
+    entries_dir = tmp_path / "entries"
+    entries_dir.mkdir(parents=True)
+    FileStateWriter().write_yaml(
+        entries_dir / "existing.yaml",
+        {"id": "L-survivor", "summary": "Survivor", "detail": "short", "recurrence": 1, "merged_from": []},
+    )
+    store.put("Survivor", "default", {"entry_id": "L-survivor"})
+    return entries_dir
+
+
+def _learn_duplicate(tmp_path: Path, entries_dir: Path, store: FakeMemoryStore, learning_id: str, writer=None):  # type: ignore[no-untyped-def]
+    verdict = MagicMock(action="merge", existing_id="L-survivor", similarity=0.9)
+    with (
+        patch("trw_mcp.state.dedup.dedup_verdict", return_value=verdict),
+        patch("trw_mcp.state._store_selection.selected_store", return_value=(store, "default")),
+        patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
+    ):
+        return check_and_handle_dedup(
+            LearningParams(
+                summary="Survivor",
+                detail="a longer restatement of the survivor",
+                learning_id=learning_id,
+                tags=[],
+                evidence=[],
+                impact=0.5,
+                source_type="agent",
+                source_identity="",
+            ),
+            entries_dir,
+            FileStateReader(),
+            writer or FileStateWriter(),
+            _CFG,
+        )
+
+
+@pytest.mark.parametrize("failure", ["raise", "apply_then_raise", "not_found", "sidecar_write"])
+def test_a_retried_merge_after_a_failure_counts_the_duplicate_once(tmp_path: Path, failure: str) -> None:
+    store = _FlakyStore([] if failure == "sidecar_write" else [failure])
+    entries_dir = _merge_setup(tmp_path, store)
+    writer = _FailingOnceWriter() if failure == "sidecar_write" else None
+
+    with pytest.raises((RuntimeError, OSError)):
+        _learn_duplicate(tmp_path, entries_dir, store, "L-attempt1", writer)
+    assert FileStateReader().read_yaml(entries_dir / "existing.yaml")["recurrence"] == 1, (
+        "the sidecar changed although the merge failed"
+    )
+
+    result = _learn_duplicate(tmp_path, entries_dir, store, "L-attempt2")
+
+    assert result is not None and result["status"] == "merged"
+    merged = store.get("L-survivor")
+    assert merged is not None and merged.recurrence == 2
+    assert merged.merged_from == ["L-attempt2"]
+    assert FileStateReader().read_yaml(entries_dir / "existing.yaml")["recurrence"] == 2

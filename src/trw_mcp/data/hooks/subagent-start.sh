@@ -79,14 +79,13 @@ esac
 _log_file="${_project_root:+$_project_root/.trw/logs/subagent-events.jsonl}"
 if [ -n "$_log_file" ] && [ -d "$(dirname "$_log_file")" ]; then
   _ts_telem="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts_telem="unknown"
-  if command -v jq >/dev/null 2>&1; then
-    _agent_type_telem=$(printf '%s' "$_payload" | jq -r '.agent_type // .subagent_type // "unknown"' 2>/dev/null) || _agent_type_telem="unknown"
-    jq -n --arg ts "$_ts_telem" --arg event "subagent_start" --arg agent_type "$_agent_type_telem" \
-      '{ts: $ts, event: $event, agent_type: $agent_type}' >> "$_log_file" 2>/dev/null
-  else
-    printf '{"ts":"%s","event":"subagent_start","agent_type":"unknown"}\n' \
-      "$_ts_telem" >> "$_log_file" 2>/dev/null
-  fi
+  # PRD-FIX-154 FR03: _json_get reads, _json_object writes -- jq or python3,
+  # never a shell parser, and never the "unknown" placeholder a jq-less host
+  # used to write even when python3 could have read the real value.
+  _agent_type_telem=$(printf '%s' "$_payload" | _json_get --strings --default "unknown" .agent_type .subagent_type) \
+    || _agent_type_telem="unknown"
+  _json_object --str ts "$_ts_telem" --str event "subagent_start" --str agent_type "$_agent_type_telem" \
+    | _trw_safe_write "$_log_file" append 2>/dev/null
 fi
 
 log_hook_execution "SubagentStart" "" "0"

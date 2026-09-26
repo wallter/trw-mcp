@@ -99,7 +99,7 @@ def test_every_agent_with_retry_protocol_can_call_a_trw_tool() -> None:
         ({"tools": ["mcp__trw__trw_recall"]}, True),
         # `allowedTools` is not part of the sub-agent frontmatter schema — an
         # allowlist declared there is dropped, so it grants nothing.
-        ({"allowedTools": ["mcp__trw__trw_code_search"]}, False),
+        ({"allowedTools": ["mcp__trw__trw_code"]}, False),
         ({"description": "mcp__trw__", "disallowedTools": ["mcp__trw__trw_recall"]}, False),
     ],
 )

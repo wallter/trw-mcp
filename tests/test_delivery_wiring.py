@@ -11,7 +11,6 @@ and read the live operation (FR05/FR04).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,17 +18,6 @@ import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 from tests._delivery_support import make_uuid7, strong_capability
-
-# PRD-CORE-280 slice e1: the deferred-delivery maintenance steps this real
-# trw_deliver run waits on (graph_backfill, memory_decay/tier_sweep, dedup
-# auto_prune) still call memory_adapter.get_backend directly, independent of
-# selected_store, so a joined deferred batch opens memory.db in-process and its
-# step is recorded FAILED. Not e1's to fix (a later slice migrates them);
-# skipped only under the e1 oracle, never in a normal run.
-_BLOCKED_ON_E3_DEFERRED_MAINTENANCE = pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: deferred delivery maintenance still opens the store in-process",
-)
 
 
 def _seed_run(tmp_path: Path) -> Path:
@@ -187,15 +175,9 @@ def test_live_deferred_batch_journals_trust_increment(tmp_path, monkeypatch) -> 
 
 
 @pytest.mark.integration
-@_BLOCKED_ON_E3_DEFERRED_MAINTENANCE
-def test_live_deferred_batch_finalizes_operation_success(tmp_path, monkeypatch, fake_memory_store) -> None:
-    """FR02/FR05: a completed live batch becomes aggregate success.
-
-    The joined deferred batch's maintenance steps (graph_backfill, memory_decay/
-    tier_sweep, dedup auto_prune) go through ``selected_store`` now (CORE-280 e3),
-    which needs a resolvable store/namespace or every step fails closed with
-    ``StoreUnavailableError`` — the fake stands in for the daemon here.
-    """
+@pytest.mark.usefixtures("fake_memory_store")  # the deferred memory steps need a store
+def test_live_deferred_batch_finalizes_operation_success(tmp_path, monkeypatch) -> None:
+    """FR02/FR05: a completed live batch becomes aggregate success."""
     tools = _make_ceremony_server(monkeypatch, tmp_path)
     run_dir = _seed_run(tmp_path)
     did = make_uuid7()
@@ -221,7 +203,7 @@ def test_live_deferred_batch_finalizes_operation_failure(tmp_path, monkeypatch) 
     run_dir = _seed_run(tmp_path)
     did = make_uuid7()
 
-    with patch("trw_mcp.tools._deferred_delivery._step_consolidation", side_effect=RuntimeError("boom")):
+    with patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", side_effect=RuntimeError("boom")):
         _deliver(tools, tmp_path, run_dir, delivery_id=did, capability_token=strong_capability())
         _join_deferred()
 
@@ -231,8 +213,8 @@ def test_live_deferred_batch_finalizes_operation_failure(tmp_path, monkeypatch) 
 
 
 @pytest.mark.integration
-@_BLOCKED_ON_E3_DEFERRED_MAINTENANCE
-def test_idempotent_retry_of_same_request_follows_existing_operation(tmp_path, monkeypatch, fake_memory_store) -> None:
+@pytest.mark.usefixtures("fake_memory_store")  # the deferred memory steps need a store
+def test_idempotent_retry_of_same_request_follows_existing_operation(tmp_path, monkeypatch) -> None:
     """FR01: an identical retry resolves to the same operation without replay."""
     tools = _make_ceremony_server(monkeypatch, tmp_path)
     run_dir = _seed_run(tmp_path)
@@ -331,25 +313,19 @@ def test_prd_core_215_nfr04() -> None:
 
 
 @pytest.mark.integration
-def test_delivery_status_and_recover_tools_are_registered_and_read_live_op(tmp_path, monkeypatch) -> None:
-    """FR05/FR04: the public tools read the live operation without mutating it."""
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.delivery_ops import register_delivery_tools
+def test_delivery_status_mode_and_recover_read_live_op(tmp_path, monkeypatch) -> None:
+    """FR05/FR04: trw_status(delivery=...) and recovery read the live operation without mutating it."""
+    from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.tools.delivery_ops import delivery_recover as recover_fn
 
     tools = _make_ceremony_server(monkeypatch, tmp_path)
     run_dir = _seed_run(tmp_path)
     did = make_uuid7()
     _deliver(tools, tmp_path, run_dir, delivery_id=did, capability_token=strong_capability())
 
-    server = FastMCP("t")
-    register_delivery_tools(server)
-    from tests.conftest import extract_tool_fn
-
-    status_fn = extract_tool_fn(server, "trw_delivery_status")
-    recover_fn = extract_tool_fn(server, "trw_delivery_recover")
+    status_fn = extract_tool_fn(make_test_server("orchestration"), "trw_status")
     with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"):
-        status = status_fn(delivery_id=did)
+        status = status_fn(delivery=did)
         # A read-only status call never authorizes recovery; an unknown action is
         # refused, not fabricated.
         bad = recover_fn(delivery_id=did, action="nope")

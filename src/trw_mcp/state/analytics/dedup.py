@@ -276,7 +276,7 @@ def auto_prune_excess_entries(
 
         sqlite_entries = list_entries_by_status(trw_dir, status="active")
     except Exception:  # justified: boundary, ImportError + SQLite/adapter failures
-        logger.warning("sqlite_read_fallback", step="auto_prune", reason="get_backend failed")
+        logger.warning("sqlite_read_fallback", step="auto_prune", reason="store read failed")
 
     if sqlite_entries is not None:
         # SQLite path: use pre-loaded entries

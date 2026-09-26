@@ -28,7 +28,7 @@ SURFACE_ROLE_ADMISSIONS: dict[str, ConfigAdmission] = {
         consumer="trw_mcp.middleware.surface_authority.SurfaceAuthorityMiddleware._resolve",
         default_rationale=(
             "Defaults to 'agent', which is byte-identical to the pre-PRD behaviour: every existing "
-            "session keeps the kernel + task-pack surface it has today. 'reviewer' is never a "
+            "session keeps the kernel + flag-gated-pack surface it has today. 'reviewer' is never a "
             "default and never inferred — it is declared per PROCESS by the dispatch layer through "
             "TRW_SURFACE_ROLE, because a dispatched reviewer already gets its own stdio server and "
             "process scope is what makes the role unreachable from inside the bounded session."
@@ -38,11 +38,11 @@ SURFACE_ROLE_ADMISSIONS: dict[str, ConfigAdmission] = {
             'tool_resolution_mode — including the "all" operator escape, which is deliberately NOT '
             'honoured for a reviewer: "all" widens an operator\'s own session, while this role '
             "contains a subordinate process, so honouring it would let an audited project un-bound "
-            "the lane auditing it. It also dominates task-pack resolution and REPLACES (never "
+            "the lane auditing it. It also dominates the config-flag packs and REPLACES (never "
             "subtracts from) the never-hide union, so a future addition to that set cannot "
             "re-widen a reviewer surface. Consequence to weigh before setting it anywhere but in a "
             "dispatch env: writing surface_role: reviewer into a project .trw/config.yaml would "
-            "bound every session in that project to the nine read-only tools, including the "
+            "bound every session in that project to the read-only reviewer tools, including the "
             "operator's own; the intended selection is per-process env only, and an env-declared "
             "reviewer can never be downgraded by a config file (FR14)."
         ),

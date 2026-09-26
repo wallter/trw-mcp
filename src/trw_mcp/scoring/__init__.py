@@ -75,21 +75,6 @@ from trw_mcp.scoring._recall import (
 from trw_mcp.scoring._recall import (
     utility_based_prune_candidates as utility_based_prune_candidates,
 )
-from trw_mcp.scoring._skill_contribution import (
-    DuplicateSkillFlag as DuplicateSkillFlag,
-)
-from trw_mcp.scoring._skill_contribution import (
-    SkillLifecycleRecord as SkillLifecycleRecord,
-)
-from trw_mcp.scoring._skill_contribution import (
-    compute_skill_contribution as compute_skill_contribution,
-)
-from trw_mcp.scoring._skill_contribution import (
-    compute_skill_lifecycle_report as compute_skill_lifecycle_report,
-)
-from trw_mcp.scoring._skill_contribution import (
-    find_duplicate_skills as find_duplicate_skills,
-)
 from trw_mcp.scoring._utils import (
     _IMPACT_DECAY_FLOOR as _IMPACT_DECAY_FLOOR,
 )
@@ -145,21 +130,16 @@ def __getattr__(name: str) -> object:
 
 __all__ = [
     "CeremonyDepthContract",
-    "DuplicateSkillFlag",
     "RecallContext",
-    "SkillLifecycleRecord",
     "apply_impact_decay",
     "apply_time_decay",
     "classify_complexity",
     "compute_impact_distribution",
     "compute_rework_rate",
-    "compute_skill_contribution",
-    "compute_skill_lifecycle_report",
     "compute_tier_ceremony_score",
     "compute_utility_score",
     "correlate_recalls",
     "enforce_tier_distribution",
-    "find_duplicate_skills",
     "get_ceremony_depth_contract",
     "get_phase_requirements",
     "infer_domains",

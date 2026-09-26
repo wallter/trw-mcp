@@ -5,8 +5,9 @@ four bespoke construction sites across three modules and three independently
 written failure postures, and nothing typed its contents. This module owns the
 filename, the path, the document, and the read — every consumer goes through it.
 
-Two writers, two key spellings. ``trw_pre_compact_checkpoint`` writes
-``timestamp`` from :meth:`datetime.isoformat`; the bundled PreCompact shell hook
+Two writers, two key spellings. The pre-compact checkpoint mode
+(``trw_checkpoint(pre_compact=True)``) writes ``timestamp`` from
+:meth:`datetime.isoformat`; the bundled PreCompact shell hook
 writes ``ts`` from ``date -u '+%Y-%m-%dT%H:%M:%SZ'`` (and the literal ``unknown``
 when ``date`` fails). The hook path is the ordinary Claude Code compaction path,
 so a reader that knew only ``timestamp`` would call the most common real marker

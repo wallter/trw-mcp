@@ -1,9 +1,8 @@
-"""PRD-SEC-014-FR05: both public READMEs state the real embedding-egress story.
+"""PRD-SEC-014-FR05 / PRD-CORE-302 W40: both public READMEs state the real model-egress story.
 
 Both network-behavior tables used to say the model downloads on the *first*
-operation, which a warm-cache measurement falsified, and neither said that
-embedding egress is not governed by the consent flags — the exact inference an
-operator who has read the PRD-SEC-004 design would otherwise make.
+operation, which a warm-cache measurement falsified. Since W40 a model downloads
+only through an explicit fetch, and the consent flags govern uploads alone.
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ def _read(package: str) -> str:
 
 
 @pytest.mark.parametrize("package", ["trw-mcp", pytest.param("trw-memory", marks=requires_monorepo)])
-def test_readme_documents_warm_cache_and_consent_independence(package: str) -> None:
-    """FR05: the warm-cache invariant and the consent-flag independence are stated."""
+def test_readme_documents_the_one_network_story(package: str) -> None:
+    """PRD-CORE-302 W40: models download only on an explicit fetch; runtime is cache-only."""
     text = _read(package)
     lowered = text.lower()
 
@@ -37,14 +36,14 @@ def test_readme_documents_warm_cache_and_consent_independence(package: str) -> N
     assert "local hugging face cache" in lowered
     assert "zero** huggingface.co request" in lowered
 
-    # (b) a fetch happens only when the cache cannot answer and no switch is set
-    assert "TRW_OFFLINE" in text
-    assert "HF_HUB_OFFLINE" in text
+    # (b) the one fetch path is named, and the retired switches are not documented as live
+    assert "trw-mcp models fetch" in text
+    assert "`TRW_OFFLINE=1`" not in text
+    assert "TRW_OFFLINE |" not in text
 
-    # (c) egress is NOT governed by the consent flags
+    # (c) the consent flags govern uploads, not model downloads
     assert "learning_sharing_enabled" in text
-    assert "platform_telemetry_enabled" in text
-    assert "independent of the consent flags" in lowered
+    assert "no consent flag" in lowered
 
 
 @pytest.mark.parametrize("package", ["trw-mcp", pytest.param("trw-memory", marks=requires_monorepo)])
@@ -68,8 +67,7 @@ def test_trw_mcp_readme_points_at_the_doctor_row() -> None:
     """FR04/FR05: the operator is told where to read the live posture."""
     text = _read("trw-mcp")
     assert "embedding_egress" in text
-    assert "cache-first" in text
-    assert "network-capable" in text
+    assert "network-capable" not in text
 
 
 def test_missing_packaged_readme_fails(tmp_path: Path, monkeypatch) -> None:

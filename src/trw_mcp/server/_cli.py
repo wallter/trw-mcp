@@ -14,8 +14,9 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp._logging import configure_logging
+from trw_mcp._logging import StderrHandler, configure_logging
 from trw_mcp.models.config import TRWConfig, get_config, reload_config
+from trw_mcp.server._cli_replacements import enforce_state_changing_guard
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 
 
@@ -177,7 +178,7 @@ def main() -> None:
     _logging.basicConfig(
         format="%(levelname)s: %(message)s",
         level=_logging.DEBUG,
-        stream=_sys.stderr,
+        handlers=[StderrHandler()],
         force=True,
     )
 
@@ -218,6 +219,10 @@ def main() -> None:
     cmd = str(args.command or "")
     handler = SUBCOMMAND_HANDLERS.get(cmd)
     if handler is not None:
+        # PRD-CORE-300-FR02 slice S0: the one shared refusal every
+        # state-changing CLI-replacement command inherits, applied before any
+        # handler runs.
+        enforce_state_changing_guard(cmd, args)
         handler(args)
         return
 

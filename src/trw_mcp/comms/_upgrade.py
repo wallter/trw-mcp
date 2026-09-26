@@ -23,7 +23,6 @@ import hashlib
 import json
 import math
 import os
-import shutil
 import sqlite3
 import struct
 import time
@@ -32,6 +31,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from trw_mcp._pinned_read import copy_to, read_at
 from trw_mcp.comms._envelope import canonical_bytes
 from trw_mcp.comms._pins import member_pin_entry
 from trw_mcp.comms._schema import SCHEMA_VERSION, V4_STEPS, SchemaVersionError, stored_version, verify
@@ -44,8 +44,8 @@ _COUNTER_OFFSET = 24
 
 def change_counter(path: Path) -> int:
     """SQLite's file change counter (header bytes 24-27): moves on every committed content change."""
-    with path.open("rb") as handle:
-        header = handle.read(100)
+    # Read while _exclusive() holds the file: a raw open/close would release that lock (C15).
+    header = read_at(path, _COUNTER_OFFSET + 4)
     if len(header) < _COUNTER_OFFSET + 4:
         raise StoreError(StoreRefusal.CORRUPT, "mailbox header is truncated")
     return int(struct.unpack(">I", header[_COUNTER_OFFSET : _COUNTER_OFFSET + 4])[0])
@@ -131,7 +131,7 @@ def _verified_backup(path: Path) -> Path:
     """Copy the committed v3 file (caller holds the exclusive lock), fsync it, and verify the copy."""
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     backup = path.with_name(f"comms.sqlite3.v3-{stamp}-{os.getpid()}-{time.monotonic_ns()}.bak")
-    shutil.copyfile(path, backup)
+    copy_to(path, backup)  # never shutil.copyfile: its close would release the held lock (C15)
     _fsync_file_and_dir(backup)
     copy = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
     copy.row_factory = sqlite3.Row

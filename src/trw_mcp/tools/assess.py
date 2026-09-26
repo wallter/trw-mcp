@@ -28,7 +28,6 @@ from typing import Any
 
 import structlog
 from fastmcp import Context, FastMCP
-from pydantic import ValidationError
 from trw_memory.decisions import redact_state, toolkit_from_env
 from trw_memory.decisions.toolkit import AskResult, InvalidRequest
 
@@ -118,31 +117,6 @@ def _provenance(calls: list[AskResult], *, attempted_backend: str) -> dict[str, 
     }
 
 
-_EXAMPLE = (
-    '{"questions": {"q": {"type": "choice", "instructions": "Which option?", '
-    '"criteria": {"a": "rubric for a", "b": "rubric for b"}}}, "state": "the facts"}'
-)
-
-
-def _shape_error(exc: InvalidRequest, questions: dict[str, Any]) -> str:
-    """A question-shape error names each failing field by path and shows one valid payload."""
-    cause = exc.__cause__
-    if not isinstance(cause, ValidationError):
-        return str(exc)
-    paths = []
-    for error in cause.errors()[:3]:
-        loc = list(error["loc"])
-        # A tagged union puts the question's own type in the path; the caller never wrote that key.
-        if (
-            len(loc) > 1
-            and isinstance(questions.get(str(loc[0])), dict)
-            and loc[1] == questions[str(loc[0])].get("type")
-        ):
-            del loc[1]
-        paths.append(f"questions.{'.'.join(str(part) for part in loc)}: {error['msg']}")
-    return f"invalid questions ({cause.error_count()} error(s)): {'; '.join(paths)}. Valid example: {_EXAMPLE}"
-
-
 def register_assess_tools(server: FastMCP) -> None:
     @server.tool()
     def trw_assess(
@@ -151,11 +125,16 @@ def register_assess_tools(server: FastMCP) -> None:
         items: dict[str, Any] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Use when triaging, grading, routing or ranking. ONE call for every question
-        (mix types); items={k:state} screens many. state: facts, not your lean. Shape:
-        {"q":{"type":"choice","instructions":"..","criteria":{"a":"rubric","b":".."}}};
-        noul criteria keys "true"/"false"; score criteria an ordered list. Advisory:
-        never gate; branch on probability, not near-tie labels.
+        """Use when triaging, grading, routing or ranking. ONE call, every question (mix
+        types); items={"key": state} screens many states with the same questions. state:
+        facts plus known operator prefs, not your lean. Each question needs "instructions" (the question text) and,
+        per type, "criteria": noul -> {"true": "..", "false": ".."} (exactly those two
+        keys); choice -> {"opt-a": "rubric", "opt-b": "rubric"} (options live only here,
+        never a separate "options" list); score -> ["low", "mid", "high"] (ordered levels).
+        Example: {"q1": {"type": "noul", "instructions": "..", "criteria": {"true": "..",
+        "false": ".."}}, "q2": {"type": "choice", "instructions": "..", "criteria": {"a": "..",
+        "b": ".."}}, "q3": {"type": "score", "instructions": "..", "criteria": ["low", "high"]}}.
+        Advisory: branch on probability/margin, never gate; near-tie carries "advice".
         """
         config = get_config()
         if not getattr(config, "assess_enabled", False):
@@ -193,7 +172,9 @@ def register_assess_tools(server: FastMCP) -> None:
                 return {"status": batch.status, "items": per_item, "unanswered": batch.unanswered, **rendered}
             result = kit.ask(state, questions)
         except InvalidRequest as exc:
-            raise ValueError(redact_secrets(_shape_error(exc, questions))) from exc
+            # The toolkit (trw-memory's decisions._models — the deep module where DecisionQuestion is
+            # parsed) already built a message naming the field and a worked example; redact and pass through.
+            raise ValueError(redact_secrets(str(exc))) from exc
 
         rendered = {
             "status": result.status,

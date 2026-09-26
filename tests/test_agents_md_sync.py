@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastmcp import FastMCP
 
 from tests._test_agents_md_support import _patched_learning_env
-from tests.conftest import get_tools_sync
+from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.learning import register_learning_tools
 
@@ -17,15 +17,15 @@ class TestSyncIncludesInstructionFile:
     """Integration tests verifying sync result includes instruction_file fields (FR06)."""
 
     def test_sync_result_has_instruction_file_fields(self, tmp_project: Path) -> None:
-        """trw_claude_md_sync result always includes instruction_file_synced and instruction_file_path keys."""
-        with _patched_learning_env(tmp_project) as tools:
-            result = tools["trw_claude_md_sync"].fn(scope="root")
+        """instructions sync result always includes instruction_file_synced and instruction_file_path keys."""
+        with _patched_learning_env(tmp_project):
+            result = instructions_sync_fn(scope="root")
 
         assert "instruction_file_synced" in result
         assert "instruction_file_path" in result
 
     def test_codex_sync_creates_instruction_file(self, tmp_project: Path) -> None:
-        """trw_claude_md_sync with client='codex' creates .codex/INSTRUCTIONS.md."""
+        """instructions sync with client='codex' creates .codex/INSTRUCTIONS.md."""
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_project / ".trw"),
             patch("trw_mcp.tools.learning.get_config", return_value=TRWConfig()),
@@ -35,15 +35,14 @@ class TestSyncIncludesInstructionFile:
         ):
             server = FastMCP("test")
             register_learning_tools(server)
-            tools = get_tools_sync(server)
-            result = tools["trw_claude_md_sync"].fn(scope="root", client="codex")
+            result = instructions_sync_fn(scope="root", client="codex", _config=TRWConfig())
 
         assert result["instruction_file_synced"] is True
         assert result["instruction_file_path"] is not None
         assert (tmp_project / ".codex" / "INSTRUCTIONS.md").exists()
 
     def test_opencode_sync_creates_instruction_file(self, tmp_project: Path) -> None:
-        """trw_claude_md_sync with client='opencode' creates .opencode/INSTRUCTIONS.md."""
+        """instructions sync with client='opencode' creates .opencode/INSTRUCTIONS.md."""
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_project / ".trw"),
             patch("trw_mcp.tools.learning.get_config", return_value=TRWConfig()),
@@ -53,8 +52,7 @@ class TestSyncIncludesInstructionFile:
         ):
             server = FastMCP("test")
             register_learning_tools(server)
-            tools = get_tools_sync(server)
-            result = tools["trw_claude_md_sync"].fn(scope="root", client="opencode")
+            result = instructions_sync_fn(scope="root", client="opencode", _config=TRWConfig())
 
         assert result["instruction_file_synced"] is True
         assert result["instruction_file_path"] is not None

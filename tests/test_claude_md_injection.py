@@ -562,7 +562,7 @@ class TestMergeMarkerMatchingIsLineAnchored:
     """A marker mentioned in prose must never delimit the replaced region.
 
     ``merge_trw_section`` is the delivery-path writer -- what
-    ``trw_instructions_sync`` and ``trw_deliver`` call for CLAUDE.md and
+    ``instructions sync`` and ``trw_deliver`` call for CLAUDE.md and
     AGENTS.md. It located the section with ``existing.index(TRW_MARKER_START)``,
     a substring scan returning the FIRST occurrence anywhere in the file, then
     deleted everything from there to the end marker. A user whose instruction

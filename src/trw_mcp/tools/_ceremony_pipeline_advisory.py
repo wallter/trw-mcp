@@ -26,19 +26,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-def _pipeline_health_unmask_hint() -> str:
-    """PRD-FIX-140-FR06 — the grant step for ``trw_pipeline_health``, when masked.
-
-    Every advisory below tells the agent to call ``trw_pipeline_health()``, which
-    is a ``telemetry_security`` pack member and therefore outside the resolved
-    surface of every standard task type. Returns ``""`` when the session can
-    already call it, so a session with the tool exposed sees the unchanged text.
-    """
-    from trw_mcp.tools._masked_tool_hint import unmask_hint
-
-    return unmask_hint("trw_pipeline_health", reason="inspect degraded pipeline signals")
-
-
 def _primary_target_identity(trw_dir: Path) -> tuple[str | None, str | None]:
     """Return ``(primary target label, its last success timestamp)`` from sync state.
 
@@ -64,7 +51,7 @@ def step_pipeline_health_advisory(
 ) -> None:
     """PRD-FIX-COMPOUNDING-6 FR03 + PRD-FIX-107 FR06 — pipeline-health advisory + escalation.
 
-    Calls step_pipeline_health() with all five probes. When degraded=True,
+    Calls step_pipeline_health() with all four probes. When degraded=True,
     injects ``pipeline_health_advisory`` (a single-line string) into results.
     When healthy, does NOT inject the key (PRD-INFRA-068 lesson: no
     focus-distraction on healthy sessions).
@@ -121,7 +108,7 @@ def step_pipeline_health_advisory(
         if bool(health.get("degraded")):
             advisory = str(health.get("advisory", ""))
             if advisory:
-                results["pipeline_health_advisory"] = advisory + _pipeline_health_unmask_hint()
+                results["pipeline_health_advisory"] = advisory
                 logger.warning(
                     "session_start_pipeline_degraded",
                     advisory=advisory,
@@ -139,8 +126,8 @@ def step_pipeline_health_advisory(
             if isinstance(unmeasured, list) and unmeasured:
                 names = ", ".join(str(name) for name in unmeasured)
                 advisory = (
-                    f"pipeline health: {names} could not be measured — call trw_pipeline_health() for detail"
-                    + _pipeline_health_unmask_hint()
+                    f"pipeline health: {names} could not be measured — "
+                    "run `trw-mcp telemetry pipeline-health` for detail"
                 )
                 results["pipeline_health_advisory"] = advisory
                 logger.warning(
@@ -167,9 +154,8 @@ def step_pipeline_health_advisory(
                 "primary_last_success_at": primary_last_success_at,
                 "enforced_by": "make check (pipeline-health)",
                 "advisory": (
-                    "Compounding pipeline is broken — call trw_pipeline_health() for detail. "
+                    "Compounding pipeline is broken — run `trw-mcp telemetry pipeline-health` for detail. "
                     "The fail-closed check runs inside `make check`; no TRW tool blocks on this."
-                    + _pipeline_health_unmask_hint()
                 ),
             }
             logger.error(

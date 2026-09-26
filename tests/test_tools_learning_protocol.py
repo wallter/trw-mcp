@@ -15,6 +15,7 @@ from tests._tools_learning_shared import (  # noqa: F401
     _CFG,
     _get_tools,
     _write_analytics,
+    instructions_sync_fn,
     no_machine_wide_ide_detection,
 )
 from trw_mcp.models.config import TRWConfig
@@ -63,7 +64,7 @@ class TestProgressiveDisclosure:
             detail="Testing line count",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         # Count lines between markers
@@ -82,7 +83,7 @@ class TestProgressiveDisclosure:
                 detail=f"Detail for learning {i}",
                 impact=0.9,
             )
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         # CORE-093: learnings_promoted always 0
         assert result["learnings_promoted"] == 0
         claude_md = tmp_path / "CLAUDE.md"
@@ -97,7 +98,7 @@ class TestProgressiveDisclosure:
             detail="Testing",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "/trw-ceremony-guide" in content
@@ -110,7 +111,7 @@ class TestProgressiveDisclosure:
             detail="Testing",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "| Phase | Tool |" not in content
@@ -123,7 +124,7 @@ class TestProgressiveDisclosure:
             detail="Testing",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "Rationalization Watchlist" not in content
@@ -138,7 +139,7 @@ class TestProgressiveDisclosure:
             detail="Testing",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
         start = content.index("<!-- trw:start -->")
@@ -169,7 +170,7 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         # Default max_auto_lines=80, our output should be well under
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
 
     def test_max_auto_lines_config_default(self) -> None:
@@ -375,7 +376,7 @@ class TestProgressiveDisclosure:
             detail="Should be promoted for analytics",
             impact=0.9,
         )
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        sync_result = instructions_sync_fn(scope="root")
         # CORE-093: learnings_promoted always 0
         assert sync_result["learnings_promoted"] == 0
         claude_md = tmp_path / "CLAUDE.md"
@@ -427,9 +428,9 @@ class TestBehavioralProtocol:
         assert len(directive_lines) == 12
 
     def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """Full trw_claude_md_sync includes compact behavioral protocol (CORE-093)."""
+        """Full instructions sync includes compact behavioral protocol (CORE-093)."""
         tools = _get_tools()
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
 
         claude_md = tmp_path / "CLAUDE.md"

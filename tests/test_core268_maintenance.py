@@ -1,6 +1,5 @@
 """CORE268: real bounded maintenance traversal and preserved claim observations."""
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,12 +25,6 @@ def assertion():
     return Assertion(type=AssertionType.GREP_PRESENT, pattern="actual_symbol", target="fixture.py")
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_all_pages_anchors_namespaces_and_historical_fields drives run_maintain_verify against a raw SQLiteBackend "
-    "with no fake/daemon equivalent for the trw-memory Store protocol (store/update/"
-    "entries_with_assertions)",
-)
 def test_all_pages_anchors_namespaces_and_historical_fields(tmp_path: Path):
     (tmp_path / "fixture.py").write_text("def actual_symbol():\n    return 1\n")
     backend = SQLiteBackend(tmp_path / "memory.db")
@@ -71,12 +64,6 @@ def test_all_pages_anchors_namespaces_and_historical_fields(tmp_path: Path):
         backend.close()
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_persistence_failure_does_not_starve_later_page drives run_maintain_verify against a raw SQLiteBackend "
-    "with no fake/daemon equivalent for the trw-memory Store protocol (store/update/"
-    "entries_with_assertions)",
-)
 def test_persistence_failure_does_not_starve_later_page(tmp_path: Path):
     (tmp_path / "fixture.py").write_text("actual_symbol = 1\n")
     backend = SQLiteBackend(tmp_path / "memory.db")
@@ -96,6 +83,14 @@ def test_persistence_failure_does_not_starve_later_page(tmp_path: Path):
                     raise OSError("controlled persist failure")
                 return backend.update(lid, **kwargs)
 
+            # The verdict write re-reads its row inside a transaction before updating it
+            # (c5b4fb192); only the update itself fails here.
+            def transaction(self):
+                return backend.transaction()
+
+            def get(self, lid, **kwargs):
+                return backend.get(lid, **kwargs)
+
         result = sweep(FailingFirst(), tmp_path)
         assert result.entries_processed == 3
         assert result.persist_failures == 1
@@ -106,12 +101,6 @@ def test_persistence_failure_does_not_starve_later_page(tmp_path: Path):
         backend.close()
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_unknown_first_page_and_real_correction drives run_maintain_verify against a raw SQLiteBackend "
-    "with no fake/daemon equivalent for the trw-memory Store protocol (store/update/"
-    "entries_with_assertions)",
-)
 def test_unknown_first_page_and_real_correction(tmp_path: Path):
     backend = SQLiteBackend(tmp_path / "memory.db")
     try:
@@ -164,12 +153,6 @@ def test_mixed_unknown_refresh_preserves_previous_observation(tmp_path: Path, mo
     assert outcome.verification_status != "verified"
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_malformed_raw_pages_do_not_hide_later_valid_claims drives run_maintain_verify against a raw SQLiteBackend "
-    "with no fake/daemon equivalent for the trw-memory Store protocol (store/update/"
-    "entries_with_assertions)",
-)
 @pytest.mark.parametrize("corrupt_ids", [("L-1",), ("L-1", "L-2")])
 def test_malformed_raw_pages_do_not_hide_later_valid_claims(tmp_path: Path, corrupt_ids):
     """Actual SQLite decode drops must not be mistaken for candidate exhaustion."""

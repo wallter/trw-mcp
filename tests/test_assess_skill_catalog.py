@@ -31,3 +31,11 @@ def test_the_skill_ships_only_when_assess_is_enabled() -> None:
     from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
 
     assert CONDITIONAL_SKILLS.get("trw-assess") == "assess_enabled"
+
+
+def test_skill_carries_the_operator_preferences_state_slot() -> None:
+    """W41-3: every confirmed Jev miss in the 7.0.0 usage review traced to an omitted premise --
+    the skill must tell the caller to put standing operator preferences in the state."""
+    text = _SKILL.read_text(encoding="utf-8")
+    assert "operator preferences" in text.lower()
+    assert "omitted premise" in text.lower()

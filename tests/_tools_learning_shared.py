@@ -43,7 +43,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def no_machine_wide_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep client detection inside the temp project, off the developer's PATH.
 
-    ``trw_instructions_sync(client="auto")`` resolves its write targets through
+    ``instructions_sync_fn(client="auto")`` resolves its write targets through
     ``detect_ide``, which reads machine-global signals by design. On a
     workstation with Cursor installed, every empty ``tmp_path`` therefore looks
     like a Cursor project whose profile does not claim CLAUDE.md, so the sync
@@ -58,6 +58,40 @@ def no_machine_wide_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
 def _get_tools() -> dict[str, Any]:
     """Create fresh server and return tool map."""
     return get_tools_sync(make_test_server("learning"))
+
+
+def instructions_sync_fn(
+    scope: str = "root",
+    target_dir: str | None = None,
+    client: str = "auto",
+    dry_run: bool = False,
+    force: bool = False,
+    *,
+    _config: Any | None = None,
+) -> dict[str, Any]:
+    """Call ``execute_claude_md_sync`` with the removed instructions-sync
+    tool's own default parameters (PRD-CORE-300 S6b folded the tool into
+    ``trw-mcp instructions sync``; this keeps every pre-existing call site's
+    keyword-argument shape intact). ``_config`` overrides the resolved config
+    for call sites that patch specific module attributes rather than env vars."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.claude_md import execute_claude_md_sync, instruction_write_trigger
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._learning_module_helpers import _create_llm_client
+
+    with instruction_write_trigger("tool_call", "instructions sync"):
+        return dict(
+            execute_claude_md_sync(
+                scope,
+                target_dir,
+                _config if _config is not None else get_config(),
+                FileStateReader(),
+                _create_llm_client(),
+                client,
+                dry_run=dry_run,
+                force=force,
+            )
+        )
 
 
 def _entries_dir(root: Path) -> Path:

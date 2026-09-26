@@ -102,14 +102,13 @@ _dr_past_deadline() {
 # drift. Both families use the same `cooldown_calls` value but a DIFFERENT state
 # file, so their counters never interact (NFR05).
 _dr_write_state() {
-  # write-temp-then-mv, so an interleaved write from a concurrent session can
-  # never leave a half-written counter behind (NFR05). $1=path $2=value.
-  # Returns 1 when the counter was NOT persisted; the caller decides what that means.
-  _drw_tmp="$1.$$"
-  printf '%s\n' "$2" 2>/dev/null > "$_drw_tmp" || { rm -f "$_drw_tmp" 2>/dev/null; return 1; }
-  mv -f "$_drw_tmp" "$1" 2>/dev/null && return 0
-  rm -f "$_drw_tmp" 2>/dev/null
-  return 1
+  # write-temp-then-mv via the shared _trw_safe_write (lib-trw.sh), so an
+  # interleaved write from a concurrent session can never leave a
+  # half-written counter behind (NFR05) AND a symlinked state path or
+  # `.trw/context` ancestor cannot redirect the write (PRD-SEC/RC8). $1=path
+  # $2=value. Returns 1 when the counter was NOT persisted; the caller
+  # decides what that means.
+  printf '%s\n' "$2" | _trw_safe_write "$1"
 }
 
 # _dr_prepare_dirs: sets $_root and $_state_dir. Returns 1 (nothing usable) if
@@ -140,7 +139,7 @@ _dr_gate() {
     "$_root"/*) ;;
     *) return 1 ;;
   esac
-  _drg_remaining=$(cat "$_drg_state" 2>/dev/null) || _drg_remaining=''
+  _drg_remaining=$(_trw_safe_read "$_drg_state") || _drg_remaining=''
   case "$_drg_remaining" in
     '' | *[!0-9]*) _drg_remaining=0 ;;
   esac
@@ -219,8 +218,8 @@ printf '%s' "$_payload" | jq -e . >/dev/null 2>&1 || exit 0
 # another) and hard-coding one client's field names would make rule 1 answer
 # "not empty" for every result of every other shape.
 _rendered=$(printf '%s' "$_payload" | jq -r '.tool_response // "" | [.. | strings] | join("\n")' 2>/dev/null) || exit 0
-_tool=$(printf '%s' "$_payload" | jq -r '.tool_name // ""' 2>/dev/null) || _tool=''
-_command=$(printf '%s' "$_payload" | jq -r '.tool_input.command // ""' 2>/dev/null) || _command=''
+_tool=$(printf '%s' "$_payload" | _json_get --strings .tool_name) || _tool=''
+_command=$(printf '%s' "$_payload" | _json_get --strings .tool_input.command) || _command=''
 
 _dr_past_deadline && exit 0
 
@@ -290,7 +289,7 @@ _dr_past_deadline && exit 0
 # path carries trw_pin_key. A session with no identity gets its own "unpinned"
 # slot rather than sharing another session's.
 _dr_prepare_dirs || exit 0
-_safe_key=$(_dr_safe_key "$(printf '%s' "$_payload" | jq -r '.session_id // ""' 2>/dev/null)")
+_safe_key=$(_dr_safe_key "$(printf '%s' "$_payload" | _json_get --strings .session_id)")
 
 # --- fire each family through its OWN cooldown, then combine into ONE line ---
 # A single PostToolUse response carries one additionalContext string, so when

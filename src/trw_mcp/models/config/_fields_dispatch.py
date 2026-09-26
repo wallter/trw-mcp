@@ -106,16 +106,17 @@ class _DispatchFields:
         description="Default read-only posture for dispatched children; --allow-writes overrides to False.",
     )
     # Expose the ``dispatch`` capability pack on a session's resolved MCP tool
-    # surface (PRD-CORE-281). OFF by default: ``dispatch`` is a HIGH-RISK pack
-    # (``_defaults.HIGH_RISK_PACKS``) whose tools launch another agent process,
-    # so joining the advertised surface of every session is an operator act.
+    # surface (PRD-CORE-281). OFF by default: its tools launch another agent
+    # process, so joining the advertised surface of every session is an
+    # operator act. Required in every mode, including tool_resolution_mode:
+    # all; there is no per-call grant path.
     # Read by ``middleware/surface_authority`` -> ``resolve_tool_surface``.
     dispatch_tools_exposed: bool = Field(
         default=False,
         description=(
-            "Expose the dispatch capability pack (trw_dispatch, trw_dispatch_status, "
-            "trw_agent_work_evidence, trw_validate_agent_work_evidence) on the resolved tool "
-            "surface. Off by default; otherwise reachable only via trw_request_tool_access."
+            "Expose the dispatch capability pack (trw_dispatch: launch, status and the "
+            "AgentWorkEvidence modes) on the resolved tool surface. Off by default, and required "
+            "in every mode (including tool_resolution_mode: all); there is no per-call grant."
         ),
     )
     # Give a DISPATCHED child its own stdio trw-mcp connection to this project
@@ -137,4 +138,11 @@ class _DispatchFields:
     dispatch_role_client: dict[str, str] = Field(
         default_factory=dict,
         description="Per-role default client used only when --client and default_client do not apply.",
+    )
+    # 7.0.0 W21: clients tried in order when a dispatch refuses on quota or never
+    # launches. Empty by default: a fallback is a different agent's answer, so the
+    # operator lists it. --fallback-clients overrides per call ('' disables).
+    dispatch_fallback_clients: list[str] = Field(
+        default_factory=list,
+        description="Clients tried in order after quota_exhausted or a launch failure; --fallback-clients overrides.",
     )

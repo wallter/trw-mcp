@@ -14,22 +14,19 @@ from pathlib import Path
 
 from trw_mcp.wiring.detector import DetectorResult
 
-# TOOL-LIVENESS-2026-07-24.md lines 126-140: 10 tools classified LIVE_NON_MCP.
-# 8 of the 10 are reached only through SKILL.md files and agent frontmatter
-# ``tools:`` lists; a checker that scans Python and shell but not those surfaces
-# produces a 30%+ false-dead rate.
-LIVE_NON_MCP_TOOLS: tuple[str, ...] = (
-    "trw_code_search",
-    "trw_code_symbol",
-    "trw_code_index_update",
-    "trw_submit_feedback",
-    "trw_delivery_status",
-    "trw_pipeline_health",
-    "trw_dispatch",
-    "trw_dispatch_status",
-    "trw_channel_stats",
-    "trw_mcp_security_status",
-)
+# TOOL-LIVENESS-2026-07-24.md lines 126-140: originally 10 tools classified
+# LIVE_NON_MCP. PRD-CORE-300 slice S4 removed the code-index-build MCP tool
+# entirely (its pure callable, renamed, is reached only from the `trw-mcp
+# code index` CLI now, never from an MCP-tool call site this detector scans),
+# leaving 9. Slice S1 made the delivery status tool a trw_status mode, S3a
+# moved two more to `trw-mcp telemetry channel-stats` / `security`, S9 folded
+# the feedback tool into `trw_status(feedback=...)` and S3b moved the
+# pipeline-health probe to `trw-mcp telemetry pipeline-health`,
+# and S10 folded the two code-search tools into trw_code, leaving 1.
+# Most of the rest are reached only through SKILL.md files and agent
+# frontmatter ``tools:`` lists; a checker that scans Python and shell but not
+# those surfaces produces a 30%+ false-dead rate.
+LIVE_NON_MCP_TOOLS: tuple[str, ...] = ("trw_dispatch",)
 
 # Deliberate test-reset helpers the generic scan reported as dead.
 TEST_RESET_HELPERS: tuple[str, ...] = (
@@ -68,14 +65,22 @@ def test_tuple_registered_registrars_not_flagged(live_result: DetectorResult, re
     that property against a future contributor adding a call-graph shortcut.
     """
     registrars = _registrar_names(repo_root)
-    assert len(registrars) >= 30, f"expected the full registrar tuple, got {len(registrars)}"
+    # PRD-CORE-300 slice S4 removed 4 registrars (code_index, codebase_risk_report,
+    # ordering_compare, cross_repo_ordering); the floor moves down with them.
+    # S7 (agent-work evidence), S6c (replay) and S1 (delivery) removed one each,
+    # S3a three (mcp_security_status, channel_stats, meta_tune_ops), S5 one (query),
+    # S9 two (knowledge, submit_feedback, both folded into kernel-tool modes),
+    # S3b one (pipeline_health), S10 replaced three code-navigation
+    # registrars with one (code), and S11b three (phase_overrides,
+    # skill_discovery, profile_explain).
+    assert len(registrars) >= 12, f"expected the full registrar tuple, got {len(registrars)}"
     rendered = "\n".join(finding.render() for finding in live_result.findings)
     flagged = [name for name in registrars if name in rendered]
     assert not flagged, f"registrar false positives: {flagged}"
 
 
 def test_ten_live_non_mcp_tools_not_flagged(live_result: DetectorResult) -> None:
-    """Zero findings against the 10 tools confirmed reachable via non-MCP paths."""
+    """Zero findings against the tools confirmed reachable via non-MCP paths (see :data:`LIVE_NON_MCP_TOOLS`)."""
     rendered = "\n".join(finding.render() for finding in live_result.findings)
     flagged = [tool for tool in LIVE_NON_MCP_TOOLS if tool in rendered]
     assert not flagged, f"LIVE_NON_MCP false positives: {flagged}"

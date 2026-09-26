@@ -674,3 +674,48 @@ class TestInstructionSurfaceDerivation:
     def test_every_exclusion_states_a_reason(self) -> None:
         for relpath, reason in doctor._GATE_SCAN_EXCLUSIONS.items():
             assert reason.strip(), f"{relpath} is excluded with no stated reason"
+
+
+# ── mcp_security row (PRD-CORE-300 slice S3a) ────────────────────────────────
+
+
+class TestMcpSecurityRow:
+    """The doctor row reporting the same status ``trw-mcp telemetry security`` does."""
+
+    def test_passes_with_no_events(self, tmp_path: Path) -> None:
+        results = _doctor_core(tmp_path, _make_config(tmp_path))
+        row = _status_of(results, "mcp_security")
+        assert row.status == "PASS"
+
+    def test_warns_on_a_recent_anomaly(self, tmp_path: Path) -> None:
+        from datetime import datetime, timezone
+
+        events_dir = tmp_path / ".trw" / "context"
+        events_dir.mkdir(parents=True)
+        now = datetime.now(tz=timezone.utc)
+        row_json = json.dumps(
+            {
+                "event_id": "evt-1",
+                "session_id": "s",
+                "ts": now.isoformat(),
+                "emitter": "mcp_security",
+                "event_type": "mcp_security",
+                "payload": {"decision": "shadow_anomaly", "transport": "stdio"},
+            }
+        )
+        (events_dir / f"events-{now.strftime('%Y-%m-%d')}.jsonl").write_text(row_json + "\n")
+
+        results = _doctor_core(tmp_path, _make_config(tmp_path))
+        row = _status_of(results, "mcp_security")
+        assert row.status == "WARN"
+        assert "1 recent anomaly" in row.message
+
+    def test_never_raises_on_malformed_events(self, tmp_path: Path) -> None:
+        """NFR-8 fail-open: a malformed jsonl row is skipped, not a FAIL."""
+        events_dir = tmp_path / ".trw" / "context"
+        events_dir.mkdir(parents=True)
+        (events_dir / "events-2026-01-01.jsonl").write_text("not-json\n")
+
+        results = _doctor_core(tmp_path, _make_config(tmp_path))
+        row = _status_of(results, "mcp_security")
+        assert row.status == "PASS"

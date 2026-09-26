@@ -44,11 +44,11 @@ def _load_lint():  # type: ignore[no-untyped-def]
 def test_agent_files_carry_rule(agent_file: str) -> None:
     text = (_AGENTS_DIR / agent_file).read_text(encoding="utf-8")
     assert "negative existence claim" in text
-    assert "trw_code_search" in text
+    assert "trw_code" in text
     assert "grep" in text
     frontmatter = yaml.safe_load(text.split("---", 2)[1])
     granted_tools = frontmatter.get("tools", [])
-    assert "mcp__trw__trw_code_search" in granted_tools
+    assert "mcp__trw__trw_code" in granted_tools
 
 
 # --------------------------------------------------------------------------- #
@@ -80,9 +80,7 @@ def test_flags_unsupported_claim(tmp_path: Path) -> None:
 @requires_monorepo
 def test_supported_claim_with_command_and_root_proof_not_flagged(tmp_path: Path) -> None:
     lint = _load_lint()
-    body = (
-        "no callers found (`trw_code_search(pattern='foo', root='trw-mcp/src')`, root confirmed via `ls trw-mcp/src`)\n"
-    )
+    body = "no callers found (`trw_code(mode='search', query='foo', repo_root='trw-mcp/src')`, root confirmed via `ls trw-mcp/src`)\n"
     _write_audit(tmp_path, "audit-2.md", body)
     scope = _write_scope(tmp_path)
     rc = lint.main(["--scope", str(scope), "--root", str(tmp_path), "--strict"])
@@ -92,7 +90,7 @@ def test_supported_claim_with_command_and_root_proof_not_flagged(tmp_path: Path)
 @requires_monorepo
 def test_adjacent_line_evidence_suppresses(tmp_path: Path) -> None:
     lint = _load_lint()
-    body = "no callers found for symbol bar.\n`trw_code_search(pattern='bar', root='trw-mcp/src')`\n"
+    body = "no callers found for symbol bar.\n`trw_code(mode='search', query='bar', repo_root='trw-mcp/src')`\n"
     _write_audit(tmp_path, "audit-3.md", body)
     scope = _write_scope(tmp_path)
     assert lint.main(["--scope", str(scope), "--root", str(tmp_path), "--strict"]) == 0

@@ -25,9 +25,6 @@ from trw_mcp.scoring._decay import entry_utility, utility_params_for
 from trw_mcp.scoring._recall_context import (
     RecallContext as RecallContext,
 )
-from trw_mcp.scoring._recall_context import (
-    _IntelCacheProtocol as _IntelCacheProtocol,
-)
 from trw_mcp.scoring._recall_domains import (
     _STRUCTURAL_STEMS as _STRUCTURAL_STEMS,
 )

@@ -659,7 +659,7 @@ def _strip_263_additions(node: object) -> object:
 #: The keys PRD-CORE-263 adds to a HEALTHY payload. ``reason`` / ``status`` /
 #: ``unmeasured`` appear only on a degraded or unmeasured result, whose growth
 #: NFR01 deliberately leaves unbounded — that growth IS the information.
-_FR03_ADDED_KEYS = frozenset({"measured", "unmeasured", "wal_checkpoint", "embeddings_coverage_ratio"})
+_FR03_ADDED_KEYS = frozenset({"measured", "unmeasured", "embeddings_coverage_ratio"})
 
 #: Historical four-character size heuristic for one surfaced learning, measured on 2026-09-04 with a
 #: wildcard recall of the shipped default against this repository's live store

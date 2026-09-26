@@ -149,13 +149,11 @@ def test_clients_without_internal_phases_retain_self_contained_workflow(tmp_path
     # gone, but the canonical body carries the same concept in different
     # words -- this is fork-specific phrasing, not a lost requirement.
     assert "no inline author self-review fallback" in " ".join(adapter.split())
-    for name in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+    assert not (installed / "trw-prd-ready-contract.md").exists()
+    for name in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
         resource = installed / f"{name}-contract.md"
-        # The canonical body now names the sibling `*-contract.md` filenames
-        # for the three delegated phases (groom/review/exec-plan); it never
-        # names itself this way (see test_bootstrap_opencode_split.py for the
-        # remaining self-reference gap). Either way, the copied bytes are the
-        # unmodified canonical source.
+        # The canonical body names the sibling `*-contract.md` filenames for the
+        # three delegated phases; the copied bytes are the unmodified canonical source.
         assert resource.read_bytes() == (DATA / "skills" / name / "SKILL.md").read_bytes()
     # Cursor remains a separate self-contained projection, not silently excluded.
     #

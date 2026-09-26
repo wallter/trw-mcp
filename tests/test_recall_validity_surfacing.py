@@ -50,9 +50,6 @@ def test_transform_open_entry_has_no_validity_keys() -> None:
 def trw_dir(tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch) -> Path:
     trw = tmp_path / ".trw"
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    from trw_mcp.state.memory_adapter import reset_backend
-
-    reset_backend()
     return trw
 
 

@@ -39,6 +39,10 @@ trivial or cheaply reversed choices, and for a decision already made.
 - **Criteria describe what makes each answer true**, never bare labels (measured AUC 0.74 labels vs 0.96 prose).
 - **State is facts** (counts, booleans, short excerpts), never your lean: framing moved contested answers by
   0.1-0.3. No secrets, customer data or whole files.
+- **Include known operator preferences / standing rules as a state fact** (e.g. "operator prefers bold,
+  reversible moves" or "no intermediate releases"). Every confirmed miss in the 7.0.0 usage review traced to an
+  omitted premise, not to Jev ranking the stated facts badly — a probability answers only the state as given, and
+  Jev cannot infer a standing rule you did not write down.
 
 ```python
 trw_assess(
@@ -65,8 +69,8 @@ trw_assess(
 
 ## When it is not available
 
-- Not in your tool list: your client may defer MCP tools, so search for `trw_assess` by name, or call
-  `trw_request_tool_access(tool_name="trw_assess", reason=...)`.
+- Not in your tool list: your client may defer MCP tools, so search for `trw_assess` by name. If it is still absent,
+  the pack is off; it needs `assess_enabled: true` in `.trw/config.yaml` (there is no per-call grant).
 - `post_compaction_recovery_required`: call `trw_session_start`, then retry once.
 - `invalid_request`: fix the shape (each question is `{type, instructions, criteria}`); do not resend it unchanged.
 - `disabled`, a transient failure, or no access at all (restricted sub-agents and reviewer lanes often lack it):

@@ -77,8 +77,9 @@ class CorrelationResult(BaseModel):
     ``_telemetry.py`` vocabulary that declares them and the set here that
     consumes them. So every call to ``correlate()`` in every project since this
     module was written has reported ``raw_rate=0.0``: a fabricated measurement,
-    surfaced through ``trw_channel_stats`` and ``channel-doctor stats`` as
-    "0.0%" — which reads as *we measured, and the answer is none*.
+    surfaced through ``trw-mcp telemetry channel-stats`` (moved off the MCP
+    surface by PRD-CORE-300 slice S3a) and ``channel-doctor stats`` as "0.0%"
+    — which reads as *we measured, and the answer is none*.
 
     This is the local idiom, not a new invention. ``_ttl.py::CheckResult``
     carries ``ttl_unknown`` alongside ``is_stale`` for the same reason. This

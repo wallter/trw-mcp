@@ -12,12 +12,14 @@ Two handlers:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 
 def _run_config_reference(args: argparse.Namespace) -> None:
     """Handle the ``config-reference`` subcommand -- print config env vars."""
+    from trw_mcp.models.config._env_only_vars import ENV_ONLY_VARS
     from trw_mcp.models.config._main_fields import _TRWConfigFields
 
     print("# TRW Configuration Reference\n")
@@ -36,6 +38,12 @@ def _run_config_reference(args: argparse.Namespace) -> None:
             default_str = default_str[:37] + "..."
         desc = field_info.description or ""
         print(f"| `{env_var}` | {field_type} | `{default_str}` | {desc} |")
+
+    # Env-only variables: read straight from os.environ, never declared as a
+    # TRWConfig field, so the loop above cannot see them. ENV_ONLY_VARS is the
+    # single explicit registry for this category (W35 item 4).
+    for env_only in ENV_ONLY_VARS:
+        print(f"| `{env_only.name}` | str | (none — env-only) | {env_only.description} |")
 
 
 def _run_local(args: argparse.Namespace) -> None:
@@ -148,8 +156,28 @@ def _run_local(args: argparse.Namespace) -> None:
     elif local_cmd == "deliver":
         run_path_str = getattr(args, "run_path", None)
         run_path = Path(run_path_str) if run_path_str else None
+        as_json = bool(getattr(args, "json", False))
         try:
             status = mark_local_delivered(str(getattr(args, "message", "") or "local delivery"), run_path=run_path)
+        except FileNotFoundError as exc:
+            if as_json:
+                # PRD-CORE-300-FR02 slice S0: --json means exactly one parseable
+                # document on stdout, success or failure alike.
+                print(json.dumps({"error": str(exc)}))
+            else:
+                print(f"Error: {exc}")
+            sys.exit(1)
+        if as_json:
+            print(
+                json.dumps(
+                    {
+                        "run_id": status["run_id"],
+                        "run_path": status["run_path"],
+                        "gate_evaluated": False,
+                    }
+                )
+            )
+        else:
             print(f"Run delivered: {status['run_id']}")
             print(f"  Path: {status['run_path']}")
             # Said out loud, not only stamped in run.yaml. The operator reading
@@ -158,9 +186,6 @@ def _run_local(args: argparse.Namespace) -> None:
             print("  NOTE: offline path — no deliver gate was evaluated (gate_evaluated: false).")
             print("        CONSTITUTION 1.a still binds: a passing build check, a durable")
             print("        acceptable-failure record, or a recorded override.")
-        except FileNotFoundError as exc:
-            print(f"Error: {exc}")
-            sys.exit(1)
     else:
         # PRD-CORE-247-FR03: this listing IS the discoverability fix. The
         # capability must be reachable without reading argparse source, so every

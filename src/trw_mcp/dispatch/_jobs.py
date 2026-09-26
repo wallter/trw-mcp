@@ -41,6 +41,7 @@ from typing import Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.dispatch._capability import HELP_TIMEOUT_S
 from trw_mcp.dispatch._env import build_runner_env
 from trw_mcp.dispatch._policy import policy_record
 from trw_mcp.dispatch._private_io import write_private_atomic
@@ -56,8 +57,9 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "timed_ou
 
 # A child that never wrote a result and whose pid-liveness probe is unreliable
 # (non-POSIX, or pid reused) would otherwise hang in ``running`` forever. We
-# declare it ``failed`` once wall-clock exceeds the job's own timeout times this
-# slack factor — generous enough to cover the runner's own shutdown/kill window.
+# declare it ``failed`` once wall-clock exceeds the job's pre-launch bound plus its
+# own timeout times this slack factor — generous enough to cover the runner's own
+# shutdown/kill window.
 _STUCK_TTL_FACTOR = 1.5
 
 # Default retention for terminal job files swept by ``_sweep_old_jobs``.
@@ -87,6 +89,11 @@ class DispatchJob(BaseModel):
         default=600,
         gt=0,
         description="The request's wall-clock timeout; used to declare a stuck job failed.",
+    )
+    prelaunch_s: float = Field(
+        default=0.0,
+        ge=0,
+        description="Worst-case wall-clock before the child's timeout_s starts (the flag pre-flight).",
     )
     pid: int | None = Field(default=None, description="OS pid of the detached child, if spawned.")
     process_identity: dict[str, str | int] | None = None
@@ -251,6 +258,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
         status="running",
         created_at=datetime.now(timezone.utc).isoformat(),
         timeout_s=req.timeout_s,
+        prelaunch_s=float(HELP_TIMEOUT_S),
         pid=proc.pid,
         process_identity=capture_identity(proc.pid),
         argv_redacted=argv_redacted,
@@ -287,7 +295,7 @@ def _load_result(jobs_dir: Path, job_id: str) -> DispatchResult | None:
 
 
 def _stuck_past_ttl(job: DispatchJob, *, now: datetime) -> bool:
-    """True if a running job has exceeded ``timeout_s * _STUCK_TTL_FACTOR``.
+    """True if a running job has exceeded ``prelaunch_s + timeout_s * _STUCK_TTL_FACTOR``.
 
     Guards against a child that never wrote a result AND whose pid-liveness probe
     is unreliable (non-POSIX, or a reused pid) — without this it would stay
@@ -298,7 +306,7 @@ def _stuck_past_ttl(job: DispatchJob, *, now: datetime) -> bool:
         created = datetime.fromisoformat(job.created_at)
     except ValueError:  # pragma: no cover - defensive against a corrupt record
         return False
-    deadline = created + timedelta(seconds=job.timeout_s * _STUCK_TTL_FACTOR)
+    deadline = created + timedelta(seconds=job.prelaunch_s + job.timeout_s * _STUCK_TTL_FACTOR)
     return now > deadline
 
 
@@ -337,7 +345,7 @@ def _reconcile_job(job: DispatchJob, jobs_dir: Path, *, now: datetime) -> Dispat
         job.status = "failed"
     elif _stuck_past_ttl(job, now=now):
         # The pid probe still reports "alive" (or is unreliable) yet wall-clock is
-        # past timeout_s * _STUCK_TTL_FACTOR: the child is wedged. Reap its tree
+        # past its watchdog budget (_stuck_past_ttl): the child is wedged. Reap its tree
         # (intermediate _run_job group + foreign-agent session via the sidecar)
         # BEFORE cleanup deletes the sidecar — otherwise both leak permanently.
         _kill_job_tree(job, jobs_dir)
@@ -358,7 +366,7 @@ def get_status(job_id: str, *, trw_dir: Path | None = None) -> DispatchJob:
     - result file present -> succeeded (``result.ok``) / timed_out
       (``result.timed_out``) / failed (otherwise).
     - no result + pid not alive -> failed (the child crashed without writing one).
-    - no result + still "alive" but past ``timeout_s * 1.5`` wall-clock -> failed
+    - no result + still "alive" but past ``prelaunch_s + timeout_s * 1.5`` wall-clock -> failed
       (stuck-running TTL: covers an unreliable pid probe).
 
     Whenever a terminal status is observed or reached, transient request and pid

@@ -74,8 +74,7 @@ class TestExplorerAgentContent:
     def test_allowed_tools_listed(self) -> None:
         """FR38: allowed tools include required MCP tools."""
         content = get_explorer_agent_content()
-        assert "mcp__trw__trw_before_edit_hint" in content
-        assert "mcp__trw__trw_codebase_risk_report" in content
+        assert "mcp__trw__trw_code" in content
         assert "mcp__trw__trw_recall" in content
         assert "Read" in content
         assert "Glob" in content
@@ -96,8 +95,12 @@ class TestExplorerAgentContent:
     def test_description_contains_trigger_phrases(self) -> None:
         """FR39: description contains trigger phrases for delegation."""
         content = get_explorer_agent_content()
-        assert "full codebase risk analysis" in content
-        assert "ordering comparison" in content
+        assert "file-set risk hints" in content
+        assert "hotspots from an operator-run" in content
+        assert "`trw-mcp code risk` report" in content
+        # PRD-CORE-300: the ordering-compare tool was deleted, so the
+        # description must not advertise a capability the agent cannot reach.
+        assert "ordering comparison" not in content
 
     def test_description_contains_anti_examples(self) -> None:
         """FR39: description contains anti-example to prevent wrong delegation."""

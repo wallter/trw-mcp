@@ -215,7 +215,6 @@ class TestCompactionGate:
         blocked_tools = [
             "trw_deliver",
             "trw_status",
-            "trw_prd_create",
             "trw_prd_validate",
             "trw_init",
             "trw_recall",

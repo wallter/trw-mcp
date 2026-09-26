@@ -306,6 +306,9 @@ _SERVER_RECEIPT_DISCLAIMER = (
     "driven by request identity and the owner status locator, not by any server claim of delivery."
 )
 
+# PRD-CORE-300-FR03: the one owner status locator a client queries by name today.
+DELIVERY_STATUS_LOCATOR = "For a `trw_deliver` call, the owner status locator is `trw_status(delivery=<delivery_id>)`."
+
 
 def render_transport_loss_guidance() -> str:
     """Render the client-visible transport-loss retry protocol (FR06).
@@ -314,12 +317,7 @@ def render_transport_loss_guidance() -> str:
     generated client integration snippet classifies the same four boundaries
     and states a safe, idempotent recovery for each.
     """
-    lines = [
-        "## MCP transport-loss retry protocol",
-        "",
-        _SERVER_RECEIPT_DISCLAIMER,
-        "",
-    ]
+    lines = ["## MCP transport-loss retry protocol", "", _SERVER_RECEIPT_DISCLAIMER, "", DELIVERY_STATUS_LOCATOR, ""]
     for boundary in TRANSPORT_LOSS_PROTOCOL:
         uncertainty = (
             "Keep the operation outcome `uncertain` until the owner store confirms it."
@@ -345,10 +343,9 @@ def client_transport_guidance(client_id: str) -> str:
 # Truthful generated capability instructions (PRD-CORE-218-FR06)
 #
 # Client instruction projections must derive from the RESOLVED manifest/profile
-# and distinguish three capability classes:
-#   - available    — kernel + selected packs (usable right now)
-#   - discoverable  — packs reachable via trw_skill_discovery / trw_request_tool_access
-#   - gated         — operator-grant-only
+# and distinguish two capability classes (PRD-CORE-300 S11b):
+#   - available — the kernel and every always-on pack (usable in every session)
+#   - gated     — a pack behind a config flag (comms / dispatch / assess)
 #
 # Two client profiles rendering the SAME resolved state must encode the same
 # semantic capability truth despite format differences (NFR03). Any count drift,
@@ -378,10 +375,13 @@ _ADVERTISABLE_LIFECYCLE: frozenset[SurfaceLifecycle] = frozenset({SurfaceLifecyc
 
 
 class CapabilityClass(str, Enum):
-    """The three capability classes a truthful projection must distinguish."""
+    """The capability classes a truthful projection must distinguish.
+
+    ``AVAILABLE``: on for every agent session. ``GATED``: on only when its pack's
+    config flag is (PRD-CORE-300 S11b).
+    """
 
     AVAILABLE = "available"
-    DISCOVERABLE = "discoverable"
     GATED = "gated"
 
 
@@ -430,14 +430,13 @@ class CapabilityProjection:
     client_id: str
     fmt: ProjectionFormat
     available: tuple[str, ...]
-    discoverable: tuple[str, ...]
     gated: tuple[str, ...]
     declared_counts: tuple[tuple[CapabilityClass, int], ...]
     listed_lifecycle: tuple[tuple[str, SurfaceLifecycle], ...]
 
-    def semantic_state(self) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-        """The format-independent capability truth: the three ordered class sets."""
-        return (self.available, self.discoverable, self.gated)
+    def semantic_state(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """The format-independent capability truth: the ordered class sets."""
+        return (self.available, self.gated)
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,14 +464,13 @@ def _members(profile: ResolvedProfile, capability_class: CapabilityClass) -> tup
 def render_capability_projection(
     profile: ResolvedProfile, *, client_id: str, fmt: ProjectionFormat
 ) -> CapabilityProjection:
-    """Derive a truthful three-class projection from a resolved profile.
+    """Derive a truthful class projection from a resolved profile.
 
     Retired/removed/hidden capabilities are excluded (advertising stops).
     Rendering is client-agnostic in semantics: the same profile yields the same
     ``semantic_state`` for any ``client_id`` / ``fmt``.
     """
     available = _members(profile, CapabilityClass.AVAILABLE)
-    discoverable = _members(profile, CapabilityClass.DISCOVERABLE)
     gated = _members(profile, CapabilityClass.GATED)
     listed_lifecycle = tuple(
         sorted((cap.tool_id, SurfaceLifecycle(cap.lifecycle)) for cap in profile.capabilities if _is_advertisable(cap))
@@ -481,11 +479,9 @@ def render_capability_projection(
         client_id=client_id,
         fmt=fmt,
         available=available,
-        discoverable=discoverable,
         gated=gated,
         declared_counts=(
             (CapabilityClass.AVAILABLE, len(available)),
-            (CapabilityClass.DISCOVERABLE, len(discoverable)),
             (CapabilityClass.GATED, len(gated)),
         ),
         listed_lifecycle=listed_lifecycle,
@@ -527,7 +523,7 @@ def check_projection_parity(
             )
 
     resolved_lifecycle = {cap.tool_id: SurfaceLifecycle(cap.lifecycle) for cap in profile.capabilities}
-    for tool_id in (*projection.available, *projection.discoverable, *projection.gated):
+    for tool_id in (*projection.available, *projection.gated):
         lifecycle = resolved_lifecycle.get(tool_id)
         if lifecycle is not None and lifecycle not in _ADVERTISABLE_LIFECYCLE:
             failures.append(
@@ -541,28 +537,21 @@ def check_projection_parity(
 
 
 def render_client_capability_instructions(profile: ResolvedProfile, *, client_id: str) -> str:
-    """Render human-readable client instructions distinguishing the three classes.
+    """Render the flag-based capability block for generated client instructions.
 
-    PRD-FIX-140-FR08: only the AVAILABLE class is enumerated. Naming every
-    discoverable and operator-gated tool made the generated block itself the
-    largest source of ``trw-mcp check-instructions`` mismatches (38 references on
-    2026-09-16) — the framework's own parity check failing against the
-    framework's own text — and told an agent about tools it cannot call without
-    telling it how. The other two classes are reported as counts plus the one
-    step that actually reaches them.
+    PRD-FIX-140-FR08: only the AVAILABLE class is enumerated by tool name; the
+    GATED class is reported as a count plus the config flags that turn it on,
+    so the block never names a tool a session cannot call (PRD-CORE-300 S11b).
     """
+    from trw_mcp.models.surface_packs import FLAG_GATED_PACKS
+
     proj = render_capability_projection(profile, client_id=client_id, fmt=ProjectionFormat.BULLET_LIST)
-    lines = [f"<!-- trw:capabilities:{client_id} -->", f"## Resolved capabilities ({profile.task_type})", ""]
+    lines = [f"<!-- trw:capabilities:{client_id} -->", "## Resolved capabilities", ""]
+    lines.append(f"- **Available in every session** ({len(proj.available)}): {', '.join(proj.available) or '(none)'}")
+    flags = ", ".join(f"`{flag}`" for flag in sorted(set(FLAG_GATED_PACKS.values())))
     lines.append(
-        f"- **Available now (kernel + selected packs)** ({len(proj.available)}): "
-        f"{', '.join(proj.available) or '(none)'}"
-    )
-    lines.append(
-        f"- **Discoverable via trw_skill_discovery / trw_request_tool_access** ({len(proj.discoverable)}) "
-        "and **Operator-grant only** "
-        f"({len(proj.gated)}): not listed here — ask for one by name with "
-        "`trw_request_tool_access(tool_name=..., reason=...)`, or run `trw_profile_explain` to see the "
-        "resolved surface."
+        f"- **Behind a config flag** ({len(proj.gated)}): turned on in `.trw/config.yaml` by {flags}; "
+        'run `trw_status(detail="surface")` to see what this project has on.'
     )
     return "\n".join(lines)
 

@@ -82,7 +82,7 @@ _FINGERPRINT_COMPACT_FIELDS = ("build_identity", "connection_nonce")
 # roster — every session, plus every post-compaction resume.
 #
 # The full profile-resolution audit shape, including both snapshot ids and the
-# layer chain, is what trw_profile_explain exists to serve. verbose=True keeps
+# layer chain, is what trw_status(detail="surface") exists to serve. verbose=True keeps
 # them here too.
 # trw:intentional diagnostics with no caller action — response-boundary only.
 _COMPACT_DROP_KEYS = (

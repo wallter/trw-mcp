@@ -15,6 +15,10 @@ from trw_mcp.bootstrap._update_transaction import (
 from trw_mcp.canons.registry import install_view, load_registry
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
 
 def test_transaction_covers_every_managed_framework_artifact() -> None:
     registry = load_registry()
@@ -157,7 +161,7 @@ def _repo_with_vendored_bundle(tmp_path: Path) -> tuple[Path, Path]:
     bundle = repo / "vendor" / "data"
     shutil.copytree(_DATA_DIR, bundle)
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "installed")
+    _git(repo, *_NO_HOOKS, "commit", "-qm", "installed")
     return repo, bundle
 
 

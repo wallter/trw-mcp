@@ -58,12 +58,13 @@ def test_append_ceremony_status_adds_summary_when_state_exists(tmp_path: Path) -
     assert "learnings=0" in result["ceremony_status"]
 
 
-def test_nudge_selection_cache_based(tmp_path: Path) -> None:
+def test_nudge_selection_ignores_cached_bandit_weights(tmp_path: Path) -> None:
+    """PRD-CORE-303 FR01: recall order wins even when a cache ranks B above A."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
-    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9}})
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9, "L-1": 0.5}})
 
     learnings = [
         {"id": "L-1", "summary": "Document the health check", "impact": 0.9},
@@ -72,37 +73,42 @@ def test_nudge_selection_cache_based(tmp_path: Path) -> None:
             "summary": "Retry failed queue workers",
             "nudge_line": "Retry the failed queue workers before closing the run.",
             "impact": 0.7,
-            "domain": ["backend"],
-            "phase_affinity": ["implement"],
         },
     ]
-    recall_context = type(
-        "RecallContext",
-        (),
-        {"inferred_domains": {"backend"}, "current_phase": "implement", "modified_files": []},
-    )()
 
     with (
+        patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="learnings"),
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
-        patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
+        patch("trw_mcp.state.recall_context.build_recall_context", return_value=None),
     ):
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
-    # PRD-CORE-278 FR09: the selection is unchanged, but an unverified claim now
-    # says so in the one slot that speaks with the framework's voice. Every
-    # learning in every store observed on 2026-09-16 carried
-    # verification_status "unknown", and the most prominent one was false
-    # (sub_n98TiMz4ioCKf5Lj).
-    assert result["nudge_content"] == "Unverified: Retry the failed queue workers before closing the run."
+    # PRD-CORE-278 FR09: an unverified claim says so in the nudge slot.
+    assert result["nudge_content"] == "Unverified: Document the health check"
+
+
+def test_nudge_skips_a_first_candidate_with_no_renderable_text(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    learnings = [
+        {"id": "L-1", "summary": "   ", "impact": 0.9},
+        {"id": "L-2", "summary": "Retry failed queue workers", "impact": 0.7},
+    ]
+
+    with (
+        patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="learnings"),
+        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
+        patch("trw_mcp.state.recall_context.build_recall_context", return_value=None),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
+    assert result["nudge_content"] == "Unverified: Retry failed queue workers"
 
 
 def test_nudge_from_a_verified_learning_is_not_labelled(tmp_path: Path) -> None:
     """The label is a statement about evidence, not decoration."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
-    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9}})
 
     learnings = [
         {
@@ -122,6 +128,7 @@ def test_nudge_from_a_verified_learning_is_not_labelled(tmp_path: Path) -> None:
     )()
 
     with (
+        patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="learnings"),
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
         patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
     ):
@@ -228,13 +235,16 @@ def test_contextual_action_messenger_records_synthetic_impression_and_counts(tmp
 
 
 def test_standard_workflow_pool_records_synthetic_impression_and_counts(tmp_path: Path) -> None:
+    """The weighted-random pool pick stands even with cached bandit weights (FR01)."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
     (trw_dir / "config.yaml").write_text("nudge_enabled: true\n", encoding="utf-8")
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9}})
 
     with (
         patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="workflow"),
-        patch("trw_mcp.tools._ceremony_status._has_cached_learning_weights", return_value=False),
         patch("trw_mcp.state._nudge_content.load_pool_message", return_value="Workflow nudge"),
     ):
         result = append_ceremony_status({"status": "ok"}, trw_dir)

@@ -3,67 +3,42 @@
 Belongs to the ``_subcommands_doctor.py`` catalogue; kept in a sibling so the
 doctor module stays well under the effective-LOC gate.
 
-An operator reasoning about what leaves the machine had two documented surfaces
-for the consent flags and none for embedding traffic — which those flags do not
-govern at all. This reports the two facts that do govern it: whether the
-configured model is already complete in the local Hugging Face cache, and the
-resulting posture.
+Runtime model loads never download (PRD-CORE-302 W40): a model reaches the
+machine only at install time or through ``trw-mcp models fetch``. The row
+therefore reports one fact — whether the configured model is complete in the
+local Hugging Face cache — and the fix when it is not.
 """
 
 from __future__ import annotations
 
-import os
-
 __all__ = ["embedding_egress_report"]
 
-_OFFLINE_ENV_VARS = ("TRW_OFFLINE", "HF_HUB_OFFLINE")
-_TRUTHY_ENV_VALUES = ("1", "true", "yes", "on")
-
-_POSTURE_DETAIL = {
-    "cache-first": "the complete local snapshot is used and no huggingface.co request is made.",
-    "offline-forced": "an uncached model raises LocalOnlyViolationError rather than downloading.",
-    "network-capable": "a huggingface.co request may occur on first embed; set TRW_OFFLINE=1 to block it.",
-}
-
-
-def _offline_switch_engaged() -> str:
-    """Return the name of an engaged offline switch, or an empty string."""
-    return next(
-        (name for name in _OFFLINE_ENV_VARS if os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES),
-        "",
-    )
+_FETCH_COMMAND = "trw-mcp models fetch"
 
 
 def embedding_egress_report(model: str, *, embeddings_enabled: bool) -> tuple[str, str]:
     """Return ``(status, message)`` for the ``embedding_egress`` doctor row.
 
-    Fail-open: any probe failure is reported as an unknown cache state with the
-    conservative ``network-capable`` posture rather than raising, so a cache
-    layout this build does not recognise degrades visibly instead of silently.
+    Fail-open: a probe failure is reported as an unknown cache state rather than
+    raising, so a cache layout this build does not recognise degrades visibly.
     """
     if not embeddings_enabled:
-        return "PASS", "embeddings_enabled=false — no embedding egress is possible."
+        return "PASS", "embeddings_enabled=false — no embedding model is loaded."
     try:
+        from trw_memory._model_pin import pinned_revision
         from trw_memory.embeddings._hf_cache import CacheState, probe_model_cache
-        from trw_memory.models.config import MemoryConfig
 
         state = probe_model_cache(model).state
-        local_only = bool(MemoryConfig().local_only)
     except Exception as exc:  # justified: diagnostic must never abort the doctor report
-        return "WARN", (
-            f"model '{model}': cache state unknown ({type(exc).__name__}), posture network-capable — "
-            "a huggingface.co request may occur on first embed."
-        )
+        return "WARN", f"model '{model}': cache state unknown ({type(exc).__name__}); fix: {_FETCH_COMMAND}."
 
-    switch = _offline_switch_engaged()
     if state is CacheState.COMPLETE:
-        posture = "cache-first"
-    elif switch or local_only:
-        posture = "offline-forced"
+        status, detail = "PASS", "loaded from the local cache; runtime makes no huggingface.co request."
     else:
-        posture = "network-capable"
-    detail = _POSTURE_DETAIL[posture]
-    if posture == "offline-forced":
-        detail = f"downloads are blocked by {switch or 'memory_local_only=True'}; {detail}"
-    status = "WARN" if posture == "network-capable" else "PASS"
-    return status, f"model '{model}': cache {state.value}, posture {posture} — {detail}"
+        status = "WARN"
+        detail = f"not cached, so embeddings are off (runtime never downloads); fix: {_FETCH_COMMAND}."
+    if pinned_revision(model) is None:
+        # PRD-CORE-302 FR06: an unpinned model loads whatever ``main`` names today.
+        status = "WARN"
+        detail = f"{detail} Unpinned: loads revision main, so the weights can change under the store."
+    return status, f"model '{model}': cache {state.value} — {detail}"

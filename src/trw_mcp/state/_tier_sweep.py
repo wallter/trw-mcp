@@ -91,7 +91,7 @@ def _sweep_hot_to_warm(
     for entry_id in stale_hot_ids:
         try:
             evicted = self._hot.pop(entry_id)
-            self.warm_add(entry_id, evicted.model_dump(), None)
+            self.warm_add(entry_id, evicted.model_dump())
             self._flush_last_accessed(entry_id)
             demoted += 1
             logger.debug("sweep_hot_to_warm", entry_id=entry_id)
@@ -286,11 +286,10 @@ def _sweep_cold_to_purge(
 def sweep(self: _TierManagerSelf) -> TierSweepResult:
     """Execute lifecycle sweep across all tiers.
 
-    Performs four transition checks in order:
+    Performs three transition checks in order:
     1. Hot -> Warm: entries whose last_accessed_at exceeds memory_hot_ttl_days.
     2. Warm -> Cold: entries idle > memory_cold_threshold_days with impact < 0.5.
     3. Cold -> Purge: entries idle > memory_retention_days with impact < 0.3.
-    4. Cold -> Warm is handled on-demand by cold_promote().
 
     All thresholds are read from get_config() at call time (FR06).
     Per-entry failures are logged and counted in ``errors``; the sweep

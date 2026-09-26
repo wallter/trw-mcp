@@ -259,6 +259,9 @@ def test_maintain_verify_cli_is_registered_and_dispatches(
     import json as _json
 
     payload = _json.loads(capsys.readouterr().out)
+    # The fake's ``verify`` only counts rows carrying assertions; it checks
+    # nothing, so this proves the CLI handler reached ``store.verify`` for the
+    # checkout's namespace and printed its summary, not any real sweep verdict.
     assert payload["entries_processed"] == 1
     assert payload["stale_transitions"] == 1
     entry = asyncio.run(daemon_checkout.client.get("L-cli", daemon_checkout.namespace))

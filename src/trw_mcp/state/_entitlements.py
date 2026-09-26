@@ -2,7 +2,7 @@
 
 Reads ``.trw/entitlements.yaml`` (in the project ``.trw/`` directory)
 and gates tier-restricted trw-mcp features (e.g.
-``trw_before_edit_hint`` consumption of trw-distill sidecars).
+``trw_code`` hint-mode consumption of trw-distill sidecars).
 
 v0 design (intentionally minimal):
 
@@ -18,10 +18,10 @@ v0 design (intentionally minimal):
   trw-distill sidecar) rather than refusing to operate.
 - Feature map is hard-coded for v0:
     free   → []
-    team   → ["trw_before_edit_hint:distill_sidecar"]
-    pro    → ["trw_before_edit_hint:distill_sidecar"]
-    enterprise → ["trw_before_edit_hint:distill_sidecar"]
-    beta   → ["trw_before_edit_hint:distill_sidecar"]
+    team   → ["trw_code:distill_sidecar"]
+    pro    → ["trw_code:distill_sidecar"]
+    enterprise → ["trw_code:distill_sidecar"]
+    beta   → ["trw_code:distill_sidecar"]
 
 The ``beta`` tier is the tester-program bridge (production feedback
 ``sub_Y-f6QQ3Y_Os9b0vM``): the backend tester program grants beta/tester
@@ -72,14 +72,18 @@ _TIER_ALIASES: dict[str, Tier] = {"alpha": "beta"}
 # Raw tier strings accepted from an entitlements file (canonical tiers + aliases).
 _ACCEPTED_RAW_TIERS: frozenset[str] = frozenset(_VALID_TIERS) | frozenset(_TIER_ALIASES)
 
+#: The one feature id every sidecar consumer gates on (hint mode, the risk CLI,
+#: the install-time artifact check and ``trw-mcp tier``).
+DISTILL_SIDECAR_FEATURE: str = "trw_code:distill_sidecar"
+
 # Tier → enabled feature flags. Additive: a tier always inherits prior tiers.
 _TIER_FEATURES: dict[Tier, frozenset[str]] = {
     "free": frozenset(),
-    "team": frozenset({"trw_before_edit_hint:distill_sidecar"}),
-    "pro": frozenset({"trw_before_edit_hint:distill_sidecar"}),
-    "enterprise": frozenset({"trw_before_edit_hint:distill_sidecar"}),
+    "team": frozenset({DISTILL_SIDECAR_FEATURE}),
+    "pro": frozenset({DISTILL_SIDECAR_FEATURE}),
+    "enterprise": frozenset({DISTILL_SIDECAR_FEATURE}),
     # Tester-program bridge — same feature as paid tiers (sub_Y-f6QQ3Y_Os9b0vM).
-    "beta": frozenset({"trw_before_edit_hint:distill_sidecar"}),
+    "beta": frozenset({DISTILL_SIDECAR_FEATURE}),
 }
 
 

@@ -68,11 +68,22 @@ _JEV_SESSION_START = (
     "Jev is on: at a judgment call (flaky vs real, rank findings, option A vs "
     "B, merge vs hold) ask trw_assess instead of deciding in prose.",
 )
+# W41-5: a blocked deliver is a release go/no-go judgment call -- exactly the class
+# USAGE-7.0.0.md observed getting NO trw_assess calls during release mechanics (08:00Z
+# to 13:00Z on 2026-09-24), because the two existing triggers above only fire from
+# trw_build_check/trw_review, and a release is often adjudicated at deliver time from
+# external CI output neither of those tools ever saw.
+_JEV_DELIVER_BLOCKED = (
+    "jev:deliver_blocked",
+    "Blocked: fix first, override, or escalate? Ask trw_assess with the blocking "
+    "reason as state and one choice question {fix_first, override, escalate}.",
+)
 
 
 def _potential_jev_candidates(
     tool_name: str,
     *,
+    tool_success: bool,
     build_passed: bool | None,
     review_verdict: str | None,
     review_p0_count: int,
@@ -91,6 +102,8 @@ def _potential_jev_candidates(
         return [_JEV_REVIEW_FINDINGS]
     if resolved == ToolName.SESSION_START:
         return [_JEV_SESSION_START]
+    if resolved == ToolName.DELIVER and tool_success is False:
+        return [_JEV_DELIVER_BLOCKED]
     return []
 
 
@@ -247,6 +260,7 @@ def append_ceremony_status_for_tool(
             result,
             trw_dir,
             tool_name=tool_name,
+            tool_success=tool_success,
             build_passed=build_passed,
             review_verdict=review_verdict,
             review_p0_count=review_p0_count,
@@ -263,6 +277,7 @@ def _maybe_attach_transition_nudge(
     trw_dir: Path | None,
     *,
     tool_name: str,
+    tool_success: bool = True,
     build_passed: bool | None,
     review_verdict: str | None,
     review_p0_count: int,
@@ -297,6 +312,7 @@ def _maybe_attach_transition_nudge(
     jev_candidates: list[tuple[str, str]] = []
     potential_jev = _potential_jev_candidates(
         tool_name,
+        tool_success=tool_success,
         build_passed=build_passed,
         review_verdict=review_verdict,
         review_p0_count=review_p0_count,
@@ -328,7 +344,7 @@ def maybe_attach_edit_hint_transition_nudge(
     *,
     learnings: list[LearningSummary],
 ) -> None:
-    """FR04(b): attach the top-learning transition line for ``trw_before_edit_hint``.
+    """FR04(b): attach the top-learning transition line for ``trw_code``'s hint mode.
 
     Minimal path: skips the whole ``append_ceremony_status`` pipeline (no
     ``NudgeContext``, no phase/status lines) and calls only the transition

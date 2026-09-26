@@ -1,68 +1,61 @@
-"""Lexical code-search index and ranking over PRD-CORE-171 manifests."""
+"""Lexical code search and symbol lookup over the chunk store (PRD-CORE-300-FR15).
+
+A query only reads: it opens the published store read-only, asks SQLite for
+candidate rows, and keeps the best ``top_k`` in a heap. Candidates, response
+size and wall-clock are bounded (:mod:`trw_mcp.code_index.bounds`); crossing
+one returns ``index_bound_exceeded`` naming the key. Building the store is the
+build's job (the ``trw-mcp code index`` CLI command, ``BUILD_COMMAND`` below),
+never a query's.
+"""
 
 from __future__ import annotations
 
-import os
+import heapq
 import re
+import sqlite3
 from collections import Counter
+from collections.abc import Callable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from trw_mcp.code_index.chunking import CodeChunk, chunk_source_file
-from trw_mcp.code_index.models import CodeIndexManifest
-from trw_mcp.code_index.storage import default_manifest_path, load_manifest
+from trw_mcp.code_index.bounds import CodeIndexBounds, Deadline, IndexBoundExceeded
+from trw_mcp.code_index.chunking import CodeChunk
+from trw_mcp.code_index.store import (
+    RuntimeUnsupported,
+    StoreCorrupt,
+    StoreInfo,
+    StoreMissing,
+    open_store,
+    row_to_chunk,
+    stream_rows,
+)
 
-CHUNK_INDEX_SCHEMA_VERSION: Literal["code-chunk-index/v1"] = "code-chunk-index/v1"
-CHUNK_INDEX_RELATIVE_PATH: str = ".trw/code-index/chunks.json"
 MAX_SNIPPET_LINES: int = 12
 MAX_SNIPPET_CHARS: int = 800
+#: PRD-CORE-300-FR06 (slice S4): the build step moved from an MCP tool to the
+#: ``trw-mcp code index`` CLI command.
+BUILD_COMMAND: str = "trw-mcp code index"
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
-ErrorCode = Literal["", "missing_index", "invalid_repo", "invalid_path", "query_empty"]
+ErrorCode = Literal[
+    "",
+    "index_missing",
+    "index_corrupt",
+    "index_bound_exceeded",
+    "invalid_repo",
+    "invalid_path",
+    "query_empty",
+    "unsupported_runtime",
+]
 #: One member, and deliberately still a Literal: it is the response's record of
 #: WHICH search ran, so a future second mode extends it rather than replaces it.
 #: ``"semantic"`` was a member until 2.0.0 and named a branch that could not
 #: return a result (UF-031); ``dependency_missing`` left ``ErrorCode`` with it,
 #: because the only producer of either was the deleted optional-embedder hook.
 SearchMode = Literal["lexical"]
-
-
-class ChunkIndexStats(BaseModel):
-    """Chunk lifecycle counters for one manifest reconciliation."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    total_chunks: int = Field(ge=0)
-    added_files: int = Field(ge=0)
-    unchanged_files: int = Field(ge=0)
-    modified_files: int = Field(ge=0)
-    deleted_files: int = Field(ge=0)
-    failed_files: int = Field(ge=0)
-
-
-class CodeChunkIndex(BaseModel):
-    """Persisted chunk index scoped to one repository root."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    schema_version: Literal["code-chunk-index/v1"]
-    repo_root: str
-    manifest_sha256: str | None
-    chunks: tuple[CodeChunk, ...]
-    stats: ChunkIndexStats
-
-
-class ChunkIndexUpdateResult(BaseModel):
-    """Return value for chunk-index reconciliation."""
-
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
-
-    index: CodeChunkIndex
-    index_path: str
-    stats: ChunkIndexStats
 
 
 class LineRange(BaseModel):
@@ -110,94 +103,12 @@ class CodeSearchResponse(BaseModel):
     error_code: ErrorCode = ""
     error: str = ""
     remediation: str = ""
-    #: PRD-SEC-015 round-2 audit (Row 2): set to ``"read_only_stale"`` when the
-    #: reviewer role skipped reconciling the index against the manifest and
-    #: served whatever was already on disk. Empty string outside that path.
-    index_state: Literal["", "read_only_stale"] = ""
-
-
-def default_chunk_index_path(repo_root: Path | str) -> Path:
-    """Return the canonical chunk-index path for ``repo_root``."""
-
-    return Path(repo_root) / CHUNK_INDEX_RELATIVE_PATH
-
-
-def update_chunk_index(repo_root: Path | str) -> ChunkIndexUpdateResult:
-    """Reconcile chunks with the current PRD-CORE-171 manifest."""
-
-    root = _validated_repo_root(repo_root)
-    manifest_path = default_manifest_path(root)
-    manifest = load_manifest(manifest_path)
-    if manifest is None:
-        raise FileNotFoundError("code-index manifest is missing or invalid; run trw_code_index_update first")
-
-    previous = load_chunk_index(default_chunk_index_path(root))
-    previous_by_path = _chunks_by_path(previous.chunks if previous is not None else ())
-    manifest_by_path = {row.path: row for row in manifest.files}
-    chunks: list[CodeChunk] = []
-    added_files = 0
-    unchanged_files = 0
-    modified_files = 0
-    failed_files = 0
-
-    for row in manifest.files:
-        prior_chunks = previous_by_path.get(row.path, ())
-        if prior_chunks and all(chunk.file_sha256 == row.sha256 for chunk in prior_chunks):
-            chunks.extend(prior_chunks)
-            unchanged_files += 1
-            continue
-
-        file_path = root / row.path
-        try:
-            new_chunks = chunk_source_file(root, file_path, file_sha256=row.sha256)
-        except (OSError, UnicodeDecodeError, ValueError):
-            failed_files += 1
-            continue
-        chunks.extend(new_chunks)
-        if prior_chunks:
-            modified_files += 1
-        else:
-            added_files += 1
-
-    deleted_files = len(set(previous_by_path) - set(manifest_by_path))
-    stats = ChunkIndexStats(
-        total_chunks=len(chunks),
-        added_files=added_files,
-        unchanged_files=unchanged_files,
-        modified_files=modified_files,
-        deleted_files=deleted_files,
-        failed_files=failed_files,
-    )
-    index = CodeChunkIndex(
-        schema_version=CHUNK_INDEX_SCHEMA_VERSION,
-        repo_root=str(root),
-        manifest_sha256=_manifest_fingerprint(manifest),
-        chunks=tuple(sorted(chunks, key=lambda chunk: (chunk.path, chunk.start_line, chunk.chunk_id))),
-        stats=stats,
-    )
-    index_path = default_chunk_index_path(root)
-    save_chunk_index(index_path, index)
-    return ChunkIndexUpdateResult(index=index, index_path=str(index_path), stats=stats)
-
-
-def _resolve_index_for_read(root: Path) -> tuple[CodeChunkIndex | None, Literal["", "read_only_stale"]]:
-    """Return ``(index, index_state)`` honoring the reviewer role's write bar.
-
-    PRD-SEC-015 round-2 audit (Row 2): ``trw_code_search``/``trw_code_symbol``
-    are allowlisted read tools, but their sole index accessor,
-    ``update_chunk_index``, always reconciles against the manifest and calls
-    ``save_chunk_index`` — creating ``.trw/code-index/`` and writing
-    ``chunks.json`` even when nothing changed. Under the reviewer role this
-    reads whatever already exists on disk (``load_chunk_index`` never creates
-    a directory or writes) and reports ``"read_only_stale"`` so a caller can
-    see no refresh happened, instead of silently mutating repository state
-    the review is supposed to be read-only against.
-    """
-    from trw_mcp.state._surface_role import reviewer_role_active
-
-    if reviewer_role_active():
-        return load_chunk_index(default_chunk_index_path(root)), "read_only_stale"
-    return update_chunk_index(root).index, ""
+    #: ``"stale"`` when the store was built at a git HEAD other than the
+    #: current one; the answer is still served, with the revision it came from.
+    index_state: Literal["", "stale"] = ""
+    index_revision: str = ""
+    #: The ``code_index_bounds`` key a failed query crossed.
+    bound: str = ""
 
 
 def lexical_search(
@@ -206,38 +117,33 @@ def lexical_search(
     query: str,
     top_k: int = 10,
     path: str | None = None,
+    bounds: CodeIndexBounds | None = None,
 ) -> CodeSearchResponse:
-    """Return ranked lexical matches without optional parser or embedding dependencies."""
+    """Return ranked lexical matches from the published store."""
 
-    validation = _validate_request(repo_root, query=query, path=path, mode="lexical")
-    if isinstance(validation, CodeSearchResponse):
-        return validation
-    root, safe_path = validation
-    try:
-        index, index_state = _resolve_index_for_read(root)
-    except FileNotFoundError as exc:
-        return _failure("lexical", query, "missing_index", str(exc), "Run trw_code_index_update for this repo first.")
-    except NotADirectoryError as exc:
-        return _failure("lexical", query, "invalid_repo", str(exc), "Pass an existing repository directory.")
-    if index is None:
-        return _failure(
-            "lexical",
-            query,
-            "missing_index",
-            "code-index has no existing chunks.json and the reviewer role never reconciles one",
-            "Ask the orchestrator to run trw_code_index_update as an agent-role session first.",
-        )
+    query_terms = _terms(query[: (bounds or CodeIndexBounds()).query_max_chars])  # a longer query is refused unscanned
 
-    query_terms = _terms(query)
-    hits: list[CodeSearchHit] = []
-    for chunk in _filter_chunks(index.chunks, safe_path):
-        score = _lexical_score(query_terms, chunk)
-        if score <= 0:
-            continue
-        hits.append(_hit(chunk, score=score, reason=f"lexical token match: {_matched_terms(query_terms, chunk)}"))
+    def candidates(conn: sqlite3.Connection, scope: tuple[str, tuple[object, ...]]) -> Iterator[sqlite3.Row]:
+        term_clauses: list[str] = []
+        params: list[object] = []
+        for term in query_terms:
+            pattern = f"%{_escape_like(term)}%"
+            term_clauses.append(
+                "(symbol_name LIKE ? ESCAPE '\\' OR signature LIKE ? ESCAPE '\\' OR docstring_summary LIKE ? "
+                "ESCAPE '\\' OR text LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\')"
+            )
+            params.extend([pattern] * 5)
+        where = " OR ".join(term_clauses) or "0"
+        if scope[0]:
+            where = f"({where}) AND {scope[0]}"
+            params.extend(scope[1])
+        return stream_rows(conn, where=where, params=tuple(params))
 
-    ranked = tuple(sorted(hits, key=lambda hit: (-hit.score, hit.path, hit.line_range.start))[: _bounded_top_k(top_k)])
-    return CodeSearchResponse(status="ok", mode="lexical", query=query, results=ranked, index_state=index_state)
+    def score(chunk: CodeChunk) -> tuple[float, str] | None:
+        value = _lexical_score(query_terms, chunk)
+        return (value, f"lexical token match: {_matched_terms(query_terms, chunk)}") if value > 0 else None
+
+    return _run(repo_root, query, top_k, path, bounds, candidates, score)
 
 
 def symbol_search(
@@ -246,66 +152,138 @@ def symbol_search(
     symbol: str,
     top_k: int = 10,
     path: str | None = None,
+    bounds: CodeIndexBounds | None = None,
 ) -> CodeSearchResponse:
     """Return exact symbol matches before fuzzy symbol matches."""
 
-    validation = _validate_request(repo_root, query=symbol, path=path, mode="lexical")
+    needle = symbol[: (bounds or CodeIndexBounds()).query_max_chars].strip().lower()  # a longer one is refused
+
+    def candidates(conn: sqlite3.Connection, scope: tuple[str, tuple[object, ...]]) -> Iterator[sqlite3.Row]:
+        where = "symbol_name LIKE ? ESCAPE '\\'"
+        params: list[object] = [f"%{_escape_like(needle)}%"]
+        if scope[0]:
+            where = f"{where} AND {scope[0]}"
+            params.extend(scope[1])
+        return stream_rows(conn, where=where, params=tuple(params))
+
+    def score(chunk: CodeChunk) -> tuple[float, str] | None:
+        if chunk.symbol_name is None:
+            return None
+        candidate = chunk.symbol_name.lower()
+        if candidate == needle:
+            return 100.0, "exact symbol match"
+        if needle in candidate:
+            return 50.0 + (len(needle) / len(candidate)), "fuzzy symbol match"
+        return None
+
+    return _run(repo_root, symbol, top_k, path, bounds, candidates, score)
+
+
+def _run(
+    repo_root: Path | str,
+    query: str,
+    top_k: int,
+    path: str | None,
+    bounds: CodeIndexBounds | None,
+    candidates: Callable[[sqlite3.Connection, tuple[str, tuple[object, ...]]], Iterator[sqlite3.Row]],
+    score: Callable[[CodeChunk], tuple[float, str] | None],
+) -> CodeSearchResponse:
+    budgets = bounds or CodeIndexBounds()
+    validation = _validate_request(repo_root, query=query, path=path, budgets=budgets)
     if isinstance(validation, CodeSearchResponse):
         return validation
     root, safe_path = validation
+    deadline = Deadline(budgets.query_timeout_seconds, "query_timeout_seconds")
+    conn: sqlite3.Connection | None = None
     try:
-        index, index_state = _resolve_index_for_read(root)
-    except FileNotFoundError as exc:
-        return _failure("lexical", symbol, "missing_index", str(exc), "Run trw_code_index_update for this repo first.")
-    except NotADirectoryError as exc:
-        return _failure("lexical", symbol, "invalid_repo", str(exc), "Pass an existing repository directory.")
-    if index is None:
-        return _failure(
-            "lexical",
-            symbol,
-            "missing_index",
-            "code-index has no existing chunks.json and the reviewer role never reconciles one",
-            "Ask the orchestrator to run trw_code_index_update as an agent-role session first.",
+        conn, info = open_store(root, deadline)
+        deadline.check()
+        ranked = _top_hits(candidates(conn, _scope(safe_path)), score, top_k, budgets, deadline)
+        response = CodeSearchResponse(
+            status="ok",
+            mode="lexical",
+            query=query,
+            results=ranked,
+            index_state=_state(root, info),
+            index_revision=info.revision,
         )
+        if len(response.model_dump_json()) > budgets.query_max_response_bytes:
+            raise IndexBoundExceeded("query_max_response_bytes", budgets.query_max_response_bytes)
+        deadline.check()  # an answer that arrived late is a timeout, however few rows it scanned
+        return response
+    except StoreMissing as exc:
+        return _failure(query, "index_missing", str(exc), f"Run {BUILD_COMMAND} for this repository to build it.")
+    except RuntimeUnsupported as exc:
+        return _failure(query, "unsupported_runtime", str(exc), "Run trw-mcp on Python 3.11 or newer.")
+    except IndexBoundExceeded as exc:
+        return _failure(query, "index_bound_exceeded", str(exc), "Narrow the query or its path.", bound=exc.bound)
+    except (StoreCorrupt, sqlite3.DatabaseError) as exc:
+        if deadline.expired():  # an interrupted statement is the query deadline, not a corrupt store
+            bound = IndexBoundExceeded("query_timeout_seconds", budgets.query_timeout_seconds)
+            return _failure(query, "index_bound_exceeded", str(bound), "Narrow the query.", bound=bound.bound)
+        return _failure(query, "index_corrupt", str(exc), f"Rebuild the store with {BUILD_COMMAND}.")
+    finally:
+        if conn is not None:
+            conn.close()
 
-    needle = symbol.lower()
-    hits: list[CodeSearchHit] = []
-    for chunk in _filter_chunks(index.chunks, safe_path):
-        if chunk.symbol_name is None:
+
+def _top_hits(
+    rows: Iterator[sqlite3.Row],
+    score: Callable[[CodeChunk], tuple[float, str] | None],
+    top_k: int,
+    budgets: CodeIndexBounds,
+    deadline: Deadline,
+) -> tuple[CodeSearchHit, ...]:
+    """Keep the best ``top_k`` in a heap; count candidates against the row budget."""
+
+    limit = _bounded_top_k(top_k)
+    heap: list[tuple[tuple[float, str, int], int, CodeSearchHit]] = []
+    for scanned, row in enumerate(rows, start=1):
+        if scanned > budgets.query_max_rows:
+            raise IndexBoundExceeded("query_max_rows", budgets.query_max_rows)
+        deadline.check()  # every row: one row of a crafted store can take the whole budget (rc7 C12)
+        chunk = row_to_chunk(row)
+        scored = score(chunk)
+        if scored is None:
             continue
-        candidate = chunk.symbol_name.lower()
-        if candidate == needle:
-            hits.append(_hit(chunk, score=100.0, reason="exact symbol match"))
-        elif needle in candidate:
-            hits.append(_hit(chunk, score=50.0 + (len(needle) / len(candidate)), reason="fuzzy symbol match"))
-
-    ranked = tuple(sorted(hits, key=lambda hit: (-hit.score, hit.path, hit.line_range.start))[: _bounded_top_k(top_k)])
-    return CodeSearchResponse(status="ok", mode="lexical", query=symbol, results=ranked, index_state=index_state)
-
-
-def load_chunk_index(path: Path) -> CodeChunkIndex | None:
-    """Load a chunk index, returning ``None`` for missing or invalid state."""
-
-    if not path.exists():
-        return None
-    try:
-        return CodeChunkIndex.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValueError:
-        return None
+        value, reason = scored
+        # Min-heap on the inverse of the result order: the root is the worst kept hit.
+        key = (value, _Reverse(chunk.path), -chunk.start_line)
+        entry = (key, scanned, _hit(chunk, score=value, reason=reason))
+        if len(heap) < limit:
+            heapq.heappush(heap, entry)
+        elif key > heap[0][0]:
+            heapq.heapreplace(heap, entry)
+    ordered = sorted(heap, key=lambda item: (-item[2].score, item[2].path, item[2].line_range.start))
+    return tuple(item[2] for item in ordered)
 
 
-def save_chunk_index(path: Path, index: CodeChunkIndex) -> None:
-    """Persist a chunk index via atomic replace."""
+class _Reverse(str):
+    """A string that sorts in reverse, so a min-heap drops the later path first."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp")
-    temp_path.write_text(f"{index.model_dump_json(indent=2)}\n", encoding="utf-8")
-    try:
-        os.replace(temp_path, path)
-    except OSError:
-        if temp_path.exists():
-            temp_path.unlink()
-        raise
+    __slots__ = ()
+
+    def __lt__(self, other: str) -> bool:
+        return str.__gt__(self, other)
+
+    def __gt__(self, other: str) -> bool:
+        return str.__lt__(self, other)
+
+
+def _state(root: Path, info: StoreInfo) -> Literal["", "stale"]:
+    from trw_mcp.tools._sidecar_substrate import resolve_git_sha
+
+    return "stale" if info.git_head != resolve_git_sha(root) else ""
+
+
+def _scope(path: str | None) -> tuple[str, tuple[object, ...]]:
+    if path is None:
+        return "", ()
+    return "(path = ? OR path LIKE ? ESCAPE '\\')", (path, f"{_escape_like(path)}/%")
+
+
+def _escape_like(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _validated_repo_root(repo_root: Path | str) -> Path:
@@ -320,18 +298,25 @@ def _validate_request(
     *,
     query: str,
     path: str | None,
-    mode: SearchMode,
+    budgets: CodeIndexBounds,
 ) -> tuple[Path, str | None] | CodeSearchResponse:
+    # Refused before any copy, tokenizing or store open, echoing no more than the cap: a scan costs rows x terms,
+    # one LIKE per term (rc7 sweep).
+    if len(query) > budgets.query_max_chars:
+        return _refused(query[: budgets.query_max_chars], "query_max_chars", budgets.query_max_chars, len(query))
     stripped_query = query.strip()
     if not stripped_query:
-        return _failure(mode, query, "query_empty", "query must not be empty", "Provide a non-empty query.")
+        return _failure(query, "query_empty", "query must not be empty", "Provide a non-empty query.")
+    terms = len(_terms(stripped_query))
+    if terms > budgets.query_max_terms:
+        return _refused(query, "query_max_terms", budgets.query_max_terms, terms)
     try:
         root = _validated_repo_root(repo_root)
     except NotADirectoryError as exc:
-        return _failure(mode, query, "invalid_repo", str(exc), "Pass an existing repository directory.")
+        return _failure(query, "invalid_repo", str(exc), "Pass an existing repository directory.")
     safe_path = _normalize_path_filter(path)
     if path is not None and safe_path is None:
-        return _failure(mode, query, "invalid_path", "path must be repo-relative and must not contain '..'", "")
+        return _failure(query, "invalid_path", "path must be repo-relative and must not contain '..'", "")
     return root, safe_path
 
 
@@ -345,26 +330,6 @@ def _normalize_path_filter(path: str | None) -> str | None:
     if posix.is_absolute() or ".." in posix.parts:
         return None
     return posix.as_posix().strip("/")
-
-
-def _filter_chunks(chunks: tuple[CodeChunk, ...], path: str | None) -> tuple[CodeChunk, ...]:
-    if path is None:
-        return chunks
-    return tuple(chunk for chunk in chunks if chunk.path == path or chunk.path.startswith(f"{path}/"))
-
-
-def _chunks_by_path(chunks: tuple[CodeChunk, ...]) -> dict[str, tuple[CodeChunk, ...]]:
-    grouped: dict[str, list[CodeChunk]] = {}
-    for chunk in chunks:
-        grouped.setdefault(chunk.path, []).append(chunk)
-    return {path: tuple(path_chunks) for path, path_chunks in grouped.items()}
-
-
-def _manifest_fingerprint(manifest: CodeIndexManifest) -> str:
-    seed = "\n".join(f"{row.path}:{row.sha256}" for row in manifest.files)
-    import hashlib
-
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def _terms(text: str) -> Counter[str]:
@@ -412,15 +377,21 @@ def _capped_snippet(text: str) -> str:
     return f"{snippet[: MAX_SNIPPET_CHARS - 1]}…"
 
 
-def _failure(mode: SearchMode, query: str, error_code: ErrorCode, error: str, remediation: str) -> CodeSearchResponse:
+def _refused(query: str, field: str, limit: int, size: int) -> CodeSearchResponse:
+    bound = IndexBoundExceeded(field, limit, f"the query has {size}")
+    return _failure(query, "index_bound_exceeded", str(bound), "Shorten the query.", bound=bound.bound)
+
+
+def _failure(query: str, error_code: ErrorCode, error: str, remediation: str, *, bound: str = "") -> CodeSearchResponse:
     return CodeSearchResponse(
         status="failed",
-        mode=mode,
+        mode="lexical",
         query=query,
         results=(),
         error_code=error_code,
         error=error,
         remediation=remediation,
+        bound=bound,
     )
 
 
@@ -435,23 +406,16 @@ def response_to_dict(response: CodeSearchResponse) -> dict[str, object]:
 
 
 __all__ = [
-    "CHUNK_INDEX_RELATIVE_PATH",
-    "CHUNK_INDEX_SCHEMA_VERSION",
+    "BUILD_COMMAND",
     "MAX_SNIPPET_CHARS",
     "MAX_SNIPPET_LINES",
-    "ChunkIndexStats",
-    "CodeChunkIndex",
     "CodeSearchHit",
     "CodeSearchResponse",
     "ErrorCode",
     "LineRange",
     "SearchMode",
     "SymbolRef",
-    "default_chunk_index_path",
     "lexical_search",
-    "load_chunk_index",
     "response_to_dict",
-    "save_chunk_index",
     "symbol_search",
-    "update_chunk_index",
 ]

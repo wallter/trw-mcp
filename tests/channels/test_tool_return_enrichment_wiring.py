@@ -1,7 +1,7 @@
 """Wiring tests: tool-return enrichment by client tier (Gap 2 closure).
 
 Proves that the RESPONSE CONTENT changes by resolved tier (T0 / T1 / T2)
-for trw_before_edit_hint.  Tests verify behavior change, not existence.
+for trw_code's hint mode.  Tests verify behavior change, not existence.
 
 These are unit tests: no filesystem I/O, all sidecar/entitlement
 dependencies are patched out.
@@ -196,7 +196,7 @@ class TestBeforeEditHintTierWiring:
         from datetime import datetime, timedelta, timezone
 
         from trw_mcp.state._entitlements import sign_entitlement_for_dev
-        from trw_mcp.tools.before_edit_hint import _SCHEMA_VERSION_ACCEPTED
+        from trw_mcp.tools._before_edit_hint_core import _SCHEMA_VERSION_ACCEPTED
 
         # Build a minimal git repo + sidecar + entitlement
         repo = tmp_path / "repo"
@@ -245,16 +245,16 @@ class TestBeforeEditHintTierWiring:
         from fastmcp import FastMCP
 
         from tests.conftest import get_tools_sync
-        from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
+        from trw_mcp.tools.code import register_code_tools
 
         srv = FastMCP("test")
-        register_before_edit_hint_tools(srv)
+        register_code_tools(srv)
         tools = get_tools_sync(srv)
-        tool_fn = tools["trw_before_edit_hint"].fn
+        tool_fn = tools["trw_code"].fn
 
-        return tool_fn(  # type: ignore[return-value]
-            file_path="src.py", repo_root=str(repo), cache_dir=str(cache_dir)
-        )
+        result = tool_fn(mode="hint", files="src.py", repo_root=str(repo))
+        hints: list[dict[str, Any]] = result["hints"]
+        return hints[0]
 
     def test_t2_response_has_co_change_neighbors(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
         result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)

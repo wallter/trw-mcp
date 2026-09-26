@@ -123,7 +123,7 @@ def test_trw_recall_signature_is_exactly_the_new_parameter_set() -> None:
     register_learning_tools(server)
     fn = extract_tool_fn(server, "trw_recall")
     params = list(inspect.signature(fn).parameters)
-    assert params == ["ctx", "query", "tags", "status", "max_results", "ids", "options"]
+    assert params == ["ctx", "query", "tags", "status", "max_results", "ids", "options", "graph_id"]
 
 
 def test_trw_build_check_signature_is_exactly_the_new_parameter_set() -> None:

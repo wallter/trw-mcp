@@ -36,7 +36,6 @@ _STATIC_CTX_KEYS: dict[str, str] = {
     ToolName.INIT: "ctx:init",
     ToolName.RECALL: "ctx:recall",
     ToolName.STATUS: "ctx:status",
-    ToolName.PRD_CREATE: "ctx:prd_create",
     ToolName.PRD_VALIDATE: "ctx:prd_validate",
 }
 

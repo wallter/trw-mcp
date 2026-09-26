@@ -26,7 +26,11 @@ _M = TypeVar("_M", bound=BaseModel)
 
 
 class RecallOptions(BaseModel):
-    """``trw_recall(options=...)``: shaping and filters most calls never set."""
+    """``trw_recall(options=...)``: shaping and filters most calls never set.
+
+    ``graph_depth``/``graph_edge_types``/``graph_limit`` shape graph mode
+    (``graph_id`` set) — PRD-CORE-300-FR11 (S9); ignored otherwise.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -35,6 +39,9 @@ class RecallOptions(BaseModel):
     include_tiers: list[str] | None = None
     as_of: str | None = None
     include_superseded: bool = False
+    graph_depth: int = 1
+    graph_edge_types: list[str] | None = None
+    graph_limit: int = 50
 
 
 class BuildCheckOptions(BaseModel):

@@ -145,18 +145,12 @@ def test_run_compensation_is_removed(tmp_path: Path, monkeypatch: pytest.MonkeyP
     preserved exactly: there are still no registered compensating effects, so
     nothing may run — the difference is that the tool no longer advertises it.
     """
-    from fastmcp import FastMCP
-
-    from tests.conftest import extract_tool_fn
     from trw_mcp.tools import _delivery_models, _delivery_reconcile_actions, delivery_ops
-    from trw_mcp.tools.delivery_ops import register_delivery_tools
+    from trw_mcp.tools.delivery_ops import delivery_recover as recover
 
     coord = make_coordinator(tmp_path)
     delivery_id = make_uuid7()
     coord.claim(delivery_id=delivery_id, capability_token=strong_capability())
-    server = FastMCP("delivery-recovery")
-    register_delivery_tools(server)
-    recover = extract_tool_fn(server, "trw_delivery_recover")
     monkeypatch.setattr("trw_mcp.tools.delivery_ops._coordinator", lambda: coord)
 
     response = recover(delivery_id=delivery_id, action="run_compensation")
@@ -171,22 +165,16 @@ def test_run_compensation_is_removed(tmp_path: Path, monkeypatch: pytest.MonkeyP
         assert "run_compensation" not in source, f"{module.__name__} still names the deleted action"
 
 
-def test_public_recovery_tool_routes_every_advertised_action(
+def test_public_recovery_routes_every_advertised_action(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from fastmcp import FastMCP
-
-    from tests.conftest import extract_tool_fn
-    from trw_mcp.tools.delivery_ops import register_delivery_tools
+    from trw_mcp.tools.delivery_ops import delivery_recover as recover
 
     coord = make_coordinator(tmp_path)
     delivery_id = make_uuid7()
     capability = strong_capability()
     coord.claim(delivery_id=delivery_id, capability_token=capability)
-    server = FastMCP("delivery-recovery")
-    register_delivery_tools(server)
-    recover = extract_tool_fn(server, "trw_delivery_recover")
     monkeypatch.setattr("trw_mcp.tools.delivery_ops._coordinator", lambda: coord)
 
     result = recover(

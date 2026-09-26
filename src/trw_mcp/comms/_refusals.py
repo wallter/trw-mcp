@@ -38,12 +38,12 @@ class _R:
 
 
 REFUSALS: dict[str, _R] = {
-    "no_pinned_run": _R("pin a run first: trw_init, or trw_adopt_run to resume one", state="no_run"),
+    "no_pinned_run": _R("pin a run first: trw_init, or `trw-mcp run adopt` to resume one", state="no_run"),
     "no_formation": _R(
-        "not a formation member: trw_peers(action='announce') and ask the orchestrator to admit you", identity=True
+        "not a formation member: trw_inbox(action='announce') and ask the orchestrator to admit you", identity=True
     ),
     "no_matching_member": _R(
-        "not a formation member: trw_peers(action='announce') and ask the orchestrator to admit you", identity=True
+        "not a formation member: trw_inbox(action='announce') and ask the orchestrator to admit you", identity=True
     ),
     "ambiguous_member_match": _R("two members match this pin and run; ask the orchestrator to repair the manifest"),
     "stamped_identity_mismatch": _R("this run is stamped for another member; ask the orchestrator to repair it"),
@@ -59,8 +59,8 @@ REFUSALS: dict[str, _R] = {
     ),
     "candidate_registry_full": _R("retry after candidates expire or withdraw"),
     "context_isolation_disabled": _R("enable ctx_isolation_enabled; comms needs per-connection identity"),
-    "no_endpoint_for_member": _R("enroll first: trw_peers(action='enroll')", state="joined"),
-    "receiver_lease_expired": _R("renew the lease: trw_peers(action='enroll')", state="joined"),
+    "no_endpoint_for_member": _R("enroll first: trw_inbox(action='enroll')", state="joined"),
+    "receiver_lease_expired": _R("renew the lease: trw_inbox(action='enroll')", state="joined"),
     "live_endpoint_held_by_other_incarnation": _R(
         "another live process holds this member; stop it or wait for it", state="joined"
     ),
@@ -68,7 +68,7 @@ REFUSALS: dict[str, _R] = {
     "recipient_unavailable": _R("the peer is not live; retry later or use your native channel"),
     "recipient_not_eligible": _R("the recipient is terminal or not joined; address another member"),
     "recipient_binding_mismatch": _R("the recipient changed binding; list peers and retry"),
-    "invalid_recipient": _R("address a member_id from trw_peers(action='list')"),
+    "invalid_recipient": _R("address a member_id from trw_inbox(action='list')"),
     "ambiguous_addressing": _R("address exactly one of recipient_member_id or scope"),
     "scope_matches_no_peer": _R("no peer declares that path; address a member directly"),
     "invalid_scope": _R("use a repo-relative path"),
@@ -111,12 +111,12 @@ REFUSALS: dict[str, _R] = {
     "endpoint_replaced_by_newer_incarnation": _R(DISPLACED_RECOVERY, state="joined"),
     # Pause (PAUSE-RESUME-DESIGN rev 2). Refused before any mailbox transaction, so never counted.
     "formation_paused": _R(
-        "the formation is paused: ack with trw_peers(action='ack_pause', pause_id=...) and wait for RESUME; "
+        "the formation is paused: ack with trw_inbox(action='ack_pause', pause_id=...) and wait for RESUME; "
         "status or reply to the orchestrator still sends",
         state="paused",
     ),
     "not_paused": _R("the formation is not paused; carry on"),
-    "pause_id_mismatch": _R("ack the pause_id from your latest response; call trw_peers to see it"),
+    "pause_id_mismatch": _R("ack the pause_id from your latest response; call trw_inbox to see it"),
 }
 IDENTITY_REASONS = frozenset(reason for reason, spec in REFUSALS.items() if spec.identity)
 

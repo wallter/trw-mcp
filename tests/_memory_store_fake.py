@@ -8,13 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from trw_memory.embeddings.provenance import EmbeddingSpace
 from trw_memory.lifecycle.correction import LearningPatch
+from trw_memory.lifecycle.dedup import DedupResult
 from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings, assertion_health
 from trw_memory.models.memory import MemoryEntry
 from trw_memory.sync import AdmissionOutcome
 
-from trw_mcp.state._store_selection import NamespaceHealth, RecallSpec, SimilarHit, SimilarWindow, StoreRequest
+from trw_mcp.state._store_selection import (
+    EmbedderStatus,
+    NamespaceHealth,
+    RecallSpec,
+    StoreRequest,
+    VectorCoverage,
+    VectorSet,
+)
 from trw_mcp.state._tier_routing import USER_NAMESPACE
 
 
@@ -29,13 +36,17 @@ class FakeMemoryStore:
         self.rows: dict[tuple[str, str], MemoryEntry] = {}
         self.calls: list[tuple[str, object]] = []
         self.synced: dict[tuple[str, str], int] = {}
-        self.stored_vectors: dict[str, list[float]] = {}  # project rows, already in the asked space
+        self.stored_vectors: dict[str, list[float]] = {}  # project rows, already in the active space
+        self.text_vectors: dict[str, list[float]] = {}  # the daemon encoder's answers, by text
+        self.dup_threshold: float | None = 0.9  # ``None``: the daemon has no embedder
         self.graph_edges: dict[tuple[str, str], list[tuple[str, str, float]]] = {}  # (ns, source) -> (target, type, w)
         # Test seam: the fake has no write gate, so a caller scripts the refusal status
         # ("invalid"/"blocked"/"quarantined"/...) the daemon's real gate would return,
         # to drive ``memory_adapter``'s status translation. Cleared after one use.
         self.next_put_status: str | None = None
         self.edges: dict[str, int] = {}  # materialised graph edges per namespace; the fake keeps no graph
+        self.embedder: EmbedderStatus = {"available": True, "model": "fake-encoder", "loaded": False, "reason": None}
+        self.vector_coverage: VectorCoverage | None = None
 
     def put(self, summary: str, namespace: str, request: StoreRequest) -> dict[str, object]:
         self.calls.append(("put", (summary, namespace)))
@@ -116,9 +127,12 @@ class FakeMemoryStore:
         self.calls.append(("admit_shared", len(results)))
         return AdmissionOutcome(list(results), 0, 0)
 
-    def vectors(self, ids: list[str], space: EmbeddingSpace) -> dict[str, list[float]]:
+    def vectors(self, ids: list[str]) -> VectorSet | None:
         self.calls.append(("vectors", tuple(ids)))
-        return {entry_id: self.stored_vectors[entry_id] for entry_id in ids if entry_id in self.stored_vectors}
+        if self.dup_threshold is None:
+            return None  # the daemon has no embedder
+        found = {entry_id: self.stored_vectors[entry_id] for entry_id in ids if entry_id in self.stored_vectors}
+        return VectorSet(found, self.dup_threshold)
 
     def verify(self, namespace: str, project_root: Path | None, settings: VerifySettings) -> MaintainVerifySummary:
         # Counts the rows the real sweep would visit; it checks nothing.
@@ -176,25 +190,35 @@ class FakeMemoryStore:
         ]
         return rows, len(hops) > limit
 
-    def maintain(self, namespace: str) -> dict[str, Any]:
+    def maintain(self, namespace: str, consolidation: dict[str, object]) -> dict[str, Any]:
         # Records the request; the fake has no importance to decay.
-        self.calls.append(("maintain", (namespace,)))
+        self.calls.append(("maintain", (namespace, consolidation)))
         return {"status": "ok", "passes": {"decay": {"status": "ok", "processed": 0, "remaining": 0}}}
 
-    def similar(self, namespace: str, vector: list[float], space: EmbeddingSpace | None, top_k: int) -> SimilarWindow:
-        # Every stored vector counts as in *space*: the fake has no provenance.
-        self.calls.append(("similar", (namespace, top_k)))
+    def similar(
+        self, namespace: str, text: str, skip_threshold: float, merge_threshold: float, top_k: int
+    ) -> DedupResult | None:
+        # The daemon's rule over this fake's rows: ``text_vectors`` stands in for its encoder
+        # (a text it does not know means no embedder), and no threshold is calibrated.
+        self.calls.append(("similar", (namespace, text, skip_threshold, merge_threshold, top_k)))
+        vector = self.text_vectors.get(text)
+        if vector is None or not text.strip():
+            return None
         norm = math.sqrt(sum(x * x for x in vector)) or 1.0
-        hits = []
+        best: tuple[float, str, bool] | None = None
         for (ns, entry_id), entry in self.rows.items():
             stored = self.stored_vectors.get(entry_id)
             if ns != namespace or stored is None:
                 continue
             other = math.sqrt(sum(x * x for x in stored)) or 1.0
             cosine = sum(a * b for a, b in zip(vector, stored, strict=False)) / (norm * other)
-            hits.append(SimilarHit(entry_id, cosine, entry.status == "active"))
-        window = sorted(hits, key=lambda hit: -hit.similarity)[:top_k]
-        return SimilarWindow(len(window), window if space is not None else [])
+            if best is None or cosine > best[0]:
+                best = (cosine, entry_id, entry.status == "active")
+        if best is not None and best[0] >= skip_threshold:
+            return DedupResult("skip", best[1], best[0])
+        if best is not None and best[0] >= merge_threshold and best[2]:
+            return DedupResult("merge", best[1], best[0])
+        return DedupResult("store", None, max(best[0], 0.0) if best else 0.0)
 
     def _write(self, key: tuple[str, str], entry: MemoryEntry) -> None:
         previous = self.rows.get(key)
@@ -214,6 +238,18 @@ class FakeMemoryStore:
     def count(self, namespace: str) -> int:
         self.calls.append(("count", namespace))
         return sum(1 for (ns, _eid) in self.rows if ns == namespace)
+
+    def embedder_status(self, namespace: str) -> EmbedderStatus:
+        self.calls.append(("embedder_status", namespace))
+        return self.embedder
+
+    def reembed(self, namespace: str) -> dict[str, object]:
+        self.calls.append(("reembed", namespace))
+        return {"status": "unavailable", "reason": "embedder_error"}
+
+    def coverage(self, namespace: str) -> VectorCoverage | None:
+        self.calls.append(("coverage", namespace))
+        return self.vector_coverage
 
     def health(self, namespace: str) -> NamespaceHealth:
         # A derived relation is a tag one of the three newest rows shares with another row.

@@ -193,15 +193,6 @@ class TestMcpInstance:
         tool_names = {t.name for t in tools}
         assert {"trw_review"} <= tool_names
 
-    async def test_mcp_registers_probe_tools(self) -> None:
-        """PRD-CORE-144: the empirical probe harness tools are wired into the
-        production server surface (consumer-wiring proof for the harness)."""
-        from trw_mcp.server._app import mcp
-
-        tools = await mcp._list_tools()
-        tool_names = {t.name for t in tools}
-        assert {"trw_probe", "trw_probe_budget_status"} <= tool_names
-
     async def test_mcp_does_not_register_ceremony_feedback_tools(self) -> None:
         """PRD-FIX-076: the ceremony de-escalation kill-switch tools were
         deregistered from the MCP surface (dead — zero skill/agent/hook

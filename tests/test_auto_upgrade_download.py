@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from tests._auto_upgrade_test_support import (
     _make_tar_gz_bytes,
@@ -123,10 +124,11 @@ class TestDownloadReleaseArtifact:
             result = download_release_artifact("https://example.com/release.tar.gz")
         assert result is None
 
-    def test_auth_header_sent(self, tmp_path: Path) -> None:
+    def test_auth_header_sent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """platform_api_key produces an Authorization header ONLY when the
-        artifact host matches the configured platform host over https
-        (sweep-4 credential-egress guard)."""
+        artifact host is on the trusted-host allowlist over https (W38; a
+        configured platform host alone is not trusted)."""
+        monkeypatch.setenv("TRW_PLATFORM_TRUSTED_HOSTS", "example.com")
         archive_bytes = _make_tar_gz_bytes({"data/f.txt": b"ok"})
         _reset_config(TRWConfig(platform_url="https://example.com", platform_api_key="secret-key"))
         client = _client_for_archive(archive_bytes)

@@ -21,47 +21,33 @@ tool's ``_meta``. FastMCP 3.2.4 plumbs a tool's ``meta`` dict straight through
 against the live server: ``{"anthropic/alwaysLoad": true, "fastmcp": {...}}``),
 so no fork or transport shim is needed.
 
-WHY THIS IS A FLOOR AND NOT A LIST
-----------------------------------
-Every name here is a tool deferral no longer saves. The set is therefore capped
-by intent, not by taste: a tool earns a place only if *not finding it* silently
-degrades the framework, and only if nothing already-loaded can substitute.
+WHAT THE FLOOR IS (PRD-CORE-300-FR14)
+------------------------------------
+Every name here is a tool deferral no longer saves, so the set is not a taste
+list. After the PRD-CORE-300 cut the always-on kernel is small (the tools an
+agent needs in every session: session start, init, status, recall, learn,
+checkpoint, deliver, build check, review, PRD validation, code navigation), and
+a kernel tool an agent must stop and search for is a kernel tool it skips. So
+the floor IS the always-on kernel, read from ``models/surface_v2.POST_CUT_KERNEL``
+(the spec S11b makes ``surface_packs.KERNEL_TOOLS`` equal) rather than restated
+here. A kernel name that is not registered yet, ``trw_code`` before slice S10,
+is skipped and logged, and joins the floor the moment it registers.
 
-Admitted (5):
+Flag-gated, outside the kernel:
 
-* ``trw_session_start`` — the mandated first action. Nothing precedes it, so
-  nothing can tell the agent to search for it. The headline case.
-* ``trw_checkpoint`` — the compaction-survival call. It must fire *before* an
-  unpredictable event, mid-implementation, on no external prompt.
-* ``trw_learn`` — the capture path for the value hierarchy's third rung. Fires
-  opportunistically on discovery, with the same "won't stop to search" failure
-  mode as the checkpoint.
-* ``trw_build_check`` — the evidence ``trw_deliver``'s gate reads. Loading the
-  gate but not its precondition strands the agent at the gate.
-* ``trw_deliver`` — the terminal ceremony. Missing it discards the session.
-
-Deliberately EXCLUDED, and why the exclusion holds:
-
-* ``trw_recall`` — kernel, but ``trw_session_start(query=...)`` already performs
-  the recall, and that tool is loaded. Subsumed.
-* ``trw_review`` — RIGID, and the remedy for the ``review_scope_block``
-  NO_ESCAPE. But that block names ``trw_review`` in its own text, and the agent
-  reading it is already stopped: it can afford one search, with an exact name.
-* ``trw_status`` / ``trw_skill_discovery`` / ``trw_request_tool_access`` /
-  ``trw_profile_explain`` — kernel, but each is reached deliberately, when the
-  agent has already decided it wants them. On-demand is the correct cost.
-
-Opt-in (outside the floor and its cap):
-
-* ``trw_assess`` — only when ``assess_enabled`` is set. A project that opted into
-  the advisory judge wants it used at decision points, and a deferred tool was
-  the reason two lanes gave for not reaching for it. With ``assess_enabled`` off it is hidden and
-  stays deferred, so no default install pays for it.
+* ``trw_assess`` (``assess_enabled``), ``trw_send`` and ``trw_inbox``
+  (``comms_enabled``) — loaded up front only when the flag is on. A project
+  that opted into the advisory judge or a formation wants them used, and a
+  deferred tool was the reason two lanes gave for not reaching for the judge.
+  With the flag off they stay deferred, so no install pays for them unasked.
+* ``trw_dispatch`` — NEVER loaded up front, whatever ``dispatch_tools_exposed``
+  says. It spawns other agents; reaching it should cost a deliberate search.
 
 The per-server ``alwaysLoad`` in ``.mcp.json`` is the WRONG lever for this and is
 not used: it exempts the entire server from deferral, which restores the whole
 ~15.7k-token definition surface and discards the benefit this module exists to
-keep. Per-tool ``_meta`` is the fine-grained control.
+keep, and exempts an exposed ``trw_dispatch`` too. Per-tool ``_meta`` is the
+fine-grained control; the generated config never sets the per-server key.
 
 Clients that ignore ``_meta`` (every upfront-loading client: opencode, Codex
 CLI, Cursor, Cline, Gemini CLI) are unaffected — the key is additive metadata,
@@ -70,9 +56,12 @@ not a schema change, so it cannot break a client that does not read it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Final
 
 import structlog
+
+from trw_mcp.models.surface_v2 import POST_CUT_FLAGGED, POST_CUT_KERNEL
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -82,31 +71,37 @@ logger = structlog.get_logger(__name__)
 #: Claude Code's per-tool deferral opt-out key, written into the tool's ``_meta``.
 ALWAYS_LOAD_META_KEY: Final[str] = "anthropic/alwaysLoad"
 
-#: The ceremony floor that loads before the agent can search for anything.
-#: Read this module's docstring before adding a name — each addition is a tool
-#: whose definition every deferring client pays for in every session.
-ALWAYS_LOAD_TOOLS: Final[frozenset[str]] = frozenset(
-    {
-        "trw_session_start",
-        "trw_checkpoint",
-        "trw_learn",
-        "trw_build_check",
-        "trw_deliver",
-    }
-)
+#: The always-on kernel, loaded before the agent can search for anything.
+#: Derived from the post-cut kernel spec; never hand-list a name here.
+ALWAYS_LOAD_TOOLS: Final[frozenset[str]] = frozenset(POST_CUT_KERNEL)
+
+#: Flag-gated tools that are never loaded up front, whatever their flag says.
+NEVER_ALWAYS_LOAD: Final[frozenset[str]] = frozenset({"trw_dispatch"})
+
+#: tool -> config flag: loaded up front only while that flag is true.
+FLAG_GATED_ALWAYS_LOAD: Final[Mapping[str, str]] = {
+    tool: flag for tool, flag in POST_CUT_FLAGGED.items() if tool not in NEVER_ALWAYS_LOAD
+}
+
+#: The config flags the boot path must read (see ``server/_tools.py``).
+GATING_FLAGS: Final[frozenset[str]] = frozenset(FLAG_GATED_ALWAYS_LOAD.values())
 
 
-#: Always-loaded only when the project enabled it (``assess_enabled``).
-ASSESS_TOOL: Final[str] = "trw_assess"
+def always_load_names(flags: Mapping[str, bool]) -> frozenset[str]:
+    """The kernel floor plus each flag-gated tool whose flag is on in *flags*."""
+    return ALWAYS_LOAD_TOOLS | {tool for tool, flag in FLAG_GATED_ALWAYS_LOAD.items() if flags.get(flag, False)}
 
 
-async def apply_always_load_meta(server: FastMCP, *, assess_enabled: bool = False) -> tuple[str, ...]:
-    """Mark every :data:`ALWAYS_LOAD_TOOLS` entry, plus ``trw_assess`` when enabled, as always-loaded.
+async def apply_always_load_meta(server: FastMCP, *, flags: Mapping[str, bool] | None = None) -> tuple[str, ...]:
+    """Mark the kernel floor, plus each flag-gated tool whose flag is on, as always-loaded.
+
+    *flags* maps a config flag name (``assess_enabled``, ``comms_enabled``) to
+    its value; a missing flag counts as off.
 
     Mutates the registered tool objects in place. That is intentional and safe
     here, and only here: ``get_tool`` returns the registry singleton, so the
     assignment is process-permanent (learning L-MZ6J). This runs exactly once at
-    boot with a static set, which is the one shape where permanence is the goal
+    boot with a config-derived set, which is the one shape where permanence is the goal
     — a per-request mutation of the same objects would be a leak.
 
     Fail-open per tool: a name that does not resolve is logged and skipped, so a
@@ -119,7 +114,7 @@ async def apply_always_load_meta(server: FastMCP, *, assess_enabled: bool = Fals
     applied: list[str] = []
     missing: list[str] = []
 
-    for name in sorted(ALWAYS_LOAD_TOOLS | ({ASSESS_TOOL} if assess_enabled else set())):
+    for name in sorted(always_load_names(flags or {})):
         tool: Any = None
         try:
             tool = await server.get_tool(name)
@@ -144,6 +139,9 @@ async def apply_always_load_meta(server: FastMCP, *, assess_enabled: bool = Fals
 __all__ = [
     "ALWAYS_LOAD_META_KEY",
     "ALWAYS_LOAD_TOOLS",
-    "ASSESS_TOOL",
+    "FLAG_GATED_ALWAYS_LOAD",
+    "GATING_FLAGS",
+    "NEVER_ALWAYS_LOAD",
+    "always_load_names",
     "apply_always_load_meta",
 ]

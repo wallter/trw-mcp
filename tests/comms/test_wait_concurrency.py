@@ -37,7 +37,7 @@ def pair(formation_env: FormationFixture, tmp_path: Path) -> Any:
         for session in ("pin-a", "pin-b"):
             peer = WaitPeer(formation_env.project_root, tmp_path / "peers", session)
             children.append(peer)
-            assert peer.call("trw_peers", action="enroll")["status"] == "ok"
+            assert peer.call("trw_inbox", action="enroll")["status"] == "ok"
         yield (*children, database_path(formation_env.manifest_path()))
     finally:
         for peer in children:

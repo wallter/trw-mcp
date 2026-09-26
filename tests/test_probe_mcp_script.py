@@ -35,12 +35,25 @@ PROBE_PATH = REPO_ROOT / "scripts" / "probe-mcp.py"
 
 
 def _load_probe() -> ModuleType:
-    """Import ``scripts/probe-mcp.py`` by path (its name is not importable)."""
+    """Import ``scripts/probe-mcp.py`` by path (its name is not importable).
+
+    The probe puts the monorepo root at ``sys.path[0]`` when it is imported, and
+    this loader runs from a MODULE-scoped fixture, outside the per-test
+    ``_restore_sys_path`` guard. Left in place, that entry makes the repo-root
+    ``tests`` package shadow ``trw-mcp/tests`` for the rest of the xdist worker,
+    so every later ``multiprocessing`` spawn child dies unpickling its target
+    with ``No module named 'tests.<module>'``. Restore the path once the probe
+    has bound its imports.
+    """
     spec = importlib.util.spec_from_file_location("trw_probe_mcp_script", PROBE_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    saved_path = list(sys.path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = saved_path
     return module
 
 
@@ -198,9 +211,16 @@ def test_corpus_count_returns_zero_for_an_absent_store(probe_mod: ModuleType, tm
 
 
 def test_expected_tool_surface_is_derived_from_the_disclosure_config(probe_mod: ModuleType) -> None:
-    """The expected set equals the server's own resolution, bounded by eligibility."""
-    from trw_mcp.middleware.surface_authority import _BOOTSTRAP_TOOLS
-    from trw_mcp.models.phase_policy import RIGID_TOOLS
+    """The expected set equals the server's own resolution, bounded by eligibility.
+
+    PRD-CORE-300 S11b: ``expected_tool_surface`` now calls
+    ``resolve_tool_surface(mode, **flags)`` directly and returns inputs
+    ``{tool_resolution_mode, comms_enabled, dispatch_enabled, assess_enabled,
+    eligible_tool_count}`` — there is no ``task_type`` any more (the surface no
+    longer depends on it), and no ``_BOOTSTRAP_TOOLS``/``RIGID_TOOLS`` union
+    (both deleted; the kernel plus the always-on packs cover the same ground).
+    """
+    from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS
     from trw_mcp.server._surface_manifest_registry import eligible_tool_names, resolve_tool_surface
 
     surface, inputs = probe_mod.expected_tool_surface()
@@ -208,22 +228,32 @@ def test_expected_tool_surface_is_derived_from_the_disclosure_config(probe_mod: 
 
     assert surface, "a vacuous expected set would make the contract unfalsifiable"
     assert surface <= eligible
-    assert set(RIGID_TOOLS) <= surface
-    assert set(_BOOTSTRAP_TOOLS) <= surface
-    assert inputs["task_type"] is None
+    assert set(ALWAYS_ON_TOOLS) <= surface
+    assert "task_type" not in inputs
     assert inputs["eligible_tool_count"] == len(eligible)
 
-    if inputs["tool_resolution_mode"] == "standard" and not inputs["phase_exposure_enabled"]:
-        bounded = set(resolve_tool_surface(None, "standard", comms_enabled=bool(inputs["comms_enabled"])).tools)
-        assert surface == (bounded | set(RIGID_TOOLS) | set(_BOOTSTRAP_TOOLS)) & eligible
+    if inputs["tool_resolution_mode"] == "standard":
+        bounded = set(
+            resolve_tool_surface(
+                "standard",
+                comms_enabled=bool(inputs["comms_enabled"]),
+                dispatch_enabled=bool(inputs["dispatch_enabled"]),
+                assess_enabled=bool(inputs["assess_enabled"]),
+            ).tools
+        )
+        assert surface == bounded & eligible
         # Boundedness is the point: a masked tool must NOT be in the expected set,
         # or the probe would never notice the disclosure layer disappearing.
-        assert "trw_pipeline_health" not in surface
+        if not inputs["dispatch_enabled"]:
+            assert "trw_dispatch" not in surface
 
 
 def test_expected_tool_surface_tracks_tool_resolution_mode_all(probe_mod: ModuleType, monkeypatch) -> None:
-    """Flipping the operator escape to ``all`` widens the expected set."""
+    """Flipping the operator escape to ``all`` widens the expected set — but
+    NEVER the dispatch pack without its own flag (FR09: process launching is
+    never on by default, in any mode)."""
     from trw_mcp.models import config as config_module
+    from trw_mcp.models.surface_packs import PACK_TOOLS
     from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
     real = config_module.get_config()
@@ -231,7 +261,8 @@ def test_expected_tool_surface_tracks_tool_resolution_mode_all(probe_mod: Module
     class _AllMode:
         tool_resolution_mode = "all"
         comms_enabled = False
-        phase_exposure_enabled = False
+        dispatch_tools_exposed = False
+        assess_enabled = False
         pipeline_health_gate_graph_min_corpus = getattr(real, "pipeline_health_gate_graph_min_corpus", 10)
 
     monkeypatch.setattr(config_module, "get_config", lambda: _AllMode())
@@ -239,27 +270,9 @@ def test_expected_tool_surface_tracks_tool_resolution_mode_all(probe_mod: Module
     surface, inputs = probe_mod.expected_tool_surface()
 
     assert inputs["tool_resolution_mode"] == "all"
-    assert surface == set(eligible_tool_names())
-    assert "trw_pipeline_health" in surface
-
-
-def test_expected_tool_surface_narrows_under_phase_exposure(probe_mod: ModuleType, monkeypatch) -> None:
-    """With phase exposure on, the expected set is bounded by the phase policy."""
-    from trw_mcp.models import config as config_module
-    from trw_mcp.models.phase_policy import DEFAULT_PHASE_POLICY, RIGID_TOOLS
-
-    class _PhaseGated:
-        tool_resolution_mode = "standard"
-        comms_enabled = False
-        phase_exposure_enabled = True
-        pipeline_health_gate_graph_min_corpus = 10
-
-    monkeypatch.setattr(config_module, "get_config", lambda: _PhaseGated())
-
-    surface, inputs = probe_mod.expected_tool_surface()
-
-    assert inputs["phase_exposure_enabled"] is True
-    assert surface <= set(DEFAULT_PHASE_POLICY.list_for("RESEARCH")) | set(RIGID_TOOLS)
+    assert inputs["dispatch_enabled"] is False
+    assert surface == set(eligible_tool_names()) - set(PACK_TOOLS["dispatch"])
+    assert "trw_dispatch" not in surface
 
 
 def test_gate_graph_min_corpus_reads_the_live_config(probe_mod: ModuleType, monkeypatch) -> None:
@@ -530,11 +543,6 @@ def _repo_store_rows_matching(pattern: str) -> int:
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="scripts/probe-mcp.py seeds an unpinned fixture that the 6.0.0 daemon-only store refuses; "
-    "fixture-daemon port in 6.1.0",
-)
 def test_live_probe_reports_every_contract_and_stays_inside_its_fixture(tmp_path: Path) -> None:
     """End-to-end: the probe spawns the real server, reports, and contaminates nothing.
 
@@ -581,7 +589,7 @@ def test_live_probe_reports_every_contract_and_stays_inside_its_fixture(tmp_path
         "init_ok",
         "status_ok",
         "recall_ok",
-        "tool_access_grant",
+        "surface_detail",
         "pipeline_health_callable",
         "graph_verdict_agreement",
     }
@@ -634,3 +642,33 @@ def test_live_probe_with_no_seed_reports_the_graph_contract_inconclusive(tmp_pat
     assert graph["status"] == "inconclusive"
     assert report["summary"]["all_passed"] is False
     assert report["environment"]["seeded_learnings"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Daemon cleanup: the server auto-starts a memory daemon for the fixture HOME
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("keep", [False, True], ids=["removed", "kept"])
+def test_fixture_dir_stops_the_daemon_placed_under_it(probe_mod: ModuleType, keep: bool) -> None:
+    """A detached daemon (30-min idle exit) outlived every probe run; two were found 16 min on."""
+    import shutil
+    import subprocess
+
+    daemon: subprocess.Popen[bytes] | None = None
+    fixture: Path | None = None
+    try:
+        with probe_mod.fixture_dir(keep) as fixture:
+            home = fixture / "home"
+            home.mkdir()
+            daemon = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(120)", "trw_memory.server", "serve"],
+                env={"HOME": str(home), "TRW_USER_DIR": str(home / ".trw-user"), "PATH": "/usr/bin:/bin"},
+                start_new_session=True,
+            )
+        assert daemon.wait(timeout=10) is not None
+    finally:
+        if daemon is not None and daemon.poll() is None:
+            daemon.kill()
+        if keep and fixture is not None:
+            shutil.rmtree(fixture, ignore_errors=True)

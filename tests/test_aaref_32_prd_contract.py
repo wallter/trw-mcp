@@ -10,6 +10,7 @@ import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from tests._test_tools_requirements_support import _get_tools, set_project_root  # noqa: F401
+from trw_mcp.tools.requirements import create_prd
 
 
 def _mapping(requirement_id: str, method: str = "test") -> dict[str, object]:
@@ -183,7 +184,7 @@ def test_prd_create_round_trips_typed_verification_mappings(tmp_path: Path) -> N
         _mapping("PRD-CORE-001-NFR02", "demonstration"),
         _mapping("PRD-CORE-001-NFR03", "inspection"),
     ]
-    result = _get_tools()["trw_prd_create"].fn(
+    result = create_prd(
         input_text="Add observable verification behavior",
         category="CORE",
         priority="P1",
@@ -530,7 +531,7 @@ def test_measured_traceability_is_exposed_by_tool(tmp_path: Path) -> None:
     [("CORE", 12), ("INFRA", 9), ("FIX", 8), ("RESEARCH", 7)],
 )
 def test_create_and_validate_report_variant_section_counts(tmp_path: Path, category: str, expected: int) -> None:
-    created = _get_tools()["trw_prd_create"].fn(
+    created = create_prd(
         input_text=f"Create {category} contract",
         category=category,
         priority="P2",
@@ -552,7 +553,7 @@ def test_lifecycle_and_quality_namespaces_are_explicit(tmp_path: Path) -> None:
 
 
 def test_complete_sparse_template_has_no_deprecated_completeness_warning(tmp_path: Path) -> None:
-    created = _get_tools()["trw_prd_create"].fn(
+    created = create_prd(
         input_text="Create a complete but intentionally sparse template",
         category="CORE",
         priority="P2",
@@ -597,7 +598,7 @@ def test_template_classification_examples_round_trip_and_keep_review_boundary() 
         ("non_behavioral", "inspection", False),
     ]
     assert mappings[1].automation_infeasible_reason is None
-    created = _get_tools()["trw_prd_create"].fn(
+    created = create_prd(
         input_text="Preserve template verification examples",
         category="CORE",
         title="Example contracts",
@@ -915,7 +916,7 @@ def test_creator_rejects_malformed_requirement_kind(tmp_path: Path) -> None:
     from trw_mcp.exceptions import ValidationError
 
     with pytest.raises(ValidationError, match="requirement_kind"):
-        _get_tools()["trw_prd_create"].fn(
+        create_prd(
             input_text="Add behavior",
             category="CORE",
             title="Invalid kind",

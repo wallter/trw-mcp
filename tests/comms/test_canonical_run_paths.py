@@ -47,7 +47,7 @@ def test_alias_binding_routes_without_accepting_a_different_run(
         assert isinstance(result, dict)
         return result
 
-    assert call("trw_peers", action="enroll")["status"] == "ok"
+    assert call("trw_inbox", action="enroll")["status"] == "ok"
     db = database_path(formation_env.manifest_path())
     with closing(sqlite3.connect(db)) as conn:
         assert conn.execute("SELECT run_path FROM endpoints").fetchone()[0] == str(receiver.resolve())
@@ -105,7 +105,7 @@ def test_endpoint_resolution_failure_refuses_without_charge(
         return result
 
     monkeypatch.setenv("TRW_SESSION_ID", "pin-b")
-    assert call("trw_peers", action="enroll")["status"] == "ok"
+    assert call("trw_inbox", action="enroll")["status"] == "ok"
     monkeypatch.setenv("TRW_SESSION_ID", "pin-a")
     sent = call("trw_send", recipient_member_id="impl-2", request_key="seed", body="hello")
     assert sent["status"] == "ok", sent

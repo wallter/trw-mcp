@@ -27,9 +27,7 @@ tools:
   - mcp__trw__trw_deliver
   - mcp__trw__trw_learn
   - mcp__trw__trw_recall
-  - mcp__trw__trw_instructions_sync
   - mcp__trw__trw_build_check
-  - mcp__trw__trw_prd_create
   - mcp__trw__trw_prd_validate
 disallowedTools:
   - NotebookEdit

@@ -126,7 +126,7 @@ class TestDefectRecordsAreNotStateAssertions:
             id="L-1cHv-dead-hooks",
         ),
         pytest.param(
-            "trw_skill_discovery strict mode rejects frontmatter fields Claude Code itself defines",
+            "skill discovery strict mode rejects frontmatter fields Claude Code itself defines",
             "on 12 of 31 bundled skills, and its ranking counts stopwords as query matches",
             id="L-ODuU-skill-frontmatter",
         ),

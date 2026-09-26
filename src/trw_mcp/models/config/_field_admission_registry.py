@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from trw_mcp.models.config._field_admission_assess import ASSESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
+from trw_mcp.models.config._field_admission_code_index import CODE_INDEX_ADMISSIONS
 from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
@@ -24,6 +25,7 @@ from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSION
 from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_instruction_writes import INSTRUCTION_WRITE_ADMISSIONS
 from trw_mcp.models.config._field_admission_memory_truth import MEMORY_TRUTH_ADMISSIONS
+from trw_mcp.models.config._field_admission_platform_egress import PLATFORM_EGRESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_project_handoff import PROJECT_HANDOFF_ADMISSIONS
 from trw_mcp.models.config._field_admission_registry_types import (
     BudgetDecision as BudgetDecision,
@@ -33,7 +35,6 @@ from trw_mcp.models.config._field_admission_registry_types import (
 )
 from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT_ADMISSIONS
 from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
-from trw_mcp.models.config._field_admission_tool_access_grant import TOOL_ACCESS_GRANT_ADMISSIONS
 from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
 
 #: Explicit full-metadata admissions for public fields added by PRD-CORE-218
@@ -75,13 +76,16 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
         owner="PRD-CORE-218-FR04",
         consumer="trw_mcp.middleware.surface_authority (SurfaceAuthorityMiddleware) via resolve_tool_surface",
         default_rationale=(
-            "Defaults to 'standard' so the bounded kernel+task-pack surface is the default; "
-            "'all' is an explicit operator selection (FR04)."
+            "Defaults to 'standard': the kernel plus every pack whose config flag is on; "
+            "'all' is an explicit operator selection that also turns on the comms and assess "
+            "packs (FR04)."
         ),
         interaction_analysis=(
             "Two-valued selector consumed by the manifest tool-surface resolver and enforced by "
-            "SurfaceAuthorityMiddleware; 'all' remains subject to phase-exposure/policy/authorization "
-            "(NFR02). It is now the sole exposure authority — the legacy tool_exposure_mode was removed."
+            "SurfaceAuthorityMiddleware; 'all' never turns on the dispatch pack (that needs "
+            "dispatch_tools_exposed in every mode) and never widens a surface_role='reviewer' "
+            "session (NFR02). It is now the sole exposure authority — the legacy tool_exposure_mode "
+            "was removed."
         ),
         deprecation_plan="Retain; the sole tool-exposure authority after the CORE-125 preset filter removal.",
         docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-218.md#prd-core-218-fr04",
@@ -133,7 +137,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
         consumer="trw_mcp.tools._hint_sidecar_refresh.resolve_refresh_plan (data/git_hooks/trw-post-commit.sh)",
         default_rationale=(
             "Defaults True so the T2 tier is live rather than dormant; flipping it False is the "
-            "FR01 rollback path (\u00a79), which degrades trw_before_edit_hint to its existing T1/T0 behavior."
+            "FR01 rollback path (\u00a79), which degrades trw_code's hint mode to its existing T1/T0 behavior."
         ),
         interaction_analysis=(
             "Master gate read before hint_sidecar_refresh_file_cap; when False the refresh is a no-op and "
@@ -305,6 +309,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **PROJECT_HANDOFF_ADMISSIONS,
     # PRD-CORE-248: WAL-checkpoint trigger + resetting-permit tunables (own table).
     **WAL_CHECKPOINT_ADMISSIONS,
+    **CODE_INDEX_ADMISSIONS,
     # PRD-CORE-255: review-verdict TTL (own table, see module docstring).
     **REVIEW_VERDICT_ADMISSIONS,
     # PRD-CORE-265: formation manifest + enforcement tunables (own table).
@@ -317,9 +322,10 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     # PRD-SEC-015: reviewer-role selector (own table, see module docstring).
     **SURFACE_ROLE_ADMISSIONS,
     # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
-    **TOOL_ACCESS_GRANT_ADMISSIONS,
     # PRD-CORE-281: dispatch pack exposure + child TRW access (own table).
     **DISPATCH_ACCESS_ADMISSIONS,
     # trw-jev slice 1: assess_support pack exposure (own table).
     **ASSESS_ADMISSIONS,
+    # W38 (7.0.0 security P1): platform-contact kill switch (own table).
+    **PLATFORM_EGRESS_ADMISSIONS,
 }

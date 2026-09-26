@@ -1,11 +1,13 @@
 """PRD-CORE-233 FR03 — no-run diagnostics name a remedy the caller can execute.
 
 Both no-active-run message sites used to say only "Call trw_init() to create a
-run or trw_adopt_run(run_path=...) to resume one". Neither tool is granted to
+run or `run-adopt(run_path=...)` to resume one". Neither tool was granted to
 any of the seven bundled sub-agents that hold ``trw_checkpoint``, so the printed
 remedy was unexecutable for exactly the callers who hit the error. FR03 adds the
 ``run_path=`` parameter — which the tool already accepts — to both sites and
-binds them to ONE shared remedy set so they cannot drift apart.
+binds them to ONE shared remedy set so they cannot drift apart. PRD-CORE-300
+S6b folded the standalone adoption tool into ``trw-mcp run adopt``; the third
+remedy now names that CLI verb instead.
 """
 
 from __future__ import annotations
@@ -55,14 +57,15 @@ def _resolver_error(session_id: str = "fr03-no-pin") -> StateError:
 
 
 def _names_run_path_outside_adopt_run(text: str) -> bool:
-    """True when ``run_path=`` is offered on its own, not only inside ``trw_adopt_run``.
+    """True when ``run_path=`` is offered on its own, not only inside the adopt remedy.
 
     Pre-change both message sites already contained the substring ``run_path=``
-    — but ONLY as part of ``trw_adopt_run(run_path=...)``, a tool none of the
+    — but ONLY as part of ```run-adopt(run_path=...)```, a tool none of the
     affected callers hold. A bare substring check would pass vacuously, so the
-    adopt-run mention is masked out before looking.
+    now-CLI adopt remedy (``--run-path=``, hyphenated, not ``run_path=``) is
+    masked out before looking.
     """
-    return "run_path=" in text.replace("trw_adopt_run(run_path=...)", "trw_adopt_run(<run dir>)")
+    return "run_path=" in text.replace("--run-path=", "--RUN-DIR=")
 
 
 def test_shared_hint_names_run_path_as_an_executable_remedy() -> None:
@@ -75,7 +78,7 @@ def test_shared_hint_names_run_path_as_an_executable_remedy() -> None:
     # The ceremony tools are RETAINED, not substituted — the orchestrator-side
     # reader still needs them (FR03 boundary semantics).
     assert "trw_init" in hint
-    assert "trw_adopt_run" in hint
+    assert "run adopt" in hint
 
 
 def test_resolver_message_and_suggestion_name_run_path(isolated_project: Path) -> None:
@@ -85,7 +88,7 @@ def test_resolver_message_and_suggestion_name_run_path(isolated_project: Path) -
     assert _names_run_path_outside_adopt_run(str(exc)), f"resolver message must name run_path=; got {str(exc)!r}"
     assert _names_run_path_outside_adopt_run(exc.suggestion), f"suggestion must name run_path=; got {exc.suggestion!r}"
     assert "trw_init" in str(exc)
-    assert "trw_adopt_run" in str(exc)
+    assert "run adopt" in str(exc)
 
 
 def test_both_message_sites_offer_the_same_remedy_set(isolated_project: Path) -> None:

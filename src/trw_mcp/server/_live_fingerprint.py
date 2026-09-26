@@ -15,8 +15,8 @@ and FastMCP cannot distinguish that self-check from a genuine request (it
 synthesizes its own ``Context`` either way), so running the full middleware
 chain here made merely IMPORTING the package write a real
 ``MCPSecurityMiddleware`` audit event to disk for every registered tool. The
-per-session exposure masks (``SurfaceAuthorityMiddleware``,
-``PhaseExposureMiddleware``) are consequently not reflected in this
+per-session exposure mask (``SurfaceAuthorityMiddleware``) is consequently
+not reflected in this
 fingerprint's surface — acceptable because its purpose is DRIFT DETECTION
 (does this process's deployed code match a prior digest), which needs the
 registered surface to be deterministic across restarts of the same code, not

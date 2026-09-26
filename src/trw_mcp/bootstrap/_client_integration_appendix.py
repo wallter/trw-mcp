@@ -7,7 +7,7 @@ client's generated ``AGENTS.md`` instructions carry:
 - PRD-CORE-215-FR06 — ``client_transport_guidance`` (marker ``trw:transport-loss``):
   the four client-observed transport-loss boundaries and their safe recoveries.
 - PRD-CORE-218-FR06 — ``render_client_capability_instructions`` (marker
-  ``trw:capabilities``): the three-class (available / discoverable / gated)
+  ``trw:capabilities``): the two-class (available / behind a config flag)
   listing derived from the LIVE surface manifest seam.
 
 Extracted as its own sibling because ``_client_integrations.py`` sits at the
@@ -93,7 +93,16 @@ def build_client_integration_appendix(
             failures=[f.detail for f in failures],
         )
     else:
-        parts.append(render_client_capability_instructions(profile, client_id=client_id))
+        capability_text = render_client_capability_instructions(profile, client_id=client_id)
+        # PRD-CORE-300-FR02 slice S0: rendered FROM the registry (never
+        # hand-listed) so a future S1-S6 CLI-replacement entry appears here
+        # automatically.
+        from trw_mcp.server._cli_replacements import render_cli_replacements_pointer
+
+        pointer = render_cli_replacements_pointer()
+        if pointer:
+            capability_text = f"{capability_text}\n- {pointer}"
+        parts.append(capability_text)
 
     return ClientIntegrationAppendix(text="\n\n".join(parts), parity_failures=failures)
 

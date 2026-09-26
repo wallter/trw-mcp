@@ -422,7 +422,7 @@ def stamped_ids(run_path: Path) -> tuple[str, str | None] | None:
         return None
     try:
         data = yaml.safe_load(run_yaml.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         logger.debug("formation_run_yaml_unreadable", run=str(run_path), reason=str(exc))
         return None
     if not isinstance(data, dict):

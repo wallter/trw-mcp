@@ -22,19 +22,24 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
-import tempfile
 from fastmcp import FastMCP
 
-from tests._daemon_reaper import reap_daemons_under
+from tests._daemon_reaper import reap_daemons_under, stop_spawned
 from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
 from tests._timing import pytest_sessionfinish as _timing_sessionfinish
+
+if TYPE_CHECKING:
+    from trw_memory.daemon import DaemonPaths
+
 from tests._trw_home import (
     isolated_trw_home,  # noqa: F401  (shared HOME/XDG/TRW_USER_DIR floor; see that module's docstring)
 )
@@ -87,6 +92,29 @@ def _xdist_fanout_violation(numprocesses: object, allow_wide: bool) -> str | Non
 
 
 @pytest.fixture(autouse=True)
+def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Stop every daemon this test's in-process client auto-started, published or not.
+
+    The HOME and ``tmp_path`` reaps find a daemon by its discovery file, and an
+    auto-started daemon publishes seconds later: ``init_project``/``update_project``
+    tests returned first and leaked it (C1, 2026-09-25). A test that patches
+    ``start_daemon_detached`` itself replaces this recorder and spawns nothing.
+    """
+    from trw_memory.daemon import client as daemon_client
+
+    spawned: list[subprocess.Popen[bytes]] = []
+    real = daemon_client.start_daemon_detached
+
+    def recording(paths: DaemonPaths) -> subprocess.Popen[bytes]:
+        spawned.append(real(paths))
+        return spawned[-1]
+
+    monkeypatch.setattr(daemon_client, "start_daemon_detached", recording)
+    yield
+    stop_spawned(spawned)
+
+
+@pytest.fixture(autouse=True)
 def _reap_isolated_home_daemons(isolated_trw_home: None) -> Iterator[None]:
     """Stop the memory daemon a test auto-started under its isolated HOME.
 
@@ -111,18 +139,55 @@ def _skip_installer_index_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRW_SKIP_INDEX_PREFLIGHT", "1")
 
 
+#: Where an xdist worker hands its leaked daemon pids to the controller: a worker's own
+#: exit status never reaches the controller, so under ``-n`` a leak only failed the
+#: worker's session and the run still exited 0 (C1, 2026-09-25).
+_WORKER_LEAKS_KEY = "trw_leaked_daemons"
+_WORKER_LEAKS = pytest.StashKey[list[int]]()
+
+
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Stop every memory daemon still published under this run's basetemp.
 
     The per-test reap covers a test's own tmp tree; this also catches daemons
     started for module- or session-scoped tmp dirs and by subprocesses.
+
+    PRD-INFRA-196-FR07: reaping still runs first (a daemon its own test already
+    stopped is not a leak), but any pid the sweep still had to signal now fails
+    the session too — a leaked daemon (RETRO-6.0.0: ~450 processes, 7.3 GB in
+    one incident) is a bug in the test that started it, not a free pass.
     """
     try:
         _timing_sessionfinish(session, exitstatus)
     finally:
         factory = getattr(session.config, "_tmp_path_factory", None)
         if factory is not None:
-            reap_daemons_under(factory.getbasetemp(), wait=True, by_process=True)
+            placements: dict[int, str] = {}
+            leaked = reap_daemons_under(factory.getbasetemp(), wait=True, by_process=True, placements=placements)
+            workeroutput = getattr(session.config, "workeroutput", None)
+            if workeroutput is not None:
+                workeroutput[_WORKER_LEAKS_KEY] = leaked
+            leaked += session.config.stash.get(_WORKER_LEAKS, [])
+            if leaked:
+                print(
+                    f"\nFAIL: {len(leaked)} leaked memory daemon(s) stopped at session end under "
+                    f"{factory.getbasetemp()}: pids {leaked}",
+                    file=sys.stderr,
+                )
+                for pid in leaked:
+                    print(f"  leaked daemon {pid}: {placements.get(pid, '?')}", file=sys.stderr)
+                if session.exitstatus == 0:
+                    session.exitstatus = 1
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node: object, error: object) -> None:
+    """xdist controller: collect the daemon pids a finished worker had to reap."""
+    del error
+    leaked = getattr(node, "workeroutput", {}).get(_WORKER_LEAKS_KEY) or []
+    config = getattr(node, "config", None)
+    if leaked and config is not None:
+        config.stash[_WORKER_LEAKS] = [*config.stash.get(_WORKER_LEAKS, []), *leaked]
 
 
 _MIN_FREE_GB_ENV = "TRW_PYTEST_MIN_FREE_GB"
@@ -255,24 +320,15 @@ def get_prompts_sync(server: FastMCP) -> dict[str, Any]:
 # Registry mapping short group name -> (module_path, function_name).
 # Imports are deferred so conftest doesn't eagerly pull in all tool modules.
 _TOOL_GROUPS: dict[str, tuple[str, str]] = {
-    "before_edit_hint": ("trw_mcp.tools.before_edit_hint", "register_before_edit_hint_tools"),
-    "before_edit_hint_batch": ("trw_mcp.tools.before_edit_hint_batch", "register_before_edit_hint_batch_tools"),
     "build": ("trw_mcp.tools.build", "register_build_tools"),
     "ceremony": ("trw_mcp.tools.ceremony", "register_ceremony_tools"),
     "ceremony_feedback": ("trw_mcp.tools.ceremony_feedback", "register_ceremony_feedback_tools"),
     "checkpoint": ("trw_mcp.tools.checkpoint", "register_checkpoint_tools"),
-    "code_search": ("trw_mcp.tools.code_search", "register_code_search_tools"),
-    "codebase_risk_report": ("trw_mcp.tools.codebase_risk_report", "register_codebase_risk_report_tools"),
-    "knowledge": ("trw_mcp.tools.knowledge", "register_knowledge_tools"),
+    "code": ("trw_mcp.tools.code", "register_code_tools"),
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
-    "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
-    "phase_overrides": ("trw_mcp.tools.phase_overrides", "register_phase_override_tools"),
-    "pipeline_health": ("trw_mcp.tools._pipeline_health_tool", "register_pipeline_health_tools"),
-    "profile_explain": ("trw_mcp.tools.trw_profile_explain", "register_trw_profile_explain_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
-    "skill_discovery": ("trw_mcp.tools.skill_discovery", "register_skill_discovery_tools"),
 }
 
 
@@ -341,10 +397,7 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_inference.py",
         "test_explain.py",
         "test_snapshot.py",
-        "test_allowlist_policy_surface.py",
         "test_property_layer_composition.py",
-        # PRD-INTENT-002 phase-exposure — pure logic / mocks only.
-        "test_phase_overrides.py",
         "test_models.py",
         "test_scoring.py",
         "test_scoring_branches.py",
@@ -355,7 +408,6 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_middleware_ceremony.py",
         "test_middleware_response_optimizer.py",
         "test_prompts_messaging.py",
-        "test_telemetry_embeddings.py",
         "test_validation_v2.py",
         "test_prd_utils_edge.py",
         "test_fix055_traceability_lang.py",
@@ -476,7 +528,7 @@ def _isolate_trw_user_dir_floor(tmp_path_factory: pytest.TempPathFactory) -> Ite
     that pre-test value is *unset*, which opens a window between one test's
     teardown and the next test's setup where ``TRW_USER_DIR`` is absent. A
     background thread left over from the previous test (session_start /
-    deferred-deliver / embedder warmup) that calls ``get_user_backend()`` in
+    deferred-deliver / embedder warmup) that resolves the user directory in
     that window falls through ``resolve_user_memory_dir``'s precedence chain to
     ``Path.home() / ".trw" / "memory"`` — the OPERATOR'S REAL user-tier store.
     Three tests were observed binding the real ``~/.trw/memory/memory.db`` this
@@ -519,11 +571,6 @@ def _isolate_trw_user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     worker. Per-file overrides remain valid because they use the same
     function-scoped monkeypatch restoration boundary. The inter-test window is
     covered by the session-scoped ``_isolate_trw_user_dir_floor`` above.
-
-    Pairs with ``_reset_memory_backend`` (function-scoped autouse) which
-    calls ``reset_user_backend()`` between
-    tests — this fixture provides the directory boundary, that one discards the
-    backend singleton already bound to the previous directory.
     """
     monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / ".trw-user"))
     # Also clear XDG_DATA_HOME so platform-default path resolution does not
@@ -569,6 +616,9 @@ def _restore_sys_path() -> Iterator[None]:
 
     Collection-time inserts (module-level, e.g. ``test_agent_loc.py``) run before
     any test, so they are already inside the snapshot and survive restoration.
+    So does an insert made by a MODULE-, CLASS- or SESSION-scoped fixture: it
+    runs outside this function-scoped window, so such a fixture must restore
+    ``sys.path`` itself (see ``_load_probe`` in ``test_probe_mcp_script.py``).
     The list is restored IN PLACE (slice assignment) so any code holding a
     reference to ``sys.path`` still observes the restored value.
     """
@@ -658,6 +708,22 @@ def _reset_auto_close_throttle_fixture() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_update_check_throttle_fixture() -> Iterator[None]:
+    """Reset the per-process check_for_update throttle between tests.
+
+    W38: check_for_update() now caches its result for _VERSION_CACHE_HOURS;
+    tests need a fresh window per case so they can call it multiple times
+    (with different mocked responses/config) without being served a stale
+    cached result from an earlier test in the same process.
+    """
+    from trw_mcp.state.auto_upgrade import _reset_update_check_throttle
+
+    _reset_update_check_throttle()
+    yield
+    _reset_update_check_throttle()
+
+
+@pytest.fixture(autouse=True)
 def _reset_deferred_delivery_state() -> Iterator[None]:
     """Reset deferred-delivery throttle + cancel event between tests.
 
@@ -706,28 +772,11 @@ def _join_and_reset_deferred() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_memory_backend() -> Iterator[None]:
-    """Reset the project AND user memory-adapter singletons for test isolation.
-
-    Joins any running deferred-deliver thread first to prevent
-    use-after-close segfaults on the SQLite backend.
-
-    ``reset_user_backend()`` is as load-bearing as ``reset_backend()``:
-    ``_user_tier._user_backend`` is a SEPARATE module-global singleton, and
-    leaving it bound returns a backend rooted at an EARLIER test's
-    ``TRW_USER_DIR`` (this fixture's sibling ``_isolate_trw_user_dir``
-    re-points the env var, but not the already-built object).
-    """
-    from trw_mcp.state._user_tier import reset_user_backend
-    from trw_mcp.state.memory_adapter import reset_backend
-
+def _join_deferred_delivery() -> Iterator[None]:
+    """Join any running deferred-deliver thread so it cannot outlive the test."""
     _join_and_reset_deferred()
-    reset_backend()
-    reset_user_backend()
     yield
     _join_and_reset_deferred()
-    reset_backend()
-    reset_user_backend()
 
 
 @pytest.fixture(autouse=True)
@@ -772,6 +821,28 @@ def _restore_structlog_config() -> Iterator[None]:
         yield
     finally:
         structlog.configure(**_PRISTINE_STRUCTLOG_CONFIG)
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logging_handlers() -> Iterator[None]:
+    """Put the stdlib root logger's handlers and level back after each test.
+
+    The CLI entry point and ``configure_logging()`` call ``basicConfig(force=True)``,
+    which swaps the root handlers process-wide. A handler bound to the stderr that
+    pytest captured for one test outlives that test's capture; every later record
+    then raises ``I/O operation on closed file`` and stdlib ``handleError`` prints a
+    traceback with the caller's source lines into whatever test is capturing next.
+    """
+    import logging
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_level = root.level
+    try:
+        yield
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
 
 
 @pytest.fixture(autouse=True)

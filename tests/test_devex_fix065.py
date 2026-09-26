@@ -72,8 +72,9 @@ class TestReadmeConfig:
         return path.read_text(encoding="utf-8")
 
     def test_has_config_yaml_example(self, readme: str) -> None:
+        # learning_max_entries is deliberately absent: it only trims the analytics
+        # index (state/analytics/entries.py), so listing it as a pruning knob misled.
         assert "embeddings_enabled:" in readme
-        assert "learning_max_entries:" in readme
         assert "ceremony_mode:" in readme
 
     def test_has_config_section(self, readme: str) -> None:
@@ -155,15 +156,6 @@ class TestToolDocstringSeeAlso:
         desc = tools["trw_deliver"].description or ""
         assert "See Also:" in desc
         assert "trw_build_check" in desc
-
-    def test_trw_prd_create_see_also(self) -> None:
-        from tests.conftest import get_tools_sync, make_test_server
-
-        server = make_test_server("requirements")
-        tools = get_tools_sync(server)
-        desc = tools["trw_prd_create"].description or ""
-        assert "See Also:" in desc
-        assert "trw_prd_validate" in desc
 
 
 # ── FR05: CLI typo suggestion ────────────────────────────────────────

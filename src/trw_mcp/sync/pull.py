@@ -11,6 +11,7 @@ import structlog
 from pydantic import BaseModel
 
 from trw_mcp.state._origin_project import ORIGIN_PROJECT_KEY, UNKNOWN_ORIGIN_PROJECT
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.sync._team_entry import _local_node_id, team_learning_to_entry
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.identity import resolve_sync_client_id
@@ -119,6 +120,19 @@ class SyncPuller:
 
         started_at = perf_counter()
         effective_client_id = (client_id or "").strip() or self._client_id
+
+        # W38 (7.0.0 security P1): ``platform_contact_enabled: false`` skips
+        # this contact entirely — no request is attempted.
+        if not platform_contact_enabled():
+            logger.info(
+                "sync_pull_skipped",
+                event_type="sync_pull_skipped",
+                reason="platform_contact_disabled",
+                client_id=effective_client_id,
+                outcome="skipped",
+            )
+            return None
+
         logger.info(
             "sync_pull_start",
             event_type="sync_pull_start",
@@ -129,9 +143,15 @@ class SyncPuller:
         )
 
         try:
-            headers: dict[str, str] = {
-                "Authorization": f"Bearer {self._api_key}",
-            }
+            url = f"{self._backend_url}/v1/intel/state"
+            # platform_auth_headers is the ONE function that may build this
+            # header — see trw_mcp.state._platform_trust module docstring. A
+            # poisoned backend_url (or a globally disabled
+            # platform_contact_enabled) is never sent the credential; the
+            # request still proceeds unauthenticated (the backend simply
+            # rejects it) rather than being skipped, since no secret is at
+            # risk once the header is withheld.
+            headers: dict[str, str] = platform_auth_headers(url, self._api_key)
             if etag:
                 headers["If-None-Match"] = f'"{etag}"'
 
@@ -147,7 +167,7 @@ class SyncPuller:
 
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.get(
-                    f"{self._backend_url}/v1/intel/state",
+                    url,
                     headers=headers,
                     params=params,
                 )

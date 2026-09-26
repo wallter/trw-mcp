@@ -11,7 +11,7 @@ from tests._formation_test_support import FormationFixture, formation_env  # noq
 from tests.comms.conftest import call_peers, enable_comms, joined_member
 from trw_mcp.comms._store import DATABASE_FILENAME
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, PACK_TOOLS, STANDARD_TASK_PACKS
+from trw_mcp.models.surface_packs import FLAG_GATED_PACKS, KERNEL_TOOLS, PACK_TOOLS
 from trw_mcp.server._surface_manifest_registry import _TOOL_OWNER
 from trw_mcp.server._tools import raw_registered_tool_names
 from trw_mcp.state.claude_md._tool_manifest import TOOL_DESCRIPTIONS
@@ -155,7 +155,7 @@ def test_wait_field_bounds_refuse_outside_the_edges(field: str, value: int) -> N
         TRWConfig.model_validate({field: value})
 
 
-COMMS_TOOLS = ("trw_peers", "trw_send", "trw_inbox")
+COMMS_TOOLS = ("trw_send", "trw_inbox")
 
 
 def _parity_gaps() -> dict[str, set[str]]:
@@ -212,7 +212,7 @@ def test_comms_is_opt_in_and_not_kernel() -> None:
     """The three comms tools live in an opt-in pack, never the kernel (NFR06)."""
     assert PACK_TOOLS["peer_comms"] == COMMS_TOOLS
     assert not set(PACK_TOOLS["peer_comms"]) & set(KERNEL_TOOLS)
-    assert "peer_comms" not in STANDARD_TASK_PACKS
+    assert FLAG_GATED_PACKS.get("peer_comms") == "comms_enabled"
 
 
 def test_the_formation_manifest_is_owner_only(formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch) -> None:

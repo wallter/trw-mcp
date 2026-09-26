@@ -90,7 +90,12 @@ def _drive_four_tools(server: Any, lid: str) -> dict[str, dict[str, Any]]:
 
     return {
         "trw_recall": extract_tool_fn(server, "trw_recall")(query="app.py startup"),
-        "trw_before_edit_hint": extract_tool_fn(server, "trw_before_edit_hint")(file_path="app.py"),
+        # trw_code(mode="hint") wraps one BeforeEditHintResult per file in a
+        # {"status","hints","count"} envelope; unwrap to the single hint so
+        # this dict's shape (and _stable's per-entry cleaning) matches the
+        # other three tools' flat responses. Keyed "trw_code_hint" (not the
+        # tool's own name) purely as this dict's own label.
+        "trw_code_hint": extract_tool_fn(server, "trw_code")(mode="hint", files="app.py")["hints"][0],
         "trw_build_check": extract_tool_fn(server, "trw_build_check")(tests_passed=True, test_count=2),
         # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
         "trw_learn": extract_tool_fn(server, "trw_learn")(learning_id=lid, status="active"),
@@ -121,7 +126,7 @@ def test_unwritable_logs_leave_responses_unchanged(
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
-    server = make_test_server("learning", "before_edit_hint", "build")
+    server = make_test_server("learning", "code", "build")
     lid = extract_tool_fn(server, "trw_learn")(
         summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
     )["learning_id"]

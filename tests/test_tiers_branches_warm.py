@@ -4,53 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from trw_mcp.state.tiers import TierManager
-
-
-class TestWarmAddWithMemoryStore:
-    """Test warm_add branch when MemoryStore is available and embedding provided."""
-
-    def test_warm_add_memory_store_available_with_embedding(self, tmp_path: Path) -> None:
-        """Lines 288-292: MemoryStore.available() is True and embedding is not None."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        mgr = TierManager(trw_dir)
-
-        # Removed: a `patch("trw_mcp.state.tiers.MemoryStore", ..., create=True)`
-        # block whose only body was `assert original_import` on the builtin
-        # `__import__`. `tiers` has no `MemoryStore` attribute, so `create=True`
-        # invented one that nothing reads — the block patched nothing, asserted
-        # nothing about this module, and its mocks were then discarded.
-        mock_ms = MagicMock()
-        mock_ms.available.return_value = True
-        mock_instance = MagicMock()
-        mock_ms.return_value = mock_instance
-
-        with patch("trw_mcp.state.memory_store.MemoryStore", mock_ms):
-            mgr.warm_add("entry-1", {"summary": "test"}, [0.1, 0.2, 0.3])
-
-        mock_instance.upsert.assert_called_once_with("entry-1", [0.1, 0.2, 0.3], {"source": "warm_tier"})
-        mock_instance.close.assert_not_called()
-
-    def test_warm_add_memory_store_upsert_exception_propagates(self, tmp_path: Path) -> None:
-        """Lines 288-292: MemoryStore.upsert raises — exception propagates."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        mgr = TierManager(trw_dir)
-
-        mock_ms = MagicMock()
-        mock_ms.available.return_value = True
-        mock_instance = MagicMock()
-        mock_instance.upsert.side_effect = RuntimeError("vec error")
-        mock_ms.return_value = mock_instance
-
-        with patch("trw_mcp.state.memory_store.MemoryStore", mock_ms):
-            with pytest.raises(RuntimeError, match="vec error"):
-                mgr.warm_add("entry-1", {"summary": "test"}, [0.1, 0.2, 0.3])
 
 
 class TestWarmSidecarUpsertEdgeCases:
@@ -128,9 +83,7 @@ class TestWarmRemoveSidecarEdgeCases:
             encoding="utf-8",
         )
 
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = False
-            mgr.warm_remove("remove-me")
+        mgr.warm_remove("remove-me")
 
         lines = [line.strip() for line in sidecar.read_text(encoding="utf-8").splitlines() if line.strip()]
         ids = [json.loads(line)["id"] for line in lines]
@@ -154,9 +107,7 @@ class TestWarmRemoveSidecarEdgeCases:
             encoding="utf-8",
         )
 
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = False
-            mgr.warm_remove("remove-me")
+        mgr.warm_remove("remove-me")
 
         lines = [line.strip() for line in sidecar.read_text(encoding="utf-8").splitlines() if line.strip()]
         ids = [json.loads(line)["id"] for line in lines]
@@ -266,9 +217,7 @@ class TestWarmRemoveEmptySidecar:
         sidecar = mgr._warm_sidecar_path()
         assert sidecar.exists()
 
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = False
-            mgr.warm_remove("only-one")
+        mgr.warm_remove("only-one")
 
         content = sidecar.read_text(encoding="utf-8").strip()
         assert content == ""
@@ -282,41 +231,21 @@ class TestWarmRemoveEmptySidecar:
         sidecar = mgr._warm_sidecar_path()
         assert not sidecar.exists()
 
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = False
-            mgr.warm_remove("nonexistent")
+        mgr.warm_remove("nonexistent")
 
 
-class TestWarmSearchFallbackPath:
-    """Test warm_search falls back to keyword search when MemoryStore unavailable."""
+class TestWarmSearchKeywordPath:
+    """warm_search is keyword search over the sidecar; trw-mcp keeps no vectors (PRD-CORE-302 FR05)."""
 
-    def test_warm_search_no_memorystore_uses_keyword_fallback(self, tmp_path: Path) -> None:
-        """When MemoryStore.available() is False, keyword search is used."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        mgr = TierManager(trw_dir)
-
-        mgr._warm_sidecar_upsert("w1", {"summary": "pytest patterns", "tags": []})
-        mgr._warm_sidecar_upsert("w2", {"summary": "docker setup", "tags": []})
-
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = False
-            results = mgr.warm_search(["pytest"], query_embedding=[0.1] * 384)
-
-        assert len(results) == 1
-        assert results[0]["id"] == "w1"
-
-    def test_warm_search_no_embedding_uses_keyword_fallback(self, tmp_path: Path) -> None:
-        """When query_embedding is None, keyword search is used even if store available."""
+    def test_warm_search_matches_the_sidecar_by_keyword(self, tmp_path: Path) -> None:
+        """A query token in an entry's summary finds it."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True, exist_ok=True)
         mgr = TierManager(trw_dir)
 
         mgr._warm_sidecar_upsert("w1", {"summary": "testing patterns", "tags": []})
 
-        with patch("trw_mcp.state.memory_store.MemoryStore") as mock_ms:
-            mock_ms.available.return_value = True
-            results = mgr.warm_search(["testing"], query_embedding=None)
+        results = mgr.warm_search(["testing"])
 
         assert len(results) == 1
         assert results[0]["id"] == "w1"

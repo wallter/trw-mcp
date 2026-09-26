@@ -60,7 +60,5 @@ messages:
     text: "Learnings recalled. Review them for relevant patterns before proceeding."
   ctx:status:
     text: "Run status loaded. Resume from last checkpoint rather than re-implementing."
-  ctx:prd_create:
-    text: "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before the work starts."
   ctx:prd_validate:
     text: "PRD validated. NEXT: trw_init() to bootstrap the governed run."

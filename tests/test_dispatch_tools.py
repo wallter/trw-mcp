@@ -1,7 +1,7 @@
 """Behavior tests for the dispatch MCP tools + registration safety.
 
 Covers ``trw_dispatch`` (wait / background / resolution-error paths) and
-``trw_dispatch_status``, plus a guard that registering the dispatch tools on the
+its ``action="status"`` mode, plus a guard that registering the dispatch tools on the
 real server does NOT drop any pre-existing core tool.
 """
 
@@ -378,7 +378,7 @@ def test_dispatch_unknown_client_returns_error(monkeypatch: pytest.MonkeyPatch) 
     assert out["exit_code"] == 2
 
 
-# --- trw_dispatch_status ---
+# --- trw_dispatch(action="status") ---
 
 
 def test_status_running_no_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -394,7 +394,7 @@ def test_status_running_no_result(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr("trw_mcp.dispatch._jobs.get_status", lambda jid, trw_dir=None: job)
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", lambda jid: job)
-    out = _tool("trw_dispatch_status")(job_id="j1")
+    out = _tool("trw_dispatch")(action="status", target="j1")
     assert out["job_id"] == "j1"
     assert out["status"] == "running"
     assert out["result"] is None
@@ -413,7 +413,7 @@ def test_status_terminal_includes_result(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", lambda jid: job)
     monkeypatch.setattr("trw_mcp.dispatch._jobs.get_result", lambda jid, trw_dir=None: _fake_result("done"))
-    out = _tool("trw_dispatch_status")(job_id="j2")
+    out = _tool("trw_dispatch")(action="status", target="j2")
     assert out["status"] == "succeeded"
     assert out["result"]["text"] == "done"
     # W6: a successful terminal result omits raw streams and points at the
@@ -437,7 +437,7 @@ def test_status_terminal_verbose_includes_raw_streams(monkeypatch: pytest.Monkey
     )
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", lambda jid: job)
     monkeypatch.setattr("trw_mcp.dispatch._jobs.get_result", lambda jid, trw_dir=None: _fake_result("done"))
-    out = _tool("trw_dispatch_status")(job_id="j3", verbose=True)
+    out = _tool("trw_dispatch")(action="status", target="j3", verbose=True)
     assert out["result"]["raw_stdout"] == "done"
     assert "raw_streams_omitted" not in out["result"]
 
@@ -459,7 +459,7 @@ def test_status_terminal_failed_keeps_raw_streams(monkeypatch: pytest.MonkeyPatc
         "trw_mcp.dispatch._jobs.get_result",
         lambda jid, trw_dir=None: _fake_result("", exit_code=1),
     )
-    out = _tool("trw_dispatch_status")(job_id="j4")
+    out = _tool("trw_dispatch")(action="status", target="j4")
     assert out["status"] == "failed"
     assert "raw_stdout" in out["result"]
     assert "raw_streams_omitted" not in out["result"]
@@ -470,7 +470,7 @@ def test_status_unknown_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
         raise KeyError(jid)
 
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", _raise)
-    out = _tool("trw_dispatch_status")(job_id="ghost")
+    out = _tool("trw_dispatch")(action="status", target="ghost")
     assert "error" in out
     assert "ghost" in str(out["error"])
 
@@ -480,7 +480,7 @@ def test_status_invalid_job_id_is_non_throwing(monkeypatch: pytest.MonkeyPatch) 
         raise ValueError("invalid dispatch job_id")
 
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_status", _raise)
-    out = _tool("trw_dispatch_status")(job_id="../../escape")
+    out = _tool("trw_dispatch")(action="status", target="../../escape")
 
     assert "error" in out
 
@@ -514,9 +514,8 @@ def test_full_registration_includes_dispatch_and_preserves_core() -> None:
     _register_tools()
     names = _registered_tool_names()
 
-    # New Phase 3 tools are registered.
+    # The Phase 3 tool is registered (its helpers are modes since PRD-CORE-300 S7).
     assert "trw_dispatch" in names
-    assert "trw_dispatch_status" in names
 
     # Pre-existing core tools survive the new registration.
     core = {

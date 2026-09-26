@@ -21,7 +21,20 @@ from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
 logger = structlog.get_logger(__name__)
-_RNG = random.SystemRandom()
+_RNG: random.Random = random.SystemRandom()
+
+
+def set_rng(rng: random.Random) -> None:
+    """Override the pool-choice RNG. Test/measurement seam only.
+
+    Production keeps ``random.SystemRandom()`` (weighted pool selection,
+    unchanged). ``scripts/_context_cost_probe.py`` calls this with a seeded
+    ``random.Random`` so repeated context-cost measurements of identical code
+    are reproducible (7.0.0 C14 determinism fix — see
+    ``_nudge_content.set_rng`` for the paired content-selection seam).
+    """
+    global _RNG
+    _RNG = rng
 
 
 def _emit_debug_capture_event(event: str, **fields: object) -> None:

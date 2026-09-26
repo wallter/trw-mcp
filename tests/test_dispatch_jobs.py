@@ -318,6 +318,45 @@ def test_stuck_running_past_ttl_reaps_child_tree(tmp_path: Path) -> None:
             proc.wait(timeout=5)
 
 
+# --- D2: the watchdog budgets the pre-launch work, not just the child ---
+
+
+@pytest.mark.parametrize(
+    ("posture", "elapsed_s", "expected"),
+    [
+        # 15s help + 15s child budget for every posture: a reviewer lane no longer waits
+        # for a code-index build before launch (rc8 pre-C12), so it gets no extra allowance.
+        ("reviewer", 29, "running"),
+        ("reviewer", 100, "failed"),
+        ("default", 29, "running"),
+        ("default", 100, "failed"),
+    ],
+)
+def test_watchdog_allows_for_the_prelaunch_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, posture: str, elapsed_s: int, expected: str
+) -> None:
+    import trw_mcp.dispatch._jobs as jobs_mod
+
+    class _FakeProc:
+        pid = os.getpid()  # alive, so only the watchdog can end the job
+
+        def wait(self) -> int:
+            return 0
+
+    killed: list[str] = []
+    monkeypatch.setattr(jobs_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(jobs_mod, "_kill_job_tree", lambda job, _dir: killed.append(job.job_id))
+    req = DispatchRequest(client="codex", prompt="hi", timeout_s=10, read_only=True, posture=posture)  # type: ignore[arg-type]
+    job = start_background(req, trw_dir=tmp_path / ".trw")
+    jobs_dir = tmp_path / ".trw" / "runtime" / "dispatch-jobs"
+
+    now = datetime.fromisoformat(job.created_at) + timedelta(seconds=elapsed_s)
+    reconciled = jobs_mod._reconcile_job(job, jobs_dir, now=now)
+
+    assert reconciled.status == expected
+    assert killed == ([job.job_id] if expected == "failed" else [])
+
+
 # --- F-05: full uuid job_id ---
 
 

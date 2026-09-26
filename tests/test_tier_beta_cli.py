@@ -40,7 +40,7 @@ class TestTierIssueBeta:
         e = load_entitlement(trw_dir)
         assert e.tier == "beta"
         assert e.reason == "ok"
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+        assert e.has_feature("trw_code:distill_sidecar")
 
     def test_issue_beta_print_only(self, tmp_path: Path, capsys) -> None:
         args = argparse.Namespace(
@@ -91,4 +91,4 @@ class TestTierStatusBetaRows:
         run_tier(argparse.Namespace(tier_command="show", trw_dir=str(trw_dir)))
         out = capsys.readouterr().out
         assert "tier:      beta" in out
-        assert "trw_before_edit_hint:distill_sidecar" in out
+        assert "trw_code:distill_sidecar" in out

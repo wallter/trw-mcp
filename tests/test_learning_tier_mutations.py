@@ -10,7 +10,6 @@ from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state import memory_adapter
 from trw_mcp.state._tier_routing import USER_NAMESPACE
-from trw_mcp.state._user_tier import reset_user_backend
 
 
 @pytest.fixture(autouse=True)
@@ -19,11 +18,7 @@ def _isolated_stores(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TRW_USER_TIER_ENABLED", "true")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     _reset_config()
-    memory_adapter.reset_backend()
-    reset_user_backend()
     yield
-    memory_adapter.reset_backend()
-    reset_user_backend()
     _reset_config()
 
 

@@ -15,7 +15,7 @@ Result keys written:
   * ``profile_snapshot_id``  — persistent-surface content hash (FR-13).
   * ``session_override_hash`` — session-layer delta hash (FR-13).
 
-Per-field attribution is built only by ``trw_profile_explain`` on demand.
+Per-field attribution is built only by ``trw_status(detail="surface")`` on demand.
 
 A missing/invalid LAYER (``LayerLoadError``) degrades to a structured
 ``profile_resolution_error`` key and leaves the verdict alone — that is FR-12
@@ -91,7 +91,7 @@ def step_resolve_profile(
         results["profile_layers_applied"] = list(resolved.layers_applied)
         # PRD-FIX-141-FR06: state WHAT this was resolved from. session_start runs
         # before trw_init, so the Scout's session layer usually does not exist
-        # yet and the tier comes from defaults; trw_profile_explain, called
+        # yet and the tier comes from defaults; trw_status(detail="surface"), called
         # later, legitimately sees a different one. Same resolver, same block,
         # so a reader can reconcile the two instead of choosing between them.
         results["profile_resolution_basis"] = resolution_basis(resolved, run_dir=run_dir)

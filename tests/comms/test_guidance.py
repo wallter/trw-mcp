@@ -97,7 +97,7 @@ def test_state_reports_what_the_call_established_not_what_its_status_implies(sce
     sent = scene.send("k", "hello")
     assert sent["status"] == "ok"
     assert sent["state"] == "joined" and "enroll" in sent["guidance"]
-    enrolled = _call(scene, "trw_peers", action="enroll")
+    enrolled = _call(scene, "trw_inbox", action="enroll")
     assert enrolled["state"] == "enrolled" and "guidance" in enrolled
 
 

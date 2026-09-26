@@ -85,7 +85,6 @@ class ToolName:
     INIT = "init"
     RECALL = "recall"
     STATUS = "status"
-    PRD_CREATE = "prd_create"
     PRD_VALIDATE = "prd_validate"
 
 

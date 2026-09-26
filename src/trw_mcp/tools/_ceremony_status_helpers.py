@@ -1,12 +1,10 @@
 """Ceremony status helper cluster — extracted from _ceremony_status.py.
 
 Belongs to the ``_ceremony_status.py`` facade. Re-exported there for
-back-compat (test patches reach in via
-``trw_mcp.tools._ceremony_status._has_cached_learning_weights``).
+back-compat.
 
 Contextual learning-nudge selection helpers: domain matching, phase
-match scoring, deterministic fallback ordering, cached bandit-weight
-ranking, and IntelligenceCache lookup.
+match scoring and deterministic fallback ordering.
 
 Extracted as DIST-243 batch 48 to keep the parent ``_ceremony_status.py``
 module under the 350 effective-LOC ceiling.
@@ -124,36 +122,6 @@ def _matches_inferred_domains(learning: dict[str, object], inferred_domains: set
     return bool(_candidate_domains(learning) & inferred_domains)
 
 
-def _phase_match_score(learning: dict[str, object], phase: str) -> float:
-    """Estimate how relevant a learning is for the current phase."""
-    normalized_phase = phase.strip().lower()
-    if not normalized_phase:
-        return 0.5
-    phase_affinity = learning.get("phase_affinity")
-    if isinstance(phase_affinity, list):
-        normalized_affinity = {str(v).strip().lower() for v in phase_affinity if str(v).strip()}
-        if normalized_affinity:
-            return 1.0 if normalized_phase in normalized_affinity else 0.1
-    phase_origin = str(learning.get("phase_origin", "")).strip().lower()
-    if phase_origin:
-        return 0.8 if phase_origin == normalized_phase else 0.2
-    return 0.5
-
-
-def _domain_match_score(learning: dict[str, object], inferred_domains: set[str]) -> float:
-    """Estimate overlap between the learning and the current inferred domains."""
-    if not inferred_domains:
-        return 0.5
-    learning_domains = _candidate_domains(learning)
-    if not learning_domains:
-        return 0.2
-    overlap = learning_domains & inferred_domains
-    union = learning_domains | inferred_domains
-    if not union:
-        return 0.0
-    return len(overlap) / len(union)
-
-
 def _normalized_modified_files(recall_context: object | None) -> list[str]:
     """Return best-effort normalized modified file paths from recall context."""
     modified_files = getattr(recall_context, "modified_files", [])
@@ -167,18 +135,6 @@ def _normalize_inferred_domains(raw_domains: object) -> set[str]:
     if not isinstance(raw_domains, (list, tuple, set, frozenset)):
         return set()
     return {str(d).strip().lower() for d in raw_domains if str(d).strip()}
-
-
-def _coerce_float(value: object, default: float = 0.0) -> float:
-    """Best-effort float coercion for untyped learning payload values."""
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float, str)):
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
 
 
 def _contextualize_candidates(
@@ -252,22 +208,6 @@ def _deterministic_fallback_text(learning: dict[str, object]) -> str:
     return ""
 
 
-def _cached_bandit_weight(learning: dict[str, object], bandit_params: dict[str, float] | None) -> float:
-    """Return the cached backend-provided bandit weight for one learning."""
-    if not bandit_params:
-        return 1.0
-    learning_id = str(learning.get("id", ""))
-    if not learning_id:
-        return 1.0
-    raw_score = bandit_params.get(learning_id)
-    if raw_score is None:
-        return 1.0
-    try:
-        return max(0.5, min(2.0, float(raw_score)))
-    except (TypeError, ValueError):
-        return 1.0
-
-
 def _select_deterministic_fallback_learning(
     candidates: list[dict[str, object]],
 ) -> dict[str, object] | None:
@@ -276,37 +216,3 @@ def _select_deterministic_fallback_learning(
         if _deterministic_fallback_text(candidate):
             return candidate
     return None
-
-
-def _select_cached_or_deterministic_learning(
-    candidates: list[dict[str, object]],
-    *,
-    phase: str,
-    inferred_domains: set[str],
-    bandit_params: dict[str, float] | None,
-) -> dict[str, object] | None:
-    """Prefer cached backend weights, else preserve deterministic recall order."""
-    contentful = [c for c in candidates if _deterministic_fallback_text(c)]
-    if not contentful:
-        return None
-    if not bandit_params:
-        return contentful[0]
-    return max(
-        contentful,
-        key=lambda c: (
-            _cached_bandit_weight(c, bandit_params),
-            _phase_match_score(c, phase),
-            _domain_match_score(c, inferred_domains),
-            _coerce_float(c.get("impact", 0.0) or 0.0),
-        ),
-    )
-
-
-def _has_cached_learning_weights(trw_dir: Path) -> bool:
-    """Return True when backend-provided nudge weights are cached locally."""
-    try:
-        from trw_mcp.sync.cache import IntelligenceCache
-
-        return bool(IntelligenceCache(trw_dir).get_bandit_params())
-    except Exception:  # justified: cache lookup is advisory only
-        return False

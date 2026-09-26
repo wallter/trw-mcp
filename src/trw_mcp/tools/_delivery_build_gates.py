@@ -359,7 +359,7 @@ def build_receipt_content_stale_warning(run_path: Path | None) -> str | None:
 _UNPINNED_BUILD_WARNING = (
     "No successful build check found before delivery in this unpinned session. "
     "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check(), "
-    "or call trw_init()/trw_adopt_run() so run-scoped evidence can be checked."
+    "or call trw_init() / `trw-mcp run adopt` so run-scoped evidence can be checked."
 )
 
 
@@ -398,7 +398,7 @@ def _check_no_active_run_build_gate(
 ) -> str | None:
     """Require build-check evidence for deliver when no run pin exists.
 
-    Eval containers commonly run without ``trw_init``/``trw_adopt_run``. In
+    Eval containers commonly run without ``trw_init`` / `trw-mcp run adopt`. In
     that state there is no run ``events.jsonl`` for the normal delivery gate,
     but the local ceremony state still records session_start/build_check
     progress. Without this fallback, ``trw_deliver`` can silently mark

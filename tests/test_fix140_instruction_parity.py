@@ -12,8 +12,7 @@ from __future__ import annotations
 import pytest
 
 from tests._layout import PACKAGE_ROOT, requires_monorepo
-from trw_mcp.models.phase_policy import RIGID_TOOLS
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, REVIEWER_TOOLS
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, REVIEWER_TOOLS
 from trw_mcp.state.claude_md._tool_manifest import resolve_exposed_tools, validate_instruction_manifest
 
 _REPO_ROOT = PACKAGE_ROOT
@@ -23,14 +22,16 @@ class TestGeneratedInstructionsNameOnlyExposedTools:
     """The rendered block, the baseline, and this repository's own files."""
 
     def test_the_agent_baseline_is_the_kernel_plus_the_never_hide_set(self) -> None:
+        """PRD-CORE-300 S11b: the agent baseline is now ALWAYS_ON_TOOLS — the
+        kernel plus every pack no config flag gates."""
         resolved = resolve_exposed_tools("standard")
 
-        assert resolved == frozenset(KERNEL_TOOLS) | RIGID_TOOLS
+        assert resolved == frozenset(ALWAYS_ON_TOOLS)
         assert "trw_build_check" in resolved, "the Deliver Gate section names it as the remedy"
         assert "trw_review" in resolved
 
     def test_a_reviewer_lane_resolves_to_the_reviewer_surface(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A reviewer surface REPLACES the resolution, ahead of the never-hide union."""
+        """A reviewer surface REPLACES the resolution, ahead of the always-on union."""
         from trw_mcp.state import _surface_role
 
         monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
@@ -42,9 +43,11 @@ class TestGeneratedInstructionsNameOnlyExposedTools:
 
         assert resolved == frozenset(REVIEWER_TOOLS)
         assert "trw_build_check" not in resolved
-        assert "trw_request_tool_access" not in resolved
+        assert "trw_dispatch" not in resolved
 
     def test_the_capability_block_names_no_masked_tool(self) -> None:
+        """PRD-CORE-300 S11b flattened the listing to available/gated (the
+        discoverable tier and its meta tools are gone)."""
         from trw_mcp.bootstrap._client_integrations import (
             ProjectionFormat,
             render_capability_projection,
@@ -57,16 +60,13 @@ class TestGeneratedInstructionsNameOnlyExposedTools:
         rendered = render_client_capability_instructions(profile, client_id="claude-code")
         projection = render_capability_projection(profile, client_id="claude-code", fmt=ProjectionFormat.BULLET_LIST)
 
-        assert projection.discoverable, "fixture lost its discoverable class — the check below would be vacuous"
         assert projection.gated, "fixture lost its gated class — the check below would be vacuous"
-        for tool in (*projection.discoverable, *projection.gated):
+        for tool in projection.gated:
             if tool in projection.available:
                 continue
             assert tool not in rendered, f"{tool} is named in the generated block but is not available"
-        assert "trw_request_tool_access(tool_name=..., reason=...)" in rendered
-        assert "Available now" in rendered
-        assert "Discoverable via" in rendered
-        assert "Operator-grant only" in rendered
+        assert "Available in every session" in rendered
+        assert "Behind a config flag" in rendered
 
     def test_the_rendered_block_passes_the_parity_validator(self) -> None:
         from trw_mcp.bootstrap._client_integrations import (
@@ -93,9 +93,9 @@ class TestGeneratedInstructionsNameOnlyExposedTools:
 
     def test_the_validator_still_catches_a_real_mismatch(self) -> None:
         """Non-vacuity: the clean result above must not come from a disabled validator."""
-        mismatches = validate_instruction_manifest("Call trw_pipeline_health() now.", resolve_exposed_tools("standard"))
+        mismatches = validate_instruction_manifest("Call trw_dispatch() now.", resolve_exposed_tools("standard"))
 
-        assert mismatches == ["trw_pipeline_health"]
+        assert mismatches == ["trw_dispatch"]
 
 
 class TestTheGateNamesOnlyFieldsTheResponseCarries:

@@ -17,7 +17,6 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trw_mcp.models.config._fields_assess import _AssessFields
-from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
@@ -35,7 +34,6 @@ from trw_mcp.models.config._fields_memory_truth import _MemoryTruthFields
 from trw_mcp.models.config._fields_nudge import _NudgeFields
 from trw_mcp.models.config._fields_orchestration import _OrchestrationFields
 from trw_mcp.models.config._fields_paths import _PathsFields
-from trw_mcp.models.config._fields_phase_exposure import _PhaseExposureFields
 from trw_mcp.models.config._fields_prd import _PRDFields
 from trw_mcp.models.config._fields_profile import _ProfileFields
 from trw_mcp.models.config._fields_scoring import _ScoringFields
@@ -64,7 +62,6 @@ class _TRWConfigFields(
     _InstructionSurfaceFields,
     _FeedbackFields,
     _NudgeFields,
-    _BanditFields,
     _BuildFields,
     _DispatchFields,
     _ToolsFields,
@@ -72,7 +69,6 @@ class _TRWConfigFields(
     _SyncFields,
     _PathsFields,
     _PRDFields,
-    _PhaseExposureFields,
     _ProfileFields,
     _ScoutFields,
     _VerificationFields,

@@ -186,7 +186,7 @@ DEGRADED_MODE_ADMISSIONS: dict[str, ConfigAdmission] = {
             "Defaults to 'pointer'. The verbatim ceremony table is 2777 characters, 53 "
             "percent of the 5244-character full-ceremony protocol block, and a hand-copied "
             "list can drift from what the server actually exposes while a pointer to "
-            "trw_skill_discovery/trw_status cannot. 'verbatim' is retained for an operator "
+            "trw_status(detail=\"surface\") cannot. 'verbatim' is retained for an operator "
             "whose client cannot make the discovery call at all."
         ),
         interaction_analysis=(

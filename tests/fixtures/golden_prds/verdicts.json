@@ -1,0 +1,31 @@
+{
+  "tier_approved.md": {
+    "valid": true,
+    "quality_tier": "approved",
+    "total_score": 96.35,
+    "failure_rules": [
+      "verification:PRD-FIX-137-NFR01:implemented_requirement_automation"
+    ]
+  },
+  "tier_draft.md": {
+    "valid": false,
+    "quality_tier": "draft",
+    "total_score": 37.76,
+    "failure_rules": [
+      "sections:section_count"
+    ]
+  },
+  "tier_review.md": {
+    "valid": true,
+    "quality_tier": "review",
+    "total_score": 61.42,
+    "failure_rules": [
+      "verification:PRD-CORE-293-FR01:verification_mapping_required",
+      "verification:PRD-CORE-293-FR02:verification_mapping_required",
+      "verification:PRD-CORE-293-FR03:verification_mapping_required",
+      "verification:PRD-CORE-293-FR04:verification_mapping_required",
+      "verification:PRD-CORE-293-NFR01:verification_mapping_required",
+      "verification:PRD-CORE-293-NFR02:verification_mapping_required"
+    ]
+  }
+}

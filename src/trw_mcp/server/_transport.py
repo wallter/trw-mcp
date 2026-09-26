@@ -11,6 +11,7 @@ import structlog
 
 from trw_mcp.server._app import mcp
 from trw_mcp.server._boot_timeline import emit_boot_phase
+from trw_mcp.server._parent_watch import start_parent_watch
 
 
 def resolve_and_run_transport(
@@ -34,4 +35,5 @@ def resolve_and_run_transport(
     # PRD-CORE-248 FR02: the last thing this process controls before mcp.run()
     # takes over and the client's first frame decides what happens next.
     emit_boot_phase("transport_ready")
+    start_parent_watch()
     mcp.run()

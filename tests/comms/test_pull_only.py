@@ -63,7 +63,7 @@ async def test_ack_recipient_guard_and_process_local_negative_control(
 
     s = transport_scene
     async with Client(s.server) as client:
-        assert (await invoke(client, "trw_peers", action="enroll"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox", action="enroll"))["status"] == "ok"
         sent = await invoke(client, "trw_send", recipient_member_id="impl-2", request_key="q", body="for-two")
         message_id = sent["receipt"]["message_id"]
         if disable_ack_scope:

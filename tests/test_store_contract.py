@@ -413,14 +413,11 @@ def test_a_poisoned_shared_result_is_refused_and_counted(store: MemoryStore) -> 
     assert (outcome.admitted, outcome.refused) == ([], 1)
 
 
-def test_vectors_leave_out_rows_with_no_vector_in_the_space(store: MemoryStore) -> None:
-    from trw_memory.embeddings.provenance import EmbeddingSpace
+def test_vectors_answer_in_one_space_with_its_collapse_threshold(store: MemoryStore) -> None:
+    """PRD-CORE-302 C2: no caller space; the answer carries the store's own space threshold, or ``None``."""
+    answer = store.vectors(["L-v-missing"])
 
-    store.put("No vector stored", "default", {"entry_id": "L-v1"})
-    space = EmbeddingSpace("e" * 64, "test-encoder:e", 3)
-
-    assert store.vectors(["L-v1", "L-v-missing"], space) == {}
-    assert store.vectors([], space) == {}
+    assert answer is None or (answer.vectors == {} and 0.0 < answer.dup_threshold <= 1.0)
 
 
 # -- listing (PRD-CORE-280 FR01 slice c): one namespace, filtered in the query ----------------
@@ -462,16 +459,12 @@ def test_find_duplicate_names_an_active_exact_copy_in_the_namespace_only(store: 
     assert store.find_duplicate(_SYNC_NS, "Retired summary", "d") is None
 
 
-# -- dedup KNN (PRD-CORE-280 FR01 slice c) ------------------------------------------------------
+# -- dedup verdict (PRD-CORE-302 FR01) ---------------------------------------------------------
 
 
-def test_similar_over_a_namespace_without_vectors_is_an_empty_complete_window(store: MemoryStore) -> None:
-    from trw_memory.embeddings.provenance import EmbeddingSpace
-
-    store.put("No vector here", _SYNC_NS, {"entry_id": "L-sim"})
-
-    assert store.similar(_SYNC_NS, [1.0, 0.0, 0.0], EmbeddingSpace("a" * 64, "test-encoder:a", 3), 10) == (0, [])
-    assert store.similar(_SYNC_NS, [1.0, 0.0, 0.0], None, 10) == (0, [])
+def test_similar_on_empty_text_gives_no_verdict(store: MemoryStore) -> None:
+    """PRD-CORE-302 C1/C4: empty text is no semantic verdict (the caller stores), not a refusal."""
+    assert store.similar(_SYNC_NS, "  \n", 0.95, 0.85, 10) is None
 
 
 # -- maintain-verify (PRD-CORE-280 FR01 slice c) -----------------------------------------------
@@ -556,10 +549,59 @@ def test_graph_backfill_pages_a_namespace_and_says_where_it_stopped(store: Memor
 # -- maintenance (PRD-CORE-280 FR01 slice e2) ------------------------------------------------------
 
 
+_POLICY: dict[str, object] = {"enabled": True, "similarity_threshold": 0.75, "min_cluster": 3, "max_per_cycle": 50}
+
+
 def test_maintain_runs_the_stores_decay_pass_for_the_namespace(store: MemoryStore) -> None:
     store.put("Maintained", _SYNC_NS, {"entry_id": "L-mnt"})
 
-    decay = store.maintain(_SYNC_NS)["passes"]["decay"]
+    decay = store.maintain(_SYNC_NS, _POLICY)["passes"]["decay"]
 
     assert decay["status"] == "ok", decay
     assert decay["processed"] == 0, "a fresh row has not gone unused long enough to decay"
+
+
+# -- embedder status (PRD-CORE-302 FR05) ---------------------------------------------------------
+
+
+def test_embedder_status_answers_without_loading_a_model(store: MemoryStore) -> None:
+    """The store says whether it can encode; the fake can, the keyword-only test daemon cannot."""
+    embedder = store.embedder_status(_SYNC_NS)
+
+    assert isinstance(embedder["available"], bool)
+    assert embedder["loaded"] is False, "a status read must never load the model"
+    if not embedder["available"]:
+        assert embedder["reason"], embedder
+
+
+@pytest.mark.parametrize("stuck", [False, True], ids=["advances", "stuck"])
+def test_a_daemon_verify_calls_until_the_sweep_is_done_and_refuses_one_that_stops_advancing(stuck: bool) -> None:
+    """rc9: one memory_verify call verifies a bounded part of the namespace and answers ``next`` (the
+    daemon keeps the position); the store calls again until the sweep is complete, and a daemon whose
+    position does not move forward is refused rather than looped on."""
+    from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings
+
+    counts = MaintainVerifySummary().as_dict()
+    replies = [
+        {"status": "ok", "summary": {**counts, "entries_processed": 2}, "next": ["ns", "L-2"]},
+        {"status": "ok", "summary": {**counts, "entries_processed": 2, "entry_failures": 1}, "next": ["ns", "L-5"]},
+        {"status": "ok", "summary": {**counts, "entries_processed": 1}},
+    ]
+    if stuck:
+        replies[1]["next"] = ["ns", "L-2"]
+    calls: list[str] = []
+
+    class _Client:
+        async def verify(self, namespace, project_root, settings):  # type: ignore[no-untyped-def]
+            calls.append(namespace)
+            return replies[len(calls) - 1]
+
+    store = DaemonMemoryStore(_Client(), "ns")  # type: ignore[arg-type]
+    if stuck:
+        with pytest.raises(ValueError, match="did not advance"):
+            store.verify("ns", None, VerifySettings())
+        return
+    summary = store.verify("ns", None, VerifySettings())
+
+    assert len(calls) == 3
+    assert (summary.entries_processed, summary.entry_failures) == (5, 1)

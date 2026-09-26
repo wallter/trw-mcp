@@ -19,15 +19,13 @@ _project_root="$(get_repo_root)" || exit 0
 _payload=$(cat) || exit 0
 
 # Extract fields from InstructionsLoaded payload
-_file_path=""
-_load_reason=""
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
-# jq only (T29): without it the row below records "(jq unavailable)" instead.
-if command -v jq >/dev/null 2>&1; then
-  _file_path=$(printf '%s' "$_payload" | jq -r '.file_path // .path // empty' 2>/dev/null) || true
-  _load_reason=$(printf '%s' "$_payload" | jq -r '.load_reason // .reason // empty' 2>/dev/null) || true
-fi
+# PRD-FIX-154 FR03: jq or python3 via _json_get, never a jq-only read -- a
+# jq-less host with python3 now records the real file/reason instead of
+# "(jq unavailable)".
+_file_path=$(printf '%s' "$_payload" | _json_get --strings .file_path .path) || _file_path=""
+_load_reason=$(printf '%s' "$_payload" | _json_get --strings .load_reason .reason) || _load_reason=""
 
 # Ensure telemetry directory exists
 _telemetry_dir="$_project_root/.trw/telemetry"
@@ -35,31 +33,17 @@ _telemetry_dir="$_project_root/.trw/telemetry"
 
 _log_file="$_telemetry_dir/instructions-loaded.jsonl"
 
-# Append a structured log entry — use jq when available for correct JSON escaping
-if command -v jq >/dev/null 2>&1; then
-  jq -n \
-    --arg ts "$_ts" \
-    --arg file "$_file_path" \
-    --arg reason "$_load_reason" \
-    '{ts: $ts, event: "instructions_loaded", file: $file, load_reason: $reason}' \
-    >> "$_log_file" 2>/dev/null || true
-else
-  # Minimal fallback — only use fields we control (ts); skip user-supplied strings
-  # to avoid JSON injection when jq is absent.
-  printf '{"ts":"%s","event":"instructions_loaded","file":"(jq unavailable)","load_reason":"(jq unavailable)"}\n' \
-    "$_ts" >> "$_log_file" 2>/dev/null || true
-fi
+# Append a structured log entry -- _json_object escapes correctly on either path.
+_json_object --str ts "$_ts" --str event "instructions_loaded" --str file "$_file_path" --str load_reason "$_load_reason" \
+  | _trw_safe_write "$_log_file" append || true
 
-# Rotate at 2000 lines to prevent unbounded growth
-if [ -f "$_log_file" ]; then
-  _line_count=$(wc -l < "$_log_file" 2>/dev/null | tr -d ' ') || _line_count=0
+# Rotate at 2000 lines to prevent unbounded growth. _trw_safe_read treats a
+# symlinked log as absent, so rotation no-ops on one instead of following it.
+_il_content=$(_trw_safe_read "$_log_file") || _il_content=""
+if [ -n "$_il_content" ]; then
+  _line_count=$(printf '%s\n' "$_il_content" | wc -l 2>/dev/null | tr -d ' ') || _line_count=0
   if [ "$_line_count" -gt 2000 ] 2>/dev/null; then
-    _tmp="${_log_file}.tmp"
-    if tail -1000 "$_log_file" > "$_tmp" 2>/dev/null; then
-      mv "$_tmp" "$_log_file" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
-    else
-      rm -f "$_tmp" 2>/dev/null
-    fi
+    printf '%s\n' "$_il_content" | tail -1000 | _trw_safe_write "$_log_file" || true
   fi
 fi
 

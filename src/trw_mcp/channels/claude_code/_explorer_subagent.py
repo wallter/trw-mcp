@@ -54,8 +54,8 @@ _EXPLORER_CONTENT = """\
 name: trw-distill-explorer
 description: >
   Read-only codebase intelligence specialist powered by trw-distill.
-  Use when you need: full codebase risk analysis, ordering comparison,
-  top-N hotspot ranking, and convention summaries.
+  Use when needing file-set risk hints, hotspots from an operator-run
+  `trw-mcp code risk` report, or conventions.
   Do NOT use for single-file pre-edit hints — use the PreToolUse hook instead.
 model: {model}
 maxTurns: 20
@@ -66,11 +66,7 @@ tools:
   - Read
   - Glob
   - Grep
-  - mcp__trw__trw_before_edit_hint
-  - mcp__trw__trw_before_edit_hint_batch
-  - mcp__trw__trw_codebase_risk_report
-  - mcp__trw__trw_code_search
-  - mcp__trw__trw_code_symbol
+  - mcp__trw__trw_code
   - mcp__trw__trw_recall
 disallowedTools:
   - Bash
@@ -93,9 +89,10 @@ trw-distill risk data via MCP tools and return structured Markdown reports.
 ## Trigger Phrases
 
 Invoke this subagent when asked for:
-- **Full codebase risk analysis** — use `trw_codebase_risk_report`
-- **Ordering comparison** — compare risk scores across files
-- **Hotspot ranking** — top-N files by risk score
+- **Per-file risk hints** — use `trw_code(mode="hint", files=...)`
+- **Hotspot ranking** — top-N files by risk score (full report: an operator
+  runs `trw-mcp code risk` from a shell; this read-only, no-shell subagent
+  cannot run it itself)
 - **Convention summaries** — use `trw_recall` for code patterns
 
 ## Rules
@@ -112,7 +109,9 @@ Invoke this subagent when asked for:
 ## Tool Usage Protocol
 
 1. Read the user's risk-analysis request.
-2. Call the most specific MCP tool (e.g., `trw_codebase_risk_report` for a repo-wide ranking).
+2. Call the most specific MCP tool (e.g., `trw_code(mode="hint", files=[...])`
+   for a named set of files). A repo-wide ranking needs `trw-mcp code risk`, an
+   operator CLI command this subagent has no shell access to run.
 3. If the sidecar is missing, surface the action from `distill_action` field.
 4. Format the response using the return format below.
 5. Never expand scope beyond what was requested.

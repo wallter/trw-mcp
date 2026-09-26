@@ -40,7 +40,7 @@ if ! _trw_has_json_parser; then
   mkdir -p "$_unk_root/.trw/context" 2>/dev/null || true
   printf '{"ts":"%s","event":"change_evidence_unknown","reason":"jq_unavailable"}\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'unknown')" \
-    >>"$_unk_root/.trw/context/session-events.jsonl" 2>/dev/null || true
+    | _trw_safe_write "$_unk_root/.trw/context/session-events.jsonl" append || true
   log_hook_execution "PostToolUse" "unknown" "0" "jq_unavailable=1"
   exit 0
 fi
@@ -82,7 +82,7 @@ _append_unpinned_change() {
   _uc_root="$(get_repo_root)" || return 0
   _uc_events="$_uc_root/.trw/context/session-events.jsonl"
   mkdir -p "$_uc_root/.trw/context" 2>/dev/null || return 0
-  if [ -f "$_uc_events" ]; then
+  if [ -f "$_uc_events" ] && [ ! -L "$_uc_events" ]; then
     _uc_size=$(wc -c <"$_uc_events" 2>/dev/null | tr -d ' ') || _uc_size=0
     case "$_uc_size" in
       ''|*[!0-9]*) _uc_size=0 ;;
@@ -96,7 +96,7 @@ _append_unpinned_change() {
   printf '{"ts":"%s","event":"file_modified","tool":"%s","file":"%s","session_id":"%s","pinned":false}\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'unknown')" \
     "$(_json_escape "$_tool_name")" "$(_json_escape "$_uc_file")" "$(_json_escape "$_uc_key")" \
-    >>"$_uc_events" 2>/dev/null || return 0
+    | _trw_safe_write "$_uc_events" append || return 0
   log_hook_execution "PostToolUse" "$_tool_name" "0:unpinned-change"
   return 0
 }

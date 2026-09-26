@@ -101,7 +101,7 @@ CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 #: Tools the post-compaction gate MUST NOT block. Named for the question the
 #: gate is asking — "may this call proceed on stale post-compaction context?" —
 #: rather than for whichever members happen to answer it today. Each member
-#: carries its own reason, because they are exempt for two different ones.
+#: carries its reason.
 #:
 #: ``trw_checkpoint`` / ``trw_learn`` / ``trw_build_check`` (operator-approved
 #: 2026-07-26, closing the decision audit C-5 deferred): the gate exists to stop
@@ -113,21 +113,10 @@ CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 #: delegates, one session, 2026-07-26). A gate that defends context integrity by
 #: destroying evidence integrity has its priorities inverted.
 #:
-#: ``trw_request_tool_access`` (PRD-CORE-258-FR03): it is the documented escape
-#: from a restricted surface — ``middleware/surface_authority.py`` and
-#: ``middleware/phase_exposure.py`` both instruct callers to reach for it BY
-#: NAME — and a remedy for restriction A must not be withheld by restriction B.
-#: An agent told to call the escape hatch and then refused the escape hatch has
-#: been handed a loop with no documented exit. Exempting it does not widen this
-#: gate: it grants one masked call, and that granted call is itself evaluated by
-#: this same ``on_call_tool`` and still blocked.
-#:
 #: Everything else stays gated, including ``trw_recall`` and ``trw_status`` (they
 #: SHAPE subsequent decisions, which is exactly what a stale-context agent must
 #: not do) and ``trw_deliver`` (a terminal act — see ``TERMINAL_TOOLS``).
-COMPACTION_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
-    {"trw_checkpoint", "trw_learn", "trw_build_check", "trw_request_tool_access"}
-)
+COMPACTION_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset({"trw_checkpoint", "trw_learn", "trw_build_check"})
 
 #: Acts that must never ride the bounded escape below (PRD-CORE-258-FR09).
 #:

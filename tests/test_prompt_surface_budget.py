@@ -70,9 +70,15 @@ pytestmark = pytest.mark.unit
 # Re-measured 2026-09-23 after the trw-assess skill rewrite (177 -> ~60 lines) and copilot
 # joining the clients that ship it: default -5,888, assess_enabled -24,380. Ceiling lowered
 # to the new max + the same +80 margin.
-_MEASURED_GRAND_TOTAL_BYTES_DEFAULT: Final[int] = 1_359_916
-_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_382_974
-PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_383_054
+#
+# Re-measured 2026-09-24: 7.0.0 work had grown the corpus to 1,390,959 (+7,905 over;
+# the trw_assess guidance added to trw-implementer/trw-prd-groomer and the trw-assess
+# operator-preferences bullet). Opencode had also shipped trw-prd-ready/trw-prd-ready-contract.md,
+# a byte copy of the SKILL.md beside it that nothing named (-16,149 once dropped from
+# PRD_READY_CONTRACTS). Ceiling lowered to the new max + a 1,000-byte margin.
+_MEASURED_GRAND_TOTAL_BYTES_DEFAULT: Final[int] = 1_349_797
+_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_374_810
+PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_375_810
 
 _FORK_CLIENTS: Final[tuple[str, ...]] = ("codex", "copilot", "opencode")
 

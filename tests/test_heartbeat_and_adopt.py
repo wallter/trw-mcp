@@ -1,9 +1,11 @@
-"""PRD-CORE-141 Wave 4 Track B — trw_heartbeat + trw_adopt_run.
+"""PRD-CORE-141 Wave 4 Track B — heartbeat mode + run adoption.
 
 FR07 covers heartbeat rate-limit behavior, event append, restart
 persistence, and should_checkpoint derivation.  FR08 covers adoption
 transfer, live-owner/terminal-status/containment guards, and the
-``run_adopted`` audit event.
+``run_adopted`` audit event. PRD-CORE-300 S6a folded the former heartbeat
+tool into ``trw_checkpoint(heartbeat=True)``; these tests exercise its
+implementation (``compute_heartbeat_result``) directly.
 
 The fixture mirrors ``tests/test_pin_isolation_ctx.py::isolated_project``
 (TRW_PROJECT_ROOT + config reset + pin-store cache flush) so these tests
@@ -12,6 +14,7 @@ do not cross-contaminate the Wave 1-3 baseline fixtures.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,15 +101,22 @@ def isolated_project(
 
 
 def _heartbeat(server: Any) -> Any:
-    from tests.conftest import extract_tool_fn
+    """The heartbeat mode's implementation (PRD-CORE-300 S6a folded the
+    former heartbeat tool into ``trw_checkpoint(heartbeat=True)``);
+    ``server`` is accepted for call-site parity but unused directly."""
+    del server
+    from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 
-    return extract_tool_fn(server, "trw_heartbeat")
+    return lambda ctx=None, message="": compute_heartbeat_result(ctx, message)
 
 
 def _adopt(server: Any) -> Any:
-    from tests.conftest import extract_tool_fn
+    """The former standalone adoption tool (PRD-CORE-300 S6b folded it into ``trw-mcp run adopt``);
+    ``server`` is accepted for call-site parity but unused directly."""
+    del server
+    from trw_mcp.tools._ceremony_adopt_run import adopt_run
 
-    return extract_tool_fn(server, "trw_adopt_run")
+    return lambda ctx=None, run_path="", force=False: adopt_run(ctx, run_path, force)
 
 
 def _make_server() -> Any:
@@ -116,7 +126,7 @@ def _make_server() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# FR07 — trw_heartbeat
+# FR07 — heartbeat mode (trw_checkpoint(heartbeat=True))
 # ---------------------------------------------------------------------------
 
 
@@ -353,7 +363,7 @@ def test_heartbeat_returns_stale_after_ts(isolated_project: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FR08 — trw_adopt_run
+# FR08 — run adoption
 # ---------------------------------------------------------------------------
 
 
@@ -667,3 +677,58 @@ def test_adopt_run_adopted_event_carries_audit_fields(
     assert payload.get("to_pin_key") == "audit-B"
     assert payload.get("force_used") is False
     assert payload.get("previous_owner_heartbeat_age_hours") is not None
+
+
+def _seed_stale_pin(project: Path, name: str, owner: str) -> Path:
+    """A run pinned to *owner* whose heartbeat is old enough to adopt without force."""
+    from trw_mcp.state._paths import TRWCallContext, pin_active_run
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
+
+    run = _seed_run(project, name, "20260101T000000Z-cccc3333")
+    pin_active_run(
+        run, context=TRWCallContext(session_id=owner, client_hint=None, explicit=False, fastmcp_session=None)
+    )
+    raw = json.loads(pin_store_path().read_text())
+    raw[owner]["last_heartbeat_ts"] = (
+        (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat().replace("+00:00", "Z")
+    )
+    pin_store_path().write_text(json.dumps(raw))
+    invalidate_pin_store_cache()
+    return run
+
+
+def test_cli_adopt_pins_the_named_session_not_the_cli_process(
+    isolated_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run adopt --session-id S`` pins S, whatever TRW_SESSION_ID the CLI process carries."""
+    from argparse import Namespace
+
+    from trw_mcp.state._pin_store import get_pin_entry
+    from trw_mcp.tools._run_cli import _adopt as cli_adopt
+
+    run = _seed_stale_pin(isolated_project, "cli-adopt", "owner-A")
+    monkeypatch.setenv("TRW_SESSION_ID", "the-cli-shell")
+    document, failed = cli_adopt(Namespace(session_id="target-S", run_path=str(run), force=False))
+
+    assert failed is False
+    assert document["to_pin_key"] == "target-S"
+    assert get_pin_entry("target-S") is not None
+    assert get_pin_entry("the-cli-shell") is None
+
+
+def test_cli_adopt_refuses_when_ctx_isolation_is_off(isolated_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the kill switch every pin is per process: the CLI cannot pin another session, so it refuses."""
+    from argparse import Namespace
+
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._pin_store import get_pin_entry
+    from trw_mcp.tools._run_cli import _adopt as cli_adopt
+
+    run = _seed_stale_pin(isolated_project, "cli-adopt-off", "owner-A")
+    monkeypatch.setattr(get_config(), "ctx_isolation_enabled", False, raising=False)
+    document, failed = cli_adopt(Namespace(session_id="target-S", run_path=str(run), force=False))
+
+    assert failed is True
+    assert document["error"] == "adoption_refused"
+    assert "ctx_isolation_enabled is false" in document["detail"]
+    assert get_pin_entry("owner-A") is not None, "the refusal happens before the pin store is touched"

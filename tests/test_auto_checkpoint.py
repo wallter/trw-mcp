@@ -4,7 +4,7 @@ Covers:
 - Config defaults for auto_checkpoint_enabled, auto_checkpoint_tool_interval,
   auto_checkpoint_pre_compact
 - _maybe_auto_checkpoint: counter increment, interval trigger, disabled skip
-- trw_pre_compact_checkpoint: active run, no run, disabled config
+- execute_pre_compact_checkpoint (PRD-CORE-300 S6a: trw_checkpoint(pre_compact=True)): active run, no run, disabled config
 - Counter reset behavior via _reset_tool_call_counter
 """
 
@@ -21,6 +21,7 @@ from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.tools.checkpoint import (
     _maybe_auto_checkpoint,
     _reset_tool_call_counter,
+    execute_pre_compact_checkpoint,
 )
 
 # --- Fixtures ---
@@ -214,7 +215,7 @@ class TestResetToolCallCounter:
         assert result["tool_calls"] == 3
 
 
-# --- trw_pre_compact_checkpoint (MCP tool) ---
+# --- execute_pre_compact_checkpoint (trw_checkpoint(pre_compact=True) impl) ---
 
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
@@ -222,7 +223,7 @@ from tests._layout import requires_non_root
 
 
 class TestPreCompactCheckpoint:
-    """trw_pre_compact_checkpoint MCP tool."""
+    """execute_pre_compact_checkpoint -- the trw_checkpoint(pre_compact=True) implementation."""
 
     def test_creates_checkpoint_with_active_run(
         self,
@@ -231,10 +232,10 @@ class TestPreCompactCheckpoint:
         run_dir: Path,
     ) -> None:
         """Active run -> creates pre-compaction safety checkpoint."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        _make_ceremony_server(monkeypatch, tmp_path)
 
         with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            result = tools["trw_pre_compact_checkpoint"].fn()
+            result = execute_pre_compact_checkpoint(None)
 
         assert result["status"] == "success"
         assert result["run_path"] == str(run_dir)
@@ -251,10 +252,10 @@ class TestPreCompactCheckpoint:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No active run -> returns skip status."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        _make_ceremony_server(monkeypatch, tmp_path)
 
         with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=None):
-            result = tools["trw_pre_compact_checkpoint"].fn()
+            result = execute_pre_compact_checkpoint(None)
 
         assert result["status"] == "skipped"
         assert result["reason"] == "no_active_run"
@@ -267,9 +268,9 @@ class TestPreCompactCheckpoint:
         """Config auto_checkpoint_pre_compact=False -> returns skip status."""
         cfg = TRWConfig(auto_checkpoint_pre_compact=False)
         _reset_config(cfg)
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        _make_ceremony_server(monkeypatch, tmp_path)
 
-        result = tools["trw_pre_compact_checkpoint"].fn()
+        result = execute_pre_compact_checkpoint(None)
 
         assert result["status"] == "skipped"
         assert "auto_checkpoint_pre_compact" in result["reason"]
@@ -281,7 +282,7 @@ class TestPreCompactCheckpoint:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Exception during checkpoint -> returns failed status."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        _make_ceremony_server(monkeypatch, tmp_path)
 
         with (
             patch(
@@ -289,7 +290,7 @@ class TestPreCompactCheckpoint:
                 return_value=Path("/nonexistent"),
             ),
         ):
-            result = tools["trw_pre_compact_checkpoint"].fn()
+            result = execute_pre_compact_checkpoint(None)
 
         assert result["status"] == "failed"
         assert "error" in result
@@ -301,10 +302,10 @@ class TestPreCompactCheckpoint:
         run_dir: Path,
     ) -> None:
         """Checkpoint should also log an event to events.jsonl."""
-        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        _make_ceremony_server(monkeypatch, tmp_path)
 
         with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            tools["trw_pre_compact_checkpoint"].fn()
+            execute_pre_compact_checkpoint(None)
 
         events_path = run_dir / "meta" / "events.jsonl"
         lines = [line for line in events_path.read_text(encoding="utf-8").strip().split("\n") if line]

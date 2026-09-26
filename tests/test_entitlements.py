@@ -43,7 +43,7 @@ class TestMissingFile:
 
     def test_free_has_no_distill_feature(self, tmp_path: Path) -> None:
         e = load_entitlement(tmp_path)
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar") is False
+        assert e.has_feature("trw_code:distill_sidecar") is False
 
 
 class TestValidEntitlement:
@@ -52,7 +52,7 @@ class TestValidEntitlement:
         e = load_entitlement(tmp_path)
         assert e.tier == "team"
         assert e.reason == "ok"
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+        assert e.has_feature("trw_code:distill_sidecar")
 
     def test_pro_tier(self, tmp_path: Path) -> None:
         _write_entitlement(tmp_path, tier="pro")
@@ -74,7 +74,7 @@ class TestBetaTesterTier:
         e = load_entitlement(tmp_path)
         assert e.tier == "beta"
         assert e.reason == "ok"
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+        assert e.has_feature("trw_code:distill_sidecar")
 
     def test_alpha_backend_plan_aliases_to_beta(self, tmp_path: Path) -> None:
         # The backend tester program (TESTER_PLAN="alpha") issues the raw
@@ -84,7 +84,7 @@ class TestBetaTesterTier:
         e = load_entitlement(tmp_path)
         assert e.tier == "beta"
         assert e.reason == "ok"
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar")
+        assert e.has_feature("trw_code:distill_sidecar")
 
     def test_alpha_alias_requires_valid_signature(self, tmp_path: Path) -> None:
         # A raw "alpha" value signed as "free" must NOT unlock beta.
@@ -173,12 +173,12 @@ class TestMalformed:
 class TestFeatureMap:
     def test_free_has_no_features(self, tmp_path: Path) -> None:
         e = Entitlement(tier="free", reason="missing")
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar") is False
+        assert e.has_feature("trw_code:distill_sidecar") is False
 
     def test_pro_has_distill_sidecar(self, tmp_path: Path) -> None:
         _write_entitlement(tmp_path, tier="pro")
         e = load_entitlement(tmp_path)
-        assert e.has_feature("trw_before_edit_hint:distill_sidecar") is True
+        assert e.has_feature("trw_code:distill_sidecar") is True
 
     def test_unknown_feature_always_false(self, tmp_path: Path) -> None:
         _write_entitlement(tmp_path, tier="enterprise")

@@ -307,7 +307,7 @@ def evaluate_build_authority(
                 f"Delivery blocked: {cause}, and the session is not pinned to a run "
                 f"(deliver_gate_mode={mode}). "
                 "Run project-native validation and record it with trw_build_check(), call "
-                "trw_init()/trw_adopt_run() so run-scoped evidence can be checked, or override with "
+                "trw_init() / `trw-mcp run adopt` so run-scoped evidence can be checked, or override with "
                 "allow_unverified=true + an unexpired acceptable-failure record."
             )
         else:

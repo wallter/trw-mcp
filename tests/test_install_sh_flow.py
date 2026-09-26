@@ -14,7 +14,7 @@ non-zero), and asserts the bootstrap:
   3. adds the pipx bin dir to PATH — proven behaviorally: the ``trw-mcp`` stub
      lives ONLY in the (off-PATH) pipx bin dir, so a later ``trw-mcp
      init-project`` only resolves if the bin dir was prepended to PATH;
-  4. flows on to a clean success exit (``--allow-unauthenticated`` open-source
+  4. flows on to a clean success exit (``--allow-unauthenticated`` package-only
      path).
 
 These complement — do not replace — the grep guards (finding 4: "keep the grep
@@ -106,7 +106,7 @@ def _run_bootstrap(bootstrap: Path, tmp_path: Path) -> tuple[subprocess.Complete
     _write_stub(stub_bin / "curl", _CURL_STUB)
     # trw-mcp resolves ONLY via the pipx bin dir once it is added to PATH.
     _write_stub(pipx_bindir / "trw-mcp", _TRW_MCP_STUB)
-    # A git repo (dir sentinel) so the open-source init path runs.
+    # A git repo (dir sentinel) so the unauthenticated init path runs.
     (project / ".git").mkdir()
 
     env = {
@@ -139,7 +139,7 @@ def _run_bootstrap(bootstrap: Path, tmp_path: Path) -> tuple[subprocess.Complete
     [
         pytest.param(_SERVED_BOOTSTRAP, True, "trw-mcp", id="served"),
         # The repo bootstrap's --allow-unauthenticated path stops at the
-        # open-source banner without calling trw-mcp, so only the served
+        # package-only banner without calling trw-mcp, so only the served
         # bootstrap exercises the end-to-end PATH-resolution proof (rung 3).
         pytest.param(_REPO_BOOTSTRAP, False, "trw-mcp", id="repo"),
     ],
@@ -182,7 +182,7 @@ def test_bootstrap_pep668_uses_pipx_and_persists_path_and_succeeds(
 
     # 5. Success flows on to a clean exit.
     assert result.returncode == 0, f"bootstrap did not exit cleanly.\n--- output ---\n{output}"
-    assert "Open-source package installed" in output, output
+    assert "trw-mcp package installed" in output, output
     if bootstrap == _SERVED_BOOTSTRAP:
         # This branch never reaches install-trw.py, so it must say recall is keyword-only.
         assert "trw-memory[embeddings]" in output, output
@@ -290,16 +290,17 @@ def _run_repo_authed(
     return result, project
 
 
-def test_repo_default_caches_the_configured_model_in_the_install_interpreter(tmp_path: Path) -> None:
-    """6.1.0: embeddings are on by default. The owning interpreter resolves the model from the
-    project's config and loads it as the embedder does."""
+def test_repo_default_caches_the_daemons_model_in_the_install_interpreter(tmp_path: Path) -> None:
+    """6.1.0: embeddings are on by default. The owning interpreter resolves the model the daemon
+    loads (MEMORY_EMBEDDING_MODEL) and fetches it through the one pinned fetch path."""
     result, project = _run_repo_authed(tmp_path, [])
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "Semantic embeddings ready (BAAI/bge-small-en-v1.5)" in output, output
     prefetch = (tmp_path / "markers" / "embed_prefetch").read_text(encoding="utf-8")
-    assert "resolve_config_overrides" in prefetch
-    assert "SentenceTransformer(model)" in prefetch
+    assert "MemoryConfig().embedding_model" in prefetch
+    assert "fetch_models(embedding_model=model)" in prefetch
+    assert "retrieval_embedding_model" not in prefetch
 
 
 def test_repo_embeddings_failure_fails_the_install_loudly(tmp_path: Path) -> None:
@@ -495,7 +496,7 @@ def test_served_bootstrap_pep668_no_pipx_uses_managed_venv(tmp_path: Path) -> No
 
     # 3. Clean success — no dead-end.
     assert result.returncode == 0, f"bootstrap dead-ended instead of using the venv.\n--- output ---\n{output}"
-    assert "Open-source package installed" in output, output
+    assert "trw-mcp package installed" in output, output
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP], ids=["served", "repo"])

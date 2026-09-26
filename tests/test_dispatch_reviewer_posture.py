@@ -103,19 +103,23 @@ def _mcp_config_payload(argv: list[str]) -> dict[str, object]:
     return parsed
 
 
-# ── the nine names reach the codex command line, exactly once each ───────────
+# ── every reviewer-tool name reaches the codex command line, exactly once each
 
 
 def test_codex_reviewer_argv_carries_each_reviewer_tool_exactly_once() -> None:
     joined = " ".join(_codex_reviewer_argv())
-    # Counted as QUOTED tokens, not substrings: ``trw_before_edit_hint`` is a
-    # prefix of ``trw_before_edit_hint_batch``, so a substring count reports two
-    # occurrences of a name that appears once and the test fails on a correct
-    # allowlist.
+    # Counted as QUOTED tokens, not substrings: ``trw_code`` is a prefix of
+    # e.g. a hypothetical ``trw_code`` + ``_search`` name, so a substring
+    # count would misreport an occurrence of a name outside the current,
+    # smaller REVIEWER_TOOLS set.
     for name in REVIEWER_TOOLS:
         occurrences = joined.count(f'"{name}"')
         assert occurrences == 1, f'"{name}" appears {occurrences}x in the reviewer argv'
-    assert len(REVIEWER_TOOLS) == 9
+    # PRD-CORE-300 collapsed the four retired code/hint tools into the single
+    # trw_code tool, slice S4 already dropped codebase-risk-report, S9 folded
+    # the graph-related tool into trw_recall and S11b dropped the two meta
+    # tools, so the reviewer set is now exactly 2.
+    assert len(REVIEWER_TOOLS) == 2
 
 
 def test_codex_reviewer_allowlist_is_the_rendered_ssot_and_parses_as_toml() -> None:
@@ -127,6 +131,19 @@ def test_codex_reviewer_allowlist_is_the_rendered_ssot_and_parses_as_toml() -> N
     assert allowlist[0] == f"mcp_servers.trw_dispatch_test.enabled_tools={reviewer_tools_toml_array()}"
     parsed = tomllib.loads(allowlist[0].replace("mcp_servers.trw_dispatch_test.enabled_tools=", "enabled_tools = ", 1))
     assert parsed["enabled_tools"] == sorted(REVIEWER_TOOLS)
+
+
+def test_codex_reviewer_argv_pre_approves_only_the_bounded_trw_server() -> None:
+    """PRD-CORE-300-NFR02: under ``codex exec`` the approval policy is ``never``,
+    so an MCP call that needs approval is refused ("MCP tool call requires
+    approval, but approval policy is never"). The live S10 probe measured exactly
+    that: the reviewer lane listed ``trw_code`` and could not call it. The fresh
+    TRW server is already bounded to the read-only reviewer set, so its tools
+    are pre-approved there, and only there: the disabled legacy ``trw`` entry
+    gets no approval key."""
+    argv = _codex_reviewer_argv()
+    approvals = [tok for tok in argv if "default_tools_approval_mode" in tok]
+    assert approvals == ['mcp_servers.trw_dispatch_test.default_tools_approval_mode="approve"']
 
 
 def test_codex_reviewer_argv_supplies_the_mcp_transport_from_trw_not_the_repo() -> None:
@@ -148,11 +165,37 @@ def test_codex_reviewer_argv_keeps_the_read_only_sandbox_and_no_write_token() ->
         assert token not in argv
 
 
-def test_codex_reviewer_argv_drops_ignore_user_config_that_conflicts_with_the_overrides() -> None:
-    # L-VupD: measured "invalid transport in mcp_servers.trw" beside the -c
-    # overrides. The default posture must still emit it.
-    assert "--ignore-user-config" not in _codex_reviewer_argv()
-    assert "--ignore-user-config" in build_command(_req("codex"))
+def test_codex_reviewer_argv_now_carries_ignore_user_config_and_disables_apps() -> None:
+    # FR-12 RESOLVED (PRD-SEC-015-FR10, 2026-09-24): L-VupD's conflict was measured
+    # on a template with NO transport anywhere on the command line. This template
+    # supplies mcp_servers.trw's full command/args via -c, which removes that
+    # dependency (live-probed 2026-09-24, codex-cli 0.156.0) — so the reviewer argv
+    # now carries --ignore-user-config (drops every user/project MCP server) and
+    # --disable apps (drops ChatGPT connectors/plugins), appended via
+    # reviewer_extra_argv AFTER the rendered -c transport tokens.
+    argv = _codex_reviewer_argv()
+    assert "--ignore-user-config" in argv
+    assert argv[argv.index("--disable") + 1] == "apps"
+    # The default posture (no TRW-supplied transport) still emits the bare flag
+    # alone, unchanged from before this FR.
+    assert build_command(_req("codex")) == [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--json",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "audit this",
+    ]
+
+
+def test_codex_reviewer_extra_argv_is_appended_after_the_mcp_transport_tokens() -> None:
+    argv = _codex_reviewer_argv()
+    # Every "-c ..." pair precedes the hardening flags: the transport is fully
+    # rendered before anything else is appended, never interleaved with it.
+    last_c_index = max(i for i, tok in enumerate(argv) if tok == "-c")
+    assert argv.index("--ignore-user-config") > last_c_index + 1
 
 
 def test_codex_default_posture_renders_none_of_the_reviewer_channel() -> None:
@@ -183,6 +226,21 @@ def test_claude_reviewer_argv_has_no_write_or_tool_preauthorisation_token() -> N
     argv = _claude_reviewer_argv()
     for token in _WRITE_ENABLING_TOKENS:
         assert token not in argv
+
+
+def test_claude_reviewer_argv_restricts_the_built_in_tool_set_to_read_only() -> None:
+    # PRD-SEC-015-FR10 (NFR02): a bare reviewer dispatch had no --allowedTools/
+    # --disallowedTools at all, so shell/edit access depended on the user's own
+    # settings.json. --tools REPLACES the built-in tool set (unlike the forbidden
+    # --allowedTools, which pre-authorises rather than restricts).
+    argv = _claude_reviewer_argv()
+    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
+    for name in ("Bash", "Edit", "Write", "WebFetch"):
+        assert name not in argv[argv.index("--tools") + 1].split(",")
+
+
+def test_claude_default_posture_emits_no_tools_restriction() -> None:
+    assert "--tools" not in build_command(_req("claude"))
 
 
 def test_claude_default_posture_still_emits_the_empty_server_map() -> None:

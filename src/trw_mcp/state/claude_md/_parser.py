@@ -304,7 +304,7 @@ def render_merged_content(
         # anywhere in the file — including a marker mentioned inside prose or
         # backticks — and then deleted everything from there to the real end
         # marker. That is the 705-line ROADMAP corruption shape, and it was live
-        # on the delivery path: merge_trw_section is what trw_instructions_sync
+        # on the delivery path: merge_trw_section is what instructions sync
         # and trw_deliver call for CLAUDE.md and AGENTS.md. The bootstrap sibling
         # (_template_claude_md.py) had already been hardened with
         # find_marker_line_span; this copy never was.

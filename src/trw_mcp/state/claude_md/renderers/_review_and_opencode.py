@@ -112,7 +112,6 @@ def _antigravity_tool_reference() -> str:
             "trw_recall",
             "trw_build_check",
             "trw_review",
-            "trw_prd_create",
             "trw_prd_validate",
         )
     )

@@ -47,7 +47,7 @@ class TestEmitToolCall:
         monkeypatch.delenv(_ENV_VAR, raising=False)
 
         with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
-            emit_tool_call(tool_name="trw_before_edit_hint", file_path="api/app.py")
+            emit_tool_call(tool_name="trw_code", file_path="api/app.py")
             mock_append.assert_called_once()
             call_kwargs = mock_append.call_args.kwargs
             assert call_kwargs["event_type"] == "pull_tool_call"
@@ -63,17 +63,17 @@ class TestEmitToolCall:
     def test_resolves_client_from_env_when_not_provided(self, monkeypatch):
         monkeypatch.setenv(_ENV_VAR, "opencode")
         with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
-            emit_tool_call(tool_name="trw_codebase_risk_report")
+            emit_tool_call(tool_name="trw_code")
             call_kwargs = mock_append.call_args.kwargs
             assert call_kwargs["client"] == "opencode"
 
     def test_includes_tool_name_in_extra(self, monkeypatch):
         monkeypatch.delenv(_ENV_VAR, raising=False)
         with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as mock_append:
-            emit_tool_call(tool_name="trw_before_edit_hint")
+            emit_tool_call(tool_name="trw_code")
             call_kwargs = mock_append.call_args.kwargs
             extra = call_kwargs.get("extra", {})
-            assert extra.get("tool_name") == "trw_before_edit_hint"
+            assert extra.get("tool_name") == "trw_code"
 
     def test_passes_record_ids(self, monkeypatch):
         monkeypatch.delenv(_ENV_VAR, raising=False)
@@ -97,7 +97,7 @@ class TestEmitToolCallFailOpen:
             side_effect=OSError("disk full"),
         ) as append:
             # Must not raise
-            emit_tool_call(tool_name="trw_before_edit_hint")
+            emit_tool_call(tool_name="trw_code")
         assert append.call_count == 1
 
     def test_does_not_raise_on_permission_error(self, monkeypatch):
@@ -105,7 +105,7 @@ class TestEmitToolCallFailOpen:
             "trw_mcp.channels._distill_telemetry.append_channel_event",
             side_effect=PermissionError("read-only filesystem"),
         ) as append:
-            emit_tool_call(tool_name="trw_codebase_risk_report")
+            emit_tool_call(tool_name="trw_code")
         assert append.call_count == 1
 
     def test_does_not_raise_on_runtime_error(self, monkeypatch):
@@ -118,7 +118,7 @@ class TestEmitToolCallFailOpen:
 
     def test_returns_none(self, monkeypatch):
         with patch("trw_mcp.channels._distill_telemetry.append_channel_event") as append:
-            result = emit_tool_call(tool_name="trw_before_edit_hint")
+            result = emit_tool_call(tool_name="trw_code")
         assert result is None
         assert append.call_count == 1
 
@@ -139,7 +139,7 @@ class TestEmitToolCallIntegration:
             "trw_mcp.channels._telemetry._resolve_log_path",
             return_value=log_path,
         ):
-            emit_tool_call(tool_name="trw_before_edit_hint", file_path="foo.py")
+            emit_tool_call(tool_name="trw_code", file_path="foo.py")
 
         lines = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
         assert len(lines) == 1

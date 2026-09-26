@@ -16,7 +16,7 @@ Use when: the operator wants to report a TRW bug, an install issue, a feature
 request, general feedback, or ask a question — and you want a single guided
 flow that captures context and submits it through the official channel.
 
-This skill wraps the `trw_submit_feedback` MCP tool. The tool POSTs to
+This skill wraps `trw_status(feedback=...)`. It POSTs to
 `<backend_url>/v1/submissions` (PRD-CORE-182) using the operator's
 `platform_api_key` from `.trw/config.yaml`. PII redaction runs before the
 network call, over the subject, the body, AND every metadata key and value.
@@ -50,13 +50,11 @@ a new shape. The canonical set is `redact_secrets` in `trw_mcp/telemetry/anonymi
 4. **Call the tool**:
 
    ```python
-   trw_submit_feedback(
-       category=<category>,
-       subject=<one-line summary, max 200 chars>,
-       message=<longer detail, min 10 chars; redacted client-side before send>,
-       contact_email=<optional reply-to>,
-       metadata=<optional dict[str,str]; auto-merged with trw_mcp_version etc.>,
-   )
+   trw_status(feedback={
+       "category": <category>, "subject": <summary, max 200 chars>,
+       "message": <detail, min 10 chars; redacted before send>,
+       "contact_email": <optional>, "metadata": <optional dict[str,str]>,
+   })
    ```
 
    Both surfaces share the same canonical tool (PRD-CORE-182); PRD-INFRA-132
@@ -72,7 +70,7 @@ a new shape. The canonical set is `redact_secrets` in `trw_mcp/telemetry/anonymi
 An agent or sub-agent may invoke this skill without a human present. In that
 case, derive `category`, `subject`, and `message` from the current context
 (the bug/rough edge you just hit, the failing command, the install issue) and
-call `trw_submit_feedback` directly — do not block waiting for interactive
+call `trw_status(feedback=...)` directly — do not block waiting for interactive
 prompts. When an operator IS present, still confirm with them first.
 
 ## Notes

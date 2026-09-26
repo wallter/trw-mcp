@@ -93,6 +93,10 @@ class ProbeCache:
             evicted_key, _ = self._store.popitem(last=False)
             self._total_bytes -= self._sizes.pop(evicted_key, 0)
 
+    def items(self) -> list[tuple[str, ProbeResult]]:
+        """Every entry, least recently used first, so a reload keeps the LRU order."""
+        return list(self._store.items())
+
     def __len__(self) -> int:
         return len(self._store)
 

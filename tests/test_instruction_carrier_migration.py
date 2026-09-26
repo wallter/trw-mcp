@@ -27,6 +27,11 @@ _START = "<!-- trw:start -->"
 _END = "<!-- trw:end -->"
 
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
 class TestLegacySidecarImportConvertsToInline:
     """The FR01 migration: an old sidecar-import install folds back inline.
 
@@ -58,7 +63,19 @@ class TestLegacySidecarImportConvertsToInline:
         # an UNCOMMITTED file it did not write (PRD-INFRA-190 FR04).
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
         subprocess.run(
-            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "legacy"],
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                *_NO_HOOKS,
+                "commit",
+                "-qm",
+                "legacy",
+            ],
             check=True,
         )
         return claude_md, sidecar

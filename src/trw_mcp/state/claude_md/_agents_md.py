@@ -164,7 +164,7 @@ def _determine_write_target_decision(
         # The RECORD first, detection only as fallback. Detection reports
         # claude-code for any project containing `.claude/`, which TRW creates
         # for EVERY client (hooks and skills are universal artifacts) — so
-        # `trw_instructions_sync()` with its default client="auto", the call the
+        # `trw-mcp instructions sync` with its default client="auto", the call the
         # behavioral protocol tells agents to make at DELIVER, re-derived "this
         # is a Claude Code project" from our own scaffolding and reinjected the
         # CLAUDE.md block into codex and opencode projects.
@@ -377,21 +377,6 @@ def _sync_instruction_file_target(
     if any(result.get(key) for key in ("created", "updated", "preserved")):
         return True, target.instruction_path
     return False, None
-
-
-def _resolve_instruction_target(
-    instruction_path: str,
-    client: str,
-) -> InstructionFileTarget | None:
-    """Resolve a legacy instruction-path request to a concrete sync target."""
-    if _is_instruction_sync_client(client):
-        return InstructionFileTarget(client_id=client, instruction_path=instruction_path)
-
-    for supported_client in _INSTRUCTION_SYNC_CLIENT_IDS:
-        profile_target = _instruction_target_from_profile(supported_client)
-        if instruction_path == profile_target.instruction_path:
-            return profile_target
-    return None
 
 
 def _sync_instruction_targets(

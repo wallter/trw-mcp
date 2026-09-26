@@ -29,10 +29,11 @@ def test_every_descriptor_declares_a_crash_boundary() -> None:
     """FR03: zero descriptors carry no boundary, and no shared_with chain is cyclic."""
     undeclared = [d.effect_id for d in DELIVERY_EFFECT_REGISTRY.values() if d.boundary is None]
     assert undeclared == []
-    # Floor, not a pin: the 46 approved §6.6 rows plus CORE-244's D25. Later PRDs
-    # legitimately add descriptors, and the point of FR03 is that a NEW one cannot
-    # arrive without a boundary — the registry raises at import if it tries.
-    assert len(DELIVERY_EFFECT_REGISTRY) >= 47
+    # Floor, not a pin: the 46 approved §6.6 rows plus CORE-244's D25, less D02,
+    # retired with delivery step 2.6 by PRD-CORE-302 FR03. Later PRDs legitimately
+    # add descriptors, and the point of FR03 is that a NEW one cannot arrive
+    # without a boundary — the registry raises at import if it tries.
+    assert len(DELIVERY_EFFECT_REGISTRY) >= 46
 
     # Every shared_with resolves, in one hop, to a host that declares `own`.
     for effect_id, descriptor in DELIVERY_EFFECT_REGISTRY.items():

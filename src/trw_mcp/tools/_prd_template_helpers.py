@@ -1,7 +1,7 @@
 """PRD template processing helpers — extracted from requirements.py.
 
 Private helpers for loading, substituting, prefilling, filtering, and
-rendering PRD templates used by ``trw_prd_create``.
+rendering PRD templates used by ``create_prd`` (called from ``trw-mcp prd create``).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ logger = structlog.get_logger(__name__)
 #: ``_load_template_body`` deliberately re-reads and re-validates the file on
 #: every call — a swapped or corrupted template must fail closed rather than be
 #: served from memory (pinned by ``test_creator_does_not_reuse_cached_template_
-#: after_source_changes``). These globals exist so ``trw_prd_create`` can stamp
+#: after_source_changes``). These globals exist so ``create_prd`` can stamp
 #: the version it just parsed; the "cache" naming is retained only because tests
 #: and re-exports reference these names.
 _CACHED_TEMPLATE_BODY: str | None = None

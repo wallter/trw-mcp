@@ -21,9 +21,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.state._ceremony_progress_state import NudgeContext
-from trw_mcp.tools._ceremony_status_helpers import (
-    _has_cached_learning_weights,
-)
 from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content
 
 if TYPE_CHECKING:
@@ -39,11 +36,9 @@ def select_pool(
     context: NudgeContext | None,
     effective_dir: Path,
 ) -> str | None:
-    """Pick the nudge pool for the standard messenger (cooldown + cache aware).
+    """Pick the nudge pool for the standard messenger (cooldown aware).
 
-    Returns the resolved pool name, or ``None`` when no pool fires.
-    Override: when ``_has_cached_learning_weights`` is set the pool is
-    forced to ``"learnings"`` regardless of the weighted-random pick. Never
+    Returns the resolved pool name, or ``None`` when no pool fires. Never
     ``"learnings"`` on a session_start response, which already carries them.
     """
     from trw_mcp.state._ceremony_nudge_selectors import nudge_may_recall
@@ -57,11 +52,7 @@ def select_pool(
     cooldown_calls = cfg.nudge_pool_cooldown_calls
 
     pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
-    if not pool:
-        return None
-    if pool != "learnings" and learnings_allowed and _has_cached_learning_weights(effective_dir):
-        return "learnings"
-    return pool
+    return pool or None
 
 
 def resolve_pool_content(

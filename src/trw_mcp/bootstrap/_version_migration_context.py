@@ -77,8 +77,8 @@ _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
 # for every installed project, and it unlinked `trust-registry.yaml` (MCP trust
 # decisions), `deliver-override-audit.jsonl` (the record of every
 # truthfulness-gate override), and the `events-*.jsonl` security stream that
-# `trw_mcp_security_status` and the anomaly detector read — none of which are
-# reconstructable.
+# the `trw-mcp telemetry security` CLI command and the anomaly detector read —
+# none of which are reconstructable.
 #
 # So the predicate is inverted to match what FIX-031's own user story asked for
 # ("my analytics history, build cache, and session state are never lost"):

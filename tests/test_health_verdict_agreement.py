@@ -2,7 +2,7 @@
 
 On 2026-09-16 ``trw_session_start`` injected ``pipeline_health_warning`` at
 severity ``error`` reading "knowledge graph dead: 0 edges for 1343 memories (min
-corpus 10)" while ``trw_pipeline_health`` reported
+corpus 10)" while the pipeline-health probe reported
 ``graph_edges.degraded = false`` for the same store in the same second
 (learning L-Rikf). Three predicates existed for one question, over two
 thresholds (100 and 10) and two populations.

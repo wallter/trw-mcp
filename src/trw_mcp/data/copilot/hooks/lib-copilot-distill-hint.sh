@@ -180,3 +180,55 @@ _is_safe_extension() {
     esac
     return 1
 }
+
+# ---------------------------------------------------------------------------
+# Symlink-safe atomic state write/read (PRD-SEC/RC8)
+# ---------------------------------------------------------------------------
+#
+# Duplicated from hooks/lib-trw.sh rather than sourced: this hook ships
+# standalone (see the file header) with no dependency on the Claude Code
+# hooks directory. A crafted checkout that ships a `.trw/context` state path
+# (or `.trw/context` itself) as a symlink to an arbitrary file must not let a
+# normal edit-hint run truncate or append to it, no race required.
+
+_trw_ancestor_symlinked() {
+    _tas_walk="$1"
+    while [ -n "$_tas_walk" ] && [ "$_tas_walk" != "/" ] && [ "$_tas_walk" != "." ]; do
+        [ -L "$_tas_walk" ] && return 0
+        case "$_tas_walk" in
+            */.trw | .trw) return 1 ;;
+        esac
+        _tas_next=$(dirname "$_tas_walk")
+        [ "$_tas_next" = "$_tas_walk" ] && return 1
+        _tas_walk="$_tas_next"
+    done
+    return 1
+}
+
+_trw_safe_write() {
+    # Usage: printf '%s' "$content" | _trw_safe_write <dest>  (replace only;
+    # lib-trw.sh's copy also appends)
+    _tsw_dest="$1"
+    _tsw_dir=$(dirname "$_tsw_dest")
+    _trw_ancestor_symlinked "$_tsw_dir" && return 1
+    [ -d "$_tsw_dir" ] || mkdir -p "$_tsw_dir" 2>/dev/null || return 1
+    [ -L "$_tsw_dir" ] && return 1
+    # A symlinked leaf would take `mv` into the directory it names.
+    [ -L "$_tsw_dest" ] && return 1
+    [ ! -e "$_tsw_dest" ] || [ -f "$_tsw_dest" ] || return 1
+    # PID-suffixed temp name, not mktemp: mktemp is absent from some
+    # minimal/restricted-PATH environments these hooks run in.
+    _tsw_tmp="${_tsw_dest}.trw-safe-write.$$"
+    rm -f "$_tsw_tmp" 2>/dev/null
+    # noclobber: a temp name planted after the rm is refused, not opened.
+    (set -C; cat > "$_tsw_tmp") 2>/dev/null || { rm -f "$_tsw_tmp" 2>/dev/null; return 1; }
+    mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
+    rm -f "$_tsw_tmp" 2>/dev/null
+    return 1
+}
+
+_trw_safe_read() {
+    [ -L "$1" ] && return 1
+    [ -f "$1" ] || return 1
+    cat "$1" 2>/dev/null
+}

@@ -74,7 +74,6 @@ def test_a_refused_override_is_never_inherited_by_a_resume(tmp_path: Path, monke
     That is a bypass of PRD-CORE-191's structured-override design.
     """
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("TRW_OFFLINE", "1")
     run_dir = seed_deliver_run(tmp_path)
     # deliver_gate_mode=block_coding hard-blocks a build-bearing task type with no
     # build evidence, which is the STRUCTURED gate the override is evaluated for.
@@ -209,7 +208,6 @@ def _child_delivery_killed_between_phase_write_and_mirror(
 
     tmp_path = Path(tmp_path_str)
     os.environ["TRW_PROJECT_ROOT"] = str(tmp_path)
-    os.environ["TRW_OFFLINE"] = "1"
 
     from tests.conftest import get_tools_sync, make_test_server
 
@@ -248,7 +246,6 @@ def test_s02_mirror_completes_on_resume_despite_the_forward_only_guard(
     monkeypatch.syspath_prepend(repo_root)
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(filter(None, (repo_root, os.environ.get("PYTHONPATH", "")))))
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("TRW_OFFLINE", "1")
 
     run_dir = seed_deliver_run(tmp_path)
     (run_dir / "meta" / "run.yaml").write_text(

@@ -168,6 +168,43 @@ def test_output_file_nested_dir_is_created(monkeypatch: pytest.MonkeyPatch, tmp_
     assert json.loads(nested.read_text())["text"] == "X"
 
 
+def test_output_file_symlink_is_refused_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[object] = []
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", lambda req: calls.append(req) or _fake_result("X"))
+    target = tmp_path / "precious.txt"
+    target.write_text("keep me", encoding="utf-8")
+    link = tmp_path / "result.json"
+    link.symlink_to(target)
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(output_file=str(link)))
+    assert exc.value.code == 2
+    assert "symlink" in capsys.readouterr().err
+    assert calls == []
+    assert target.read_text(encoding="utf-8") == "keep me"
+
+
+def test_output_file_write_never_follows_a_symlink_swapped_in_during_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "precious.txt"
+    target.write_text("keep me", encoding="utf-8")
+    out_file = tmp_path / "result.json"
+
+    def _swap(_req: object) -> DispatchResult:
+        out_file.symlink_to(target)
+        return _fake_result("X")
+
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", _swap)
+    with pytest.raises(SystemExit):
+        run_dispatch(_ns(output_file=str(out_file)))
+    assert target.read_text(encoding="utf-8") == "keep me"
+    assert not out_file.is_symlink()
+    assert json.loads(out_file.read_text())["text"] == "X"
+    assert out_file.stat().st_mode & 0o777 == 0o600
+
+
 # --- PRD-CORE-299-FR04: --variant-of writes a named, provenance-stamped variant ---
 
 

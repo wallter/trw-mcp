@@ -9,11 +9,10 @@ feature is ungated.
 Each consumer tool calls ``collect_learnings(queries=[...])`` with
 tool-appropriate queries:
 
-- ``trw_before_edit_hint``: ``[file_path, basename(file_path)]``
-- ``trw_before_edit_hint_batch``: per-file [path, basename] flattened
-- ``trw_codebase_risk_report``: top-N risk paths + basenames
-- ``trw_ordering_compare``: divergent paths (only_in_a + only_in_b)
-- ``trw_cross_repo_ordering``: aggregate-level ("cross-repo divergence")
+- ``trw_code`` hint mode, single file: ``[file_path, basename(file_path)]``
+- ``trw_code`` hint mode, multiple files: per-file [path, basename] flattened
+- the codebase-risk-report engine (``trw-mcp code risk`` CLI as of
+  PRD-CORE-300 slice S4): top-N risk paths + basenames
 
 IP boundary: trw-mcp PUBLIC; trw-distill PROPRIETARY. This module
 calls trw-mcp's own ``recall_learnings`` only — no trw_distill import.
@@ -32,7 +31,7 @@ MAX_QUERIES: int = 10
 #: PRD-CORE-278 FR09: collect twice the requested count before partitioning by
 #: origin. Every tool behind this seam is keyed on a path in THIS checkout, and
 #: returning early at ``top_n`` meant a file-name token matching five learnings
-#: from another repository filled the whole hint (L-XIhp, trw_before_edit_hint on
+#: from another repository filled the whole hint (L-XIhp, trw_code hint mode on
 #: models/config/_loader.py).
 _ATTRIBUTION_OVERFETCH: int = 2
 

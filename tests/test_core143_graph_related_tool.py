@@ -2,27 +2,20 @@
 
 The traversal itself (namespace scope, active-only rows, the breadth bound) runs in
 the store and is pinned by ``trw-memory/tests/test_tools_graph_related.py``. Here the
-tool must validate its bounds, resolve the root through the checkout's store, and
-shape the store's rows.
+:func:`graph_related` callable must validate its bounds, resolve the root through
+the checkout's store, and shape the store's rows. PRD-CORE-300-FR11 (S9) deleted the
+standalone graph-related MCP tool; its registration is now pinned by
+``tests/test_recall_graph_mode.py`` (``trw_recall(graph_id=...)``).
 """
 
 from __future__ import annotations
 
 import pytest
-from fastmcp import FastMCP
 from trw_memory.models.memory import MemoryEntry
 
 from tests._memory_fixtures import FAKE_NAMESPACE
 from tests._memory_store_fake import FakeMemoryStore
-from tests.conftest import get_tools_sync
-from trw_mcp.tools.knowledge import graph_related, register_knowledge_tools
-
-
-def test_graph_related_is_registered_on_mcp_surface() -> None:
-    server = FastMCP("core143")
-    register_knowledge_tools(server)
-
-    assert "trw_graph_related" in get_tools_sync(server)
+from trw_mcp.tools.knowledge import graph_related
 
 
 def test_graph_related_reads_the_roots_own_namespace_and_shapes_its_rows(fake_memory_store: FakeMemoryStore) -> None:

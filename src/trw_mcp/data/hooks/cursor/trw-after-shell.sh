@@ -14,6 +14,14 @@ PAYLOAD="$(cat)"
 
 # Best-effort structured log
 LOG_DIR="${CURSOR_PROJECT_DIR:-$(pwd)}/.trw/logs"
+# PRD-SEC/RC8: refuse to log through a symlinked .trw, .trw/logs or log file -- a
+# crafted checkout must not be able to redirect this append at an arbitrary
+# target the user can write. Logging is best-effort (never blocks this
+# script's own ALLOW/DENY decision), so the fix is to silently drop the log
+# line by redirecting it to /dev/null, not to abort.
+if [ -L "${LOG_DIR%/logs}" ] || [ -L "$LOG_DIR" ] || [ -L "$LOG_DIR/cursor-hooks.jsonl" ]; then
+    LOG_DIR="/dev/null-trw-logs-disabled"
+fi
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 TS="$(date -Iseconds 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
 

@@ -1,7 +1,7 @@
-"""trw_channel_stats MCP tool — channel correlation health.
-
-Returns per-channel correlation rate so an agent or operator can query
-channel telemetry health via MCP.
+"""Channel correlation health — PRD-CORE-300 slice S3a moved the MCP tool this
+module used to register to ``trw-mcp telemetry channel-stats`` (see
+``tools/_telemetry_cli.py``, which calls :func:`compute_channel_stats_result`
+directly).
 
 The throttle evaluation this tool used to surface was removed 2026-09-22
 (RC-014): it fed a manifest field (``tier_default``) nothing read to change
@@ -22,13 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from fastmcp import FastMCP
 
 log = structlog.get_logger(__name__)
 
 __all__ = [
     "compute_channel_stats_result",
-    "register_channel_stats_tools",
 ]
 
 _DEFAULT_LOG_SUBPATH = ".trw/telemetry/channel-events.jsonl"
@@ -117,32 +115,3 @@ def compute_channel_stats_result(
             "total_events": 0,
             "window_seconds": window_hours * 3600,
         }
-
-
-def register_channel_stats_tools(mcp: FastMCP) -> None:
-    """Register trw_channel_stats on the MCP server."""
-
-    # Reads channel-events.jsonl, computes push->outcome correlation rates per
-    # (channel_id, client), and applies CLIENT_CORRECTION_FACTORS.
-    @mcp.tool()
-    def trw_channel_stats(
-        window_hours: int = 1,
-        repo_root: str | None = None,
-    ) -> dict[str, Any]:
-        """Return per-channel push->outcome correlation rate.
-
-        Use when: inspecting channel health.
-
-        Output: status ok|no_activity|error, per-channel correlation rows,
-        total_events. no_activity means the log held no channel events at
-        all, which is distinct from ok with an empty list.
-
-        Args:
-            window_hours: correlation time window in hours (default 1).
-        """
-        return compute_channel_stats_result(
-            window_hours=window_hours,
-            repo_root=repo_root,
-        )
-
-    log.debug("channel_stats_tool_registered", outcome="registered")

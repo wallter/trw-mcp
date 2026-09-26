@@ -5,7 +5,7 @@ the ``_run_deferred_steps`` orchestrator, and ``_launch_deferred``
 thread launcher.
 
 Step implementations live in domain-specific sub-modules:
-- ``_deferred_steps_memory``: auto-prune, consolidation, tier sweep
+- ``_deferred_steps_memory``: auto-prune, tier sweep, memory maintenance
 - ``_deferred_steps_telemetry``: telemetry, batch send, ceremony feedback, checkpoint
 - ``_deferred_steps_learning``: publish, outcome correlation, recall, trust, index sync
 
@@ -56,7 +56,6 @@ from trw_mcp.tools._deferred_steps_learning import (
 )
 from trw_mcp.tools._deferred_steps_memory import (
     _step_auto_prune as _step_auto_prune,
-    _step_consolidation as _step_consolidation,
     _step_memory_decay as _step_memory_decay,
     _step_tier_sweep as _step_tier_sweep,
 )
@@ -87,7 +86,6 @@ logger = structlog.get_logger(__name__)
 # ``_run_deferred_steps``); the reported count follows automatically.
 DEFERRED_STEPS: tuple[str, ...] = (
     "auto_prune",
-    "consolidation",
     "tier_sweep",
     "memory_decay",
     "index_sync",
@@ -252,7 +250,6 @@ def _run_deferred_steps(
     # monkeypatches on ``_deferred_delivery._step_foo`` still bind at call time.
     step_map: dict[str, object] = {
         "auto_prune": lambda: _step_auto_prune(trw_dir),
-        "consolidation": lambda: _step_consolidation(trw_dir),
         "tier_sweep": lambda: _step_tier_sweep(trw_dir),
         "memory_decay": lambda: _step_memory_decay(trw_dir),
         "index_sync": lambda: _do_index_sync(),

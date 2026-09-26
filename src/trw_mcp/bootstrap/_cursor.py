@@ -323,7 +323,7 @@ Cursor's Agent prioritizes recent messages over the always-apply rule
 
 When Cursor signals an upcoming context compaction (preCompact hook fires,
 or the conversation nears the context window limit), call
-`trw_pre_compact_checkpoint()` BEFORE responding further — it preserves
+`trw_checkpoint(pre_compact=True)` BEFORE responding further — it preserves
 the resumption point across the compression boundary.
 """
 

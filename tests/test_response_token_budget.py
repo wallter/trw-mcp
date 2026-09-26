@@ -257,7 +257,7 @@ _PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
     # PRD-CORE-294 FR01 cut trw_recall to stubs within a byte budget: the eleven
     # counter/shaping keys are gone and nothing may come back.
     "trw_recall": {"ceremony_status", "learnings", "nudge_content", "query", "total_matches"},
-    "trw_before_edit_hint": {
+    "trw_code_hint": {
         "distill_action",
         "distill_hint",
         "distill_sidecar_path",
@@ -312,13 +312,16 @@ def test_feedback_telemetry_adds_no_response_keys(tmp_project: Path, monkeypatch
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
-    server = make_test_server("learning", "before_edit_hint", "build")
+    server = make_test_server("learning", "code", "build")
     extract_tool_fn(server, "trw_learn")(
         summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
     )
     observed = {
         "trw_recall": set(extract_tool_fn(server, "trw_recall")(query="app.py startup")),
-        "trw_before_edit_hint": set(extract_tool_fn(server, "trw_before_edit_hint")(file_path="app.py")),
+        # Unwrap the {"status","hints","count"} trw_code envelope to the single
+        # per-file hint dict, so this key set is comparable to the old
+        # trw_code_hint tool's flat response.
+        "trw_code_hint": set(extract_tool_fn(server, "trw_code")(mode="hint", files="app.py")["hints"][0]),
         "trw_build_check": set(extract_tool_fn(server, "trw_build_check")(tests_passed=False, test_count=1)),
     }
     assert observed == _PRE_FIX144_RESPONSE_KEYS, _BLOAT_GUIDANCE

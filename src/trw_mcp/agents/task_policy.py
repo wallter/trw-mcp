@@ -31,6 +31,8 @@ class TaskPolicy:
 #: operator sees diminishing returns there and wants ``xhigh``/``max`` only with
 #: evidence). A ``local-small`` model takes no effort parameter; its ``low`` is
 #: dropped by the adapter, never sent.
+#: Operator decision, 2026-09-24: ``medium`` is the default for every Opus 5.5
+#: class, security included ("that's the sweet spot"); raise per call with evidence.
 #: Review and security classes are exempt from both caps (lead ruling on the b4
 #: review): a turn cap truncates an audit mid-evidence, and their findings schema
 #: is structured YAML that a character cap would cut.
@@ -40,7 +42,8 @@ TASK_POLICY: dict[str, TaskPolicy] = {
     "review": TaskPolicy("frontier", "medium", max_turns=0, report_capped=False),
     "plan": TaskPolicy("frontier", "medium"),
     "lead": TaskPolicy("frontier", "medium"),
-    "security": TaskPolicy("frontier", "high", max_turns=0, report_capped=False),  # security review, adversarial audit
+    # security review, adversarial audit
+    "security": TaskPolicy("frontier", "medium", max_turns=0, report_capped=False),
 }
 
 #: Every bundled agent's class. The frontmatter of ``data/agents/<name>.md`` must

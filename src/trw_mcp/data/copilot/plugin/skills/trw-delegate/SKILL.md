@@ -16,7 +16,7 @@ it does not guarantee a different provider or model unless the caller explicitly
 Prefer MCP, especially in shell-less harnesses:
 
 1. Call `trw_dispatch(prompt=..., role=..., client=..., wait=False)`.
-2. Poll `trw_dispatch_status(job_id)` until `succeeded`, `failed`, `timed_out`, or `cancelled`.
+2. Poll `trw_dispatch(action="status", target=job_id)` until `succeeded`, `failed`, `timed_out`, or `cancelled`.
 3. Read the redacted result and report failures or isolation limitations. Never imply a review completed from a
    non-terminal job.
 
@@ -25,15 +25,10 @@ and a shell exists, use `trw-mcp dispatch --help` and the CLI as a fallback rath
 
 ## When the dispatch tools are not listed
 
-They are masked, not missing. Both belong to a gated capability pack that no task type exposes, so a default session
-never lists them. Two ways through, in order of preference:
+They are off, not missing. `trw_dispatch` needs `dispatch_tools_exposed: true` in `.trw/config.yaml` — the client must
+refresh its tool list after the flag flips (a reconnect if it cannot). There is no alternative grant path.
 
-- the operator sets `dispatch_tools_exposed: true` in `.trw/config.yaml` — persistent, and the client must refresh its
-  tool list (a reconnect if it cannot);
-- `trw_request_tool_access(tool_name="trw_dispatch", reason=...)` grants ONE call, so a launch-then-poll loop needs a
-  fresh grant before each `trw_dispatch_status` poll.
-
-Report which path you used. A reviewer-bounded session is refused both; do not treat that refusal as a transient error.
+A reviewer-bounded session is refused regardless of the flag; do not treat that refusal as a transient error.
 
 ## Resolution and roles
 

@@ -39,9 +39,31 @@ rule 2026-07-07, recorded in ``CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md``
 - Opus 5.5 defaults to ``medium`` effort (Opus 5 defaulted to ``high``), so
   the bundled agents' ``effort:`` frontmatter now carries more weight. Note
   that Claude Code ignores the top-level ``effortLevel`` setting for Opus 5.5
-  (``modelSettings.opus.effort`` / ``--effort`` apply instead); whether it
-  honours agent-frontmatter ``effort:`` for Opus 5.5 is NOT established by the
-  facts file — verify before relying on it.
+  (``modelSettings.opus.effort`` / ``--effort`` apply instead).
+
+Effective effort per launch path (PRD-CORE-289 FR08, 2026-09-24). "Observed" is
+Claude Code's own per-turn transcript metadata (``effort`` / ``perTurnEffort`` in
+``~/.claude/projects/<cwd>/<session>.jsonl``): what the client records it sent,
+not a server-side confirmation, and differing output text is not evidence.
+
+====================================  ========  =========  ==================
+Launch path (client version, model)   Requested Observed   Basis
+====================================  ========  =========  ==================
+Native subagent, frontmatter          high      high       126/126 turns,
+``effort:`` (2.1.280, Opus 5.5)                            trw-adversarial-auditor
+Native subagent, frontmatter          medium    medium     81 + 168 turns,
+``effort:`` (2.1.280, Opus 5.5)                            trw-reviewer, trw-implementer
+Native subagent with a model          medium    unknown    ``perTurnEffort`` null
+override (2.1.280, Sonnet 5)                               on 178/178 turns
+TRW dispatch ``claude -p --effort``   low       low        live probe, 1 turn each
+(2.1.281, Opus 5.5)                   xhigh     xhigh
+TRW dispatch ``agy --effort``         any       unknown    no metadata inspected
+codex, opencode, grok dispatch        none      unknown    no effort flag mapped (FR06)
+====================================  ========  =========  ==================
+
+So on Claude Code 2.1.280+ with Opus 5.5, agent-frontmatter ``effort:`` is
+honoured for native subagents. Dispatch evidence covers TRW's ``claude -p``
+launches only and says nothing about other clients' native subagents.
 - ``fable`` is INTENTIONALLY ABSENT from :data:`_CLAUDE_CODE_MAP`. The
   operator rule "no Fable-class subagents" (worded per-generation as
   "no Fable-5 subagents" on 2026-07-07; Fable 5.1 shipped 2026-09-01 and is

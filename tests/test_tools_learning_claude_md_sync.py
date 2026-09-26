@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests._memory_store_fake import FakeMemoryStore
-from tests._tools_learning_shared import _get_tools, no_machine_wide_ide_detection  # noqa: F401
+from tests._tools_learning_shared import _get_tools, instructions_sync_fn, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter
@@ -35,7 +35,7 @@ def fake_memory_store_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 class TestTrwClaudeMdSync:
-    """Tests for trw_claude_md_sync tool."""
+    """Tests for instructions sync."""
 
     def test_generates_claude_md(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_tools()
@@ -49,7 +49,7 @@ class TestTrwClaudeMdSync:
         )
 
         # Sync
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
         # CORE-093: learning promotion removed — learnings_promoted always 0
         assert result["learnings_promoted"] == 0
@@ -72,7 +72,7 @@ class TestTrwClaudeMdSync:
             detail="Detail here",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
 
         content = claude_md.read_text(encoding="utf-8")
         assert "My Project" in content  # Preserved
@@ -92,7 +92,7 @@ class TestTrwClaudeMdSync:
             detail="Replaces old content",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        instructions_sync_fn(scope="root")
 
         content = claude_md.read_text(encoding="utf-8")
         assert "Old content" not in content
@@ -113,7 +113,7 @@ class TestTrwClaudeMdSync:
         sub_dir = tmp_path / "src" / "module"
         sub_dir.mkdir(parents=True)
 
-        result = tools["trw_claude_md_sync"].fn(
+        result = instructions_sync_fn(
             scope="sub",
             target_dir=str(sub_dir),
         )
@@ -144,7 +144,7 @@ class TestTrwClaudeMdSync:
             impact=0.9,
         )
         with pytest.raises(StateError, match="will not truncate"):
-            tools["trw_claude_md_sync"].fn(scope="root")
+            instructions_sync_fn(scope="root")
 
         # The user's content is byte-identical after the refusal.
         assert claude_md.read_text(encoding="utf-8") == long_content
@@ -179,7 +179,7 @@ class TestTrwClaudeMdSync:
 
 
 class TestTrwClaudeMdSyncLLM:
-    """Tests for LLM-augmented trw_claude_md_sync."""
+    """Tests for LLM-augmented instructions sync."""
 
     def test_sync_without_llm_unchanged(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Verify sync still works with LLM unavailable."""
@@ -191,7 +191,7 @@ class TestTrwClaudeMdSyncLLM:
             impact=0.9,
         )
 
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
         assert result["llm_used"] is False
         # CORE-093: learning promotion removed
@@ -209,7 +209,7 @@ class TestTrwClaudeMdSyncLLM:
             detail="Check llm_used field",
             impact=0.9,
         )
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert "llm_used" in result
 
 
@@ -217,7 +217,7 @@ class TestClaudeMdSyncAtomicWrite:
     """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""
 
     def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        """trw_claude_md_sync uses _writer.write_text for CLAUDE.md."""
+        """instructions sync uses _writer.write_text for CLAUDE.md."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -232,7 +232,7 @@ class TestClaudeMdSyncAtomicWrite:
         ) as mock_cls:
             mock_instance = mock_cls.return_value
             mock_instance.write_text = MagicMock(wraps=real_writer.write_text)
-            result = tools["trw_claude_md_sync"].fn(scope="root")
+            result = instructions_sync_fn(scope="root")
             assert result["status"] == "synced"
             assert mock_instance.write_text.call_count >= 1
 
@@ -268,7 +268,7 @@ class TestClaudeMdSyncLateResolve:
             detail="Should write under the patched _paths root",
             impact=0.9,
         )
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
 
         assert result["status"] == "synced"
         written = target_root / "CLAUDE.md"

@@ -16,7 +16,7 @@ import pytest
 
 from tests._ceremony_helpers import make_ceremony_server
 from trw_mcp.tools._ceremony_runtime_helpers import _get_run_status
-from trw_mcp.tools.checkpoint import _write_compact_state
+from trw_mcp.tools.checkpoint import _write_compact_state, execute_pre_compact_checkpoint
 
 
 def _make_run(tmp_path: Path) -> Path:
@@ -126,14 +126,15 @@ def _tool_run_dir(tmp_path: Path) -> Path:
 
 
 def test_tool_persists_and_echoes_directive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """trw_pre_compact_checkpoint persists directive/anchor and echoes them back."""
+    """execute_pre_compact_checkpoint persists directive/anchor and echoes them back (trw_checkpoint(pre_compact=True))."""
     run_dir = _tool_run_dir(tmp_path)
-    tools = make_ceremony_server(monkeypatch, tmp_path)
+    make_ceremony_server(monkeypatch, tmp_path)
 
     with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-        result = tools["trw_pre_compact_checkpoint"].fn(
-            directive="land FR-01 then deliver",
-            context_anchor="readback wired, running tests",
+        result = execute_pre_compact_checkpoint(
+            None,
+            "land FR-01 then deliver",
+            "readback wired, running tests",
         )
 
     assert result["status"] == "success"
@@ -150,10 +151,10 @@ def test_tool_persists_and_echoes_directive(tmp_path: Path, monkeypatch: pytest.
 def test_tool_backward_compatible_without_args(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Calling the tool with no new args still works; no directive keys emitted."""
     run_dir = _tool_run_dir(tmp_path)
-    tools = make_ceremony_server(monkeypatch, tmp_path)
+    make_ceremony_server(monkeypatch, tmp_path)
 
     with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-        result = tools["trw_pre_compact_checkpoint"].fn()
+        result = execute_pre_compact_checkpoint(None)
 
     assert result["status"] == "success"
     assert "directive" not in result

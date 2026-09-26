@@ -142,30 +142,6 @@ def _compute_reversion_metrics(
     }
 
 
-def current_deployed_canon_fingerprint() -> str | None:
-    """Current deployed-canon generation digest (bundled registry digest), or None.
-
-    PRD-INFRA-164 FR08: the deployed generation identity the running process would
-    install. Unreadable/malformed registry yields ``None`` so currentness reports
-    unknown rather than a borrowed value (NFR07).
-    """
-    try:
-        from trw_mcp.canons.registry import load_registry
-
-        return load_registry().digest
-    except Exception:  # justified: unreadable registry -> unknown, never a fabricated digest
-        logger.debug("deployed_canon_fingerprint_unavailable", exc_info=True)
-        return None
-
-
-def current_live_process_fingerprint() -> str | None:
-    """Digest of the frozen live-process fingerprint, or None if never frozen."""
-    from trw_mcp.canons.fingerprint import get_frozen_fingerprint
-
-    frozen = get_frozen_fingerprint()
-    return frozen.digest if frozen is not None else None
-
-
 def evaluate_run_currentness(
     run_deployed_fingerprint: str | None,
     run_process_fingerprint: str | None,

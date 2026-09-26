@@ -11,23 +11,24 @@ Two passes, both deterministic and cheap on the small post-rank candidate set:
 
 1. Exact-content collapse — entries whose ``(content, detail, summary)`` tuple
    matches an earlier (higher-ranked) entry are dropped. O(K).
-2. Optional cosine collapse — when stored embeddings are available, entries
-   whose embedding cosine-similarity to a surviving representative exceeds the
-   threshold are dropped. O(K^2) on the candidate set only (never the corpus).
+2. Optional cosine collapse — when the daemon has an embedder, entries whose
+   stored vector is at or above its calibrated threshold against a surviving
+   representative are dropped. Vectors and threshold come from one
+   ``memory_vectors`` answer (PRD-CORE-302 C2). O(K^2) on the candidate set only.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import structlog
 
-logger = structlog.get_logger(__name__)
+if TYPE_CHECKING:
+    from trw_mcp.state._store_selection import VectorSet
 
-# Default cosine threshold for near-duplicate collapse. Entries at or above this
-# similarity to a surviving representative are treated as duplicates.
-DEFAULT_COSINE_DUP_THRESHOLD = 0.9
+logger = structlog.get_logger(__name__)
 
 
 def _content_key(entry: dict[str, object]) -> str:
@@ -57,16 +58,15 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def dedup_ranked_learnings(
     ranked_learnings: list[dict[str, object]],
     *,
-    embeddings_fn: Callable[[list[str]], dict[str, list[float]]] | None = None,
-    cosine_threshold: float = DEFAULT_COSINE_DUP_THRESHOLD,
+    vectors_fn: Callable[[list[str]], VectorSet | None] | None = None,
 ) -> tuple[list[dict[str, object]], int]:
     """Collapse near-duplicate entries, keeping the highest-ranked representative.
 
     Args:
         ranked_learnings: Entries already sorted best-first by the ranker.
-        embeddings_fn: Optional callable mapping entry IDs to stored embedding
-            vectors. When provided, a cosine pass runs after exact collapse.
-        cosine_threshold: Similarity at/above which two entries are duplicates.
+        vectors_fn: Optional callable mapping entry IDs to their stored vectors
+            and the collapse threshold for that space (``None``: no embedder).
+            When provided, a cosine pass runs after exact collapse.
 
     Returns:
         ``(deduped_entries, collapsed_count)`` where ``collapsed_count`` is the
@@ -88,8 +88,8 @@ def dedup_ranked_learnings(
         survivors.append(entry)
 
     # Pass 2 — cosine collapse on stored embeddings (O(K^2), candidate set only).
-    if embeddings_fn is not None and len(survivors) > 1:
-        survivors = _cosine_collapse(survivors, embeddings_fn, cosine_threshold)
+    if vectors_fn is not None and len(survivors) > 1:
+        survivors = _cosine_collapse(survivors, vectors_fn)
 
     collapsed = original_count - len(survivors)
     if collapsed:
@@ -99,19 +99,19 @@ def dedup_ranked_learnings(
 
 def _cosine_collapse(
     survivors: list[dict[str, object]],
-    embeddings_fn: Callable[[list[str]], dict[str, list[float]]],
-    cosine_threshold: float,
+    vectors_fn: Callable[[list[str]], VectorSet | None],
 ) -> list[dict[str, object]]:
-    """Drop entries whose embedding is near-duplicate of an earlier survivor."""
+    """Drop entries whose vector is a near-duplicate of an earlier survivor's."""
     ids = [str(e.get("id", "")) for e in survivors]
     try:
-        embeddings = embeddings_fn([i for i in ids if i])
+        vector_set = vectors_fn([i for i in ids if i])
     except Exception:  # justified: fail-open, embedding lookup must not block recall
         logger.debug("recall_dedup_embedding_lookup_failed", exc_info=True)
         return survivors
 
-    if not embeddings:
+    if vector_set is None or not vector_set.vectors:
         return survivors
+    embeddings, cosine_threshold = vector_set
 
     kept: list[dict[str, object]] = []
     kept_vectors: list[list[float]] = []

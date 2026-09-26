@@ -73,6 +73,25 @@ _NOISY_LOGGERS: tuple[str, ...] = (
 )
 
 
+class StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """A stream handler that writes to whatever ``sys.stderr`` is at emit time.
+
+    ``logging.StreamHandler(sys.stderr)`` binds the stream object current at
+    construction. When that object is later replaced and closed (a test's
+    captured stderr, or an embedding host that swaps the stream), every
+    subsequent record fails with ``I/O operation on closed file`` and stdlib
+    ``handleError`` dumps a traceback plus the caller's source lines onto the
+    new stderr. Resolving the stream per record removes that failure mode.
+    """
+
+    def __init__(self, level: int = logging.NOTSET) -> None:
+        logging.Handler.__init__(self, level)
+
+    @property
+    def stream(self) -> Any:
+        return sys.stderr
+
+
 def _redact_secrets(
     logger: Any,
     method_name: str,
@@ -287,7 +306,7 @@ def configure_logging(
         )
 
     # Build stdlib handlers
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    handlers: list[logging.Handler] = [StderrHandler()]
 
     # File logging
     effective_log_file = log_file

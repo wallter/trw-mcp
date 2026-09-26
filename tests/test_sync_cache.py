@@ -15,7 +15,7 @@ from tests._timing import assert_budget
 def _build_large_state() -> dict[str, object]:
     """Generate a payload large enough to exercise cache performance paths."""
     return {
-        "bandit_params": {f"L-{idx:05d}": round((idx % 100) / 100, 4) for idx in range(4000)},
+        "attribution_results": {f"L-{idx:05d}": round((idx % 100) / 100, 4) for idx in range(4000)},
         "synthesis_overlay": {"overlay_content": "x" * 350_000},
     }
 
@@ -27,14 +27,14 @@ def _p99_ms(samples: list[float]) -> float:
 
 
 def test_cache_update_and_read(tmp_path: Path) -> None:
-    """Write state then read back bandit_params."""
+    """Write state then read back attribution_results."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    state = {"bandit_params": {"L-1": 1.3, "L-2": 0.8}}
+    state = {"attribution_results": {"L-1": 1.3, "L-2": 0.8}}
     cache.update(state, etag="etag-v1")
 
-    params = cache.get_bandit_params()
+    params = cache.get_attribution_results()
     assert params is not None
     assert params["L-1"] == 1.3
     assert params["L-2"] == 0.8
@@ -45,10 +45,10 @@ def test_cache_expired_returns_none(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
-    cache.update({"bandit_params": {"L-1": 1.0}}, etag="old")
+    cache.update({"attribution_results": {"L-1": 1.0}}, etag="old")
 
     # TTL=0 means cache is always expired
-    assert cache.get_bandit_params() is None
+    assert cache.get_attribution_results() is None
 
 
 def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
@@ -56,10 +56,10 @@ def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
-    cache.update({"bandit_params": {"L-1": 1.0}}, etag="old")
+    cache.update({"attribution_results": {"L-1": 1.0}}, etag="old")
 
     with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
-        assert cache.get_bandit_params() is None
+        assert cache.get_attribution_results() is None
 
     expired_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_expired",))
     assert expired_call.kwargs["age_seconds"] >= 0
@@ -71,7 +71,6 @@ def test_cache_missing_returns_none(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path)
-    assert cache.get_bandit_params() is None
     assert cache.get_attribution_results() is None
     assert cache.etag is None
     assert not cache.is_fresh
@@ -82,7 +81,7 @@ def test_cache_atomic_write(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": {"L-1": 1.0}}, etag="v1")
+    cache.update({"attribution_results": {"L-1": 1.0}}, etag="v1")
 
     # Verify no .tmp files remain
     tmp_files = list(tmp_path.glob("*.tmp"))
@@ -93,21 +92,20 @@ def test_cache_atomic_write(tmp_path: Path) -> None:
     assert cache_file.exists()
 
 
-def test_cache_get_bandit_params(tmp_path: Path) -> None:
-    """Write state with bandit_params, read back correctly."""
+def test_a_leftover_bandit_params_key_is_ignored(tmp_path: Path) -> None:
+    """PRD-CORE-303 FR02: an old cache's bandit_params key is left on disk, never read."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    state = {
-        "bandit_params": {"L-001": 1.5, "L-002": 0.7, "L-003": 1.0},
-        "attribution_results": {"L-001": {"causal_score": 0.8}},
-    }
-    cache.update(state, etag="v2")
+    cache.update(
+        {"bandit_params": "not-a-dict", "attribution_results": {"L-001": {"causal_score": 0.8}}},
+        etag="v2",
+    )
 
-    params = cache.get_bandit_params()
-    assert params is not None
-    assert len(params) == 3
-    assert params["L-001"] == 1.5
+    assert not hasattr(cache, "get_bandit_params")
+    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
+        assert cache.get_attribution_results() == {"L-001": {"causal_score": 0.8}}
+    mock_warning.assert_not_called()
 
 
 def test_cache_is_fresh_true_within_ttl(tmp_path: Path) -> None:
@@ -115,7 +113,7 @@ def test_cache_is_fresh_true_within_ttl(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": {}}, etag="v1")
+    cache.update({"attribution_results": {}}, etag="v1")
 
     assert cache.is_fresh
 
@@ -125,7 +123,7 @@ def test_cache_is_fresh_false_when_expired(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
-    cache.update({"bandit_params": {}}, etag="v1")
+    cache.update({"attribution_results": {}}, etag="v1")
 
     assert not cache.is_fresh
 
@@ -137,11 +135,11 @@ def test_cache_etag_property(tmp_path: Path) -> None:
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
     assert cache.etag is None  # Before any write
 
-    cache.update({"bandit_params": {}}, etag="my-etag-123")
+    cache.update({"attribution_results": {}}, etag="my-etag-123")
     assert cache.etag == "my-etag-123"
 
     # Update with new etag
-    cache.update({"bandit_params": {}}, etag="my-etag-456")
+    cache.update({"attribution_results": {}}, etag="my-etag-456")
     assert cache.etag == "my-etag-456"
 
 
@@ -150,7 +148,7 @@ def test_cache_etag_none_when_expired(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
-    cache.update({"bandit_params": {}}, etag="stale-etag")
+    cache.update({"attribution_results": {}}, etag="stale-etag")
 
     assert cache.etag is None
 
@@ -162,7 +160,7 @@ def test_cache_update_logs_payload_size_and_etag(tmp_path: Path) -> None:
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
 
     with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
-        cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+        cache.update({"attribution_results": {"L-1": 1.0}}, etag="etag-v1")
 
     mock_debug.assert_called_once()
     args, kwargs = mock_debug.call_args
@@ -183,7 +181,7 @@ def test_cache_write_error_logs_error_type(tmp_path: Path) -> None:
         patch("trw_mcp.sync.cache.tempfile.mkstemp", side_effect=PermissionError("denied")),
         patch("trw_mcp.sync.cache.logger.warning") as mock_warning,
     ):
-        cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+        cache.update({"attribution_results": {"L-1": 1.0}}, etag="etag-v1")
 
     mock_warning.assert_called_once()
     args, kwargs = mock_warning.call_args
@@ -199,10 +197,10 @@ def test_cache_read_logs_freshness_metadata(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": {"L-1": 1.0}}, etag="etag-v1")
+    cache.update({"attribution_results": {"L-1": 1.0}}, etag="etag-v1")
 
     with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
-        params = cache.get_bandit_params()
+        params = cache.get_attribution_results()
 
     assert params == {"L-1": 1.0}
     read_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_read",))
@@ -243,7 +241,7 @@ def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
     state = _build_large_state()
     cache.update(state, etag="etag-v1")
 
-    params = cache.get_bandit_params()
+    params = cache.get_attribution_results()
     assert params is not None
 
 
@@ -259,7 +257,7 @@ def test_cache_read_p99_under_10ms_for_large_payload_budget(tmp_path: Path) -> N
     samples: list[float] = []
     for _ in range(100):
         started_at = time.perf_counter()
-        cache.get_bandit_params()
+        cache.get_attribution_results()
         samples.append(time.perf_counter() - started_at)
     assert_budget("cache_read_p99_large_payload", _p99_ms(samples), 10.0, "ms")
 
@@ -286,7 +284,7 @@ def test_cache_corrupt_file_returns_none(tmp_path: Path) -> None:
     cache_file = tmp_path / "intel-cache.json"
     cache_file.write_text("NOT VALID JSON {{{{")
 
-    assert cache.get_bandit_params() is None
+    assert cache.get_attribution_results() is None
     assert cache.etag is None
 
 
@@ -299,7 +297,7 @@ def test_cache_corrupt_file_logs_file_size_and_error_type(tmp_path: Path) -> Non
     cache_file.write_text("NOT VALID JSON {{{{")
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_bandit_params() is None
+        assert cache.get_attribution_results() is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_corrupt",)
@@ -316,7 +314,7 @@ def test_cache_file_permissions(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": {}}, etag="v1")
+    cache.update({"attribution_results": {}}, etag="v1")
 
     cache_file = tmp_path / "intel-cache.json"
     mode = stat.S_IMODE(cache_file.stat().st_mode)
@@ -328,7 +326,7 @@ def test_cache_etag_none_when_empty_string(tmp_path: Path) -> None:
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": {}})  # No etag provided
+    cache.update({"attribution_results": {}})  # No etag provided
 
     assert cache.etag is None
 
@@ -341,12 +339,12 @@ def test_cache_validation_error_logged_for_missing_requested_field(tmp_path: Pat
     cache.update({"synthesis_overlay": {"cluster_count": 1}}, etag="etag-v1")
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_bandit_params() is None
+        assert cache.get_attribution_results() is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_validation_error",)
     assert kwargs["event_type"] == "intel_cache_validation_error"
-    assert kwargs["field_name"] == "bandit_params"
+    assert kwargs["field_name"] == "attribution_results"
     assert kwargs["reason"] == "missing"
 
 
@@ -359,14 +357,14 @@ def test_cache_validation_error_logged_for_invalid_meta(tmp_path: Path) -> None:
     cache_file.write_text(
         json.dumps(
             {
-                "bandit_params": {"L-1": 1.0},
+                "attribution_results": {"L-1": 1.0},
                 "_meta": {"etag": "e", "ttl_seconds": 3600, "updated_at": "not-an-iso8601-timestamp"},
             }
         )
     )
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_bandit_params() is None
+        assert cache.get_attribution_results() is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_validation_error",)
@@ -380,13 +378,13 @@ def test_cache_validation_error_logged_for_invalid_requested_field_type(tmp_path
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"bandit_params": ["invalid"]}, etag="etag-v1")
+    cache.update({"attribution_results": ["invalid"]}, etag="etag-v1")
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_bandit_params() is None
+        assert cache.get_attribution_results() is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_validation_error",)
     assert kwargs["event_type"] == "intel_cache_validation_error"
-    assert kwargs["field_name"] == "bandit_params"
+    assert kwargs["field_name"] == "attribution_results"
     assert kwargs["reason"] == "invalid_type"

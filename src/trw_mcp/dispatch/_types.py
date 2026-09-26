@@ -93,6 +93,24 @@ _FORBIDDEN_EXTRA_ARG_TOKENS: frozenset[str] = frozenset(
         # posture rests on -- so it is a permission bypass, not a convenience flag.
         "--allowed-tools",
         "--allowedTools",
+        # claude: present in Claude Code 2.1.280 ``claude --help``, measured
+        # 2026-09-24 (PRD-SEC-015-FR10). TRW itself emits this to RESTRICT the
+        # reviewer posture's built-in tool set (reviewer_extra_argv); a caller
+        # smuggling a second --tools through extra_args could widen it back
+        # (claude/argparse-style CLIs take the LAST repeated flag), so it is
+        # blocked from the caller-controlled surface the same way --tools's
+        # emission from the registry itself is not.
+        "--tools",
+        # codex: present in codex-cli 0.156.0 top-level and ``codex exec --help``,
+        # measured 2026-09-24 (PRD-SEC-015-FR10). TRW itself emits `--disable apps`
+        # to bound the reviewer posture's host tool surface (reviewer_extra_argv);
+        # both --enable and --disable are blocked here so a caller cannot append
+        # `--enable apps` (or disable something the posture depends on) through
+        # extra_args and countermand it — `-c features.<name>=...` is the
+        # equivalent config-override form and is already blocked by codex's own
+        # ``forbidden_tokens`` entry for ``-c``/``--config`` (unioned with this floor).
+        "--disable",
+        "--enable",
     }
 )
 
@@ -188,7 +206,7 @@ class DispatchRequest(BaseModel):
         description=(
             "Session IDENTITY of the child, distinct from read_only (permission) and role "
             "(a prompt preamble). 'reviewer' launches the child with TRW's OWN trw-mcp server "
-            "in its argv, marked TRW_SURFACE_ROLE=reviewer, so the server bounds it to the nine "
+            "in its argv, marked TRW_SURFACE_ROLE=reviewer, so the server bounds it to "
             "REVIEWER_TOOLS server-side. Refused before spawn for a client whose spec carries no "
             "reviewer argv template, and refused with writes — see the model validator."
         ),
@@ -290,8 +308,8 @@ class DispatchRequest(BaseModel):
         an object, let alone as a command line. Placing the check only in the
         resolver would leave the API and the job re-hydration path open.
 
-        The reviewer TOOL bound is read-only by construction (nine read-report
-        tools); a child that could still edit the work it reviews would make
+        The reviewer TOOL bound is read-only by construction (a small read-report
+        set); a child that could still edit the work it reviews would make
         ``posture='reviewer'`` a claim about the MCP surface and nothing else.
         """
         if self.posture == "reviewer" and not self.read_only:
@@ -348,6 +366,20 @@ class DispatchRequest(BaseModel):
         if value.startswith("-"):
             raise ValueError(f"model may not start with '-' (flag smuggling): {value!r}")
         return value
+
+
+class DispatchAttempt(BaseModel):
+    """One client tried by the fallback chain (``_fallback.dispatch_with_fallback``)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    client: str
+    reason: str | None = Field(
+        description=(
+            "The attempt's silence_reason, 'launch_failed', 'unresolved', 'posture_unsupported' "
+            "(skipped: the client cannot run the request's posture), or None when it answered."
+        )
+    )
 
 
 class DispatchResult(BaseModel):
@@ -457,6 +489,18 @@ class DispatchResult(BaseModel):
             "because a caller that sees only empty findings cannot tell a clean review from "
             "a child that never ran (PRD-CORE-277-FR04)."
         ),
+    )
+
+    attempts: list[DispatchAttempt] = Field(
+        default_factory=list,
+        description=(
+            "Every client the fallback chain tried, in order; empty when no chain was configured. "
+            "``client`` above is the one whose result this is."
+        ),
+    )
+    fallback_note: str = Field(
+        default="",
+        description="Why another client answered, or that every client in the chain failed over; else empty.",
     )
 
     @computed_field  # type: ignore[prop-decorator]

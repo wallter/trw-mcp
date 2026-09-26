@@ -1,17 +1,21 @@
-"""MCP query tools — PRD-HPO-MEAS-001 FR-7 + FR-8.
+"""Read-only query helpers behind three CLI verbs (PRD-CORE-300 S3a and S5):
+``trw-mcp telemetry events`` / ``surface-diff`` (``tools/_telemetry_cli.py``)
+and ``trw-mcp prd diff`` (``tools/_prd_cli.py``). They were MCP tools; the
+functions are unchanged:
 
-Registers:
-- ``trw_query_events(session_id, filters=None)`` — cross-emitter merged
-  view of every :class:`HPOTelemetryEvent` written to the unified
+- ``query_events(session_id, filters=None)`` — cross-emitter merged view of
+  every :class:`HPOTelemetryEvent` written to the unified
   ``events-YYYY-MM-DD.jsonl`` files under a run's ``meta/`` directory.
-- ``trw_surface_diff(snapshot_id_a, snapshot_id_b)`` — structured diff
-  between two run snapshots: a single ``changes`` list of per-surface
-  objects (each carrying ``change_type``) plus ``*_count`` totals.
+- ``surface_diff(snapshot_id_a, snapshot_id_b)`` — structured diff between two
+  run snapshots: a single ``changes`` list of per-surface objects (each
+  carrying ``change_type``) plus ``*_count`` totals.
+- ``prd_diff_report(before_path=, after_path=)`` — FR/NFR-level diff of two
+  PRD files.
 
-Both tools are read-only queries over already-persisted state — no
-writes, no network. Fail-open on malformed rows per NFR-8.
+Read-only queries over already-persisted state — no writes, no network.
+Fail-open on malformed rows per NFR-8.
 
-Response compaction (token-bloat wave 4): the diff tools return a single
+Response compaction (token-bloat wave 4): the diff functions return a single
 ``changes`` representation instead of duplicating it as bare ``added``/
 ``removed``/``changed`` id-lists — callers filter ``changes`` by
 ``change_type`` client-side; ``*_count`` ints give the totals cheaply.
@@ -25,7 +29,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 import yaml
@@ -33,9 +37,6 @@ from typing_extensions import TypedDict
 
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.telemetry.surface_manifest import MANIFEST_FILENAME
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
 
 logger = structlog.get_logger(__name__)
 
@@ -332,84 +333,8 @@ def prd_diff_report(*, before_path: str, after_path: str) -> dict[str, Any]:
     }
 
 
-def register_query_tools(server: FastMCP) -> None:
-    """Register ``trw_query_events`` and ``trw_surface_diff`` MCP tools.
-
-    FR-7 and FR-8 MCP tool registration. The two internal query helpers
-    are wrapped as ``@server.tool()`` callables so they are visible to
-    every registered client (claude-code, opencode, cursor, etc.).
-    """
-
-    # PRD-INFRA-SEC-001 FR-9 per-dispatch consult (sprint-96 carry-forward
-    # a): deferred import to avoid circular dep with trw_mcp.server._app.
-    from trw_mcp.server._security_hook import consult_mcp_security
-
-    @server.tool(output_schema=None)
-    def trw_query_events(
-        session_id: str | None = None,
-        filters: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Return a merged cross-emitter event view for a session.
-
-        Use when reconstructing what happened: the audit trail, activity
-        history, or timeline of tool calls, hooks, and run events across every
-        emitter — not just one run's log.
-
-        Output: merged event rows, newest first.
-
-        Args:
-            session_id: restrict to this session; None for cross-session queries.
-            filters: extra equality filters — run_id, event_type, and/or emitter.
-        """
-        consult_mcp_security(
-            "trw_query_events",
-            {"session_id": session_id, "filters": filters},
-            session_id or "",
-            None,
-        )
-        return query_events(session_id=session_id, filters=filters)
-
-    @server.tool(output_schema=None)
-    def trw_prd_diff(
-        before_path: str,
-        after_path: str,
-    ) -> dict[str, Any]:
-        """Diff two PRD files, focused on requirements, metrics, and acceptance gates.
-
-        Use when: reviewing how a PRD changed between two versions or drafts.
-        """
-        consult_mcp_security(
-            "trw_prd_diff",
-            {"before_path": before_path, "after_path": after_path},
-            "",
-            None,
-        )
-        return prd_diff_report(before_path=before_path, after_path=after_path)
-
-    @server.tool(output_schema=None)
-    def trw_surface_diff(
-        snapshot_id_a: str,
-        snapshot_id_b: str,
-    ) -> dict[str, Any]:
-        """Return added/removed/changed surface fields between two snapshots.
-
-        Use when investigating configuration or tool-surface drift: what
-        changed between two recorded snapshots, by field.
-
-        Output: added, removed, and changed field entries.
-        """
-        consult_mcp_security(
-            "trw_surface_diff",
-            {"snapshot_id_a": snapshot_id_a, "snapshot_id_b": snapshot_id_b},
-            "",
-            None,
-        )
-        return surface_diff(snapshot_id_a=snapshot_id_a, snapshot_id_b=snapshot_id_b)
-
-
 __all__ = [
     "prd_diff_report",
     "query_events",
-    "register_query_tools",
     "surface_diff",
 ]

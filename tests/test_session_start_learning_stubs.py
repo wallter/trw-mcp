@@ -187,7 +187,7 @@ def test_the_ceremony_nudge_reuses_session_starts_recall(
     """The nudge riding on the session_start response never recalls on its own.
 
     Both nudge paths that draw a learning are forced open: the learnings pool
-    (cached bandit weights force it) and the contextual watch-out (a modified
+    (picked whenever its weight allows) and the contextual watch-out (a modified
     file anchors it). The response's learning block is the session's one
     recall; a second learning in the nudge would repeat it at extra cost.
     """
@@ -213,7 +213,10 @@ def test_the_ceremony_nudge_reuses_session_starts_recall(
         patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
         patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
         patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_spy),
-        patch("trw_mcp.tools._ceremony_status_pool._has_cached_learning_weights", return_value=True),
+        patch(
+            "trw_mcp.state.ceremony_nudge._select_nudge_pool",
+            side_effect=lambda _state, weights, *_a, **_k: "learnings" if weights.learnings else "workflow",
+        ),
         patch("trw_mcp.state.recall_context.build_recall_context", return_value=touched),
     ):
         result = tools["trw_session_start"].fn(query="handler")

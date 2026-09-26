@@ -25,6 +25,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from trw_mcp._pinned_read import read_at
 from trw_mcp.tools._delivery_journal_schema import _SCHEMA as _SCHEMA
 from trw_mcp.tools._delivery_models import (
     OperationRecord,
@@ -45,6 +46,8 @@ from trw_mcp.tools._delivery_rowmap import (
 
 SCHEMA_VERSION = DeliveryLimits.SCHEMA_VERSION
 _HIGH_WATER_KEY = "max_observed_utc_ms"
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+_HEADER_LEN = 20
 
 
 class LegacyDeliveryJournalMigrationRequired(RuntimeError):
@@ -174,13 +177,13 @@ class JournalStore:
         return conn
 
     def _uses_legacy_wal_mode(self) -> bool:
-        """Inspect SQLite header journal versions without opening or mutating the DB."""
+        """Inspect SQLite header journal versions without mutating the DB or dropping its locks."""
         try:
-            with self.db_path.open("rb") as handle:
-                header = handle.read(20)
-        except OSError:
+            # Never open/close here: the close would drop a live writer's locks (C15).
+            header = read_at(self.db_path, _HEADER_LEN)
+        except OSError:  # trw-fail-silent-allow: an unreadable header is not a legacy-WAL verdict; the mode=ro open that follows surfaces the real error
             return False
-        return header.startswith(b"SQLite format 3\x00") and 2 in header[18:20]
+        return header.startswith(_SQLITE_MAGIC) and 2 in header[18:20]
 
     def read_schema_version(self, conn: sqlite3.Connection) -> int:
         """Return the strict stored schema version or raise typed corruption."""

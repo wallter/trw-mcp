@@ -6,7 +6,7 @@ allowlist was written once and never kept in step with the writers, so a routine
 `update-project` — the standard upgrade path for every installed project —
 deleted production-managed state including the MCP trust registry, the
 deliver-gate override audit trail, and the unified security event stream that
-`trw_mcp_security_status` and the anomaly detector read.
+the `trw-mcp telemetry security` CLI command and the anomaly detector read.
 
 PRD-FIX-031 asked for both halves and shipped one. Its Goals required an
 allowlist "covering all active TRW context files referenced by the codebase"

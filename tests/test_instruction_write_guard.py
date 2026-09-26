@@ -36,6 +36,7 @@ import pytest
 from tests._layout import requires_local_timing
 from tests._structlog_capture import captured_structlog  # noqa: F401 -- pytest fixture
 from tests._timing import assert_budget
+from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     TRW_MARKER_END,
@@ -428,7 +429,7 @@ class TestDryRun:
     def test_tool_dry_run_leaves_every_target_byte_identical(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FR03 end to end through ``trw_instructions_sync``."""
+        """FR03 end to end through ``instructions sync``."""
         result, before = _run_sync_tool(tmp_path, monkeypatch, dry_run=True)
 
         assert result["status"] == "dry_run"
@@ -522,7 +523,7 @@ class TestProvenance:
 
         grown = "# base\n"
         for trigger, tool in (
-            ("tool_call", "trw_instructions_sync"),
+            ("tool_call", "instructions sync"),
             ("bootstrap_init", "init-project"),
             ("bootstrap_update", "update-project"),
         ):
@@ -536,7 +537,7 @@ class TestProvenance:
         assert [r["trigger"] for r in records] == ["tool_call", "bootstrap_init", "bootstrap_update", "unknown"]
         assert all(r["path"] == str(target) for r in records)
         assert all("byte_delta" in r for r in records)
-        assert records[0]["caller_tool"] == "trw_instructions_sync"
+        assert records[0]["caller_tool"] == "instructions sync"
         assert records[-1]["caller_tool"] == ""
 
     def test_a_refused_write_emits_no_provenance(
@@ -558,7 +559,7 @@ class TestProvenance:
         records = [entry for entry in captured_structlog if entry["event"] == "instruction_write_provenance"]
         assert records, "the sync wrote nothing"
         assert {r["trigger"] for r in records} == {"tool_call"}
-        assert {r["caller_tool"] for r in records} == {"trw_instructions_sync"}
+        assert {r["caller_tool"] for r in records} == {"instructions sync"}
 
     def test_bootstrap_entry_points_declare_their_own_triggers(self) -> None:
         """FR05: ``init_project`` / ``update_project`` carry the bootstrap triggers."""
@@ -1429,9 +1430,7 @@ def _replace_without_force(project_root: Path, target: Path) -> bool:
 def _run_sync_tool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, dry_run: bool = False
 ) -> tuple[dict[str, object], dict[Path, bytes]]:
-    """Run the real ``trw_instructions_sync`` tool against a temp project."""
-    from tests._tools_learning_shared import _get_tools
-
+    """Run the real ``instructions sync`` implementation against a temp project."""
     (tmp_path / ".trw").mkdir(parents=True, exist_ok=True)
     claude_md = tmp_path / "CLAUDE.md"
     claude_md.write_text("# My project rules\n\n- never delete this\n", encoding="utf-8")
@@ -1439,6 +1438,5 @@ def _run_sync_tool(
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda *a, **k: tmp_path / ".trw")
 
     before = {claude_md: claude_md.read_bytes()}
-    tools = _get_tools()
-    result = tools["trw_instructions_sync"].fn(client="claude-code", dry_run=dry_run)
+    result = instructions_sync_fn(client="claude-code", dry_run=dry_run)
     return dict(result), before

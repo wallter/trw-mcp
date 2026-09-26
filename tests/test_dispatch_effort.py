@@ -4,7 +4,7 @@ Opus 5.5 defaults to ``medium`` effort (Opus 5 defaulted to ``high``) and Claude
 Code ignores the top-level ``effortLevel`` setting for it, so a dispatched child
 that TRW sends no effort now runs at ``medium`` whatever the caller intended. The
 operator's model-tier policy (2026-09-22) sets review/planning at ``medium`` and
-security / adversarial audit at ``high``; ``xhigh``/``max`` only with evidence.
+security / adversarial audit at ``medium`` too (operator, 2026-09-24); ``xhigh``/``max`` only with evidence.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _effort_tokens(client: str, argv: list[str]) -> list[str]:
         ("code-review", "medium"),
         ("design-audit", "medium"),
         ("architectural-audit", "medium"),
-        ("adversarial-audit", "high"),
+        ("adversarial-audit", "medium"),
         (None, None),
         ("", None),
         ("not-a-role", None),
@@ -152,10 +152,10 @@ def _resolved(role: str | None, client: str = "claude") -> DispatchRequest:
     )
 
 
-def test_an_adversarial_audit_reaches_claude_at_high_effort() -> None:
+def test_an_adversarial_audit_reaches_claude_at_medium_effort() -> None:
     req = _resolved("adversarial-audit")
-    assert req.effort == "high"
-    assert _effort_tokens("claude", build_command(req)) == ["high"]
+    assert req.effort == "medium"
+    assert _effort_tokens("claude", build_command(req)) == ["medium"]
 
 
 def test_a_code_review_reaches_claude_at_medium_effort() -> None:
@@ -172,7 +172,7 @@ def test_a_bare_prompt_passes_no_effort() -> None:
 def test_a_role_on_a_client_without_a_flag_still_resolves() -> None:
     """codex has no effort flag: the role's intent is recorded, and nothing is emitted."""
     req = _resolved("adversarial-audit", client="codex")
-    assert req.effort == "high"
+    assert req.effort == "medium"
     assert "--effort" not in build_command(req)
 
 

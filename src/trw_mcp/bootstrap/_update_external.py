@@ -23,7 +23,7 @@ def _run_auto_maintenance(
     timeout: int = 120,
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Run auto-maintenance (embedding readiness and stale-space warnings) after update.
+    """Run auto-maintenance after update: warn when the memory daemon cannot encode.
 
     All operations are local (no API key required).  Fail-open — errors are
     logged as warnings but never break the update.
@@ -35,20 +35,20 @@ def _run_auto_maintenance(
         os.chdir(target_dir)
 
         from trw_mcp.models.config import _reset_config, get_config
-        from trw_mcp.state._memory_connection import check_embeddings_status
+        from trw_mcp.state._store_selection import measuring_only, selected_store
 
         _reset_config()
-        get_config()
-
-        # PRD-CORE-298 FR01: every checkout's memory lives in the daemon's one
-        # store. This must never open the checkout's own `.trw/memory/memory.db`
-        # (an unmigrated store has to stay byte-identical), so there is no
-        # local embedding-space probe here, only the enabled/available check,
-        # which reads config and the already-loaded embedder, not the store.
-        emb_status = check_embeddings_status()
-        if emb_status.get("enabled") and not emb_status.get("available"):
-            hint = emb_status.get("advisory", "pip install sentence-transformers")
-            result["warnings"].append(f"Embeddings enabled but unavailable \u2014 {hint}")
+        # The daemon holds the model (PRD-CORE-302 FR05), so its memory_status answers
+        # whether this checkout's recall can encode. PRD-CORE-298 FR01: nothing here
+        # opens the checkout's own `.trw/memory/memory.db`, not even to explain a
+        # missing pin, which update-project has already written.
+        if get_config().embeddings_enabled:
+            with measuring_only():
+                store, namespace = selected_store(target_dir / ".trw")
+            embedder = store.embedder_status(namespace)
+            if not embedder.get("available"):
+                fix = f" \u2014 run: {embedder['fix']}" if embedder.get("fix") else ""
+                result["warnings"].append(f"Memory daemon cannot encode: {embedder.get('reason')}{fix}")
 
     except Exception as exc:  # justified: boundary — auto-maintenance failure must not block update
         _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir), exc_info=True)

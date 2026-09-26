@@ -107,7 +107,14 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     """Return ``(status, message)`` describing the memory store's WAL state.
 
     Args:
-        target: The project root whose ``.trw/memory/memory.db`` is inspected.
+        target: The project root (unused for path resolution since the
+            6.0.0 daemon migration — kept for signature parity with the
+            other doctor rows, which all take the project root). The store
+            inspected is the machine-local daemon store resolved by
+            ``trw_memory.user_paths.resolve_user_memory_dir`` (``TRW_USER_DIR``
+            > ``XDG_DATA_HOME`` > ``~/.trw``), never a per-project
+            ``.trw/memory/memory.db`` — that file has not been the active
+            store for any migrated checkout since PRD-CORE-298 FR01.
         config: The RESOLVED config for *target*. Must not be reconstructed
             here — a bare ``TRWConfig()`` ignores the project's own
             ``.trw/config.yaml``, so the row would measure against a threshold
@@ -115,6 +122,7 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     """
     from trw_memory.storage._dbapi import backend, is_wal_reset_safe, sqlite_version
     from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
+    from trw_memory.user_paths import resolve_user_memory_dir
 
     from trw_mcp.state._wal_triggers import (
         last_checkpoint_age_seconds,
@@ -122,8 +130,8 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         last_reset_checkpoint_age_seconds,
     )
 
-    trw_dir = target / ".trw"
-    db_path = trw_dir / "memory" / "memory.db"
+    del target  # not used for path resolution; see docstring
+    db_path = resolve_user_memory_dir(create=False) / "memory.db"
     wal_path = db_path.with_suffix(".db-wal")
 
     try:
@@ -152,7 +160,7 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     # backlog looked stalled and this row WARNed forever -- the nuisance alarm
     # the docstring above says trains an operator to ignore the row. The marker
     # now advances when the checkpoint CAUGHT UP WITH THE BACKLOG, measured in
-    # frames (`_memory_lookups.maybe_checkpoint_wal`). Do not re-derive this
+    # frames (the since-deleted `maybe_checkpoint_wal`). Do not re-derive this
     # from file size in either direction.
     # Inclusive, matching evaluate_wal_trigger's `>=`. With `>` the trigger
     # fired at exactly the threshold while this row printed "checkpoint due at

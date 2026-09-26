@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._memory_fixtures import MemoryDaemon, attach_checkout
+from tests._tools_learning_shared import instructions_sync_fn
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
@@ -118,12 +119,12 @@ class TestRecallBehavior:
         assert result["learnings"] == []
 
 
-# --- trw_claude_md_sync behavioral equivalence ---
+# --- instructions sync behavioral equivalence ---
 
 
 @pytest.mark.integration
 class TestClaudeMdSyncBehavior:
-    """trw_claude_md_sync output structure matches expected contract."""
+    """instructions sync output structure matches expected contract."""
 
     def test_sync_returns_required_fields(self, tmp_path: Path) -> None:
         tools = _get_tools()
@@ -133,7 +134,7 @@ class TestClaudeMdSyncBehavior:
             "trw_mcp.state.claude_md.resolve_project_root",
             return_value=tmp_path,
         ):
-            result = tools["trw_claude_md_sync"].fn()
+            result = instructions_sync_fn()
 
         assert "status" in result
         assert result["status"] in ("success", "synced")

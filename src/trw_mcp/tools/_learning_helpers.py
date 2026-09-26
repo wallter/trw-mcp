@@ -19,7 +19,6 @@ from typing import Literal, cast
 
 import structlog
 
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DedupHandleResult
 from trw_mcp.state._helpers import truncate_nudge_line as truncate_nudge_line
@@ -202,96 +201,91 @@ def check_and_handle_dedup(
     if not config.dedup_enabled:
         return None
 
-    try:
-        from trw_mcp.state.dedup import dedup_verdict, merge_into_survivor
+    from trw_mcp.state.dedup import dedup_verdict, merge_into_survivor
 
-        dedup_result = dedup_verdict(
-            params.summary,
-            params.detail,
-            entries_dir,
-            reader,
-            config=config,
+    # PRD-CORE-302 C4: a daemon refusal raises out of here. Reading it as "no
+    # duplicate" would store a copy the daemon could not check.
+    dedup_result = dedup_verdict(params.summary, params.detail, entries_dir, config=config)
+    if dedup_result.action == "skip":
+        logger.info(
+            "learning_dedup_skipped",
+            new_id=params.learning_id,
+            existing_id=dedup_result.existing_id,
+            similarity=dedup_result.similarity,
         )
+        return {
+            "status": "skipped",
+            "learning_id": params.learning_id,
+            "duplicate_of": dedup_result.existing_id or "",
+            "similarity": round(dedup_result.similarity, 3),
+            "message": f"Near-identical entry already exists: {dedup_result.existing_id}",
+        }
 
-        if dedup_result.action == "skip":
+    if dedup_result.action == "merge":
+        # PRD-FIX-130-FR07: resolve the survivor's file by COMPUTING its path
+        # from the backend row, never by scanning the corpus. The old sorted
+        # glob-and-read loop measured 45,945 ms worst case against 6,532
+        # files, and the worst case IS the common one: filenames are date
+        # prefixed, so a recently re-learned entry sorts last.
+        survivor = _resolve_merge_survivor(entries_dir, dedup_result.existing_id or "", reader)
+        if survivor is None:
+            # Refusal, not a fallback guess: an id no file provably carries
+            # is left unmerged. The caller then proceeds with normal storage,
+            # which is exactly the pre-change no-match outcome.
+            logger.warning(
+                "learning_dedup_merge_unresolved",
+                new_id=params.learning_id,
+                existing_id=dedup_result.existing_id,
+            )
+        else:
+            # Only the fields the merge folds in: the survivor keeps its own
+            # provenance, so the incoming entry's is not built at all.
+            entry_dict: dict[str, object] = {
+                "id": params.learning_id,
+                "summary": params.summary,
+                "detail": params.detail,
+                "tags": params.tags,
+                "evidence": params.evidence,
+                "impact": params.impact,
+                "type": getattr(params.type, "value", params.type),
+                "confidence": getattr(params.confidence, "value", params.confidence),
+                "protection_tier": getattr(params.protection_tier, "value", params.protection_tier),
+                "assertions": params.assertions or [],  # PRD-CORE-086 FR05
+            }
+            yaml_file, survivor_data = survivor
+            # FR07: the survivor was parsed once, during resolution. Both
+            # the merge and the backend sync ride that single read —
+            # neither reopens the file.
+            merged_body: dict[str, object] = {}
+            merge_into_survivor(
+                yaml_file,
+                entry_dict,
+                reader,
+                writer,
+                max_merge_tags=config.max_consolidated_tags,
+                existing_data=survivor_data,
+                merged_out=merged_body,
+                write=False,
+            )
+            # The primary store first, the sidecar only once it accepted: the patch
+            # carries absolute values computed from the unchanged sidecar, so a
+            # retry after ANY failure (even a write that may have applied) sends
+            # the same recurrence again instead of counting the duplicate twice.
+            _sync_merged_entry_to_backend(entries_dir, merged_body)
+            writer.write_yaml(yaml_file, merged_body)
             logger.info(
-                "learning_dedup_skipped",
+                "learning_dedup_merged",
                 new_id=params.learning_id,
                 existing_id=dedup_result.existing_id,
                 similarity=dedup_result.similarity,
             )
             return {
-                "status": "skipped",
-                "learning_id": params.learning_id,
-                "duplicate_of": dedup_result.existing_id or "",
+                "status": "merged",
+                "merged_into": dedup_result.existing_id or "",
+                "new_id": params.learning_id,
                 "similarity": round(dedup_result.similarity, 3),
-                "message": f"Near-identical entry already exists: {dedup_result.existing_id}",
+                "message": f"Merged into existing entry: {dedup_result.existing_id}",
             }
-
-        if dedup_result.action == "merge":
-            # PRD-FIX-130-FR07: resolve the survivor's file by COMPUTING its path
-            # from the backend row, never by scanning the corpus. The old sorted
-            # glob-and-read loop measured 45,945 ms worst case against 6,532
-            # files, and the worst case IS the common one: filenames are date
-            # prefixed, so a recently re-learned entry sorts last.
-            survivor = _resolve_merge_survivor(entries_dir, dedup_result.existing_id or "", reader)
-            if survivor is None:
-                # Refusal, not a fallback guess: an id no file provably carries
-                # is left unmerged. The caller then proceeds with normal storage,
-                # which is exactly the pre-change no-match outcome.
-                logger.warning(
-                    "learning_dedup_merge_unresolved",
-                    new_id=params.learning_id,
-                    existing_id=dedup_result.existing_id,
-                )
-            else:
-                try:
-                    # Only the fields the merge folds in: the survivor keeps its own
-                    # provenance, so the incoming entry's is not built at all.
-                    entry_dict: dict[str, object] = {
-                        "id": params.learning_id,
-                        "summary": params.summary,
-                        "detail": params.detail,
-                        "tags": params.tags,
-                        "evidence": params.evidence,
-                        "impact": params.impact,
-                        "type": getattr(params.type, "value", params.type),
-                        "confidence": getattr(params.confidence, "value", params.confidence),
-                        "protection_tier": getattr(params.protection_tier, "value", params.protection_tier),
-                        "assertions": params.assertions or [],  # PRD-CORE-086 FR05
-                    }
-                    yaml_file, survivor_data = survivor
-                    # FR07: the survivor was parsed once, during resolution. Both
-                    # the merge and the backend sync ride that single read —
-                    # neither reopens the file.
-                    merged_body: dict[str, object] = {}
-                    merge_into_survivor(
-                        yaml_file,
-                        entry_dict,
-                        reader,
-                        writer,
-                        max_merge_tags=config.max_consolidated_tags,
-                        existing_data=survivor_data,
-                        merged_out=merged_body,
-                    )
-                    _sync_merged_entry_to_backend(entries_dir, merged_body)
-                    logger.info(
-                        "learning_dedup_merged",
-                        new_id=params.learning_id,
-                        existing_id=dedup_result.existing_id,
-                        similarity=dedup_result.similarity,
-                    )
-                    return {
-                        "status": "merged",
-                        "merged_into": dedup_result.existing_id or "",
-                        "new_id": params.learning_id,
-                        "similarity": round(dedup_result.similarity, 3),
-                        "message": f"Merged into existing entry: {dedup_result.existing_id}",
-                    }
-                except (OSError, StateError, ValueError, TypeError):
-                    logger.debug("learning_dedup_merge_failed", exc_info=True)
-    except (ImportError, OSError, RuntimeError, StateError, ValueError, TypeError) as exc:
-        logger.debug("dedup_check_failed", error=str(exc))
 
     return None
 
@@ -325,42 +319,50 @@ def _resolve_dedup_trw_dir(entries_dir: Path) -> Path:
 
 
 def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, object]) -> None:
-    """Best-effort sync of merged YAML fields into the primary backend."""
-    try:
-        from trw_memory.lifecycle.correction import LearningPatch
+    """Write the merged YAML fields into the primary backend; a failure raises (PRD-CORE-302 C5).
 
-        from trw_mcp.state._store_selection import selected_store
+    trw_learn reports ``merged`` only after this returns, so the daemon row and its
+    re-encoded vector match the survivor the response names. A refused correction
+    (``not_found``, ``invalid``) raises too, before the sidecar is written.
+    """
+    from trw_memory.lifecycle.correction import LearningPatch
 
-        learning_id = str(merged_entry.get("id", ""))
-        if not learning_id:
-            return
+    from trw_mcp.state._store_selection import StoreUnavailableError, selected_store
 
-        store, _namespace = selected_store(_resolve_dedup_trw_dir(entries_dir))
-        store.correct(
-            learning_id,
-            LearningPatch.model_validate(
-                {
-                    "detail": str(merged_entry.get("detail", "")),
-                    "tags": [str(tag) for tag in cast("list[object]", merged_entry.get("tags") or [])],
-                    "evidence": [str(item) for item in cast("list[object]", merged_entry.get("evidence") or [])],
-                    "impact": float(str(merged_entry.get("impact", 0.5))),
-                    "recurrence": int(str(merged_entry.get("recurrence", 1))),
-                    "merged_from": [str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
-                    "assertions": [
-                        dict(item)
-                        for item in cast("list[object]", merged_entry.get("assertions") or [])
-                        if isinstance(item, dict)
-                    ],
-                    # PRD-CORE-110: propagate the protection-preserving merge result so
-                    # the primary backend (recall source of truth) keeps the stronger tier.
-                    "protection_tier": str(merged_entry.get("protection_tier") or "normal"),
-                    "confidence": str(merged_entry.get("confidence") or "unverified"),
-                    "type": str(merged_entry.get("type") or "pattern"),
-                }
-            ),
+    learning_id = str(merged_entry.get("id", ""))
+    if not learning_id:
+        return
+
+    store, _namespace = selected_store(_resolve_dedup_trw_dir(entries_dir))
+    result = store.correct(
+        learning_id,
+        LearningPatch.model_validate(
+            {
+                "detail": str(merged_entry.get("detail", "")),
+                "tags": [str(tag) for tag in cast("list[object]", merged_entry.get("tags") or [])],
+                "evidence": [str(item) for item in cast("list[object]", merged_entry.get("evidence") or [])],
+                "impact": float(str(merged_entry.get("impact", 0.5))),
+                "recurrence": int(str(merged_entry.get("recurrence", 1))),
+                "merged_from": [str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
+                "assertions": [
+                    dict(item)
+                    for item in cast("list[object]", merged_entry.get("assertions") or [])
+                    if isinstance(item, dict)
+                ],
+                # PRD-CORE-110: propagate the protection-preserving merge result so
+                # the primary backend (recall source of truth) keeps the stronger tier.
+                "protection_tier": str(merged_entry.get("protection_tier") or "normal"),
+                "confidence": str(merged_entry.get("confidence") or "unverified"),
+                "type": str(merged_entry.get("type") or "pattern"),
+            }
+        ),
+    )
+    # correct() answers a refusal instead of raising; a merge it did not accept is not a merge.
+    if result.get("status") not in {"updated", "no_changes"}:
+        raise StoreUnavailableError(
+            f"the memory store did not accept the dedup merge into {learning_id} "
+            f"({result.get('status')}: {result.get('error', 'no reason given')}); nothing was merged"
         )
-    except Exception:  # justified: fail-open, merged-entry backend sync is best-effort after YAML updates
-        logger.debug("dedup_backend_sync_failed", exc_info=True)
 
 
 def enforce_distribution(

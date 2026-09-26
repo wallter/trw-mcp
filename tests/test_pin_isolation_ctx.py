@@ -555,6 +555,7 @@ def test_registered_adoption_then_startup_exposes_checkpoint_location(
     """CORE269 FR04: explicit existing adoption, not a replacement authority path."""
     from tests.conftest import extract_tool_fn, make_test_server
     from trw_mcp.tools import ceremony
+    from trw_mcp.tools._ceremony_adopt_run import adopt_run
 
     run = _seed_active_run(isolated_project, "handoff", "20260101T000000Z-adopt111")
     log = run / "meta" / "checkpoints.jsonl"
@@ -565,7 +566,9 @@ def test_registered_adoption_then_startup_exposes_checkpoint_location(
     )
     server = make_test_server("ceremony")
     ctx = _fresh_ctx("explicit-adopter")
-    extract_tool_fn(server, "trw_adopt_run")(ctx=ctx, run_path=str(run))
+    # PRD-CORE-300 S6b folded the standalone tool into `trw-mcp run adopt`;
+    # exercise its implementation directly.
+    adopt_run(ctx, str(run), False)
     result = extract_tool_fn(server, "trw_session_start")(ctx=ctx)
     assert result["run"]["checkpoint_log_path"] == str(log)
     assert result["run"]["status"] == "active"

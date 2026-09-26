@@ -10,10 +10,11 @@ succeed. 6.1.0 closes the rest of that gap:
   is written to the project config;
 * ``--script`` repairs without asking; interactive asks, and "no" is the opt-out;
 * a wanted-but-broken stack fails the install with a non-zero exit;
-* the model is the project's configured ``retrieval_embedding_model``, resolved
-  by trw-mcp's own config loader in the target interpreter, and it is fetched as
-  the embedder loads it — ``SentenceTransformer(model)`` at revision ``main``,
-  which writes the cache ref a commit-pinned ``snapshot_download`` never wrote.
+* the model is the one the memory daemon loads, trw-memory's
+  ``MemoryConfig().embedding_model`` (``MEMORY_EMBEDDING_MODEL``) resolved in the
+  target interpreter, and it is fetched as the embedder loads it — through ``SentenceTransformer`` at the revision
+  trw-memory's one pin table names, which the cache probe also asks for
+  (PRD-CORE-302 FR06).
 
 Only the TEMPLATE is loaded. ``dist/install-trw.py`` is a generated artifact
 (untracked, rebuilt by ``make installer``); the template->dist drift gate
@@ -97,14 +98,87 @@ def test_the_probe_is_trw_mcps_own_retrieval_probe(installer: ModuleType) -> Non
 
 
 def test_the_download_loads_the_model_as_the_embedder_does(installer: ModuleType) -> None:
-    """Revision ``main``, via sentence-transformers: a commit-pinned snapshot writes no refs/main,
-    so the runtime's cache-first load could not see it; and no model name is hard-coded."""
-    source = installer._SEMANTIC_DOWNLOAD_SOURCE
-    compile(source, "<download>", "exec")
-    assert "SentenceTransformer(sys.argv[1])" in source
+    """Via trw-memory's one fetch path, with no model name or revision hard-coded in the template."""
+    compile(installer._SEMANTIC_DOWNLOAD_SOURCE, "<download>", "exec")
+    assert "fetch_models(" in installer._SEMANTIC_DOWNLOAD_SOURCE
     template = _TEMPLATE.read_text(encoding="utf-8")
     assert "snapshot_download(" not in template
     assert "all-MiniLM" not in template
+    assert "bge-small" not in template
+    assert not re.search(r"revision\s*=\s*[\"']", template)
+    assert not re.search(r"\b[0-9a-f]{40}\b", template)
+
+
+def _revisions_at_the_three_call_sites(
+    installer: ModuleType, model: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> dict[str, object]:
+    """Drive the embedder load, the cache probe and the installer download; return each revision."""
+    import types
+
+    # huggingface_hub arrives with trw-memory's embeddings extra; an install
+    # without it (the public-layout release image) has no cache probe to drive.
+    huggingface_hub = pytest.importorskip("huggingface_hub", reason="needs trw-memory[embeddings]")
+    from trw_memory.embeddings._hf_cache import probe_model_cache
+    from trw_memory.embeddings.local import LocalEmbeddingProvider
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    seen: dict[str, object] = {}
+    loads: list[object] = []
+
+    class _FakeSentenceTransformer:
+        def __init__(self, model_name: str, **kwargs: object) -> None:
+            loads.append(kwargs.get("revision"))
+
+        def encode(self, *args: object, **kwargs: object) -> list[float]:
+            return [0.0]
+
+    class _FakeCrossEncoder:
+        def __init__(self, model_name: str, **kwargs: object) -> None:
+            pass
+
+    module = types.ModuleType("sentence_transformers")
+    module.SentenceTransformer = _FakeSentenceTransformer  # type: ignore[attr-defined]
+    module.CrossEncoder = _FakeCrossEncoder  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+
+    def _lookup(*, repo_id: str, filename: str, cache_dir: str | None, revision: str) -> None:
+        seen.setdefault("probe", revision)
+
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", _lookup)
+
+    probe_model_cache(model)
+    LocalEmbeddingProvider(model_name=model)._load_model()
+    seen["embedder"] = loads[0]
+    monkeypatch.setattr(sys, "argv", ["-c", model])
+    exec(installer._SEMANTIC_DOWNLOAD_SOURCE, {"__name__": "__main__"})  # the snippet under test
+    seen["installer"] = loads[-1]
+    return seen
+
+
+def test_one_constant_names_the_revision_at_all_three_call_sites(
+    installer: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PRD-CORE-302 FR06: the default model loads, probes and downloads at its one pinned commit."""
+    from trw_memory._model_pin import DEFAULT_EMBEDDING_MODEL, pinned_revision
+    from trw_memory.models.config import MemoryConfig
+
+    assert MemoryConfig().embedding_model == DEFAULT_EMBEDDING_MODEL
+    pinned = pinned_revision(DEFAULT_EMBEDDING_MODEL)
+    assert pinned is not None and re.fullmatch(r"[0-9a-f]{40}", pinned)
+    seen = _revisions_at_the_three_call_sites(installer, DEFAULT_EMBEDDING_MODEL, monkeypatch, tmp_path)
+    assert seen == {"probe": pinned, "embedder": pinned, "installer": pinned}
+
+
+def test_an_unpinned_model_uses_main_everywhere_and_doctor_says_so(
+    installer: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from trw_mcp.server._doctor_embedding_egress import embedding_egress_report
+
+    seen = _revisions_at_the_three_call_sites(installer, _MODEL, monkeypatch, tmp_path)
+    assert seen == {"probe": "main", "embedder": "main", "installer": "main"}
+    status, message = embedding_egress_report(_MODEL, embeddings_enabled=True)
+    assert status == "WARN"
+    assert "Unpinned" in message
 
 
 def test_download_passes_the_model_to_the_target_interpreter(
@@ -118,18 +192,21 @@ def test_download_passes_the_model_to_the_target_interpreter(
     assert seen == [(["/opt/py", "-B", "-c", installer._SEMANTIC_DOWNLOAD_SOURCE, _MODEL], "/pip/target")]
 
 
-def test_the_model_is_read_from_the_projects_config(installer: ModuleType, tmp_path: Path) -> None:
-    """Resolved by trw-mcp's own config loader in the target interpreter: not a second hard-coded name."""
-    (tmp_path / ".trw").mkdir()
-    (tmp_path / ".trw" / "config.yaml").write_text(f"retrieval_embedding_model: {_MODEL}\n", encoding="utf-8")
+def test_the_model_is_the_daemons_from_its_environment(installer: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolved by trw-memory's MemoryConfig in the target interpreter: not a second hard-coded name."""
+    monkeypatch.setenv("MEMORY_EMBEDDING_MODEL", _MODEL)
 
-    assert installer.configured_embedding_model(sys.executable, tmp_path) == _MODEL
+    assert installer.daemon_embedding_model(sys.executable) == _MODEL
 
 
-def test_an_unconfigured_project_gets_trw_mcps_default_model(installer: ModuleType, tmp_path: Path) -> None:
-    from trw_mcp.models.config import TRWConfig
+def test_without_the_env_var_the_model_is_trw_memorys_default(
+    installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_memory._model_pin import DEFAULT_EMBEDDING_MODEL
 
-    assert installer.configured_embedding_model(sys.executable, tmp_path) == TRWConfig().retrieval_embedding_model
+    monkeypatch.delenv("MEMORY_EMBEDDING_MODEL", raising=False)
+
+    assert installer.daemon_embedding_model(sys.executable) == DEFAULT_EMBEDDING_MODEL
 
 
 # ── phase behaviour ──────────────────────────────────────────────────
@@ -139,7 +216,7 @@ def test_an_unconfigured_project_gets_trw_mcps_default_model(installer: ModuleTy
 def stack(installer: ModuleType, monkeypatch: pytest.MonkeyPatch) -> dict[str, list[object]]:
     """Stub model resolution and record every install/download/prompt the phase makes."""
     calls: dict[str, list[object]] = {"pip": [], "download": [], "prompt": []}
-    monkeypatch.setattr(installer, "configured_embedding_model", lambda *a, **k: _MODEL)
+    monkeypatch.setattr(installer, "daemon_embedding_model", lambda *a, **k: _MODEL)
 
     def fake_pip(python: str, package: str, label: str, ui: object, target_dir: str = "") -> bool:
         calls["pip"].append((package, target_dir))
@@ -164,7 +241,6 @@ def _run(installer: ModuleType, *, interactive: bool = False, offline: bool = Fa
     return installer.phase_semantic_readiness(
         installer.UI(interactive=interactive),
         "/opt/py",
-        project_dir=Path("/project"),
         interactive=interactive,
         pip_target="",
         offline=offline,
@@ -207,7 +283,10 @@ def test_missing_weights_downloads_the_configured_model_and_never_pip_installs(
     assert _run(installer) == installer.SEMANTIC_OK
     assert stack["pip"] == []
     assert stack["download"] == [(_MODEL, "")]
-    assert f"SentenceTransformer('{_MODEL}')" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "-m trw_mcp.server models fetch" in out
+    assert "--target-dir" not in out
+    assert "SentenceTransformer(" not in out
 
 
 def test_a_failed_repair_returns_the_gap_not_ok(
@@ -293,7 +372,6 @@ def test_a_default_script_install_runs_the_phase_and_records_embeddings_on(
     run = drive_main(installer, monkeypatch, target)
 
     assert len(run.calls["semantic"]) == 1
-    assert run.calls["semantic"][0][1]["project_dir"] == target
     assert "embeddings_enabled: true" in _config(target)
 
 

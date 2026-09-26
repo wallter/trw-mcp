@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context, FastMCP
 from pydantic import Field
 
 from trw_mcp.comms import DeliveryClass, InboxAction, MessageKind, PeerAction, inbox, peers, send
+
+#: Every ``trw_inbox`` action that is actually a peer operation (PRD-CORE-300
+#: FR10): dispatch to the ``peers`` facade instead of ``inbox`` for these.
+#: Derived from PeerAction rather than re-listed, so the two cannot drift.
+_PEER_ACTIONS: frozenset[str] = frozenset(get_args(PeerAction))
+
+InboxOrPeerAction = Literal[
+    "fetch", "ack", "status", "enroll", "list", "heartbeat", "announce", "withdraw", "discover", "ack_pause"
+]
 
 
 def _tool_response(payload: dict[str, Any], *, report_pull_only: bool = False) -> dict[str, Any]:
@@ -26,17 +35,6 @@ def _tool_response(payload: dict[str, Any], *, report_pull_only: bool = False) -
 
 
 def register_swarm_comms_tools(server: FastMCP) -> None:
-    @server.tool()
-    def trw_peers(
-        action: PeerAction = "list", cursor: str | None = None, pause_id: str | None = None, ctx: Context | None = None
-    ) -> dict[str, Any]:
-        """Use when announcing presence, renewing a lease, listing peers, or acking a pause.
-
-        Output: peer liveness; next_cursor pages with action="list".
-        Pull-only; never wakes peers.
-        """
-        return _tool_response(peers(action, ctx, cursor=cursor, pause_id=pause_id))
-
     @server.tool()
     def trw_send(
         request_key: str,
@@ -62,21 +60,28 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
 
     @server.tool()
     def trw_inbox(
-        action: InboxAction = "fetch",
+        action: InboxOrPeerAction = "fetch",
         message_ids: list[str] | None = None,
         cursor: str | None = None,
         wait_seconds: Annotated[int, Field(strict=True)] = 0,
+        pause_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Use when fetching messages, ACKing received IDs, or reading body-free status.
+        """Use when fetching messages, ACKing IDs, reading body-free status, or
+        running a peer action (enroll, list, heartbeat, announce, withdraw,
+        discover, ack_pause).
 
-        Fetch/status return items; next_cursor appears only when another page
-        exists. ACK takes message_ids only. Fresh fetch recovers pending
-        traffic (pull-only; ACK is not completion). wait_seconds>0 retries an
-        empty fetch in-process until the deadline.
+        Fetch/status/list return items or peers; next_cursor pages either.
+        ACK takes message_ids only; ack_pause takes pause_id. Fresh fetch
+        recovers pending traffic (pull-only; ACK is not completion).
+        wait_seconds>0 retries an empty fetch in-process until the deadline.
         """
+        if action in _PEER_ACTIONS:
+            peer_action: PeerAction = action  # type: ignore[assignment]
+            return _tool_response(peers(peer_action, ctx, cursor=cursor, pause_id=pause_id))
         # strict=True: the transport rejects bool/float/str before the handler (FR11).
-        return _tool_response(inbox(action, message_ids, cursor, ctx, wait_seconds))
+        inbox_action: InboxAction = action  # type: ignore[assignment]
+        return _tool_response(inbox(inbox_action, message_ids, cursor, ctx, wait_seconds))
 
 
 __all__ = ["register_swarm_comms_tools"]

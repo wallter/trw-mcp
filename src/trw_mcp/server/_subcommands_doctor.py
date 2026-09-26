@@ -314,16 +314,17 @@ def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
 
 
 def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
-    """Report the configured model's cache state and the effective egress posture.
+    """Report the daemon's embedding model cache state and the effective egress posture.
 
     Delegates to the ``_doctor_embedding_egress`` sibling (kept out of this file
     for the eLOC gate). Fail-open: an unanswerable cache probe becomes a WARN row
     with the conservative posture, never an aborted report.
     """
     from trw_mcp.server._doctor_embedding_egress import embedding_egress_report
+    from trw_mcp.state._retrieval_capability import daemon_embedding_model
 
     status, message = embedding_egress_report(
-        str(getattr(config, "retrieval_embedding_model", "") or ""),
+        daemon_embedding_model(),
         embeddings_enabled=bool(getattr(config, "embeddings_enabled", False)),
     )
     return CheckResult("embedding_egress", cast("DoctorStatus", status), message)
@@ -332,14 +333,19 @@ def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
 # ── docs/sprint-mcp7/PLAN.md §3b item 3: retrieval capability ────────────────
 
 
-def _check_retrieval(_target: Path, config: TRWConfig) -> CheckResult:
-    """Report vectors / embeddings / weights / bm25 as active, degraded or off, with the fix."""
-    from trw_mcp.state._retrieval_capability import probe_retrieval, retrieval_row
+def _check_retrieval(target: Path, config: TRWConfig) -> CheckResult:
+    """Report vectors / embeddings / weights as active, degraded or off, with the fix."""
+    from trw_mcp.state._retrieval_capability import (
+        daemon_embedding_model,
+        outside_active_space_note,
+        probe_retrieval,
+        retrieval_row,
+    )
 
     status, message = retrieval_row(
-        probe_retrieval(config.retrieval_embedding_model, embeddings_enabled=config.embeddings_enabled)
+        probe_retrieval(daemon_embedding_model(), embeddings_enabled=config.embeddings_enabled)
     )
-    return CheckResult("retrieval", cast("DoctorStatus", status), message)
+    return CheckResult("retrieval", cast("DoctorStatus", status), message + outside_active_space_note(target / ".trw"))
 
 
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────
@@ -472,6 +478,20 @@ def _check_foreign_client_paths(target: Path, _config: TRWConfig) -> CheckResult
     return CheckResult("foreign_client_paths", *foreign_client_paths_row(target))
 
 
+def _check_claude_code_version(_target: Path, config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_environment import claude_code_version_row
+
+    return CheckResult(
+        "claude_code_version", *claude_code_version_row(int(config.dispatch.dispatch_version_probe_timeout_s))
+    )
+
+
+def _check_stray_servers(target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_environment import stray_servers_row
+
+    return CheckResult("stray_servers", *stray_servers_row(target))
+
+
 def _check_jev(target: Path, config: TRWConfig) -> CheckResult:
     from trw_mcp.server._doctor_jev import jev_row
 
@@ -492,6 +512,42 @@ def _check_version_status_compatible(target: Path, _config: TRWConfig) -> CheckR
     from trw_mcp.server._doctor_version_status import version_status_row
 
     return CheckResult("version_status", *version_status_row(target))
+
+
+def _check_mcp_security(target: Path, _config: TRWConfig) -> CheckResult:
+    """PRD-CORE-300 slice S3a: the same status ``trw-mcp telemetry security`` reports.
+
+    WARN when a recent shadow anomaly or an active quarantine is recorded;
+    PASS otherwise. Reads *target*/.trw/context directly (like ``_check_trw_dir``)
+    rather than through ``resolve_trw_dir()``'s config/cwd resolution, so this
+    check honors the doctor's own ``target_dir`` argument rather than the
+    process's cwd. Read-only; never raises (NFR-8 fail-open) — a resolution
+    error becomes a FAIL row for this check alone, per the fail-open-isolated
+    contract every doctor check keeps.
+    """
+    from trw_mcp.tools.mcp_security_status import compute_security_status
+
+    try:
+        status = compute_security_status(events_dir=target / ".trw" / "context").model_dump()
+    except Exception as exc:  # justified: doctor checks are fail-open isolated
+        return CheckResult("mcp_security", "FAIL", f"check raised: {exc}")
+    anomalies = status.get("recent_anomalies") or []
+    quarantined = status.get("quarantined_servers") or []
+    if anomalies or quarantined:
+        return CheckResult(
+            "mcp_security",
+            "WARN",
+            f"{len(anomalies)} recent anomaly(ies), {len(quarantined)} quarantined server(s)",
+        )
+    return CheckResult("mcp_security", "PASS", "no recent anomalies, no quarantined servers")
+
+
+def _check_pipeline_health(target: Path, config: TRWConfig) -> CheckResult:
+    """WARN when the compounding-pipeline health surface reports a degraded signal."""
+    from trw_mcp.server._doctor_pipeline_health import pipeline_health_row
+
+    status, message = pipeline_health_row(target, config)
+    return CheckResult("pipeline_health", cast("DoctorStatus", status), message)
 
 
 # ── Catalogue + orchestration ────────────────────────────────────────────────
@@ -535,6 +591,14 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("jev", "_check_jev"),
     # PLAN.md §3b item 3: appended last for the same reason.
     ("retrieval", "_check_retrieval"),
+    ("stray_servers", "_check_stray_servers"),
+    ("claude_code_version", "_check_claude_code_version"),
+    # PRD-CORE-300 slice S3a: appended last for the same reason as the rows
+    # above — reports the same status `trw-mcp telemetry security` does, now
+    # that its former MCP-tool form is retired.
+    ("mcp_security", "_check_mcp_security"),
+    # PRD-CORE-300-FR05 slice S3b: appended last for the same reason as the rows above.
+    ("pipeline_health", "_check_pipeline_health"),
 )
 
 

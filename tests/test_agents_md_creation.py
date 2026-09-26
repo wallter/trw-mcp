@@ -12,6 +12,7 @@ from tests._test_agents_md_support import (
     _extract_trw_section,
     _patched_learning_env,
 )
+from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.state.claude_md import TRW_MARKER_END, TRW_MARKER_START, merge_trw_section
 
 
@@ -22,7 +23,7 @@ def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestAgentsMdCreation:
-    """Test AGENTS.md file creation via trw_claude_md_sync."""
+    """Test AGENTS.md file creation via instructions sync."""
 
     def test_agents_md_created_on_root_sync(self, tmp_project: Path) -> None:
         """The auto path no longer writes AGENTS.md for ANY detected client.
@@ -39,13 +40,13 @@ class TestAgentsMdCreation:
         ``agents_md=True`` alongside its own carrier — the defect this change fixes.
         So it now asserts the withdrawal is complete, which is what
         PRD-CORE-240-FR04 requires, instead of asserting a write that should no
-        longer happen. ``trw_instructions_sync(client="cursor-cli")`` still writes
+        longer happen. ``instructions_sync_fn(client="cursor-cli")`` still writes
         AGENTS.md through the explicit-client branch; that is cursor-cli's own
         carrier and is covered elsewhere.
         """
         (tmp_project / ".opencode").mkdir(exist_ok=True)
-        with _patched_learning_env(tmp_project, agents_md_enabled=True) as tools:
-            result = tools["trw_claude_md_sync"].fn(scope="root")
+        with _patched_learning_env(tmp_project, agents_md_enabled=True):
+            result = instructions_sync_fn(scope="root")
 
         assert result["agents_md_synced"] is False
         assert not (tmp_project / "AGENTS.md").exists()
@@ -65,8 +66,8 @@ class TestAgentsMdCreation:
 
     def test_agents_md_disabled_config(self, tmp_project: Path) -> None:
         """AGENTS.md is NOT created when agents_md_enabled=False."""
-        with _patched_learning_env(tmp_project, agents_md_enabled=False) as tools:
-            result = tools["trw_claude_md_sync"].fn(scope="root")
+        with _patched_learning_env(tmp_project, agents_md_enabled=False):
+            result = instructions_sync_fn(scope="root")
 
         assert result["agents_md_synced"] is False
         assert result["agents_md_path"] is None
@@ -158,8 +159,8 @@ class TestAgentsMdCreation:
         sub_dir = tmp_project / "submodule"
         sub_dir.mkdir()
 
-        with _patched_learning_env(tmp_project, agents_md_enabled=True) as tools:
-            result = tools["trw_claude_md_sync"].fn(scope="sub", target_dir=str(sub_dir))
+        with _patched_learning_env(tmp_project, agents_md_enabled=True):
+            result = instructions_sync_fn(scope="sub", target_dir=str(sub_dir))
 
         assert result["agents_md_synced"] is False
         assert not (tmp_project / "AGENTS.md").exists()

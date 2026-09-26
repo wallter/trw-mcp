@@ -5,12 +5,13 @@ MCP server to run ANOTHER coding-agent CLI for a second-opinion audit, either
 synchronously (``wait=True``) or via a fire-and-poll background job
 (``wait=False``, the default).
 
-Two tools are registered:
+One tool, ``trw_dispatch``, with four actions (PRD-CORE-300-FR09):
 
-- ``trw_dispatch`` — resolve + launch a request. Default ``wait=False`` returns a
-  ``job_id`` immediately; poll ``trw_dispatch_status``.
-- ``trw_dispatch_status`` — return a job's status, including the redacted result
-  once terminal.
+- ``launch`` (default) — resolve + launch a request. Default ``wait=False``
+  returns a ``job_id`` immediately; poll it with ``action="status"``.
+- ``status`` — a job's status, including the redacted result once terminal.
+- ``evidence`` / ``validate_evidence`` — export or check an AgentWorkEvidence v1
+  record (:mod:`trw_mcp.tools.agent_work_evidence`).
 
 Redaction: the raw ``prompt`` argument is the caller's own input — it is accepted
 but NEVER echoed back in the tool return or logged. The :class:`DispatchResult`
@@ -23,7 +24,7 @@ import uuid
 from collections.abc import Callable
 
 import structlog
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
@@ -32,6 +33,7 @@ from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchResult
 from trw_mcp.dispatch._usage import record_child_usage, record_dispatch_policy
 from trw_mcp.models.config import get_config
+from trw_mcp.tools.agent_work_evidence import export_evidence, validate_evidence
 
 logger = structlog.get_logger(__name__)
 
@@ -80,7 +82,8 @@ def _result_payload_capped(
     Fail-open: if the success-path omission somehow raises, fall back to the full
     capped shape so a result is never lost.
     """
-    payload = result.model_dump(mode="json")
+    # No fallback chain ran: its two fields carry nothing a caller acts on.
+    payload = result.model_dump(mode="json", exclude=None if result.attempts else {"attempts", "fallback_note"})
     try:
         if result.ok and not verbose:
             payload.pop("raw_stdout", None)
@@ -94,6 +97,45 @@ def _result_payload_capped(
     payload["raw_stdout"] = _truncate_stream(result.raw_stdout)
     payload["raw_stderr"] = _truncate_stream(result.raw_stderr)
     return payload
+
+
+_ACTIONS = ("launch", "status", "evidence", "validate_evidence")
+
+
+def _refuse(message: str) -> dict[str, object]:
+    return {"error": message, "exit_code": 2}
+
+
+def _status(job_id: str, verbose: bool) -> dict[str, object]:
+    """A job's status; its result once terminal and the child wrote one, else None."""
+    try:
+        job = get_status(job_id)
+    except (KeyError, ValueError):
+        return {"error": f"unknown job_id {job_id!r}"}
+
+    # Terminal set is imported, not restated: the hand-copied tuple here
+    # omitted "cancelled", so a job cancelled AFTER its child had already
+    # written a result reported result=None forever — real evidence on disk,
+    # discarded because a poller's local list had drifted from the registry's.
+    # ``terminal`` is returned so a caller knows when to stop polling without
+    # keeping its own copy of the same set.
+    terminal = job.status in _TERMINAL_STATUSES
+    result_payload: dict[str, object] | None = None
+    if terminal:
+        from trw_mcp.dispatch._jobs import get_result
+
+        result = get_result(job_id)
+        if result is not None:
+            record_child_usage(result, child_id=job_id)  # PRD-CORE-290-FR01; a re-poll counts once
+            result_payload = _result_payload_capped(result, verbose=verbose, result_path=job.result_path)
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "terminal": terminal,
+        "policy": job.policy,
+        "result": result_payload,
+    }
 
 
 def register_dispatch_tools(server: FastMCP) -> None:
@@ -123,7 +165,8 @@ def register_dispatch_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @_with_client_list
     def trw_dispatch(
-        prompt: str,
+        prompt: str = "",
+        action: str = "launch",
         client: str | None = None,
         role: str | None = None,
         model: str | None = None,
@@ -137,22 +180,42 @@ def register_dispatch_tools(server: FastMCP) -> None:
         with_trw: bool | None = None,
         wait: bool = False,
         verbose: bool = False,
+        target: str = "",
+        ctx: Context | None = None,
     ) -> dict[str, object]:
-        """Delegate a prompt to a sub-agent CLI in {clients}.
+        """Delegate a prompt to a sub-agent CLI in {clients}, or read a job or evidence.
         Use when you need an independent agent's review. Async by default
-        (job_id; poll trw_dispatch_status), or wait=True (<=120s) inline.
+        (job_id; poll with action="status"), or wait=True (<=120s) inline.
         Read-only unless allow_writes=True.
 
         Output: job_id+status to poll, or an inline result if wait=True; error+exit_code if rejected.
 
         Args:
-            prompt: instruction for the child; never echoed back.
-            posture: "reviewer" limits the child to nine read-only TRW
-                tools; excludes allow_writes.
+            action: "launch" (default); "status" polls the job id in target
+                (terminal says when to stop); "evidence" exports the
+                AgentWorkEvidence v1 record for the run path in target (the
+                active run if empty; verbose adds events and the schema);
+                "validate_evidence" checks the JSON document in target.
+            prompt: instruction for the child (launch); never echoed back.
+            posture: "reviewer" limits the child to a small read-only TRW
+                tool set; excludes allow_writes.
             with_trw: gives the child a TRW session on this project (claude,
                 codex only); excludes posture="reviewer".
-            verbose: raw streams on success.
+            verbose: raw streams on success; for evidence, events + schema.
         """
+        if action == "status":
+            return _status(target, verbose) if target else _refuse("action='status' needs the job id in target")
+        if action == "evidence":
+            return export_evidence(ctx, target or None, include_events=verbose, include_schema=verbose)
+        if action == "validate_evidence":
+            return (
+                validate_evidence(target) if target else _refuse("action='validate_evidence' needs the JSON in target")
+            )
+        if action != "launch":
+            return _refuse(f"unknown action {action!r}; valid actions: {', '.join(_ACTIONS)}")
+        if not prompt:
+            return _refuse("action='launch' needs prompt")
+        # The modes above launch nothing, so they run anywhere; everything below launches.
         # Nested-launch guard (PRD-CORE-281): FIRST, ahead of config, so a server
         # started for a dispatched child does nothing at all on this path. Without
         # it a read-only with_trw child could start a grandchild with writes on.
@@ -226,11 +289,11 @@ def register_dispatch_tools(server: FastMCP) -> None:
             from trw_mcp.state._paths import resolve_trw_dir
 
             project_root = resolve_trw_dir().parent.resolve()
-            target = resolved_cwd.resolve()
-            if not target.is_relative_to(project_root):
+            target_cwd = resolved_cwd.resolve()
+            if not target_cwd.is_relative_to(project_root):
                 return {
                     "error": (
-                        f"cwd must be within the project root ({project_root}) when writes are enabled; got {target}"
+                        f"cwd must be within the project root ({project_root}) when writes are enabled; got {target_cwd}"
                     ),
                     "exit_code": 2,
                 }
@@ -262,7 +325,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 return {
                     "error": (
                         f"wait=True is only supported for timeout_s<= {_MAX_WAIT_TIMEOUT_S}s; "
-                        "use wait=False (background) + trw_dispatch_status for longer dispatches"
+                        "use wait=False (background) + action='status' for longer dispatches"
                     ),
                     "exit_code": 2,
                 }
@@ -284,44 +347,4 @@ def register_dispatch_tools(server: FastMCP) -> None:
             "client": job.client,
             "argv_redacted": job.argv_redacted,
             "policy": record_dispatch_policy(req, job.job_id),
-        }
-
-    @server.tool(output_schema=None)
-    def trw_dispatch_status(job_id: str, verbose: bool = False) -> dict[str, object]:
-        """Poll a job from trw_dispatch(wait=False). Use when checking if a
-        background dispatch has finished.
-
-        Output: job_id + status + terminal (stop polling when true); result is
-        present once terminal AND the child wrote one, else None.
-
-        Args:
-            verbose: include full raw streams on success.
-        """
-        try:
-            job = get_status(job_id)
-        except (KeyError, ValueError):
-            return {"error": f"unknown job_id {job_id!r}"}
-
-        # Terminal set is imported, not restated: the hand-copied tuple here
-        # omitted "cancelled", so a job cancelled AFTER its child had already
-        # written a result reported result=None forever — real evidence on disk,
-        # discarded because a poller's local list had drifted from the registry's.
-        # ``terminal`` is returned so a caller knows when to stop polling without
-        # keeping its own copy of the same set.
-        terminal = job.status in _TERMINAL_STATUSES
-        result_payload: dict[str, object] | None = None
-        if terminal:
-            from trw_mcp.dispatch._jobs import get_result
-
-            result = get_result(job_id)
-            if result is not None:
-                record_child_usage(result, child_id=job_id)  # PRD-CORE-290-FR01; a re-poll counts once
-                result_payload = _result_payload_capped(result, verbose=verbose, result_path=job.result_path)
-
-        return {
-            "job_id": job.job_id,
-            "status": job.status,
-            "terminal": terminal,
-            "policy": job.policy,
-            "result": result_payload,
         }

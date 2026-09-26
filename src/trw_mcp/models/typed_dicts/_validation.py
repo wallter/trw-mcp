@@ -70,7 +70,7 @@ class PrdFrontmatterDict(TypedDict, total=False):
 
 
 class PrdCreateResultDict(TypedDict, total=False):
-    """Return shape of ``trw_prd_create`` MCP tool.
+    """Return shape of ``create_prd`` (called from ``trw-mcp prd create``, PRD-CORE-300-FR07).
 
     ``not_written_reason`` is present ONLY when the PRD could not be persisted
     (no PRD directory and no ``.trw``). Without it, an empty ``output_path`` was

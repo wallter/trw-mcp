@@ -194,7 +194,8 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
     assert per_rule["DEP001"] == ["tiktoken"]
     assert per_rule["DEP002"] == ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
     assert per_rule["DEP003"] == ["opentelemetry", "tiktoken"]
-    assert per_rule["DEP004"] == ["rank_bm25"]
+    # rank-bm25 is a trw-memory base dependency (PRD-CORE-302 FR08); trw-mcp neither imports nor declares it.
+    assert "DEP004" not in per_rule
 
 
 def test_fastmcp_pins_are_on_patched_floor() -> None:
@@ -263,7 +264,8 @@ def test_requirements_lock_has_no_stale_git_self_pins() -> None:
 
 def test_the_lock_tests_wait_for_the_published_dependency() -> None:
     """``uv lock`` can record a new trw-memory floor only once it is on PyPI, so the paired
-    pre-cut check (``release_public.py check --with-local``) deselects these two; the
-    post-publish check keeps them."""
+    pre-cut check (``release_public.py check --with-local``) and the C1 release gate both
+    deselect these two; ``release_public.py all``'s post-lock-refresh ``check trw-mcp``
+    (no ``--with-local``) keeps them and fails the cut if they fail."""
     for test in (test_uv_lock_version_matches_pyproject, test_uv_lock_dependency_specifiers_match_pyproject):
         assert "requires_published_lock" in {mark.name for mark in getattr(test, "pytestmark", [])}

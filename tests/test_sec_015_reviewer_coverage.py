@@ -47,13 +47,9 @@ from trw_mcp.middleware.surface_authority import SurfaceAuthorityMiddleware, res
 from trw_mcp.models.config import TRWConfig, get_config, reload_config
 from trw_mcp.models.config import _loader as config_loader
 from trw_mcp.models.config._retired_keys import _reset_warned_keys
-from trw_mcp.models.phase_policy import RIGID_TOOLS
-from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS, REVIEWER_TOOLS
-from trw_mcp.tools import phase_overrides
+from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, REVIEWER_TOOLS
 
 pytestmark = pytest.mark.unit
-
-_MOD = "trw_mcp.middleware.surface_authority"
 
 
 @dataclass
@@ -95,11 +91,9 @@ def middleware() -> SurfaceAuthorityMiddleware:
 
 @pytest.fixture(autouse=True)
 def _clean_state() -> Any:
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
     _reset_warned_keys()
     yield
-    phase_overrides.reset_overrides()
     reset_surface_authority_state()
     _reset_warned_keys()
 
@@ -152,7 +146,6 @@ async def test_the_same_config_file_now_bounds_the_real_middleware_without_the_e
     config, not what stops a config-only declaration from working at all."""
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     _build_real_config(monkeypatch, {"surface_role": "reviewer"})
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: None)
 
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
     denied = await middleware.on_call_tool(ctx, _execute)  # type: ignore[arg-type]
@@ -263,9 +256,8 @@ async def test_an_unset_surface_role_still_behaves_as_an_ordinary_agent_through_
     ``surface_role`` breaking ordinary agent sessions."""
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     _build_real_config(monkeypatch, {})
-    monkeypatch.setattr(f"{_MOD}.resolve_task_type", lambda **_: None)
 
-    assert "trw_deliver" in RIGID_TOOLS  # non-vacuity: this tool IS excluded from REVIEWER_TOOLS
+    assert "trw_deliver" in ALWAYS_ON_TOOLS  # non-vacuity: this tool IS excluded from REVIEWER_TOOLS
     assert "trw_deliver" not in REVIEWER_TOOLS
 
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_deliver"), fastmcp_context=_FakeContext())
@@ -304,13 +296,6 @@ async def test_only_the_exact_reviewer_sentinel_activates_the_bound(
 # ── FR01: reviewer tools are never operator-only ────────────────────────
 
 
-def test_reviewer_tools_are_disjoint_from_operator_only_tools() -> None:
-    """A reviewer surface must never include an operator-only tool — that class
-    is excluded from the eligible public surface entirely, so a member here
-    would be a silent widening beyond what any ordinary agent can even reach."""
-    assert REVIEWER_TOOLS.isdisjoint(OPERATOR_ONLY_TOOLS)
-
-
 # ── FR05: the ceremony exemption compared symmetrically in one test ─────
 
 
@@ -339,14 +324,14 @@ async def test_reviewer_and_agent_sessions_diverge_on_the_ceremony_warning_in_on
         return FakeToolResult(content=[TextContent(type="text", text="ok")])
 
     agent_ctx = FakeMiddlewareContext(
-        message=FakeMessage(name="trw_code_search"),
+        message=FakeMessage(name="trw_code"),
         fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="agent-sess")),
     )
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     agent_out = await mw.on_call_tool(agent_ctx, call_next)  # type: ignore[arg-type]
 
     reviewer_ctx = FakeMiddlewareContext(
-        message=FakeMessage(name="trw_code_search"),
+        message=FakeMessage(name="trw_code"),
         fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="reviewer-sess")),
     )
     monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")

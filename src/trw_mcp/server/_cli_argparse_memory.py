@@ -1,4 +1,6 @@
-"""``memory`` CLI subparsers: ``token`` (PRD-CORE-298 FR02) and ``migrate`` (PRD-CORE-280 FR03).
+"""``memory`` CLI subparsers: ``token`` (PRD-CORE-298 FR02), ``migrate`` (PRD-CORE-280 FR03), ``reembed`` (PRD-CORE-302 FR07).
+
+Also ``models fetch`` (PRD-CORE-302 W40), the one explicit model download.
 
 Belongs to the ``_cli_argparse_operational.py`` facade, which calls
 :func:`add_memory_subcommands` while registering the operational surface.
@@ -8,13 +10,13 @@ from __future__ import annotations
 
 import argparse
 
-__all__ = ["add_memory_subcommands"]
+__all__ = ["add_memory_subcommands", "add_models_subcommands"]
 
 
 def add_memory_subcommands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``memory token`` and ``memory migrate``."""
+    """Register ``memory token``, ``memory migrate`` and ``memory reembed``."""
     memory_parser = subparsers.add_parser("memory", help="Memory daemon grants and store migration for this checkout")
     memory_sub = memory_parser.add_subparsers(dest="memory_command")
     token_parser = memory_sub.add_parser(
@@ -37,3 +39,20 @@ def add_memory_subcommands(
     migrate_mode = migrate_parser.add_mutually_exclusive_group()
     migrate_mode.add_argument("--apply", action="store_true", help="Move it (default: preview, writing nothing)")
     migrate_mode.add_argument("--rollback", metavar="MANIFEST", help="Restore the project store a migration moved")
+    reembed_parser = memory_sub.add_parser(
+        "reembed", help="Re-encode this checkout's vectors outside the daemon's active embedding space"
+    )
+    reembed_parser.add_argument("--target-dir", default=".", help="Checkout root (default: .)")
+    reembed_parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
+
+
+def add_models_subcommands(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``models fetch``."""
+    models_parser = subparsers.add_parser("models", help="Download the embedding and re-rank models")
+    models_sub = models_parser.add_subparsers(dest="models_command")
+    fetch_parser = models_sub.add_parser(
+        "fetch", help="Download the daemon's models into the local cache (runtime loads never download)"
+    )
+    fetch_parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")

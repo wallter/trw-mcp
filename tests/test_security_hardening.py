@@ -262,7 +262,7 @@ class TestSecretStrApiKey:
         reason=(
             "Conflicts with an intentional, load-bearing invariant: the tracked dev "
             ".trw/config.yaml platform_api_key is INTENTIONALLY pinned & git-tracked "
-            "(it is the dev-account key resolving backend_api_key for trw_submit_feedback "
+            "(it is the dev-account key resolving backend_api_key for the feedback-submission channel "
             "and every backend call; clearing it breaks every backend call). See "
             "feedback_platform_api_key_pinned.md. This test inspects the REAL dev config "
             "(repo_root/.trw/config.yaml), not a shipped template/baseline, so its premise "

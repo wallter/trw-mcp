@@ -57,8 +57,8 @@ def core(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def call_peers(server: FastMCP, action: str = "list") -> dict[str, Any]:
-    """Invoke trw_peers through the real dispatch and return its payload."""
-    result = asyncio.run(server.call_tool("trw_peers", {"action": action}))
+    """Invoke a trw_inbox peer action through the real dispatch and return its payload."""
+    result = asyncio.run(server.call_tool("trw_inbox", {"action": action}))
     payload = result.structured_content
     assert isinstance(payload, dict), f"expected a structured payload, got {type(payload)}"
     return payload

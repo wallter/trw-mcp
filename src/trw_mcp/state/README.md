@@ -26,9 +26,7 @@
 | Module | Lines | Owner | Purpose |
 |--------|-------|-------|---------|
 | `memory_adapter.py` | 459 | **Facade** | Public CRUD for learning storage; delegates to trw-memory |
-| `_memory_connection.py` | 404 | Internal | Singleton backend lifecycle, embedder management |
 | `_memory_transforms.py` | — | Internal | Format conversions between trw-mcp and trw-memory |
-| `memory_store.py` | — | Internal | Low-level store operations |
 | `dedup.py` | 384 | Primary | Semantic deduplication (cosine similarity, batch dedup) |
 | `recall_tracking.py` | — | Primary | Recall outcome tracking |
 | `retrieval.py` | — | Primary | Hybrid retrieval orchestration |

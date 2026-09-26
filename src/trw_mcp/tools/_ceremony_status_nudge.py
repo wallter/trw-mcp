@@ -4,10 +4,10 @@ Belongs to the ``_ceremony_status.py`` facade. Re-exported there for
 back-compat.
 
 Single helper:
-- ``_try_learning_nudge_content`` — produces cache-ranked or deterministic
-  learning nudge content for live MCP responses. Honors the dedup state
-  machine, falls back to deterministic ranking when the IntelligenceCache
-  is empty/stale, and emits structured surface_event telemetry.
+- ``_try_learning_nudge_content`` — produces learning nudge content for live
+  MCP responses in recall order, after phase and domain contextualisation.
+  Honors the dedup state machine and emits structured surface_event
+  telemetry.
 
 Extracted as DIST-243 batch 51 to push parent ``_ceremony_status.py``
 closer to the 350 effective-LOC ceiling.
@@ -25,25 +25,22 @@ from trw_mcp.state.ceremony_progress import CeremonyState
 from trw_mcp.tools._ceremony_status_helpers import (
     _contextualize_candidates,
     _deterministic_fallback_text,
-    _normalize_inferred_domains,
-    _select_cached_or_deterministic_learning,
+    _select_deterministic_fallback_learning,
 )
 
 logger = structlog.get_logger(__name__)
 
 
 def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None:
-    """Attempt to produce cache-ranked or deterministic learning nudge content.
+    """Attempt to produce learning nudge content, in recall order.
 
-    Uses backend-provided cache weights when available, but never runs the
-    backend-only local policy/state machine in the public client. Falls back to
-    deterministic recall order when the cache is empty or stale.
+    Picks the first candidate with renderable text after the phase and domain
+    contextualisation (PRD-CORE-303 FR01: no backend weight reorders it).
     """
     try:
         from trw_mcp.state._ceremony_progress_state import is_nudge_eligible, record_nudge_shown
         from trw_mcp.state.recall_factories import recall_for_nudge_pool
         from trw_mcp.state.surface_tracking import log_surface_event
-        from trw_mcp.sync.cache import IntelligenceCache
         from trw_mcp.tools._recall_impl import build_recall_context
 
         client_profile_name = ""
@@ -73,7 +70,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             eligible_candidates = candidates
 
         # PRD-CORE-278 FR09: narrow the POOL before any selection runs. A sort
-        # cannot constrain the contextual and bandit selection below, and this is
+        # cannot constrain the contextual selection below, and this is
         # the one slot that speaks with the framework's voice: on 2026-09-16 it
         # quoted a dead-code claim about a different repository (L-XIhp) and a
         # repo-state claim that had become false (sub_n98TiMz4ioCKf5Lj).
@@ -91,16 +88,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
         if not selection_candidates:
             selection_candidates = eligible_candidates
 
-        inferred_domains = _normalize_inferred_domains(
-            getattr(recall_context, "inferred_domains", set()),
-        )
-        bandit_params = IntelligenceCache(trw_dir).get_bandit_params()
-        selected_learning = _select_cached_or_deterministic_learning(
-            selection_candidates,
-            phase=state.phase,
-            inferred_domains=inferred_domains,
-            bandit_params=bandit_params,
-        )
+        selected_learning = _select_deterministic_fallback_learning(selection_candidates)
         if selected_learning is None:
             return None
 
@@ -111,16 +99,7 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             # so retry over every OTHER candidate the dedup left eligible.
             rejected_id = str(selected_learning.get("id", ""))
             remainder = [row for row in wider_pool if str(row.get("id", "")) != rejected_id]
-            selected_learning = (
-                _select_cached_or_deterministic_learning(
-                    remainder,
-                    phase=state.phase,
-                    inferred_domains=inferred_domains,
-                    bandit_params=bandit_params,
-                )
-                if remainder
-                else None
-            )
+            selected_learning = _select_deterministic_fallback_learning(remainder) if remainder else None
             content = _deterministic_fallback_text(selected_learning) if selected_learning is not None else ""
         if not content or selected_learning is None:
             return None
@@ -193,7 +172,6 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             selected=learning_id,
             phase=state.phase,
             is_transition=is_transition,
-            used_cached_bandit=bool(bandit_params),
         )
         return content
     except Exception:  # trw-fail-silent-allow: fail-open, an optional nudge must never block the tool response it decorates; None means no nudge line

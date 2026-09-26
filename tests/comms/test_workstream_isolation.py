@@ -173,7 +173,7 @@ def _make_scope(root: Path, formation_id: str, monkeypatch: pytest.MonkeyPatch) 
 
 def _populate(harness: Harness, scope: Scope, *, key: str = "shared-key", body: str = "payload") -> str:
     """Enroll the recipient and admit one real message. Returns its message_id."""
-    assert harness.call(scope, MEMBERS[1], "trw_peers", action="enroll")["status"] == "ok"
+    assert harness.call(scope, MEMBERS[1], "trw_inbox", action="enroll")["status"] == "ok"
     receipt = harness.call(scope, MEMBERS[0], "trw_send", recipient_member_id=MEMBERS[1], request_key=key, body=body)
     assert receipt["status"] == "ok", receipt
     message_id = receipt["receipt"]["message_id"]

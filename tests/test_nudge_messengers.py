@@ -75,7 +75,6 @@ def test_standard_default_matches_pre_core145_snapshot(tmp_path: Path) -> None:
 
     with (
         patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="workflow"),
-        patch("trw_mcp.tools._ceremony_status._has_cached_learning_weights", return_value=False),
         patch("trw_mcp.state._nudge_content.load_pool_message", return_value=expected),
     ):
         unset = append_ceremony_status({"status": "ok"}, unset_dir)

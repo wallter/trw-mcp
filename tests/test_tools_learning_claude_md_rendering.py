@@ -13,6 +13,7 @@ from tests._tools_learning_shared import (  # noqa: F401
     _CFG,
     _get_tools,
     _write_analytics,
+    instructions_sync_fn,
     no_machine_wide_ide_detection,
     set_project_root,
 )
@@ -89,7 +90,7 @@ class TestClaudeMdTemplate:
         assert "\n\n\n" not in result
 
     def test_sync_uses_template_produces_same_output(self, tmp_path: Path) -> None:
-        """trw_claude_md_sync with bundled template produces equivalent output."""
+        """instructions sync with bundled template produces equivalent output."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -99,7 +100,7 @@ class TestClaudeMdTemplate:
             impact=0.9,
         )
 
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
         # CORE-093: learning promotion removed
         assert result["learnings_promoted"] == 0
@@ -134,7 +135,7 @@ class TestClaudeMdTemplate:
 
         tools = _get_tools()
 
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
 
         claude_md = tmp_path / "CLAUDE.md"
@@ -158,15 +159,18 @@ class TestCeremonyRendering:
             assert f"**{name}**" in result
 
     def test_render_ceremony_table(self) -> None:
-        """Table headers and all 11 tools listed."""
+        """Table headers and every ceremony tool listed."""
         result = render_ceremony_table()
         assert "### Tool Lifecycle" in result
         assert "| Phase | Tool | When to Use | What It Does | Example |" in result
         assert "|-------|------|-------------|--------------|---------|" in result
-        # All 11 tools present
         for ct in CEREMONY_TOOLS:
             assert f"`{ct.tool}`" in result
-        assert len(CEREMONY_TOOLS) == 12
+        # PRD-CORE-300 S11b: the three meta tools (skill discovery,
+        # the tool-access grant, profile explain) were removed, so the
+        # ceremony table shrank from 12 to 11 rows.
+        # 11: the PRD-create tool moved to `trw-mcp prd create` (PRD-CORE-300 S5).
+        assert len(CEREMONY_TOOLS) == 11
 
     def test_render_ceremony_flows(self) -> None:
         """Both quick and full flows present with key tool names."""
@@ -296,7 +300,7 @@ class TestCeremonyRendering:
             impact=0.9,
         )
 
-        result = tools["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
 
         claude_md = tmp_path / "CLAUDE.md"

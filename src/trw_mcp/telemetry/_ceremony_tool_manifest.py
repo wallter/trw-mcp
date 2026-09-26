@@ -9,11 +9,11 @@ and the authoritative owner store that dedupes its effect. Invariants:
 
 - ``operation_backed`` requires an owner and is EXACTLY ``trw_deliver`` (owned
   by the PRD-CORE-208 delivery journal); no tool may return a handle without a
-  durable owner. ``trw_delivery_status``/``trw_delivery_recover`` only READ from
-  that journal (CORE-208 remains their authority), so they are synchronous_only.
+  durable owner. ``trw_status(delivery=...)`` only READS that journal (CORE-208
+  remains its authority).
 - ``synchronous_bounded`` (only ``trw_prd_validate``) returns a visibly-partial
   result at its internal budget instead of continuing past the deadline.
-- ``synchronous_only`` tools (the other 14 entries) must commit or return a
+- ``synchronous_only`` tools (the other 11 entries) must commit or return a
   typed rejection before their budget and never continue invisibly.
 - Every named tool has one disposition, one budget, one request-identity
   policy, and one owner — enforced at construction.
@@ -138,40 +138,14 @@ _CEREMONY_TOOL_SPECS: tuple[CeremonyToolSpec, ...] = (
         RequestIdentityPolicy.READ_ONLY,
         "run status projector",
     ),
-    CeremonyToolSpec(
-        "trw_heartbeat",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
-        RequestIdentityPolicy.REQUIRED,
-        "run liveness store",
-    ),
-    CeremonyToolSpec(
-        "trw_adopt_run",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
-        RequestIdentityPolicy.REQUIRED,
-        "run ownership store",
-    ),
-    CeremonyToolSpec(
-        "trw_pre_compact_checkpoint",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
-        RequestIdentityPolicy.REQUIRED,
-        "run checkpoint store",
-    ),
+    # PRD-CORE-300 S6b folded run-adoption into `trw-mcp run adopt`, a CLI
+    # verb outside this MCP ceremony-tool inventory.
     CeremonyToolSpec(
         "trw_init",
         CeremonyExecutionClass.SYNCHRONOUS_ONLY,
         _BUDGET_SYNC_MUTATION_S,
         RequestIdentityPolicy.REQUIRED,
         "bootstrap project/run store",
-    ),
-    CeremonyToolSpec(
-        "trw_prd_create",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
-        RequestIdentityPolicy.REQUIRED,
-        "PRD store plus registry sync",
     ),
     CeremonyToolSpec(
         "trw_prd_validate",
@@ -212,24 +186,6 @@ _CEREMONY_TOOL_SPECS: tuple[CeremonyToolSpec, ...] = (
         "trw_deliver",
         CeremonyExecutionClass.OPERATION_BACKED,
         _BUDGET_OPERATION_BACKED_S,
-        RequestIdentityPolicy.REQUIRED,
-        _CORE_208_DELIVERY_JOURNAL,
-    ),
-    # Delivery status/recover are synchronous_only: they READ the CORE-208
-    # delivery journal (which stays their authoritative owner) but return their
-    # own bounded result rather than a fresh operation-backed handle. Only
-    # trw_deliver is operation_backed. (PRD-CORE-215 FR04 / §4 inventory.)
-    CeremonyToolSpec(
-        "trw_delivery_status",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_READ_ONLY_LOOKUP_S,
-        RequestIdentityPolicy.READ_ONLY,
-        _CORE_208_DELIVERY_JOURNAL,
-    ),
-    CeremonyToolSpec(
-        "trw_delivery_recover",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
         RequestIdentityPolicy.REQUIRED,
         _CORE_208_DELIVERY_JOURNAL,
     ),

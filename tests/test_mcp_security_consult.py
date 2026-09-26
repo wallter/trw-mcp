@@ -80,11 +80,11 @@ def test_consult_calls_on_tool_call_when_set(restore_mcp_security: None) -> None
     spy.default_server_name = "filesystem"
     _app_mod._mcp_security = spy
 
-    consult_mcp_security("trw_query_events", {"session_id": "s"}, "sess-42", "run-9")
+    consult_mcp_security("trw_some_tool", {"session_id": "s"}, "sess-42", "run-9")
 
     assert len(spy.calls) == 1
     call = spy.calls[0]
-    assert call["tool"] == "trw_query_events"
+    assert call["tool"] == "trw_some_tool"
     assert call["args"] == {"session_id": "s"}
     assert call["session_id"] == "sess-42"
     assert call["run_id"] == "run-9"

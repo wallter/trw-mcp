@@ -9,8 +9,10 @@ import pytest
 
 from tests._ide_detection_isolation import isolate_ide_detection
 from tests._memory_store_fake import FakeMemoryStore
+from tests._tools_learning_shared import instructions_sync_fn
 from tests.conftest import get_tools_sync
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools.requirements import create_prd
 
 
 @pytest.fixture
@@ -42,7 +44,7 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # The claude_md package binds resolve_project_root via a from-import at module
     # load. A prior test file (e.g. orchestration) running with conftest's
     # _isolate_trw_dir can leave claude_md.resolve_project_root pointing at a stale
-    # tmp_path closure, so trw_claude_md_sync writes CLAUDE.md to the wrong root.
+    # tmp_path closure, so instructions sync writes CLAUDE.md to the wrong root.
     # Pin it to this test's tmp_path so the sync target is deterministic.
     try:
         monkeypatch.setattr(
@@ -111,7 +113,7 @@ class TestFullWorkflow:
         assert recall_result["total_matches"] >= 1
 
         # Step 5: Sync to CLAUDE.md
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
+        sync_result = instructions_sync_fn(scope="root")
         assert sync_result["status"] == "synced"
 
         # Verify CLAUDE.md was created with auto-generated markers
@@ -148,7 +150,7 @@ class TestFullWorkflow:
         tools["trw_init"].fn(task_name="prd-test")
 
         # Create PRD
-        create_result = tools["trw_prd_create"].fn(
+        create_result = create_prd(
             input_text="We need a caching layer for API responses to reduce latency",
             category="INFRA",
             priority="P1",

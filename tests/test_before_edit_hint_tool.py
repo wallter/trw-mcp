@@ -1,4 +1,4 @@
-"""Tests for trw_before_edit_hint MCP tool (PRD-DIST-1983..1986, cycle 746)."""
+"""Tests for trw_code(mode="hint") (PRD-DIST-1983..1986, cycle 746; retargeted PRD-CORE-300)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 
 from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
-from trw_mcp.tools.before_edit_hint import (
+from trw_mcp.tools._before_edit_hint_core import (
     _SCHEMA_VERSION_ACCEPTED,
     BeforeEditHintResult,
     BeforeYouEditHintPayload,
@@ -669,17 +669,18 @@ class TestExposureRecording:
         assert result.learnings_count == 0
         assert _jsonl(receipts_path) == [] and _jsonl(surface_path) == []
 
-    def test_reviewer_role_still_records(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PRD-SEC-015 FR03/FR04: this module's appends are never role-suppressed
-        (test_reviewer_surface_enforcement.py asserts the branch does not exist),
-        so exposures are recorded under the reviewer role too."""
+    def test_reviewer_role_records_nothing(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRD-CORE-300: under the reviewer role, ``compute_before_edit_hint`` now
+        skips ``emit_hint_delivered`` and ``_record_exposure`` entirely (superseding
+        PRD-SEC-015 NFR03's "one acknowledged residual write" — see
+        test_reviewer_surface_purity.py for the byte-identical-tree sweep)."""
         self._learn(1)
         receipts_path, surface_path = self._logs(project)
         before = (len(_jsonl(receipts_path)), len(_jsonl(surface_path)))
         monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
         compute_before_edit_hint(file_path="app.py")
         after = (len(_jsonl(receipts_path)), len(_jsonl(surface_path)))
-        assert after == (before[0] + 1, before[1] + 1)
+        assert after == before
 
     def test_hint_telemetry_appends_are_bounded_and_read_free(
         self, project: Path, monkeypatch: pytest.MonkeyPatch
@@ -755,19 +756,22 @@ class TestExposureRecording:
         assert added <= 0.050
 
     def test_registered_tool_is_logged_and_response_unchanged(self, project: Path) -> None:
-        """FR02: trw_before_edit_hint reaches tool telemetry through the tool-call wrapper (PRD-FIX-150)."""
+        """FR02: trw_code(mode="hint") reaches tool telemetry through the tool-call wrapper (PRD-FIX-150)."""
         from tests.conftest import extract_tool_fn, make_test_server
         from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
-        raw = extract_tool_fn(make_test_server("before_edit_hint"), "trw_before_edit_hint")
+        raw = extract_tool_fn(make_test_server("code"), "trw_code")
         fn = wrap_tool(
             raw,
-            tool_name="trw_before_edit_hint",
+            tool_name="trw_code",
             session_id_resolver=lambda: "s",
             run_dir_resolver=lambda: None,
             fallback_dir_resolver=lambda: project / ".trw" / "context",
         )
-        response = fn(file_path="app.py")
-        assert set(response) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
+        response = fn(mode="hint", files="app.py")
+        assert response["status"] == "ok"
+        assert response["count"] == 1
+        hint = response["hints"][0]
+        assert set(hint) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
         events = "".join(p.read_text() for p in (project / ".trw").rglob("*events*.jsonl"))
-        assert "trw_before_edit_hint" in events
+        assert "trw_code" in events

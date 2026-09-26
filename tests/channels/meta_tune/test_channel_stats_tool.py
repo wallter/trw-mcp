@@ -1,4 +1,6 @@
-"""Tests for the trw_channel_stats MCP tool.
+"""Tests for :func:`compute_channel_stats_result`, the implementation behind
+`trw-mcp telemetry channel-stats` (formerly a sibling MCP tool, moved off the
+MCP surface by PRD-CORE-300 slice S3a).
 
 Uses synthetic JSONL fixtures; no live MCP, no network.
 """

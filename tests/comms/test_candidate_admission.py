@@ -165,13 +165,13 @@ def test_the_registry_is_owner_only(formation_env: FormationFixture) -> None:
     assert stat.S_IMODE(registry.stat().st_mode) == 0o600
 
 
-# --- the public trw_peers bootstrap actions ---------------------------------
+# --- the public trw_inbox bootstrap actions ---------------------------------
 
 
 def _peers(server: Any, action: str) -> dict[str, Any]:
     import asyncio
 
-    result = asyncio.run(server.call_tool("trw_peers", {"action": action}))
+    result = asyncio.run(server.call_tool("trw_inbox", {"action": action}))
     assert isinstance(result.structured_content, dict)
     return result.structured_content
 
@@ -299,7 +299,7 @@ def test_an_admitted_candidate_is_picked_up_on_its_next_call(
     assert _peers(bootstrap_scene, "list")["status"] == "refused", "a candidate is nobody until admitted"
 
     _admit(formation_env, handle)
-    picked = _peers(bootstrap_scene, "list")  # ANY trw_peers action picks up
+    picked = _peers(bootstrap_scene, "list")  # ANY trw_inbox action picks up
     assert (picked["status"], picked["member_id"]) == ("ok", "impl-2")
     assert _endpoint_members(formation_env) == {"impl-2"}
     assert formation.candidate(formation_env.trw_dir, handle).state == "picked_up"  # type: ignore[union-attr]
@@ -600,7 +600,7 @@ def test_a_manifest_without_fr18_use_stays_readable_by_pre_fr18_builds(formation
 def test_a_slot_added_after_creation_admits_a_late_candidate_who_is_picked_up(
     bootstrap_scene: Any, formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Lead's N3 acceptance: 2 slots, add a third admitting a candidate, its next trw_peers call joins."""
+    """Lead's N3 acceptance: 2 slots, add a third admitting a candidate, its next trw_inbox call joins."""
     _lead_formation(formation_env)  # lead + impl-2
     monkeypatch.setenv("TRW_SESSION_ID", "pin-b")
     handle = _peers(bootstrap_scene, "announce")["candidate_id"]

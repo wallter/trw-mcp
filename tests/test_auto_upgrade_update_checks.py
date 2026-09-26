@@ -96,7 +96,7 @@ class TestCheckForUpdate:
     def test_sends_auth_header(self) -> None:
         _reset_config(
             TRWConfig(
-                platform_url="https://example.com",
+                platform_url="https://api.trwframework.com",
                 platform_api_key="test-key",
                 update_channel="latest",
             )
@@ -207,7 +207,7 @@ class TestFetchArtifactInfo:
         assert result is None
 
     def test_auth_header_sent(self) -> None:
-        _reset_config(TRWConfig(platform_url="https://example.com", platform_api_key="my-key"))
+        _reset_config(TRWConfig(platform_url="https://api.trwframework.com", platform_api_key="my-key"))
         client = _mock_httpx_client(_mock_httpx_response(json_data={"artifact_url": "x"}))
         with patch("httpx.Client", return_value=client):
             _fetch_artifact_info("1.0.0")

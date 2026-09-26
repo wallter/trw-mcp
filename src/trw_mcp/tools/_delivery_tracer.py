@@ -59,7 +59,6 @@ SYNCHRONOUS_DISPATCH_EFFECTS: frozenset[str] = frozenset(
 #: ``resume`` action classifies before granting a lease.
 DEFERRED_STEP_EFFECT_IDS: dict[str, str] = {
     "auto_prune": "D01",
-    "consolidation": "D02",
     "tier_sweep": "D03",
     "memory_decay": "D25",
     "index_sync": "D04",

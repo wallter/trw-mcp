@@ -221,7 +221,6 @@ def test_context_reactive_message_contract_is_bounded_and_single_step() -> None:
                 ToolName.INIT,
                 ToolName.RECALL,
                 ToolName.STATUS,
-                ToolName.PRD_CREATE,
                 ToolName.PRD_VALIDATE,
             )
         ),

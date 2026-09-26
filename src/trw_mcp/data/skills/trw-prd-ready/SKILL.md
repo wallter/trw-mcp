@@ -27,8 +27,8 @@ Never promote observations to accepted requirements or invent execution authorit
 Recognize and remove the exact standalone `--embedded-plan` option before
 classifying `$ARGUMENTS`; preserve the remaining PRD/path/feature text. Require
 nonempty remaining input; classify the original remaining input once. This is
-skill routing, not a new MCP parameter. Never pass the option to `trw_prd_create`
-or `trw_prd_validate`, nor add a selected-mode parameter to their schemas.
+skill routing, not a new MCP parameter or flag. Never pass the option to
+`trw-mcp prd create` or `trw_prd_validate`, nor add a mode parameter to either.
 
 - **PRD ID**: the entire remaining argument identifies one PRD ID
   (`PRD-[A-Z]+-\d+`, whole-input match), not an ID mentioned in prose.
@@ -111,11 +111,11 @@ If the user is unavailable and evidence is strong enough, proceed with explicit 
 **Entry**: `$ARGUMENTS` is a feature description (not a PRD ID or file path).
 **Skip if**: `$ARGUMENTS` is an existing PRD ID or file path.
 
-1. Reuse the inspected preflight evidence. If preflight was skipped and relevant prior evidence is not already available, call `trw_recall` with feature keywords before creation. Retrieve again only for a new evidence gap or stale result, not merely because the phase changed. Preserve material sources and caveats in the PRD; do not copy raw memory wholesale.
-2. Read `INDEX.md` in the PRD parent directory (read `prds_relative_path` from `.trw/config.yaml`, default: `docs/requirements-aare-f/prds`) to verify no duplicate PRD exists. If a likely duplicate exists, STOP creation, report the matching PRD(s), and ask whether to reuse/groom the existing PRD instead of silently spawning a new one.
-3. Call `trw_prd_create(input_text="$ARGUMENTS")` to generate an AARE-F skeleton. If Phase 0 ran, include the decision tree and assumptions in the input text or immediately patch the generated PRD so they are visible.
-4. Read the generated PRD file to confirm creation.
-5. Default category is CORE. Use FIX for bugs, INFRA for infrastructure, QUAL for quality.
+1. Reuse the inspected preflight evidence. If preflight was skipped and no relevant prior evidence is available, call `trw_recall` with feature keywords first. Retrieve again only for a new evidence gap or a stale result, not merely because the phase changed. Keep material sources and caveats in the PRD; do not copy raw memory wholesale.
+2. Check `INDEX.md` in the PRD parent directory (`prds_relative_path` in `.trw/config.yaml`, default `docs/requirements-aare-f/prds`) for a duplicate. If one is likely, STOP, report the matching PRD(s), and ask whether to reuse/groom it instead of silently spawning a new one.
+3. Run `trw-mcp prd create --input-text "$ARGUMENTS" --json` for an AARE-F skeleton. If Phase 0 ran, put the decision tree and assumptions in the input text or patch them into the PRD.
+4. Read the PRD at the JSON's `output_path`, then `trw_prd_validate` it.
+5. Default `--category` is CORE; FIX for bugs, INFRA for infrastructure, QUAL for quality.
 
 **Exit**: PRD file exists with a valid PRD ID. Report:
 > "Created {PRD-ID} — skeleton tier. Proceeding to groom..."

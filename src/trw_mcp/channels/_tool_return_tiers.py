@@ -1,7 +1,8 @@
 """Shared tier-aware response shaping for distill MCP tools.
 
 Maps resolved client tier (T0 / T1 / T2) to the content included in
-trw_before_edit_hint and trw_codebase_risk_report
+trw_code's hint mode (the sibling risk-report consumer moved to the
+trw-mcp code risk CLI in PRD-CORE-300 slice S4)
 tool RESPONSES.
 
 Design contract

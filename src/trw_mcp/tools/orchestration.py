@@ -28,6 +28,7 @@ from trw_mcp.state.analytics._stale_runs import (
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
 from trw_mcp.tools import _orchestration_scaling as _scaling
+from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 from trw_mcp.tools._orchestration_helpers import (
     _deploy_frameworks,
@@ -62,7 +63,11 @@ from trw_mcp.tools._orchestration_phase import (
     _compute_wave_progress as _compute_wave_progress,
 )
 from trw_mcp.tools._orchestration_status_assembly import assemble_status_result
+from trw_mcp.tools._profile_cli import surface_detail
+from trw_mcp.tools._status_feedback import status_feedback
 from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
+from trw_mcp.tools.checkpoint import execute_pre_compact_checkpoint
+from trw_mcp.tools.delivery_ops import delivery_status
 
 logger = structlog.get_logger(__name__)
 # PRD-QUAL-042-FR01: cap trw_init ``task_name`` (a filesystem path component)
@@ -362,18 +367,35 @@ def register_orchestration_tools(server: FastMCP) -> None:
     def trw_status(
         ctx: Context | None = None,
         run_path: str | None = None,
-    ) -> TrwStatusDict:
-        """Report the active run's phase, progress, and last activity.
+        delivery: str = "",
+        feedback: dict[str, object] | str = "",
+        detail: str = "",
+    ) -> TrwStatusDict | dict[str, object]:
+        """Report the active run's phase, progress and last activity.
+        delivery=<id>: a trw_deliver status. feedback={category, subject,
+        message}: post a memo (never a false success). detail="surface":
+        the resolved profile and tool surface.
 
-        Use when resuming, or deciding whether to checkpoint, advance phase, or
-        re-delegate a wave. run_path is auto-detected from the session pin.
-
-        Output: phase, status, confidence, event/reversion counts, wave and shard
-        progress, and staleness.
+        Use when resuming or after a trw_deliver timeout. run_path is
+        auto-detected. Output: phase, status, confidence, staleness.
         """
+        if feedback:
+            from trw_mcp.tools._learn_arg_bags import _coerce_json
+
+            mapping, error = _coerce_json(feedback)
+            if mapping is None:
+                from fastmcp.exceptions import ToolError
+
+                raise ToolError(f"feedback {error}")
+            return status_feedback(mapping)
+        if delivery:
+            # PRD-CORE-300-FR03: the delivery owner status locator; needs no run, read-only.
+            return delivery_status(delivery)
+        if detail == "surface":
+            # PRD-CORE-300 S11b: replaces the profile-explain tool; works with no pinned run.
+            return surface_detail(context=_build_call_context(ctx))
         reader = FileStateReader()
-        # PRD-CORE-141 FR03/FR05: ctx-aware resolve_run_path suppresses the
-        # mtime scan fallback when no pin exists for this session.
+        # PRD-CORE-141 FR03/FR05: ctx-aware resolution skips the mtime scan when unpinned.
         resolved_path = resolve_run_path(run_path, context=_build_call_context(ctx))
         meta_path = resolved_path / "meta"
 
@@ -386,12 +408,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if wave_manifest_path.exists():
             wave_data = reader.read_yaml(wave_manifest_path)
 
-        # events.jsonl feeds only advisory analytics here (event_count,
-        # reflection, phase_durations, reversions); authoritative state is the
-        # run.yaml read above. A torn concurrent append must drop that one line,
-        # not StateError-abort status (invoked on every resume) — so use the
-        # resilient reader, matching the live _do_reflect seam over this same
-        # log, not strict FileStateReader.read_jsonl.
+        # events.jsonl feeds only advisory analytics; run.yaml above is authoritative.
+        # A torn concurrent append must drop one line, not abort status on every
+        # resume, so use the resilient reader (as _do_reflect does), not read_jsonl.
         events_path = meta_path / "events.jsonl"
         events = read_jsonl_resilient(events_path)
 
@@ -432,22 +451,30 @@ def register_orchestration_tools(server: FastMCP) -> None:
         message: str = "",
         shard_id: str | None = None,
         wave_id: str | None = None,
+        heartbeat: bool = False,
+        pre_compact: bool = False,
+        directive: str = "",
+        context_anchor: str = "",
     ) -> dict[str, object]:
         """Append a progress snapshot so work survives context compaction.
 
-        Use when you complete a milestone or finish a work batch, so another
-        agent can resume. message is required (the resume point); blank
-        writes nothing (recorded=false). Pass run_path when your session has
-        no pinned run — a delegated agent uses its dispatch directory; if none
-        resolves, nothing is written.
+        Use when a milestone is done; message required, blank no-ops.
+        heartbeat=True refreshes a long pin. pre_compact=True takes a
+        pre-compaction checkpoint (directive/context_anchor).
 
-        Output: recorded, status, timestamp, message metadata; reason + remedy
-        when recorded is false.
+        Output: recorded, status, timestamp; reason+remedy if not.
 
         Args:
-            shard_id: annotates progress from a delegated shard.
-            wave_id: annotates progress within a wave.
+            heartbeat: pin-refresh mode.
+            pre_compact: pre-compact mode.
         """
+        if heartbeat:
+            return cast("dict[str, object]", compute_heartbeat_result(ctx, message))
+        if pre_compact:
+            return cast(
+                "dict[str, object]",
+                execute_pre_compact_checkpoint(ctx, directive, context_anchor),
+            )
 
         result = execute_checkpoint(
             run_path,

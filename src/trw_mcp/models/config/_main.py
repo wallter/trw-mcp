@@ -21,6 +21,7 @@ import structlog
 from pydantic import Field, model_validator
 
 from trw_mcp.models.config._client_profile import ClientProfile
+from trw_mcp.models.config._local_only_guard import reject_local_only_mapping
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
@@ -87,6 +88,20 @@ class TRWConfig(_TRWConfigFields):
     # scoring/build settings. Kill switch defaults to False per NFR-7.
     meta_tune: MetaTuneConfig = Field(default_factory=MetaTuneConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_local_only(cls, data: object) -> object:
+        """F5 follow-up (P1): refuse a leftover 'local_only' instead of dropping it silently.
+
+        Covers both a direct ``TRWConfig(local_only=...)`` call and the YAML
+        cascade (``_loader.py`` passes the merged project+machine dict as
+        constructor kwargs) — see ``_local_only_guard`` module docstring for
+        why the environment case needs a separate check.
+        """
+        if isinstance(data, dict):
+            reject_local_only_mapping(data, source="TRWConfig")
+        return data
 
     @model_validator(mode="before")
     @classmethod

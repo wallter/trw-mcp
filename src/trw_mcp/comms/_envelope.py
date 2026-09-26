@@ -56,6 +56,10 @@ class Envelope:
     body: str
     kind: MessageKind
     delivery_class: DeliveryClass
+    #: Set only by scoped notify, which derives the key itself. A caller-supplied
+    #: key in shard form would let a direct send pre-occupy a notify's row and so
+    #: fake a scoped delivery to an offline peer.
+    derived_key: bool = False
 
     def validate(self) -> None:
         if not MEMBER_ID.fullmatch(self.recipient_member_id):
@@ -71,12 +75,15 @@ class Envelope:
             raise AdmissionError("invalid_request_key")
         # A request key is an identifier, not prose. Control characters in one
         # are either a mistake or an attempt to occupy the derived scoped-notify
-        # namespace, which is built from a control separator precisely so that
-        # nothing a direct caller writes can land inside it. Imported locally:
-        # _scope depends on this module for AdmissionError.
+        # namespace, which is built from a control separator so that it is
+        # distinguishable; only the notify path may write inside it. Imported
+        # locally: _scope depends on this module for AdmissionError.
         from trw_mcp.comms._scope import has_control_characters, is_shard_key
 
-        if has_control_characters(self.request_key) and not is_shard_key(self.request_key):
+        if self.derived_key:
+            if not is_shard_key(self.request_key):
+                raise AdmissionError("invalid_request_key")
+        elif has_control_characters(self.request_key):
             raise AdmissionError("invalid_request_key")
 
     def canonical_sha256(self) -> str:

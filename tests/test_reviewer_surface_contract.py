@@ -1,7 +1,11 @@
 """PRD-SEC-015 FR01/FR09/FR15 — the reviewer tool list exists exactly once.
 
-FR01 pins the ``REVIEWER_TOOLS`` frozenset itself: nine registered read-report
+FR01 pins the ``REVIEWER_TOOLS`` frozenset itself: registered read-report
 tools, disjoint from every write / verdict / dispatch / sync / escalation tool.
+PRD-CORE-300 slice S4 dropped the codebase-risk-report tool from the set
+(moved to the ``trw-mcp code risk`` CLI) and S10 folded four code-navigation
+tools into ``trw_code``, so the member count is measured from
+``len(REVIEWER_TOOLS)`` rather than hardcoded in prose.
 FR09 pins the ONE generator (``scripts/print_reviewer_tools.py``) that renders it
 for the shell audit lane, and FR15 pins the agy branch of that lane.
 
@@ -12,6 +16,7 @@ never from a hand-typed copy.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,50 +61,52 @@ _WRITE_CLASS: frozenset[str] = frozenset(
         "trw_learn",
         "trw_checkpoint",
         "trw_init",
-        "trw_adopt_run",
         "trw_build_check",
         "trw_review",
         "trw_deliver",
-        "trw_submit_feedback",
-        "trw_prd_create",
         "trw_prd_validate",
-        "trw_code_index_update",
-        "trw_heartbeat",
-        "trw_pre_compact_checkpoint",
-        "trw_delivery_status",
-        "trw_delivery_recover",
-        "trw_meta_tune_propose",
-        "trw_meta_tune_rollback",
-        "trw_replay_outcomes",
+        # PRD-CORE-300 S6a folded the former heartbeat and pre-compact-checkpoint tools
+        # into trw_checkpoint's heartbeat=True / pre_compact=True modes; they
+        # are no longer separate registered tools.
     }
 )
 
 #: Recursion class — a reviewer spawning reviewers (derived: the whole pack).
 _DISPATCH_CLASS: frozenset[str] = frozenset(CAPABILITY_PACKS["dispatch"])
 
-#: The pair recorded truncating 128 lines / 9 sections of hand-written rules out
-#: of AGENTS.md on 2026-07-23.
-_SYNC_CLASS: frozenset[str] = frozenset({"trw_instructions_sync", "trw_claude_md_sync"})
+#: The tool that once truncated 128 lines / 9 sections of hand-written rules out
+#: of AGENTS.md on 2026-07-23 was folded into `trw-mcp instructions sync`
+#: (PRD-CORE-300 S6b) — a CLI verb, not a registered MCP tool, so it cannot be
+#: a member of this frozenset (the non-vacuity check below requires every
+#: member to be a live registered tool). Kept as an empty set, not deleted, so
+#: a future sync-shaped tool has somewhere to land without re-deriving the class.
+_SYNC_CLASS: frozenset[str] = frozenset()
 
-#: The self-escalation primitive: the bound must be unreachable from inside the
-#: bounded lane (US-002).
-_ESCALATION_CLASS: frozenset[str] = frozenset({"trw_request_tool_access"})
+# PRD-CORE-300 S11b deleted the grant/escalation tool
+# outright — there is no self-escalation primitive left to name, so there is no
+# ``_ESCALATION_CLASS`` any more. The bound (US-002) now holds structurally: a
+# tool outside REVIEWER_TOOLS is reached only by turning on its config flag,
+# which the reviewer role never consults.
 
 
-def test_reviewer_tools_disjoint_from_write_and_escalation_sets() -> None:
-    """FR01: the reviewer surface intersects no write/dispatch/sync/escalation tool."""
-    forbidden = _WRITE_CLASS | _DISPATCH_CLASS | _SYNC_CLASS | _ESCALATION_CLASS
+def test_reviewer_tools_disjoint_from_write_and_dispatch_and_sync_sets() -> None:
+    """FR01: the reviewer surface intersects no write/dispatch/sync tool."""
+    forbidden = _WRITE_CLASS | _DISPATCH_CLASS | _SYNC_CLASS
 
     assert REVIEWER_TOOLS & forbidden == frozenset()
     # Non-vacuity: the forbidden set is not empty and names live tools.
-    assert forbidden <= set(eligible_tool_names()) | {"trw_meta_tune_propose", "trw_replay_outcomes"}
-    assert "trw_deliver" in forbidden and "trw_request_tool_access" in forbidden
+    assert forbidden <= set(eligible_tool_names())
+    assert "trw_deliver" in forbidden
 
 
-def test_reviewer_tools_are_exactly_nine_registered_read_report_tools() -> None:
-    """FR01: nine members, every one a registered public tool id."""
+def test_reviewer_tools_are_exactly_the_two_post_cut_read_report_tools() -> None:
+    """FR01 / PRD-CORE-300-NFR02: two members, ``trw_recall`` and ``trw_code``.
+    S4 dropped the codebase-risk-report tool, S9 folded the graph-related tool
+    into trw_recall's graph mode, S10 swapped the four code-navigation tools for
+    ``trw_code``, and S11b dropped the two meta tools (skill discovery, profile
+    explain). Both are registered public tool ids."""
     assert isinstance(REVIEWER_TOOLS, frozenset)
-    assert len(REVIEWER_TOOLS) == 9
+    assert REVIEWER_TOOLS == frozenset({"trw_recall", "trw_code"})
     assert REVIEWER_TOOLS <= set(eligible_tool_names())
 
 
@@ -110,38 +117,50 @@ def test_reviewer_tools_toml_array_round_trips_to_the_sorted_ssot() -> None:
     assert parsed["enabled_tools"] == sorted(REVIEWER_TOOLS)
 
 
+#: One flat collection literal: no nested brackets inside it.
+_COLLECTION_LITERAL = re.compile(r"[\[{(][^\[\]{}()]*[\]})]")
+
+
 def test_no_hand_typed_reviewer_list_exists_outside_the_ssot() -> None:
     """US-004: only ``models/surface_packs.py`` may enumerate the reviewer set.
 
-    A second copy is REVIEWER-SHAPED: it names six or more members while naming
-    at most one excluded write/escalation tool. Files that enumerate the FULL
-    registered surface (the manifest registry, the phase policy, the claude_md
-    tool manifest) name every write tool too, so they are not copies of this set
-    — the shape, not the hit count, is what identifies a drifting duplicate.
+    A second copy is REVIEWER-SHAPED: one collection literal (``[...]``,
+    ``{...}`` or ``(...)``) that names every member as a quoted string while
+    naming at most one excluded write/dispatch/sync tool. PRD-CORE-300 shrank the
+    set to two common names (``trw_recall``, ``trw_code``), so a whole-file
+    count would flag every file that merely mentions both; the literal is the
+    shape a drifting duplicate has. Literals enumerating the FULL registered
+    surface name every write tool too, so they are not copies of this set.
     """
     ssot = PACKAGE_ROOT / "src/trw_mcp/models/surface_packs.py"
-    excluded = _WRITE_CLASS | _ESCALATION_CLASS | _DISPATCH_CLASS | _SYNC_CLASS
+    # The PRD-CORE-300 end-state spec states the target set on purpose;
+    # tests/test_kernel_is_post_cut_kernel.py holds the SSOT equal to it.
+    spec = PACKAGE_ROOT / "src/trw_mcp/models/surface_v2.py"
+    excluded = _WRITE_CLASS | _DISPATCH_CLASS | _SYNC_CLASS
     roots = [PACKAGE_ROOT / "src/trw_mcp"]
     if MONOREPO_ROOT is not None:
         roots.append(MONOREPO_ROOT / "scripts")
     offenders: list[tuple[str, int, int]] = []
     for root in roots:
         for path in root.rglob("*"):
-            if not path.is_file() or path.suffix not in {".py", ".sh"} or path == ssot:
+            if not path.is_file() or path.suffix not in {".py", ".sh"} or path in (ssot, spec):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
-            hits = sum(1 for name in REVIEWER_TOOLS if name in text)
-            write_hits = sum(1 for name in excluded if name in text)
-            if hits >= 6 and write_hits <= 1:
-                offenders.append((str(path.relative_to(_REPO)), hits, write_hits))
+            for literal in _COLLECTION_LITERAL.findall(text):
+                hits = sum(1 for name in REVIEWER_TOOLS if f'"{name}"' in literal)
+                write_hits = sum(1 for name in excluded if f'"{name}"' in literal)
+                if hits >= len(REVIEWER_TOOLS) and write_hits <= 1:
+                    offenders.append((str(path.relative_to(_REPO)), hits, write_hits))
 
     assert offenders == [], f"hand-typed reviewer tool list(s): {offenders}"
     # Non-vacuity: the SSOT itself has exactly the reviewer shape this detects
-    # (all nine members, and no write tool inside the frozenset literal).
+    # (every member, and no write tool inside the frozenset literal).
     ssot_text = ssot.read_text(encoding="utf-8")
     literal = ssot_text.split("REVIEWER_TOOLS: frozenset[str] = frozenset(", 1)[1].split(")", 1)[0]
-    assert sum(1 for name in REVIEWER_TOOLS if name in literal) == 9
+    assert sum(1 for name in REVIEWER_TOOLS if name in literal) == len(REVIEWER_TOOLS)
     assert sum(1 for name in excluded if name in literal) == 0
+    # ...and the detector's literal pattern does find it there.
+    assert any(all(f'"{name}"' in found for name in REVIEWER_TOOLS) for found in _COLLECTION_LITERAL.findall(ssot_text))
 
 
 # ── FR09: the shell audit lane reads the SSOT through one generator ────

@@ -18,12 +18,13 @@ def _degraded_health_result(signals: list[str] | None = None) -> dict[str, objec
     signal_names = signals or ["sync_push"]
     return {
         "degraded": True,
-        "advisory": f"pipeline degraded: {', '.join(signal_names)} — call trw_pipeline_health() for details",
+        "advisory": (
+            f"pipeline degraded: {', '.join(signal_names)} — run `trw-mcp telemetry pipeline-health` for details"
+        ),
         "sync_push": {"degraded": True, "advisory": "test"},
         "graph_edges": {"degraded": False, "advisory": ""},
         "embedding_coverage": {"degraded": False, "advisory": ""},
         "recall_feedback": {"degraded": False, "advisory": ""},
-        "bandit_state": {"degraded": False, "advisory": ""},
     }
 
 
@@ -36,7 +37,6 @@ def _healthy_health_result() -> dict[str, object]:
         "graph_edges": {"degraded": False, "advisory": ""},
         "embedding_coverage": {"degraded": False, "advisory": ""},
         "recall_feedback": {"degraded": False, "advisory": ""},
-        "bandit_state": {"degraded": False, "advisory": ""},
     }
 
 
@@ -130,8 +130,8 @@ def test_step_pipeline_health_advisory_fail_open(tmp_path: Path) -> None:
     assert advisory == "" or "pipeline_health_advisory" not in results
 
 
-def test_pipeline_health_advisory_advisory_contains_tool_hint(tmp_path: Path) -> None:
-    """Advisory string must contain hint to call trw_pipeline_health() for details."""
+def test_pipeline_health_advisory_advisory_contains_cli_hint(tmp_path: Path) -> None:
+    """Advisory string must name `trw-mcp telemetry pipeline-health` (PRD-CORE-300 S3b)."""
     from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
 
     trw_dir = tmp_path / ".trw"
@@ -144,8 +144,7 @@ def test_pipeline_health_advisory_advisory_contains_tool_hint(tmp_path: Path) ->
         step_pipeline_health_advisory(trw_dir, results)
 
     advisory = str(results.get("pipeline_health_advisory", ""))
-    # Per PRD §12 Open Questions: advisory should reference trw_pipeline_health()
-    assert "trw_pipeline_health" in advisory
+    assert "trw-mcp telemetry pipeline-health" in advisory
 
 
 def test_session_start_pipeline_health_wired_into_ceremony(tmp_path: Path) -> None:
@@ -284,12 +283,15 @@ def test_unmeasured_pipeline_injects_a_distinct_advisory(tmp_path: Path) -> None
     unmeasured_health: dict[str, object] = {
         "degraded": False,
         "advisory": "",
-        "unmeasured": ["sync_push", "bandit_state"],
+        "unmeasured": ["sync_push", "recall_feedback"],
         "sync_push": {"measured": False, "degraded": False, "advisory": "sync_push not measured: OSError"},
         "graph_edges": {"degraded": False, "advisory": ""},
         "embedding_coverage": {"degraded": False, "advisory": ""},
-        "recall_feedback": {"degraded": False, "advisory": ""},
-        "bandit_state": {"measured": False, "degraded": False, "advisory": "bandit_state not measured: OSError"},
+        "recall_feedback": {
+            "measured": False,
+            "degraded": False,
+            "advisory": "recall_feedback not measured: OSError",
+        },
     }
     results: dict[str, object] = {}
 
@@ -299,7 +301,7 @@ def test_unmeasured_pipeline_injects_a_distinct_advisory(tmp_path: Path) -> None
     assert "pipeline_health_advisory" in results
     advisory = str(results["pipeline_health_advisory"])
     assert "sync_push" in advisory
-    assert "bandit_state" in advisory
+    assert "recall_feedback" in advisory
 
 
 def test_fully_healthy_pipeline_still_injects_no_advisory(tmp_path: Path) -> None:

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tests._ide_detection_isolation import isolate_ide_detection
 from tests._test_bundle_asset_support import _PKG_DATA
-from tests.conftest import get_tools_sync
+from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
 from trw_mcp.state.claude_md import render_template
 from trw_mcp.state.claude_md._parser import load_claude_md_template
@@ -31,17 +30,6 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     return tmp_path
-
-
-def _get_tools() -> dict[str, Any]:
-    """Create fresh server and return tool map."""
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.learning import register_learning_tools
-
-    srv = FastMCP("test")
-    register_learning_tools(srv)
-    return get_tools_sync(srv)
 
 
 class TestRetiredBetaRendererSurface:
@@ -86,7 +74,7 @@ class TestRetiredBetaTemplateSurface:
         trw_dir.mkdir(parents=True, exist_ok=True)
         (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
 
-        result = _get_tools()["trw_claude_md_sync"].fn(scope="root")
+        result = instructions_sync_fn(scope="root")
 
         assert result["status"] == "synced"
         content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")

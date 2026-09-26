@@ -43,7 +43,6 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
@@ -135,7 +134,6 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),

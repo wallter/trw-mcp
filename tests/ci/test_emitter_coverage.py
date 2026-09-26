@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Final
@@ -160,7 +159,8 @@ def meas_workspace(
     # Import the production tools before patching the resolvers below. A module
     # first imported under the patch binds the lambda by name and keeps it after
     # the patch is undone, which sends later tests' writes into this tmp_path.
-    import trw_mcp.server._tools  # noqa: F401
+    import trw_mcp.server._tools
+    import trw_mcp.state.recall_tracking  # noqa: F401  -- binds resolve_trw_dir at import
 
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
@@ -201,8 +201,8 @@ def meas_workspace(
 
     # ``wrap_tool``'s ctx-less ``_resolve_run_dir`` resolves the pin via the
     # process-level session id (``get_session_id``), not the ``TRW_SESSION_ID``
-    # env var. Tools invoked without ``run_path``/``ctx`` (``trw_query_events``,
-    # ``trw_surface_diff``) therefore only land in this run when the process
+    # env var. Tools invoked without ``run_path``/``ctx`` (``trw_recall``,
+    # ``trw_code``) therefore only land in this run when the process
     # session id matches the pin key. Align it for the duration of the test.
     _saved_session_id = get_session_id()
     _reset_session_id("sess-123")
@@ -219,10 +219,7 @@ def meas_workspace(
 class TestProductionDispatchReachability:
     """FR-10: real production entry points must write their declared events."""
 
-    @pytest.mark.skipif(
-        os.environ.get("TRW_E1_ORACLE") == "1",
-        reason="BLOCKED-ON-E3: trw_session_start on this unmigrated workspace opens the in-process store",
-    )
+    @pytest.mark.usefixtures("fake_memory_store")  # session_start reads the store
     def test_trw_session_start_emits_surface_registered_and_session_start(
         self,
         meas_workspace: tuple[Path, Path],
@@ -290,27 +287,15 @@ class TestProductionDispatchReachability:
         meas_workspace: tuple[Path, Path],
     ) -> None:
         trw_dir, run_dir = meas_workspace
+        # The earlier ctx-less exemplars moved to `trw-mcp telemetry` CLI verbs
+        # (PRD-CORE-300 slices S3a, S3b) or were deleted (S11b); trw_recall and
+        # trw_code are the still-registered, ctx-less, no-run_path tools this
+        # test needs to prove more than one wrapped tool name lands. trw_code's
+        # search mode is safe against a repo with no built index: it returns an
+        # empty result rather than raising.
         build_check = _get_production_tool_fn("trw_build_check")
-        query_events = _get_production_tool_fn("trw_query_events")
-        surface_diff = _get_production_tool_fn("trw_surface_diff")
-
-        other_run = trw_dir / "runs" / "task" / "run-456" / "meta"
-        other_run.mkdir(parents=True)
-        (other_run / "run_surface_snapshot.yaml").write_text(
-            "\n".join(
-                (
-                    "snapshot_id: snap-456",
-                    "artifacts:",
-                    "  - surface_id: FRAMEWORK.md",
-                    "    content_hash: " + ("aa" * 32),
-                    "    version: v1",
-                    "    discovered_at: 2026-04-24T00:00:00Z",
-                    "    source_path: FRAMEWORK.md",
-                )
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        recall = _get_production_tool_fn("trw_recall")
+        code = _get_production_tool_fn("trw_code")
 
         build_check(
             tests_passed=True,
@@ -319,15 +304,15 @@ class TestProductionDispatchReachability:
             scope="full",
             options={"mypy_clean": True, "run_path": str(run_dir)},
         )
-        query_events(session_id="sess-123")
-        surface_diff(snapshot_id_a="snap-123", snapshot_id_b="snap-456")
+        recall(query="test")
+        code(mode="search", repo_root=str(trw_dir.parent), query="test")
 
         unified_files = sorted((run_dir / "meta").glob("events-*.jsonl"))
         assert unified_files, "production wrappers wrote no unified events file"
         records = _read_jsonl(unified_files[0])
         tool_rows = [rec for rec in records if rec["event_type"] == "tool_call"]
         observed_tools = {str(row["payload"]["tool"]) for row in tool_rows}
-        assert {"trw_build_check", "trw_query_events", "trw_surface_diff"} <= observed_tools
+        assert {"trw_build_check", "trw_recall", "trw_code"} <= observed_tools
 
     def test_wrapped_build_check_error_path_populates_error_fields(
         self,

@@ -1,13 +1,13 @@
 """Unified compounding-pipeline health surface — PRD-FIX-COMPOUNDING-6.
 
-Five read-only probes (sync_push, graph_edges, embedding_coverage,
-recall_feedback, bandit_state) aggregated by step_pipeline_health().
+Four read-only probes (sync_push, graph_edges, embedding_coverage,
+recall_feedback) aggregated by step_pipeline_health().
 
 Design constraints (from the PRD-INFRA-068 lesson):
 - All probes are read-only. No writes to memory.db or state files.
 - Each probe is individually fail-open, but a probe that CRASHED is reported as
   ``measured: False`` with a reason, never as a healthy default
-  (PRD-CORE-263-FR03). Four of the five used to collapse an exception into
+  (PRD-CORE-263-FR03). Four of the then five used to collapse an exception into
   ``degraded: False`` with an empty advisory that the aggregator then stripped,
   so a probe that died on a locked database and one that measured a healthy
   corpus produced byte-identical payload entries.
@@ -21,8 +21,6 @@ Design constraints (from the PRD-INFRA-068 lesson):
 from __future__ import annotations
 
 import json
-import os
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,13 +38,12 @@ logger = structlog.get_logger(__name__)
 _SYNC_FAILURE_THRESHOLD: int = 10
 _SYNC_STALE_HOURS: float = 6.0
 _RECALL_MIN_CORPUS: int = 100
-_BANDIT_STALE_DAYS: float = 7.0
 
 # PRD-FIX-141-FR02/FR03: the graph and embedding verdicts used to carry PRIVATE
 # thresholds here (100 memories, 10% coverage) while the two other surfaces
 # asking the same questions read CONFIG fields that mean the same thing. That is
-# how ``trw_pipeline_health`` reported ``graph_edges.degraded=false`` in the same
-# second ``trw_session_start`` reported "knowledge graph dead" at severity error
+# how the pipeline-health probe reported ``graph_edges.degraded=false`` in the
+# same second ``trw_session_start`` reported "knowledge graph dead" at severity error
 # (learning L-Rikf). One threshold per question, resolved from config, read by
 # every consumer of this module's verdict.
 
@@ -261,89 +258,13 @@ def probe_recall_feedback(trw_dir: Path) -> SignalResult:
     }
 
 
-def _bandit_probe_config() -> tuple[bool, float]:
-    """Resolve (probe_enabled, stale_days) from config.
-
-    PRD-FIX-105-FR02: ``bandit_state.json`` is written by the BACKEND meta-tune
-    policy, not the MCP runtime, so a stale file is expected wherever the backend
-    bandit is not actively driven. Operators tune/disable via config.
-
-    PRD-CORE-263-NFR02: this used to fail open to ``(True, _BANDIT_STALE_DAYS)``
-    on any exception, which means a config the process could not read produced a
-    probe that then reported a staleness verdict against a threshold nobody set.
-    It raises now, and ``probe_bandit_state``'s own handler turns that into a
-    not-measured entry — the one place that decides what a probe failure means.
-    """
-    from trw_mcp.models.config import get_config
-
-    cfg = get_config()
-    enabled = bool(getattr(cfg, "pipeline_health_bandit_probe_enabled", True))
-    stale_days = float(getattr(cfg, "pipeline_health_bandit_stale_days", _BANDIT_STALE_DAYS))
-    return enabled, stale_days
-
-
-def probe_bandit_state(trw_dir: Path) -> SignalResult:
-    """Check .trw/meta/bandit_state.json mtime against the configured staleness SLA.
-
-    The file is written by the backend meta-tune policy, not the MCP runtime
-    (PRD-FIX-105-FR02). The probe is config-gated so it does not cry wolf in
-    deployments where no local writer keeps the file fresh.
-
-    Returns:
-        ``{"degraded": bool, "age_days": float, "advisory": str}``
-    """
-    try:
-        probe_enabled, stale_days = _bandit_probe_config()
-        if not probe_enabled:
-            # Operator disabled the probe (no local bandit writer). Deliberately
-            # NOT measured: nothing was read, and reporting a healthy 0.0-day age
-            # for a probe that never ran is the defect this PRD removes.
-            return _unmeasured("bandit_state", "probe_disabled", age_days=0.0)
-
-        bandit_path = trw_dir / "meta" / "bandit_state.json"
-        if not bandit_path.is_file():
-            # DEF-08: this used to return ``safe_default`` — ``measured: True,
-            # age_days: 0.0`` — for a file that has never existed. ``0.0`` is
-            # not a genuine zero-count measurement (unlike ``edge_count: 0``
-            # on an absent memory.db, which is a true fact about an empty
-            # corpus); it is a FABRICATED "just refreshed" timestamp for a
-            # probe that read nothing. That is exactly the defect this
-            # module's ``_unmeasured()`` shape exists to remove, and the one
-            # this function's own docstring already applies to the disabled
-            # case two lines above — it had just not been applied here too.
-            return _unmeasured("bandit_state", "state_missing", age_days=None)
-
-        mtime = os.path.getmtime(str(bandit_path))
-        age_days = (time.time() - mtime) / 86400.0
-
-        degraded = age_days > stale_days
-        advisory = ""
-        if degraded:
-            advisory = (
-                f"bandit_state degraded: last refresh {age_days:.1f} days ago "
-                f"(threshold: {stale_days} days). The bandit_state.json file is "
-                "written by the backend meta-tune policy; if no backend bandit is "
-                "active here, set pipeline_health_bandit_probe_enabled=false."
-            )
-
-        return {
-            "degraded": degraded,
-            "measured": True,
-            "age_days": age_days,
-            "advisory": advisory,
-        }
-    except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
-        logger.warning("pipeline_probe_bandit_state_failed", error=type(exc).__name__, exc_info=True)
-        return _unmeasured("bandit_state", type(exc).__name__, age_days=0.0)
-
-
 # ---------------------------------------------------------------------------
 # Aggregator
 # ---------------------------------------------------------------------------
 
 
 def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHealthResult:
-    """Run all five compounding-pipeline probes and aggregate the result.
+    """Run all four compounding-pipeline probes and aggregate the result.
 
     Each probe is individually fail-open: an exception returns a safe default
     and does not prevent the other probes from running.
@@ -358,8 +279,7 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
         PipelineHealthResult with keys:
         ``{"degraded": bool, "advisory": str, "unmeasured": list[str] (omitted
            when empty), "sync_push": SignalResult, "graph_edges": SignalResult,
-           "embedding_coverage": SignalResult, "recall_feedback": SignalResult,
-           "bandit_state": SignalResult}``
+           "embedding_coverage": SignalResult, "recall_feedback": SignalResult}``
     """
 
     def _run_probe(name: str, fn: Any, *, takes_config: bool = False) -> SignalResult:
@@ -386,14 +306,12 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
     graph_edges = _run_probe("graph_edges", probe_graph_edges, takes_config=True)
     embedding_coverage = _run_probe("embedding_coverage", probe_embedding_coverage, takes_config=True)
     recall_feedback = _run_probe("recall_feedback", probe_recall_feedback)
-    bandit_state = _run_probe("bandit_state", probe_bandit_state)
 
     named_signals = (
         ("sync_push", sync_push),
         ("graph_edges", graph_edges),
         ("embedding_coverage", embedding_coverage),
         ("recall_feedback", recall_feedback),
-        ("bandit_state", bandit_state),
     )
     # An unmeasured probe is excluded from BOTH lists it could join: it is not
     # degraded, and it is not healthy either (PRD-CORE-263-FR03 / OQ-03).
@@ -406,14 +324,7 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
     advisory = ""
     if degraded:
         signals_str = ", ".join(degraded_signals)
-        # PRD-FIX-140-FR06: the advisory names a tool that progressive disclosure
-        # masks for every standard task type, so it carries the grant step when
-        # this session cannot call it (empty string when it can).
-        from trw_mcp.tools._masked_tool_hint import unmask_hint
-
-        advisory = f"pipeline degraded: {signals_str} — call trw_pipeline_health() for details" + unmask_hint(
-            "trw_pipeline_health", reason="inspect degraded pipeline signals"
-        )
+        advisory = f"pipeline degraded: {signals_str} — run `trw-mcp telemetry pipeline-health` for details"
         logger.warning(
             "pipeline_health_degraded",
             signals=degraded_signals,
@@ -427,7 +338,6 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
         "graph_edges": graph_edges,
         "embedding_coverage": embedding_coverage,
         "recall_feedback": recall_feedback,
-        "bandit_state": bandit_state,
     }
     # Omitted when empty, so a fully-measured aggregate is byte-identical to the
     # pre-263 payload apart from the per-probe ``measured`` flags.

@@ -163,6 +163,48 @@ def test_stall_status_uses_shared_authority_root_from_linked_worktree(
     assert any(item.member_id == "impl-2" and item.pending == 1 for item in default_board.stalls)
 
 
+def test_a_recorded_worktree_member_loads_and_delivers_with_the_default_store(wt: WorktreeScene) -> None:
+    """Release-verify Q4: with no explicit trw_dir, a member in a linked worktree must
+    resolve the main root's formation, or its deliver gate fails closed on "unknown formation_id"."""
+    from trw_mcp.formation import FormationError, mark_member_delivered
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+
+    wt.at(wt.worktree, "pin-b")
+    with pytest.raises(FormationError, match="unknown formation_id"):
+        load(wt.worktree_run)  # unrecorded: the worktree's own index does not list it
+
+    wt.record()
+    context = load(wt.worktree_run)
+    assert context is not None
+    assert (context.manifest.formation_id, context.member_id) == ("release-train", "impl-2")
+    assert context.manifest_path == wt.fixture.manifest_path()
+    assert evaluate_formation_gate(wt.worktree_run).should_block is False
+
+    manifest = mark_member_delivered(wt.worktree_run)
+    assert manifest is not None
+    reloaded = load(wt.fixture.orchestrator_run, trw_dir=wt.fixture.trw_dir)
+    assert reloaded is not None
+    assert {entry.member_id: entry.status for entry in reloaded.manifest.members}["impl-2"] == "delivered"
+
+
+def test_the_authority_store_leaves_orchestrators_and_locally_listed_formations_alone(wt: WorktreeScene) -> None:
+    """The main root is chosen only for a recorded member whose formation the own index does not list."""
+    from trw_mcp.formation import authority_trw_dir, stamped_ids
+    from trw_mcp.formation._store import register_formation
+
+    wt.record()
+    wt.at(wt.worktree, "pin-b")
+    assert authority_trw_dir(wt.worktree_run) == wt.fixture.trw_dir
+    # A run that holds its own manifest is an orchestrator: its run.yaml is not even read.
+    assert authority_trw_dir(wt.fixture.orchestrator_run) is None
+    # A formation of the same id registered in the worktree's own store stays local.
+    register_formation(wt.worktree / ".trw", "release-train", wt.worktree_run)
+    assert authority_trw_dir(wt.worktree_run) is None
+    # An undecodable run.yaml is an unreadable stamp, not a crash.
+    (wt.worktree_run / "meta" / "run.yaml").write_bytes(b"formation_id: \xff\xfe\n")
+    assert stamped_ids(wt.worktree_run) is None
+
+
 def test_an_unrecorded_worktree_keeps_its_own_root(wt: WorktreeScene) -> None:
     """Negative control for the test above: a consistent back-pointer alone grants nothing."""
     assert linked_worktree(wt.worktree) == (wt.main, wt.worktree)
@@ -337,7 +379,7 @@ def test_a_worktree_client_announces_first_is_admitted_and_exchanges_messages(
     write_pin(fixture, "pin-orch", orchestrator)
 
     scene.at(worktree, "pin-b")
-    handle = scene.call("trw_peers", action="announce")["candidate_id"]  # no formation exists yet
+    handle = scene.call("trw_inbox", action="announce")["candidate_id"]  # no formation exists yet
 
     scene.at(main, "pin-orch")
     create(
@@ -352,17 +394,17 @@ def test_a_worktree_client_announces_first_is_admitted_and_exchanges_messages(
         trw_dir=trw_dir,
     )
     join("release-train", "lead", orchestrator, pin_key="pin-orch", trw_dir=trw_dir)
-    seen = scene.call("trw_peers", action="discover")
+    seen = scene.call("trw_inbox", action="discover")
     assert [(c["candidate_id"], c["worktree"]) for c in seen["candidates"]] == [(handle, "wt")]
     from trw_mcp import formation
 
     formation.revise("release-train", orchestrator, {"impl-2": {"admitted_candidate": handle}}, trw_dir=trw_dir)
     record = worktree_record(trw_dir, worktree)
     assert record is not None and record.member_id == "impl-2", "admission must write the FR17 record"
-    assert scene.call("trw_peers", action="enroll")["status"] == "ok"
+    assert scene.call("trw_inbox", action="enroll")["status"] == "ok"
 
     scene.at(worktree, "pin-b")
-    picked = scene.call("trw_peers", action="list")
+    picked = scene.call("trw_inbox", action="list")
     assert (picked["status"], picked["member_id"]) == ("ok", "impl-2")
     scene.at(main, "pin-orch")
     assert scene.call("trw_send", recipient_member_id="impl-2", request_key="k", body="welcome")["status"] == "ok"

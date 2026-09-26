@@ -14,14 +14,13 @@ from pydantic import ValidationError
 from trw_mcp.profile import PROFILE_SURFACE_KEYS, Profile
 
 
-def test_surface_keys_enumerate_exactly_the_ten_model_fields() -> None:
-    """FR-1: PROFILE_SURFACE_KEYS is exactly the 10 override fields on Profile.
+def test_surface_keys_enumerate_exactly_the_model_fields() -> None:
+    """FR-1: PROFILE_SURFACE_KEYS is exactly the override fields on Profile.
 
     ``env`` is a deliberate validation-context field and is NOT part of the
     override surface, so the surface enumeration must equal the model's
     override fields with ``env`` excluded.
     """
-    assert len(PROFILE_SURFACE_KEYS) == 10
     model_override_fields = set(Profile.model_fields) - {"env"}
     assert set(PROFILE_SURFACE_KEYS) == model_override_fields
     # No duplicates in the tuple.

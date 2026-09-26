@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from collections.abc import Mapping, MutableMapping
 from typing import Literal
 from uuid import uuid4
 
@@ -28,12 +27,6 @@ class ToolTraceFields(TypedDict):
     output_hash: str
     task_profile_hash: str
     causal_relation: CausalRelation
-
-
-class TaskProfileTraceField(TypedDict):
-    """Trace metadata available even when a caller has no full trace context."""
-
-    task_profile_hash: str
 
 
 def new_trace_event_id() -> str:
@@ -96,18 +89,3 @@ def with_task_profile_hash(fields: ToolTraceFields, task_profile_hash: str) -> T
     if not task_profile_hash or fields["task_profile_hash"]:
         return fields
     return {**fields, "task_profile_hash": task_profile_hash}
-
-
-def task_profile_trace_field(task_profile_hash: str) -> TaskProfileTraceField | None:
-    """Return a minimal task-profile trace field when a full trace is unavailable."""
-    if not task_profile_hash:
-        return None
-    return {"task_profile_hash": task_profile_hash}
-
-
-def merge_trace_fields(target: MutableMapping[str, object], trace_fields: Mapping[str, object] | None) -> None:
-    """Merge trace fields into an event dict, preserving explicit target values."""
-    if not trace_fields:
-        return
-    for key, value in trace_fields.items():
-        target.setdefault(key, value)

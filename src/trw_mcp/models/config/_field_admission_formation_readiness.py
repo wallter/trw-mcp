@@ -23,7 +23,7 @@ FORMATION_READINESS_ADMISSIONS: dict[str, ConfigAdmission] = {
     "dispatch_version_probe_timeout_s": ConfigAdmission(
         field_name="dispatch_version_probe_timeout_s",
         owner="PRD-CORE-266-NFR01",
-        consumer="trw_mcp.server._doctor_formation_readiness.formation_readiness_report -> _probe_version",
+        consumer="trw_mcp.server._doctor_formation_readiness.formation_readiness_report and claude_code_version_row -> probe_version",
         default_rationale=(
             "Defaults to 5 s. A warm coding-agent CLI prints its version banner in roughly 0.3 s, "
             "so 5 s is an order of magnitude of headroom for a cold node-based binary while staying "

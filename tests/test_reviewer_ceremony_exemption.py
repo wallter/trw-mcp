@@ -83,7 +83,7 @@ async def test_an_inactive_reviewer_session_gets_no_ceremony_warning(
     async def call_next(_ctx: Any) -> Any:
         return tool_result
 
-    ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_code_search"), fastmcp_context=session_ctx)
+    ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_code"), fastmcp_context=session_ctx)
     out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
     assert len(out.content) == 1

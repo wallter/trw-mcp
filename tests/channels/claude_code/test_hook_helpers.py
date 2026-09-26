@@ -104,7 +104,7 @@ class TestFormatters:
 
     def test_t1_hint_without_learnings(self) -> None:
         output = format_t1_hint([])
-        assert "No learnings" in output or "trw_before_edit_hint" in output
+        assert "No learnings" in output or "trw_code" in output
 
     def test_t2_hint_includes_risk_score(self) -> None:
         output = format_t2_hint(

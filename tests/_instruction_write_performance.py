@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._tools_learning_shared import _get_tools
+from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.models.config import reload_config
 from trw_mcp.state import _paths
 from trw_mcp.state.claude_md import _write_guard
@@ -68,12 +68,11 @@ def measure_sync(
         patch.setattr(_paths, "resolve_project_root", lambda *a, **k: root)
         patch.setattr(_paths, "resolve_trw_dir", lambda *a, **k: root / ".trw")
         patch.setattr(_write_guard, "guarded_instruction_write", measured_write)
-        tool = _get_tools()["trw_instructions_sync"].fn
         # Registration may consult config; neither arm inherits that warm state.
         reload_config(None)
         start = time.perf_counter()
         try:
-            result = tool(client="all")
+            result = instructions_sync_fn(client="all")
         finally:
             cold_sync_ms = (time.perf_counter() - start) * 1000
             reload_config(None)

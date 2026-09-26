@@ -16,8 +16,8 @@ import json
 import re
 from collections.abc import Callable
 
-from trw_mcp.dispatch._client_specs import OutputShape, UnknownClientError, client_spec_for
-from trw_mcp.dispatch._types import DispatchClient
+from trw_mcp.dispatch._client_specs import CLIENT_SPECS, OutputShape, UnknownClientError, client_spec_for
+from trw_mcp.dispatch._types import DispatchClient, DispatchRequest
 
 # Matches CSI / SGR ANSI escape sequences (colors, cursor moves) so PTY-wrapped
 # output normalizes to plain text.
@@ -369,13 +369,21 @@ _HARD_STOP_MARKERS: tuple[str, ...] = (
 # because the remedy differs: a caller fails over to another client rather than
 # re-authenticating. Measured 2026-09-23: codex's structured error "You've hit
 # your usage limit" and grok's exit-1 "402 Payment Required: ... usage balance
-# exhausted".
+# exhausted". The rate-limit spellings (HTTP 429, OpenAI/Anthropic error codes,
+# gemini's RESOURCE_EXHAUSTED under agy) take the same failover path: during the
+# 6.0.0 release all three reviewer quotas were out for 2h45m (L-rW01).
 _QUOTA_MARKERS: tuple[str, ...] = (
     "usage limit",
     "payment required",
     "usage balance exhausted",
     "insufficient_quota",
     "quota exceeded",
+    "too many requests",
+    "rate_limit_exceeded",
+    "rate_limit_error",
+    "rate limit exceeded",
+    "rate limit reached",
+    "resource_exhausted",
 )
 
 # Structured fields that carry a client's OWN verdict on the turn. Read by name;
@@ -478,15 +486,21 @@ def classify_silence(
     exit_code: int | None,
     timed_out: bool,
     merged_stderr: str = "",
+    prompt: str = "",
 ) -> str | None:
     """Name why a run produced no usable answer, or return ``None``.
 
-    Precedence is most-specific-first: a timeout, then a provider quota refusal
-    (``quota_exhausted``, so a caller can fail over), then a stop the child or its
-    transport reported, then a bare non-zero exit, then an empty answer. The
-    order matters because an expired codex credential exits 1 AND prints a 401 —
-    measured 2026-09-16 — and "auth_or_content_stop" is the actionable half of
-    that pair.
+    Precedence is most-specific-first: a timeout, then a quota refusal in the
+    client's own status fields, then a stop marker on the streams of a failed
+    run, then a quota marker there (``quota_exhausted``, so a caller can fail
+    over), then a stop the child's structured payload reported, then a bare
+    non-zero exit, then an empty answer. The order matters because an expired
+    codex credential exits 1 AND prints a 401 — measured 2026-09-16 — and
+    "auth_or_content_stop" is the actionable half of that pair.
+
+    codex echoes the whole ``prompt`` to stderr, so it is removed from the
+    streams before any marker is matched: a prompt that quotes "usage limit"
+    must not relabel an auth failure as a quota refusal and start a failover.
 
     ``merged_stderr`` is the PTY exception and the runner decides when it applies.
     A pseudo-terminal has ONE stream: under ``use_pty`` the child's stderr is
@@ -513,25 +527,45 @@ def classify_silence(
         return "timed_out"
     produced_answer = exit_code == 0 and bool(text.strip())
     status_text = " ".join(str((structured or {}).get(field) or "") for field in _STATUS_FIELDS)
-    quota_haystack = status_text if produced_answer else f"{status_text}\n{text}\n{raw_stderr}\n{merged_stderr}"
-    if any(marker in quota_haystack.lower() for marker in _QUOTA_MARKERS):
+    if any(marker in status_text.lower() for marker in _QUOTA_MARKERS):
         return "quota_exhausted"
+    # Only a prompt that itself carries a marker is removed: stripping every copy of
+    # a two-letter prompt would cut markers apart.
+    if any(marker in prompt.lower() for marker in (*_STOP_MARKERS, *_QUOTA_MARKERS, *_HARD_STOP_MARKERS)):
+        text, raw_stderr, merged_stderr = (stream.replace(prompt, " ") for stream in (text, raw_stderr, merged_stderr))
+    # A stream marker counts only when the run produced no usable answer: a
+    # complete, exit-0 review whose SUBJECT is authentication or rate limits is
+    # not a stop (measured 2026-09-17 on PRD-CORE-278's adversarial-audit
+    # dispatch: full text, ok=false).
+    if not produced_answer:
+        if any(marker in f"{raw_stderr}\n{merged_stderr}".lower() for marker in _STOP_MARKERS):
+            return "auth_or_content_stop"
+        if any(marker in f"{text}\n{raw_stderr}\n{merged_stderr}".lower() for marker in _QUOTA_MARKERS):
+            return "quota_exhausted"
     if _structured_stop(structured):
         return "auth_or_content_stop"
     if _structured_deferral(structured, text):
         return "subagent_deferral"
-    # A stderr marker counts only when the run produced no usable answer. codex
-    # echoes the whole PROMPT to stderr, so a prompt that merely mentions
-    # "credential" or "authentication" would otherwise turn a complete, exit-0
-    # review into a reported auth stop (measured 2026-09-17 on PRD-CORE-278's
-    # adversarial-audit dispatch: full text, ok=false).
     if structured is None and any(marker in merged_stderr.lower() for marker in _HARD_STOP_MARKERS):
-        return "auth_or_content_stop"
-    haystack = f"{raw_stderr}\n{merged_stderr}".lower()
-    if not produced_answer and any(marker in haystack for marker in _STOP_MARKERS):
         return "auth_or_content_stop"
     if exit_code != 0:
         return "nonzero_exit"
     if not text.strip():
         return "empty_output"
     return None
+
+
+def turn_cap_next_read(req: DispatchRequest, stderr: str) -> str:
+    """A pointer to the rest of the work when the turn cap stopped the child (PRD-CORE-290-FR04).
+
+    Only the client's own measured exhaustion text counts; an ordinary failure is
+    never relabelled. The partial transcript is kept whole in ``raw_stdout``.
+    """
+    spec = CLIENT_SPECS.get(req.client)
+    marker = spec.max_turns_exhausted_marker if spec is not None else None
+    if req.max_turns is None or not marker or marker not in stderr:
+        return ""
+    return (
+        f"incomplete: the {req.max_turns}-turn cap stopped the child. The partial transcript is whole in "
+        "raw_stdout (verbose=True); raise dispatch_default_max_turns to let the work finish."
+    )

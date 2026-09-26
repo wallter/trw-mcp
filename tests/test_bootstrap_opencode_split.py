@@ -339,7 +339,10 @@ def test_ready_installs_resolvable_shared_contracts(tmp_path: Path) -> None:
     command = (tmp_path / ".opencode/commands/trw-prd-ready.md").read_text()
     assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
     assert "original `$ARGUMENTS`" in command
-    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+    # trw-prd-ready is not its own contract: a self-copy beside SKILL.md duplicated
+    # ~16 KB of prompt surface and nothing referenced it.
+    assert not (ready / "trw-prd-ready-contract.md").exists()
+    for phase in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
         name = f"{phase}-contract.md"
         # CANONICAL-SKILL CONTENT GAP CLOSED (PRD-CORE-291-FR04) for the three
         # DELEGATED phases: the canonical body (src/trw_mcp/data/skills/
@@ -349,16 +352,11 @@ def test_ready_installs_resolvable_shared_contracts(tmp_path: Path) -> None:
         # skill, or `trw-prd-groom-contract.md` beside this skill) (inline if
         # unavailable)"). An opencode agent reading the installed SKILL.md now
         # has a textual pointer to the sibling files install_opencode_skills
-        # materializes beside it. trw-prd-ready never names ITSELF this way
-        # (there is no "or trw-prd-ready-contract.md beside this skill" clause
-        # in its own body) -- that self-reference remains an open gap.
-        if phase == "trw-prd-ready":
-            assert name not in adapter
-        else:
-            assert name in adapter
+        # materializes beside it.
+        assert name in adapter
         assert (ready / name).read_bytes() == (data / "skills" / phase / "SKILL.md").read_bytes()
-    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-exec-plan"):
-        installed = (ready / f"{phase}-contract.md").read_text()
+    for filename in ("SKILL.md", "trw-prd-groom-contract.md", "trw-exec-plan-contract.md"):
+        installed = (ready / filename).read_text()
         assert "up to two NEEDS WORK repair cycles" in installed
         assert "within the original user scope" in installed
         assert "fresh author-independent review" in installed

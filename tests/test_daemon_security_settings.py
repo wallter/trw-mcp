@@ -223,7 +223,9 @@ def test_a_daemon_other_than_the_one_that_answered_is_checked_again(
     """Daemon (1, "a") answers the check; if (2, "b") is live by the next attach, it was never checked."""
     local = to_jsonable_python(daemon_wide_security(MemoryConfig()))
     client = _StatusOnly({"security_settings": local, "daemon": [1, "a"]})
-    monkeypatch.setattr("trw_memory.daemon.client.DaemonClient", lambda _token, instance=None: client)
+    monkeypatch.setattr(
+        "trw_memory.daemon.client.DaemonClient", lambda _token, instance=None, keep_session=False: client
+    )
     monkeypatch.setattr("trw_memory.daemon.read_checkout_grant", lambda _root: "grant")
     monkeypatch.setattr(_daemon_store, "_daemon_instance", lambda: live)
 
@@ -291,3 +293,42 @@ def test_a_daemon_restarted_after_the_check_refuses_every_operation_until_checke
 
 def _no_autostart(_paths: object) -> None:
     raise AssertionError("the test tried to start a memory daemon")
+
+
+class _Retirable:
+    """A cached client that records when its owner retires it."""
+
+    def __init__(self) -> None:
+        self.retired = 0
+
+    async def retire(self) -> None:
+        self.retired += 1
+
+
+def test_a_replaced_client_is_retired_and_the_current_one_is_not(
+    tmp_path: Path, fresh_clients: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Release-verify RES-01: a daemon restart replaces the cached client and retires the old one's session."""
+    built: list[_Retirable] = []
+
+    def _build(_token: str, instance: object = None, keep_session: bool = False) -> _Retirable:
+        built.append(_Retirable())
+        return built[-1]
+
+    live = [(1, "a")]
+    monkeypatch.setattr("trw_memory.daemon.client.DaemonClient", _build)
+    monkeypatch.setattr("trw_memory.daemon.read_checkout_grant", lambda _root: "grant")
+    monkeypatch.setattr(_daemon_store, "_daemon_instance", lambda: live[0])
+    monkeypatch.setattr(_daemon_store, "_require_matching_security", lambda _client, _ns, _local: live[0])
+
+    daemon_store_for(tmp_path / ".trw", "project:x")
+    daemon_store_for(tmp_path / ".trw", "project:x")  # cached: nothing replaced
+    live[0] = (2, "b")
+    daemon_store_for(tmp_path / ".trw", "project:x")
+    _daemon_store._run(asyncio.sleep(0))  # the retire was queued on the daemon-call loop first
+
+    cached = [client for client in built if client is fresh_clients["grant"][0]]
+    retired = [client.retired for client in built if client not in cached]
+    # Each attach builds a checker client and a cached one; only the first cached client was replaced.
+    assert [client.retired for client in cached] == [0]
+    assert retired.count(1) == 1 and set(retired) <= {0, 1}

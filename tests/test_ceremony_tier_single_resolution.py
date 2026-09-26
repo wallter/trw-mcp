@@ -1,13 +1,13 @@
 """PRD-FIX-141-FR06 — one resolver, and a stated basis when two reports differ.
 
 ``trw_session_start`` reported ``resolved_profile.ceremony_tier: COMPREHENSIVE``
-while ``trw_profile_explain`` reported ``STANDARD`` in the same run on the same
+while the profile-explain tool reported ``STANDARD`` in the same run on the same
 machine (learning L-Rikf).
 
 The root cause is ORDERING, not two resolvers: both surfaces already call
 ``resolve_session_profile``. ``trw_session_start`` runs BEFORE ``trw_init``, so
 no run directory — and therefore no Scout-written ``meta/session_profile.yaml``
-— existed yet, and the tier came from the defaults layer. ``trw_profile_explain``
+— existed yet, and the tier came from the defaults layer. The profile-explain tool
 ran afterwards and read the session layer. Verified against the audit run: the
 run directory's ``session_profile.yaml`` (``ceremony_tier: STANDARD``) was
 written 61 seconds after the run id's own timestamp.

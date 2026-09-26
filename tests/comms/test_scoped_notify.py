@@ -237,31 +237,38 @@ def test_an_owner_that_is_not_listening_is_reported_not_hidden(scene: ScopeScene
     assert result["reason"] != "scope_matches_no_peer"
 
 
-def test_a_direct_request_key_may_not_carry_a_control_character(scene: ScopeScene) -> None:
-    """FR07, stated as what is actually true rather than what sounded stronger.
+@pytest.mark.parametrize("key", ["a\x00b", "a\x1fb"])
+def test_a_direct_request_key_may_not_carry_a_control_character(scene: ScopeScene, key: str) -> None:
+    """FR07. Ordinary keys refuse control characters, the derived namespace's separator included."""
+    from trw_mcp.comms._scope import is_shard_key
 
-    Ordinary keys refuse control characters, which is what keeps the derived
-    namespace out of reach of a caller writing an ordinary key. It does NOT make
-    that namespace unforgeable: a caller can compute a shard-shaped key and send
-    it directly, and that is accepted. An external review flagged the earlier
-    docstring for claiming disjointness while the test asserted the opposite two
-    lines down.
+    plain = scene.call("trw_send", {"recipient_member_id": "impl-2", "request_key": key, "body": "b"})
+    assert plain["reason"] == "invalid_request_key"
+    assert not is_shard_key(key)
 
-    What bounds the damage is that request keys are scoped PER SENDER, so a
-    forger can only collide with its own future notify -- and since this commit
-    that collision is detected as idempotency_conflict rather than producing two
-    live messages under one name.
+
+def test_a_direct_send_cannot_forge_a_scoped_notify_delivery_to_an_offline_peer(scene: ScopeScene) -> None:
+    """Release-verify S3. The derived namespace is refused at the direct boundary, not reserved by convention.
+
+    Before this, a direct send under ``shard_key("k", scope, peer)`` was stored
+    for an offline peer (FR13 durability), and a later scoped notify with key
+    ``"k"`` found that row, took it for a retry of its own shard, and returned a
+    receipt although the peer was not listening.
     """
-    from trw_mcp.comms._scope import is_shard_key, shard_key
+    from trw_mcp.comms._scope import shard_key
 
+    scope = f"{COMMS}/_store.py"
+    scene.set_lease("impl-2", live=False)
     forged = scene.call(
         "trw_send",
-        {"recipient_member_id": "impl-2", "request_key": shard_key("k", "s", "impl-2"), "body": "b"},
+        {"recipient_member_id": "impl-2", "request_key": shard_key("k", scope, "impl-2"), "body": "b"},
     )
-    assert forged["status"] == "ok", "a shard-shaped key is reserved by convention, not refused"
-    plain = scene.call("trw_send", {"recipient_member_id": "impl-2", "request_key": "a\x00b", "body": "b"})
-    assert plain["reason"] == "invalid_request_key"
-    assert not is_shard_key("a\x00b")
+    assert (forged["status"], forged["reason"]) == ("refused", "invalid_request_key"), forged
+    assert scene.rows("SELECT COUNT(*) FROM admissions") == [(0,)]
+
+    notified = scene.notify(scope=scope, key="k", body="b")
+    assert notified["reason"] == "recipient_unavailable", notified
+    assert "recipients" not in notified
 
 
 def test_one_key_cannot_name_a_direct_message_and_a_notify_at_once(scene: ScopeScene) -> None:

@@ -138,7 +138,7 @@ def _peers(
     if pickup is not None and pickup.retry:
         return _refused("storage_contended")  # transient: nothing revoked, the next call resumes
     if pickup is not None and pickup.ready:
-        action = "enroll"  # FR18 stage 3: an admitted candidate's next trw_peers call enrolls it
+        action = "enroll"  # FR18 stage 3: an admitted candidate's next trw_inbox call enrolls it
     try:
         snapshot = resolve_authority_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
         _CALL_BINDING.set(snapshot.binding)

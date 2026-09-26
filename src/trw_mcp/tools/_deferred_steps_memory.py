@@ -1,7 +1,7 @@
 """Memory-related deferred delivery steps.
 
 Sub-module of ``_deferred_delivery`` — contains steps for auto-pruning,
-consolidation, tier lifecycle sweeps, and importance decay.
+tier lifecycle sweeps, and the daemon's maintenance (decay and consolidation).
 
 Test patches should still target the parent facade:
 ``patch("trw_mcp.tools._deferred_delivery._step_auto_prune")``.
@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import cast
 
 import structlog
 
 from trw_mcp.models.typed_dicts import (
-    ConsolidationStepResult,
     MemoryDecayStepResult,
     TierSweepStepResult,
 )
@@ -76,27 +74,6 @@ def _step_auto_prune(trw_dir: Path) -> dict[str, object] | None:
     return prune_result
 
 
-def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
-    """Step 2.6: Memory consolidation (PRD-CORE-044)."""
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state.consolidation import consolidate_cycle
-
-    config = get_config()
-    if not config.memory_consolidation_enabled:
-        return cast("ConsolidationStepResult", {"status": "skipped", "reason": "disabled"})
-
-    return cast(
-        "ConsolidationStepResult",
-        dict(
-            consolidate_cycle(
-                trw_dir,
-                max_entries=config.memory_consolidation_max_per_cycle,
-                allow_cold_embedder_load=False,
-            )
-        ),
-    )
-
-
 def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
     """Step 2.75: importance decay for entries nobody has used (PRD-CORE-244 FR09).
 
@@ -108,25 +85,45 @@ def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
     verification of this checkout and WAL checkpoint), since nothing else ever
     maintains a daemon-served namespace.
     """
+    from trw_mcp.models.config import get_config
     from trw_mcp.state._store_selection import selected_store
 
+    config = get_config()
     store, namespace = selected_store(trw_dir)
-    passes = store.maintain(namespace)["passes"]
+    consolidation: dict[str, object] = {
+        "enabled": config.memory_consolidation_enabled,
+        "similarity_threshold": config.memory_consolidation_similarity_threshold,
+        "min_cluster": config.memory_consolidation_min_cluster,
+        "max_per_cycle": config.memory_consolidation_max_per_cycle,
+    }
+    answer = store.maintain(namespace, consolidation)
+    if answer.get("status") == "busy":  # another delivery's maintain of this namespace is running
+        return {"status": "skipped", "reason": "busy", "processed": 0, "remaining": 0, "consolidation": {}}
+    passes = answer["passes"]
     decay = passes.get("decay", {})
     logger.info("memory_decay_pass_complete", namespace=namespace, passes=passes)
     failed = sorted(
         name for name, result in passes.items() if isinstance(result, dict) and result.get("status") == "error"
     )
+    consolidated = dict(passes.get("consolidation", {}))
     if failed:
-        return {"status": "error", "reason": f"failed passes: {', '.join(failed)}", "processed": 0, "remaining": 0}
+        reason = f"failed passes: {', '.join(failed)}"
+        return {"status": "error", "reason": reason, "processed": 0, "remaining": 0, "consolidation": consolidated}
     if decay.get("status") != "ok":
-        return {"status": "skipped", "reason": str(decay.get("reason", "")), "processed": 0, "remaining": 0}
-    return {
+        reason = str(decay.get("reason", ""))
+        return {"status": "skipped", "reason": reason, "processed": 0, "remaining": 0, "consolidation": consolidated}
+    # A bounded maintain verifies part of a large namespace; the next delivery's maintain continues it.
+    verification = passes.get("verification", {})
+    result: MemoryDecayStepResult = {
         "status": "success",
-        "reason": "",
+        "reason": "verification continues next delivery" if verification.get("complete") is False else "",
         "processed": int(decay.get("processed", 0)),
         "remaining": int(decay.get("remaining", 0)),
+        "consolidation": consolidated,
     }
+    if decay.get("remaining_capped"):
+        result["remaining_capped"] = True  # ``remaining`` is a lower bound (rc9)
+    return result
 
 
 def _step_tier_sweep(trw_dir: Path) -> TierSweepStepResult:

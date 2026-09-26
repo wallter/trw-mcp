@@ -5,8 +5,8 @@ slash-command skill. The generic ``.claude/skills/`` path is covered by
 ``test_bootstrap_feedback_install.py``; this module locks in parity for the
 curated **codex**, **copilot**, **opencode**, and **copilot-plugin** bundled
 skill subsets, which previously omitted ``trw-feedback`` even though their
-injected instructions reference ``/trw-feedback`` and the canonical
-``trw_submit_feedback`` MCP tool.
+injected instructions reference ``/trw-feedback`` and
+``trw_status(feedback=...)``, the canonical channel.
 
 It also asserts that EVERY bundled ``trw-feedback`` copy is model-invocable
 (no ``disable-model-invocation: true`` flag) — the field-bug fix that lets
@@ -96,7 +96,7 @@ def test_cursor_ide_curates_the_feedback_skill() -> None:
     paths = [k for k in generated if "trw-feedback" in k]
     assert paths, f"cursor-ide generated no trw-feedback skill: {sorted(generated)}"
     body = generated[paths[0]].decode("utf-8")
-    assert "trw_submit_feedback" in body, "the skill must drive the canonical tool"
+    assert "trw_status(feedback=" in body, "the skill must drive the canonical channel"
     assert "disable-model-invocation: true" not in body, "must stay model-invocable"
 
 
@@ -116,7 +116,7 @@ def _assert_valid_feedback_content(content: str, label: str) -> None:
     assert result.manifest is not None
     assert result.manifest.name == "trw-feedback"
     # The skill is only useful if it actually drives the canonical tool.
-    assert "trw_submit_feedback" in content, "feedback skill must reference the trw_submit_feedback tool"
+    assert "trw_status(feedback=" in content, "feedback skill must reference the trw_status feedback mode"
     # The whole point of the field-bug fix: agents/sub-agents MAY invoke it.
     assert "disable-model-invocation: true" not in content, (
         f"trw-feedback at {label} must be model-invocable — found disable-model-invocation: true in frontmatter"

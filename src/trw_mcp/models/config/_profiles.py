@@ -164,7 +164,7 @@ _PROFILES: dict[str, ClientProfile] = {
             # Two live consumers read the flag and both did the wrong thing with a
             # True: the AGENTS.md orphan-strip DECLINED, so the migration cleanup
             # could never run in a project listing cursor-ide; and
-            # trw_instructions_sync(client="cursor-ide") CREATED a 5.7 KB AGENTS.md
+            # `trw-mcp instructions sync --client cursor-ide` CREATED a 5.7 KB AGENTS.md
             # in a project that had none. A codex+cursor-ide project had its codex
             # block rewritten rather than removed — the injection PRD-CORE-240-FR04
             # forbids in terms that leave no room.

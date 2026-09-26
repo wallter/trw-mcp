@@ -13,61 +13,53 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 import structlog
 
 from trw_mcp.models.config import get_config
+from trw_mcp.state._platform_trust import (
+    platform_auth_headers as _platform_auth_headers,
+)
+from trw_mcp.state._platform_trust import (
+    platform_contact_enabled as _platform_contact_enabled,
+)
 
 logger = structlog.get_logger(__name__)
 
-# Cache duration: check at most once per 24h
+# Cache duration: check at most once per 24h (W38: now actually enforced, see
+# _check_throttled below — previously declared and never read).
 _VERSION_CACHE_HOURS = 24
 
-# Hosts for which an http:// (cleartext) URL is acceptable in dev. Everything
-# else MUST be https before the platform bearer is attached.
-_DEV_LOCALHOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+#: Per-process throttle state for check_for_update(). None until the first
+#: successful-or-attempted check; monotonic time so wall-clock adjustments
+#: cannot shorten or extend the window.
+_last_check_monotonic: float | None = None
+_last_check_result: dict[str, object] | None = None
 
 
-def _bearer_allowed_for(url: str, *, platform_host: str | None) -> bool:
-    """Return True iff it is safe to attach the platform bearer to *url*.
-
-    Security floor (sweep-4 credential-egress): the platform bearer API key must
-    never leave the box to a non-platform / cleartext host.
-
-    Rules:
-      - Scheme must be https, EXCEPT http is allowed for loopback dev hosts
-        (localhost / 127.0.0.1 / ::1).
-      - When *platform_host* is provided (the artifact-download path), the URL's
-        hostname MUST case-insensitively equal it. A presigned-S3 URL is a
-        different host (and carries its own query-string auth), so it correctly
-        does NOT receive the platform bearer. An attacker-named artifact_url
-        likewise fails the match.
-      - When *platform_host* is None (the version-check path, whose target IS
-        the configured platform base URL) only the scheme floor is enforced.
-    """
-    parts = urlsplit(url)
-    host = (parts.hostname or "").lower()
-    scheme = parts.scheme.lower()
-    if scheme != "https" and not (scheme == "http" and host in _DEV_LOCALHOSTS):
-        return False
-    return not (platform_host is not None and host != platform_host.strip().lower())
+def _reset_update_check_throttle() -> None:
+    """Test/operator hook: clear the in-process update-check throttle."""
+    global _last_check_monotonic, _last_check_result
+    _last_check_monotonic = None
+    _last_check_result = None
 
 
-def _trusted_platform_host() -> str | None:
-    """Return the hostname of the configured platform base URL, or None.
+def _check_throttled() -> dict[str, object] | None:
+    """Return the cached result iff the last check is within the cache window."""
+    if _last_check_monotonic is None or _last_check_result is None:
+        return None
+    if (time.monotonic() - _last_check_monotonic) >= _VERSION_CACHE_HOURS * 3600:
+        return None
+    return dict(_last_check_result)
 
-    Used as the trusted-host allowlist for the artifact download: the bearer is
-    only attached when the artifact URL's host matches this.
-    """
-    cfg = get_config()
-    for base_url in cfg.effective_platform_urls:
-        host = (urlsplit(base_url).hostname or "").lower()
-        if host:
-            return host
-    return None
+
+def _remember_check_result(result: dict[str, object]) -> None:
+    global _last_check_monotonic, _last_check_result
+    _last_check_monotonic = time.monotonic()
+    _last_check_result = result
 
 
 def get_installed_version() -> str:
@@ -90,8 +82,8 @@ def check_for_update() -> dict[str, object]:
     cfg = get_config()
     current = get_installed_version()
 
-    urls = cfg.effective_platform_urls
-    if not urls:
+    if not _platform_contact_enabled():
+        logger.debug("platform_contact_disabled", contact="version_check")
         return {
             "available": False,
             "current": current,
@@ -100,19 +92,31 @@ def check_for_update() -> dict[str, object]:
             "advisory": None,
         }
 
+    cached = _check_throttled()
+    if cached is not None:
+        return cached
+
+    urls = cfg.effective_platform_urls
+    if not urls:
+        result = {
+            "available": False,
+            "current": current,
+            "latest": current,
+            "channel": cfg.update_channel,
+            "advisory": None,
+        }
+        _remember_check_result(result)
+        return result
+
     # First-success: try each backend until one responds
     for base_url in urls:
         try:
             url = f"{base_url.rstrip('/')}/v1/releases/latest"
-            headers: dict[str, str] = {}
             _key = cfg.platform_api_key.get_secret_value()
-            # Only attach the bearer over https (or loopback http for dev). A
-            # poisoned platform_url over http://attacker.host must NOT receive it.
-            if _key:
-                if _bearer_allowed_for(url, platform_host=None):
-                    headers["Authorization"] = f"Bearer {_key}"
-                else:
-                    logger.warning("credential_withheld_untrusted_host", url=url, reason="version_check_scheme")
+            # platform_auth_headers is the ONE function that builds this
+            # header. A poisoned platform_url over http://attacker.host — or
+            # an untrusted https host — must NOT receive the bearer.
+            headers: dict[str, str] = _platform_auth_headers(url, _key)
             with httpx.Client(timeout=3.0) as client:
                 response = client.get(url, headers=headers, params={"channel": cfg.update_channel})
             if 200 <= response.status_code < 300:
@@ -120,23 +124,27 @@ def check_for_update() -> dict[str, object]:
                 latest = str(data.get("version", current))
                 available = _compare_versions(current, latest)
                 advisory: str | None = f"trw-mcp {latest} available (you have {current}). " if available else None
-                return {
+                result = {
                     "available": available,
                     "current": current,
                     "latest": latest,
                     "channel": cfg.update_channel,
                     "advisory": advisory,
                 }
+                _remember_check_result(result)
+                return result
         except (httpx.HTTPError, OSError, json.JSONDecodeError, KeyError):
             logger.debug("version_check_failed", base_url=base_url)
 
-    return {
+    result = {
         "available": False,
         "current": current,
         "latest": current,
         "channel": cfg.update_channel,
         "advisory": None,
     }
+    _remember_check_result(result)
+    return result
 
 
 def _parse_version(version: str) -> tuple[int, int, int]:
@@ -180,13 +188,23 @@ def download_release_artifact(
         expected_checksum: SHA-256 hex digest to verify against
 
     Returns:
-        Path to extracted data/ directory, or None on failure.
+        Path to extracted data/ directory, or None on failure. The caller owns
+        the returned path's PARENT directory (the ``trw-upgrade-*`` scratch
+        dir this function created) and is responsible for removing it once it
+        is done reading from ``data_dir`` -- every failure path here already
+        removes its own scratch dir, since no caller ever sees it (learning
+        L-d6WS: an unconditionally-created mkdtemp dir that is only sometimes
+        cleaned up leaked thousands of ``trw-upgrade-*`` directories, about
+        1 GB/day under swarm test runs).
     Fail-open: returns None on any error.
     """
     import hashlib
+    import shutil
     import tarfile
     import tempfile
 
+    tmp_dir: Path | None = None
+    succeeded = False
     try:
         tmp_dir = Path(tempfile.mkdtemp(prefix="trw-upgrade-"))
         archive_path = tmp_dir / "release.tar.gz"
@@ -194,23 +212,12 @@ def download_release_artifact(
         # Download. artifact_url comes from the backend API response and may be
         # the platform host itself OR a presigned-S3 URL on a DIFFERENT host
         # (which carries its own query-string auth). The platform bearer is
-        # attached ONLY when artifact_url's host matches the configured platform
-        # host over https — never to S3 or an attacker-named host. Checksum is
+        # attached ONLY when artifact_url's host is on the trusted allowlist
+        # over https — never to S3 or an attacker-named host. Checksum is
         # verified post-download below regardless.
         cfg = get_config()
-        headers: dict[str, str] = {}
         _key = cfg.platform_api_key.get_secret_value()
-        if _key:
-            platform_host = _trusted_platform_host()
-            if platform_host is not None and _bearer_allowed_for(artifact_url, platform_host=platform_host):
-                headers["Authorization"] = f"Bearer {_key}"
-            else:
-                logger.warning(
-                    "credential_withheld_untrusted_host",
-                    url=artifact_url,
-                    platform_host=platform_host,
-                    reason="artifact_host_mismatch",
-                )
+        headers: dict[str, str] = _platform_auth_headers(artifact_url, _key)
         with httpx.Client(timeout=30.0, follow_redirects=True) as client:
             response = client.get(artifact_url, headers=headers)
         response.raise_for_status()
@@ -244,14 +251,23 @@ def download_release_artifact(
 
         data_dir = tmp_dir / "data"
         if data_dir.is_dir():
+            succeeded = True
             return data_dir
 
         logger.warning("archive_missing_data_dir")
         return None
 
-    except Exception:  # justified: boundary, artifact download from remote may fail for many reasons
+    except Exception:  # trw-fail-silent-allow: pre-existing boundary handler (W38 only edited its try-body's bearer/host gate above, not this shape); artifact download from remote may fail for many reasons
         logger.debug("artifact_download_failed", exc_info=True)
         return None
+    finally:
+        # Every failure path above returns None with the scratch dir either
+        # unused, half-written, or holding an archive nothing will ever read
+        # again, so it is removed here. Only the one success path leaves
+        # `succeeded=True` just before its `return`, so the caller -- who
+        # owns `data_dir`'s parent from here on -- is the one who removes it.
+        if tmp_dir is not None and not succeeded:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
@@ -318,10 +334,21 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
                         "details": "Download or verification failed",
                     }
 
-                # Apply update
-                from trw_mcp.bootstrap import update_project
+                try:
+                    # Apply update
+                    from trw_mcp.bootstrap import update_project
 
-                result = update_project(target_dir, data_dir=data_dir)
+                    result = update_project(target_dir, data_dir=data_dir)
+                finally:
+                    # download_release_artifact's success path hands this
+                    # process the ONLY reference to its trw-upgrade-* scratch
+                    # dir (data_dir's parent); nothing else will ever remove
+                    # it once update_project has read what it needs, on
+                    # either a successful or a failed apply (learning
+                    # L-d6WS).
+                    import shutil as _shutil
+
+                    _shutil.rmtree(data_dir.parent, ignore_errors=True)
                 errors = result.get("errors", [])
                 if errors:
                     return {
@@ -352,6 +379,10 @@ def perform_upgrade(update_info: dict[str, object]) -> dict[str, object]:
 
 def _fetch_artifact_info(version: str) -> dict[str, object] | None:
     """Fetch artifact download info for a specific release version."""
+    if not _platform_contact_enabled():
+        logger.debug("platform_contact_disabled", contact="artifact_info")
+        return None
+
     cfg = get_config()
     urls = cfg.effective_platform_urls
     if not urls:
@@ -360,19 +391,18 @@ def _fetch_artifact_info(version: str) -> dict[str, object] | None:
     for base_url in urls:
         try:
             url = f"{base_url.rstrip('/')}/v1/releases/{version}/artifact"
-            headers: dict[str, str] = {}
             _key = cfg.platform_api_key.get_secret_value()
-            if _key:
-                if _bearer_allowed_for(url, platform_host=None):
-                    headers["Authorization"] = f"Bearer {_key}"
-                else:
-                    logger.warning("credential_withheld_untrusted_host", url=url, reason="artifact_info_scheme")
+            headers: dict[str, str] = _platform_auth_headers(url, _key)
             with httpx.Client(timeout=5.0) as client:
                 response = client.get(url, headers=headers)
             if 200 <= response.status_code < 300:
                 result: dict[str, object] = response.json()
                 return result
-        except (httpx.HTTPError, OSError, json.JSONDecodeError):
+        except (
+            httpx.HTTPError,
+            OSError,
+            json.JSONDecodeError,
+        ):  # trw-fail-silent-allow: pre-existing per-URL fallback (W38 only edited the try-body's bearer/host gate above); the next base_url is tried
             continue
 
     return None

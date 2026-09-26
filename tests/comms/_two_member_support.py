@@ -18,9 +18,9 @@ object and the caller decides which shape it expected.
 
 WHY THE PAYLOAD IS READ FROM CONTENT AS WELL AS ``structuredContent``.
 ``trw_init`` is registered with ``output_schema=None``, so FastMCP emits no
-structured block for it while ``trw_peers``/``trw_send``/``trw_inbox`` do. A
-reader that only looked at ``structuredContent`` would silently see ``{}`` for
-every ``trw_init`` and the test would assert nothing about the join.
+structured block for it while the comms tools (``trw_send``/``trw_inbox``) do.
+A reader that only looked at ``structuredContent`` would silently see ``{}``
+for every ``trw_init`` and the test would assert nothing about the join.
 """
 
 from __future__ import annotations

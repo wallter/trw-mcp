@@ -32,8 +32,13 @@ def test_legacy_config_field_ignored_and_surface_unchanged() -> None:
     and does NOT alter the resolved surface — only ``tool_resolution_mode`` does.
 
     ``TRWConfig`` sets ``extra="ignore"``, so a stale config key is silently
-    dropped rather than resurrecting the removed authority."""
+    dropped rather than resurrecting the removed authority. PRD-CORE-300 S11b
+    deleted ``TRWConfig.resolve_tool_surface_for_task`` along with per-task
+    resolution; the sole resolver is now
+    ``server._surface_manifest_registry.resolve_tool_surface``, driven only by
+    ``tool_resolution_mode`` and the pack flags."""
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
     # Legacy fields no longer exist on the model.
     assert "tool_exposure_mode" not in TRWConfig.model_fields
@@ -45,12 +50,19 @@ def test_legacy_config_field_ignored_and_surface_unchanged() -> None:
     # The sole authority is tool_resolution_mode, still defaulting to standard —
     # the legacy value did not downgrade or otherwise change resolution.
     assert cfg.tool_resolution_mode == "standard"
-    assert cfg.resolve_tool_surface_for_task("coding").mode == "standard"
+
+    def _resolved(config: TRWConfig):
+        return resolve_tool_surface(
+            config.tool_resolution_mode,
+            comms_enabled=config.comms_enabled,
+            dispatch_enabled=config.dispatch_tools_exposed,
+            assess_enabled=config.assess_enabled,
+        )
+
+    assert _resolved(cfg).mode == "standard"
     # Compared with a config that never saw the key, rather than a literal count
-    # that moves whenever a pack default changes (PRD-CORE-274 NFR07 added peer_comms).
-    assert (
-        cfg.resolve_tool_surface_for_task("coding").tools == TRWConfig().resolve_tool_surface_for_task("coding").tools
-    )
+    # that moves whenever a pack default changes.
+    assert _resolved(cfg).tools == _resolved(TRWConfig()).tools
 
 
 def test_effective_tool_exposure_mode_property_gone() -> None:

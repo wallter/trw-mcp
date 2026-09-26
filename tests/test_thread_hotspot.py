@@ -1,4 +1,6 @@
-"""``own_thread_hotspot``: a server's own hottest-thread CPU share, fed into ``trw_heartbeat``.
+"""``own_thread_hotspot``: a server's own hottest-thread CPU share, fed into
+``trw_checkpoint(heartbeat=True)`` (a checkpoint mode since PRD-CORE-300 S6a,
+formerly a standalone heartbeat tool).
 
 Measured incident (PRD-FIX-131 follow-up): live trw-mcp servers with ONE worker
 thread at 70-85% CPU for hours, and ``py-spy``/``gdb`` unavailable. The server

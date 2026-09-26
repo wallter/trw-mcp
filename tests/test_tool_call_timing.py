@@ -399,25 +399,22 @@ _FR04_EXPECTED_TOOLS = frozenset(
     {
         "trw_session_start",
         "trw_status",
-        "trw_heartbeat",
-        "trw_adopt_run",
-        "trw_pre_compact_checkpoint",
+        # The former heartbeat / pre-compact-checkpoint tools folded into
+        # trw_checkpoint's modes by PRD-CORE-300 S6a; run-adoption folded into
+        # `trw-mcp run adopt` by PRD-CORE-300 S6b.
         "trw_init",
-        "trw_prd_create",
         "trw_prd_validate",
         "trw_learn",
         "trw_checkpoint",
         "trw_build_check",
         "trw_review",
         "trw_deliver",
-        "trw_delivery_status",
-        "trw_delivery_recover",
     }
 )
-# Only trw_deliver is operation_backed; delivery_status/recover READ the CORE-208
-# journal but are synchronous_only (PRD-CORE-215 FR04 / §4 inventory).
+# Only trw_deliver is operation_backed (PRD-CORE-215 FR04 / §4 inventory). The
+# delivery status read and recovery left the MCP surface in PRD-CORE-300 S1.
 _FR04_OPERATION_BACKED = frozenset({"trw_deliver"})
-_FR04_CORE_208_OWNED = frozenset({"trw_deliver", "trw_delivery_status", "trw_delivery_recover"})
+_FR04_CORE_208_OWNED = frozenset({"trw_deliver"})
 
 
 def test_prd_core_215_fr04() -> None:
@@ -438,11 +435,15 @@ def test_prd_core_215_fr04() -> None:
         ceremony_tool_spec,
     )
 
-    # --- The inventory is EXACTLY the 15 named tools — no more, no fewer. ---
+    # --- The inventory is EXACTLY the 9 named tools — no more, no fewer.
+    # (PRD-CORE-300: S5 moved PRD creation to the CLI; S6a folded 2 of the
+    # former 13 into trw_checkpoint's modes; S6b moved run-adoption to
+    # `trw-mcp run adopt`.) ---
     # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode, so it
-    # is no longer a separate ceremony-tool entry.
+    # is no longer a separate ceremony-tool entry. PRD-CORE-300-FR07 (slice S5)
+    # moved PRD creation to `trw-mcp prd create`, dropping the count by one.
     assert ceremony_tool_names() == _FR04_EXPECTED_TOOLS
-    assert len(_FR04_EXPECTED_TOOLS) == 15
+    assert len(_FR04_EXPECTED_TOOLS) == 9
 
     # --- Every named tool has one disposition, budget, policy, and owner. ---
     for name in _FR04_EXPECTED_TOOLS:
@@ -460,15 +461,11 @@ def test_prd_core_215_fr04() -> None:
         assert spec.disposition is CeremonyExecutionClass.OPERATION_BACKED
         # operation_backed rows name the CORE-208 delivery journal owner.
         assert "CORE-208" in spec.owner
-    # The delivery family all READ the CORE-208 journal (their authority), but
-    # status/recover are synchronous_only — they do not mint their own handle.
     for name in _FR04_CORE_208_OWNED:
         assert "CORE-208" in ceremony_tool_spec(name).owner
-    for name in ("trw_delivery_status", "trw_delivery_recover"):
-        assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
     assert ceremony_tool_disposition("trw_prd_validate") is CeremonyExecutionClass.SYNCHRONOUS_BOUNDED
     synchronous_only = _FR04_EXPECTED_TOOLS - _FR04_OPERATION_BACKED - {"trw_prd_validate"}
-    assert len(synchronous_only) == 13
+    assert len(synchronous_only) == 7
     for name in synchronous_only:
         assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
 

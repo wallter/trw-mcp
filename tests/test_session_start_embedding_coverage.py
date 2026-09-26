@@ -30,15 +30,15 @@ def _health(*, embedded: int | None, entries: int) -> NamespaceHealth:
     }
 
 
-def _refuse_local_model() -> None:
-    raise AssertionError("session start must not ask trw-mcp's embedder about the daemon's vectors")
+def _refuse_local_model(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("session start must not construct an embedder in trw-mcp; the daemon owns the model")
 
 
 @pytest.fixture
 def no_local_model() -> Iterator[None]:
     with (
-        patch("trw_mcp.state._memory_connection.get_embedder", side_effect=_refuse_local_model),
-        patch("trw_mcp.state._memory_connection.get_initialized_embedder", side_effect=_refuse_local_model),
+        patch("trw_memory.embeddings.local.LocalEmbeddingProvider.__init__", side_effect=_refuse_local_model),
+        patch("trw_memory.embeddings.get_local_embedder", side_effect=_refuse_local_model),
     ):
         yield
 

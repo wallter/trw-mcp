@@ -1,6 +1,5 @@
 """CORE-268: stored observations qualify real recall without implicit refresh."""
 
-import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -154,11 +153,6 @@ def test_registered_recall_penalizes_before_cap_without_refresh(daemon_checkout:
             assert after[field] == prior[field]
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_startup_acquired_siblings_before_cap still resolves the in-process SQLite backend directly "
-    "(get_backend), not through selected_store/daemon_checkout",
-)
 def test_startup_acquired_siblings_before_cap(tmp_path, monkeypatch):
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.persistence import FileStateReader
@@ -358,11 +352,6 @@ def test_acquired_same_id_penalty_belongs_to_candidate(namespaced, reverse):
     assert all(row["id"] == "same" for row in result)
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: test_public_acquired_same_id_boundary_before_cap still resolves the in-process SQLite backend directly "
-    "(get_backend), not through selected_store/daemon_checkout",
-)
 def test_public_acquired_same_id_boundary_before_cap(tmp_path, monkeypatch):
     """Injected acquisition boundary, not proof upstream federation retains IDs."""
 

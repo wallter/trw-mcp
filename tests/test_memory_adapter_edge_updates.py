@@ -11,13 +11,10 @@ increment, the ``session_start`` flag) lives in one place,
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from trw_mcp.state.memory_adapter import (
     find_entry_by_id,
     list_active_learnings,
-    reset_backend,
-    reset_embedder,
     store_learning,
     update_learning,
 )
@@ -62,29 +59,6 @@ class TestUpdateLearningMultiChange:
         store_learning(trw_dir, "L-io1", "s", "d", impact=0.5)
         result = update_learning(trw_dir, "L-io1", impact=1.0)
         assert result["status"] == "updated"
-
-
-class TestResetIdempotency:
-    def test_reset_backend_when_no_backend_exists(self) -> None:
-        """reset_backend() is safe to call when _backend is already None."""
-        reset_backend()
-        reset_backend()
-
-    def test_reset_embedder_when_not_initialized(self) -> None:
-        """reset_embedder() is safe to call when _embedder is already None."""
-        reset_embedder()
-        reset_embedder()
-
-    def test_reset_backend_also_resets_embedder(self) -> None:
-        """reset_backend() calls reset_embedder() internally."""
-        with patch("trw_mcp.state.memory_adapter.reset_embedder") as mock_reset_emb:
-            del mock_reset_emb
-            import inspect
-
-            from trw_mcp.state import memory_adapter
-
-            source = inspect.getsource(memory_adapter.reset_backend)
-            assert "reset_embedder" in source
 
 
 class TestListActiveLearningsBoundary:

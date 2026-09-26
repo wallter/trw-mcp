@@ -16,6 +16,7 @@ tools:
   - mcp__trw__trw_checkpoint
   - mcp__trw__trw_recall
   - mcp__trw__trw_build_check
+  - mcp__trw__trw_assess
 disallowedTools:
   - NotebookEdit
   - WebSearch
@@ -44,6 +45,12 @@ Before the first edit:
 4. Identify the focused tests and project-native validation commands. Do not
    invent a coverage floor, linter, type checker, artifact path, or commit
    convention.
+
+At a fork with two or more defensible options -- flaky vs. real failure,
+option A vs. B, blocker vs. follow-up -- score it with `{tool:trw_assess}`
+instead of deciding in prose. `trw_assess` is flag-gated: the server refuses
+the call with `{"status": "disabled"}` when `assess_enabled` is off, so treat
+a refusal as "decide as you normally would," never as an error to retry.
 
 ## Implement
 

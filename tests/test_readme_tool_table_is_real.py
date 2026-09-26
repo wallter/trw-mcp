@@ -26,8 +26,12 @@ from pathlib import Path
 
 _README = Path(__file__).resolve().parents[1] / "README.md"
 
-#: The tool table lives under this heading and ends at the next ``## ``.
-_TOOLS_HEADING = re.compile(r"^## MCP Tools\b", re.MULTILINE)
+#: The tool table lives under this heading and ends at the next ``## ``. The
+#: 2026-09-24 public README rewrite (commit 29dc6ce93) renamed the section
+#: from "## MCP Tools" to "## MCP tools, skills and agents" and trimmed the
+#: table to a curated "most used" subset rather than every registered tool;
+#: the subset-membership check below still holds for whatever names remain.
+_TOOLS_HEADING = re.compile(r"^## MCP tools, skills and agents\b", re.MULTILINE)
 
 #: ``| **Category** | `a`, `b` | Purpose |`` — column 2 holds the tool names.
 _TABLE_ROW = re.compile(r"^\|[^|]*\|([^|]*)\|")
@@ -55,7 +59,11 @@ def _readme_tool_names() -> list[str]:
         cell = _TABLE_ROW.match(line)
         if cell is None:
             continue
-        names.extend(re.findall(r"`([a-z0-9_]+)`", cell.group(1)))
+        for raw in re.findall(r"`([a-z0-9_]+)`", cell.group(1)):
+            # The curated "most used" table (post 2026-09-24 rewrite) writes
+            # the full `trw_x` name; strip the prefix so this stays "bare
+            # tool names" regardless of which form the README uses.
+            names.append(raw.removeprefix("trw_"))
     return [n for n in names if n not in _NOT_TOOLS]
 
 

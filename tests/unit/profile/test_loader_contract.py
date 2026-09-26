@@ -72,3 +72,14 @@ def test_schema_invalid_layer_fails_closed_no_silent_fallback(tmp_path: Path) ->
         load_layer("org", bad)
     assert exc.value.path == str(bad)
     assert "schema validation failed" in exc.value.reason
+
+
+def test_retired_key_in_a_layer_file_names_the_key_and_the_file(tmp_path: Path) -> None:
+    """A 6.1.0 layer still setting a retired key fails with the key, remedy and path named."""
+    layer = tmp_path / "org.yaml"
+    layer.write_text("ceremony_tier: STANDARD\nallowed_tools_by_phase:\n  IMPLEMENT: [trw_learn]\n", encoding="utf-8")
+    with pytest.raises(LayerLoadError) as exc:
+        load_layer("org", layer)
+    assert exc.value.path == str(layer)
+    assert "profile key 'allowed_tools_by_phase' is retired" in exc.value.reason
+    assert "Delete the key" in exc.value.reason

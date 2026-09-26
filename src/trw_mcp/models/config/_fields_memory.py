@@ -38,19 +38,13 @@ class _MemoryFields:
 
     # -- Hybrid retrieval (CORE-041) --
 
-    # Secondary embedding sidecar used by dedup re-indexing; the canonical
-    # store remains <trw_dir>/memory/memory.db. Coordinate any rename with
-    # _paths.resolve_memory_store_path and dedup.py.
-    memory_store_path: str = ".trw/memory/vectors.db"
     # Hybrid retrieval defaults on; initialization remains non-blocking and
     # degrades to keyword search until the embedder is ready. Operators may opt out.
     embeddings_enabled: bool = True
-    # Follows trw-memory's default encoder. Vectors written under another model
-    # are excluded from dense recall.
-    retrieval_embedding_model: str = "BAAI/bge-small-en-v1.5"
-    retrieval_embedding_dim: int = 384
-    # PRD-FIX-COMPOUNDING-3-FR02: Coverage warning threshold for coverage_probe.
-    # When coverage_ratio < this value, check_embeddings_status() emits an advisory.
+    # retrieval_embedding_model was removed in 7.0.0: the daemon's MEMORY_EMBEDDING_MODEL
+    # chooses the encoder. The key is listed in trw_mcp/data/config-retired-keys.json.
+    # PRD-FIX-COMPOUNDING-3-FR02: Coverage warning threshold for pipeline health.
+    # When coverage_ratio < this value, probe_embedding_coverage() reports degraded.
     # Default 0.10 (10%): fires on the current 3.6% post-recovery state; silent above 10%.
     embeddings_coverage_warn_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
     # PRD-CORE-292: the recall candidate pool and BM25/vector candidate caps are the
@@ -72,7 +66,6 @@ class _MemoryFields:
     memory_consolidation_min_cluster: int = Field(default=3, ge=2)
     memory_consolidation_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)
-    max_cluster_size: int = Field(default=10, ge=2)
     max_consolidated_tags: int = Field(default=20, ge=5)
 
     # -- Tiered memory (CORE-043) --

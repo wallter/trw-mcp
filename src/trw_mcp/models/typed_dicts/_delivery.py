@@ -83,6 +83,11 @@ class MemoryDecayStepResult(TypedDict):
     reason: str
     processed: int
     remaining: int
+    #: The daemon's consolidation pass as ``memory_maintain`` reported it (status, clusters_found,
+    #: entries_consolidated); consolidation runs there, under this project's policy (PRD-CORE-302 FR03).
+    consolidation: dict[str, object]
+    #: ``remaining`` is a lower bound: the store counts qualifying rows only up to a cap (rc9).
+    remaining_capped: NotRequired[bool]
 
 
 class ProgressionItem(TypedDict):
@@ -112,40 +117,6 @@ class AutoProgressStepResult(_AutoProgressStepResultRequired, total=False):
     total_evaluated: int
     applied: int
     progressions: list[ProgressionItem]
-
-
-class ConsolidationStepResult(TypedDict, total=False):
-    """Return shape of ``_step_consolidation()``.
-
-    Three distinct paths share this type:
-
-    Disabled::
-
-        {"status": "skipped", "reason": str}
-
-    No clusters found::
-
-        {"status": "no_clusters", "clusters_found": 0, "consolidated_count": 0}
-
-    Completed (with optional errors list)::
-
-        {"status": "completed", "clusters_found": int, "consolidated_count": int}
-        # + optional "errors": list[str]
-
-    Dry-run (via ``consolidate_cycle(dry_run=True)``)::
-
-        {"dry_run": True, "clusters": list, "consolidated_count": 0}
-    """
-
-    status: str
-    reason: str
-    clusters_found: int
-    consolidated_count: int
-    errors: list[str]
-    dry_run: bool
-    clusters: list[dict[str, object]]
-    audit_pattern_promotions: list[dict[str, object]]
-    audit_pattern_promotion_threshold: int
 
 
 class PublishLearningsResult(TypedDict):

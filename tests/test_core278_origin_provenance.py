@@ -253,8 +253,8 @@ class TestNudgePoolPrecedence:
             ),
             patch.object(
                 nudge_module,
-                "_select_cached_or_deterministic_learning",
-                side_effect=lambda pool, **_kw: pool[0],
+                "_select_deterministic_fallback_learning",
+                side_effect=lambda pool: pool[0],
             ),
             patch.object(
                 nudge_module,
@@ -273,7 +273,7 @@ class TestNudgePoolPrecedence:
         candidates = [_synced("team-sync-1", verification_status="unknown", nudge_line="a stale claim")]
         with (
             patch("trw_mcp.state.recall_factories.recall_for_nudge_pool", return_value=candidates),
-            patch.object(nudge_module, "_select_cached_or_deterministic_learning", return_value=candidates[0]),
+            patch.object(nudge_module, "_select_deterministic_fallback_learning", return_value=candidates[0]),
             patch.object(nudge_module, "_deterministic_fallback_text", return_value="a stale claim"),
         ):
             content = nudge_module._try_learning_nudge_content(tmp_path, CeremonyState(phase="implement"))

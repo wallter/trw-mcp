@@ -23,6 +23,11 @@ from trw_mcp.channels.copilot._vscode_mcp import generate_vscode_mcp_config
 pytestmark = pytest.mark.unit
 
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A project with its own venv build AND an (older) trw-mcp on PATH."""
@@ -132,7 +137,7 @@ def test_init_and_update_project_write_the_project_build_for_every_managed_confi
     # uncommitted files (preserve_uncommitted_changes), so commit like a real install.
     git = ["git", "-C", str(project), "-c", "user.email=t@example.com", "-c", "user.name=t"]
     subprocess.run([*git, "add", "-A"], check=True)
-    subprocess.run([*git, "commit", "-q", "-m", "trw init"], check=True)
+    subprocess.run([*git, *_NO_HOOKS, "commit", "-q", "-m", "trw init"], check=True)
     (project / "venv-later").rename(venv)
     update_project(project)
     assert _launchers(project) == _EXPECTED

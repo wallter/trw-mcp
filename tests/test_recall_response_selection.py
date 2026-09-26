@@ -24,10 +24,6 @@ from trw_mcp.tools import _recall_impl
 @pytest.fixture
 def store(daemon_checkout: DaemonCheckout, monkeypatch):
     monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
-    from trw_mcp.state import _memory_connection
-
-    monkeypatch.setattr(_memory_connection, "get_embedder", lambda: None)
-    monkeypatch.setattr(_memory_connection, "get_initialized_embedder", lambda: None)
     monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda query, rows: (rows, None))
     monkeypatch.setattr(_recall_impl, "build_recall_context", lambda *args, **kwargs: None)
     return daemon_checkout

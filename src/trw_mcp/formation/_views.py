@@ -102,12 +102,8 @@ def status(
     """Read-only member roll-up, or ``None`` when no formation is active (FR07)."""
     from trw_mcp import formation as facade
 
-    if context is None and trw_dir is None and run_path is not None:
-        shared = facade.shared_authority_root()
-        if shared is not None:
-            shared_root, record = shared
-            if facade.stamped_ids(run_path) == (record.formation_id, record.member_id):
-                trw_dir = shared_root.trw_dir
+    if context is None:
+        trw_dir = facade.authority_trw_dir(run_path, trw_dir)
     resolved = context if context is not None else facade.load(run_path, trw_dir=trw_dir)
     if resolved is None:
         return None

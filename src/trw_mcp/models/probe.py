@@ -2,7 +2,7 @@
 
 Schema pinned here per FR-02 Assertion A1. These types are the typed
 contract between :mod:`trw_mcp.probe` (harness / budget / cache / verdict)
-and the ``trw_probe`` MCP tools.
+and the ``trw-mcp probe`` CLI verbs.
 
 ``ProbeEvent`` is a payload-backed variant emitted through the unified
 ``HPOTelemetryEvent`` envelope (PRD-HPO-MEAS-001) — see
@@ -125,7 +125,7 @@ class DissentEntry(BaseModel):
 
 
 class ProbeBudgetStatus(BaseModel):
-    """Read-only budget snapshot returned by ``trw_probe_budget_status`` (FR-10)."""
+    """Read-only budget snapshot printed by ``trw-mcp probe budget`` (FR-10)."""
 
     used: int = Field(ge=0)
     remaining: int = Field(ge=0)

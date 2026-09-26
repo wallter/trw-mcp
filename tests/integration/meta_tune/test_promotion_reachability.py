@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.conftest import extract_tool_fn, make_test_server
 from trw_mcp.meta_tune import promote
 from trw_mcp.meta_tune.promotion_gate import PromotionGate, PromotionProposal
 from trw_mcp.meta_tune.sandbox import SandboxResult
@@ -203,11 +203,17 @@ def test_direct_dispatch_rejects_network_attempt_before_gate_or_live_write(
     assert '"network_attempted":true' in audit_text
 
 
-def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_path_invokes_same_promotion_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.server._cli import main
+
     cfg = _config(tmp_path)
     reload_config(cfg)
     target = tmp_path / "CLAUDE.md"
     target.write_text("before\n", encoding="utf-8")
+    candidate = tmp_path / "candidate.md"
+    candidate.write_text("after-from-cli\n", encoding="utf-8")
     calls: list[str] = []
 
     original_evaluate = PromotionGate.evaluate
@@ -218,25 +224,28 @@ def test_mcp_tool_path_invokes_same_promotion_gate(tmp_path: Path, monkeypatch: 
 
     monkeypatch.setattr(promote, "run_sandboxed", lambda *args, **kwargs: _sandbox_ok())
     monkeypatch.setattr(PromotionGate, "evaluate", _spy_evaluate)
-
+    argv = [
+        "trw-mcp", "meta-tune", "propose",
+        "--target-path", str(target),
+        "--candidate-file", str(candidate),
+        "--proposer-id", "agent-2",
+        "--reviewer-id", "alice",
+        "--approval-ts", datetime.now(timezone.utc).isoformat(),
+        "--sandbox-command", "python -c 'print(1)'",
+        "--state-dir", str(tmp_path / "state"),
+        "--json",
+    ]  # fmt: skip
+    monkeypatch.setattr(sys, "argv", argv)
     try:
-        server = make_test_server("meta_tune")
-        propose = extract_tool_fn(server, "trw_meta_tune_propose")
-        result = propose(
-            target_path=str(target),
-            candidate_content="after-from-tool\n",
-            proposer_id="agent-2",
-            reviewer_id="alice",
-            approval_ts=datetime.now(timezone.utc).isoformat(),
-            sandbox_command=["python", "-c", "print('unused in test')"],
-            state_dir=str(tmp_path / "state"),
-        )
+        with pytest.raises(SystemExit) as exited:
+            main()
     finally:
         reload_config(None)
 
+    assert exited.value.code == 0
     assert len(calls) == 1
-    assert result["decision"] == "approve"
-    assert target.read_text(encoding="utf-8") == "after-from-tool\n"
+    assert json.loads(capsys.readouterr().out)["decision"] == "approve"
+    assert target.read_text(encoding="utf-8") == "after-from-cli\n"
 
 
 def _sandbox_with_delta(delta: float) -> SandboxResult:

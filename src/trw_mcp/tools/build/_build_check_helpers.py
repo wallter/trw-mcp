@@ -27,8 +27,9 @@ _BUILD_CHECK_USAGE = (
 #: reported READY with TRW_E1_ORACLE=1 and the release suite then failed 111-128
 #: tests). Derived from the suites' own skip conditions and pinned by
 #: scripts/tests/test_narrowing_switches.py; installer/eval preflight switches that
-#: tests set on purpose narrow nothing and are not listed.
-TEST_NARROWING_SWITCHES = frozenset({"TRW_E1_ORACLE", "TRW_DISTILL_SKIP_LIVE_NETWORK"})
+#: tests set on purpose narrow nothing and are not listed. TRW_E1_ORACLE left the
+#: set when CORE-280 e3 deleted the last test it skipped.
+TEST_NARROWING_SWITCHES = frozenset({"TRW_DISTILL_SKIP_LIVE_NETWORK"})
 _ASSIGNED = re.compile(r"\b(" + "|".join(sorted(TEST_NARROWING_SWITCHES)) + r")=(\S*)")
 _OFF = frozenset({"", "0", "false", "no"})
 

@@ -165,6 +165,89 @@ _get_cc03_enabled() {
 }
 
 # ---------------------------------------------------------------------------
+# Symlink-safe atomic state write/read (PRD-SEC/RC8)
+# ---------------------------------------------------------------------------
+#
+# Duplicated from hooks/lib-trw.sh rather than sourced: this hook deliberately
+# does not source lib-trw.sh (see hooks/cursor/trw-before-shell.sh's
+# _json_escape comment — a security-relevant shell must not pull code into its
+# deciding shell from a second file). Advisory-only writers still need the
+# same guarantee lib-trw.sh's `_trw_safe_write` gives its callers: a crafted
+# checkout that ships a `.trw/context` state path (or `.trw/context` itself)
+# as a symlink to an arbitrary file must not let a normal edit-hint run
+# truncate or append to it, no race required.
+
+_trw_ancestor_symlinked() {
+    _tas_walk="$1"
+    while [ -n "$_tas_walk" ] && [ "$_tas_walk" != "/" ] && [ "$_tas_walk" != "." ]; do
+        [ -L "$_tas_walk" ] && return 0
+        case "$_tas_walk" in
+            */.trw | .trw) return 1 ;;
+        esac
+        _tas_next=$(dirname "$_tas_walk")
+        [ "$_tas_next" = "$_tas_walk" ] && return 1
+        _tas_walk="$_tas_next"
+    done
+    return 1
+}
+
+_trw_safe_write() {
+    # Usage: printf '%s' "$content" | _trw_safe_write <dest>  (replace only;
+    # lib-trw.sh's copy also appends)
+    _tsw_dest="$1"
+    _tsw_dir=$(dirname "$_tsw_dest")
+    _trw_ancestor_symlinked "$_tsw_dir" && return 1
+    [ -d "$_tsw_dir" ] || mkdir -p "$_tsw_dir" 2>/dev/null || return 1
+    [ -L "$_tsw_dir" ] && return 1
+    # A symlinked leaf would take `mv` into the directory it names.
+    [ -L "$_tsw_dest" ] && return 1
+    [ ! -e "$_tsw_dest" ] || [ -f "$_tsw_dest" ] || return 1
+    # PID-suffixed temp name, not mktemp: mktemp is absent from some
+    # minimal/restricted-PATH environments these hooks run in.
+    _tsw_tmp="${_tsw_dest}.trw-safe-write.$$"
+    rm -f "$_tsw_tmp" 2>/dev/null
+    # noclobber: a temp name planted after the rm is refused, not opened.
+    (set -C; cat > "$_tsw_tmp") 2>/dev/null || { rm -f "$_tsw_tmp" 2>/dev/null; return 1; }
+    mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
+    rm -f "$_tsw_tmp" 2>/dev/null
+    return 1
+}
+
+_trw_safe_read() {
+    [ -L "$1" ] && return 1
+    [ -f "$1" ] || return 1
+    cat "$1" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# Session-scoped identical-hint dedup (PRD-CORE-301 cut 2)
+# ---------------------------------------------------------------------------
+#
+# Mirrors the Claude Code lib's dedup: the per-file debounce above bounds HOW
+# OFTEN a hint can fire; this dedups on CONTENT so a file edited repeatedly
+# across a long session does not re-print an unchanged hint every time the
+# debounce window lapses. A changed hint, or the first hint for a file,
+# always fires.
+
+_distill_hint_already_seen() {
+    # Usage: _distill_hint_already_seen <project_root> <file_path> <hint_text>
+    # Returns 0 (true, suppress as a duplicate) or 1 (false, new/changed).
+    _dh_root="$1"
+    _dh_file_path="$2"
+    _dh_text="$3"
+    _dh_dir="${_dh_root}/.trw/context/cur06-hint-seen"
+    _dh_name=$(printf '%s' "$_dh_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+    _dh_ck=$(printf '%s' "$_dh_file_path" | cksum | cut -d' ' -f1)
+    _dh_record="${_dh_dir}/${_dh_name}-${_dh_ck}.hash"
+    _dh_hash=$(printf '%s' "$_dh_text" | cksum | cut -d' ' -f1)
+    _dh_dup=1
+    _dh_prev=$(_trw_safe_read "$_dh_record") || _dh_prev=""
+    [ "$_dh_prev" = "$_dh_hash" ] && _dh_dup=0
+    printf '%s' "$_dh_hash" | _trw_safe_write "$_dh_record" || true
+    return $_dh_dup
+}
+
+# ---------------------------------------------------------------------------
 # Safe-extension check (shared allowlist of safe-to-skip extensions) — FR-6
 # ---------------------------------------------------------------------------
 

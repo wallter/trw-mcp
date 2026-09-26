@@ -16,37 +16,17 @@ from pathlib import Path
 
 import httpx
 import structlog
-from trw_memory.exceptions import LocalOnlyViolationError, RemoteCodeNotPermittedError
 from typing_extensions import TypedDict
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_secrets
-from trw_mcp.telemetry.embeddings import embed as _platform_embed
 from trw_mcp.telemetry.retention import rotate_and_compress
 
 logger = structlog.get_logger(__name__)
-
-
-def embed(text: str) -> list[float] | None:
-    """Encode *text* in the platform's shared embedding space, if embeddings are on.
-
-    The platform compares published vectors across projects and clients, so they
-    must come from its one fixed encoder (``telemetry.embeddings``), never from
-    the local retrieval model, which a project may configure or a release may
-    change (it did: all-MiniLM-L6-v2 -> bge-small-en-v1.5).
-    """
-    if not get_config().embeddings_enabled:
-        return None
-    try:
-        return _platform_embed(text)
-    except (LocalOnlyViolationError, RemoteCodeNotPermittedError) as exc:
-        # trw-fail-silent-allow: the refusal is logged at WARNING; the learning is still published, without a vector
-        logger.warning("publish_embedding_refused", error_type=type(exc).__name__, detail=str(exc))
-        return None
-
 
 _HASH_FILE = ".publish_hashes.json"
 
@@ -83,7 +63,6 @@ class _LearningPayload(TypedDict):
     detail: str
     tags: list[str]
     impact: float
-    embedding: list[float] | None
     source_project: str
     source_learning_id: str
     status: str
@@ -202,6 +181,19 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
             "skipped_reason": "offline_mode",
         }
 
+    # P1-C follow-up: the global platform_contact_enabled kill switch must
+    # block this content-carrying POST outright, not just leave it
+    # unauthenticated. No request is attempted; learnings stay locally
+    # unpublished for a future consented run.
+    if not platform_contact_enabled():
+        return {
+            "published": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "errors": 0,
+            "skipped_reason": "platform_contact_disabled",
+        }
+
     trw_dir = resolve_trw_dir()
     entries_dir = trw_dir / "learnings" / "entries"
     if not entries_dir.exists():
@@ -259,10 +251,6 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                 summary = redact_secrets(str(data.get("summary", "")))
                 detail = redact_secrets(str(data.get("detail", "")))
 
-                # Generate embedding
-                embed_text = f"{summary} {detail}".strip()
-                embedding = embed(embed_text)
-
                 tags = data.get("tags", [])
                 if not isinstance(tags, list):
                     tags = []
@@ -273,7 +261,6 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     # Tags are free text from trw_learn, so they leave the box only redacted.
                     "tags": [redact_secrets(str(t)) for t in tags],
                     "impact": impact,
-                    "embedding": embedding,
                     "source_project": source_project,
                     "source_learning_id": entry_id,
                     "status": status,
@@ -334,9 +321,12 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
 
     for attempt in range(max_attempts):
         try:
-            headers: dict[str, str] = {"Content-Type": "application/json"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            # platform_auth_headers is the ONE function that may build the
+            # Authorization header — see _platform_trust module docstring.
+            headers: dict[str, str] = {
+                "Content-Type": "application/json",
+                **platform_auth_headers(url, api_key),
+            }
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(url, json=dict(payload), headers=headers)
             if 200 <= response.status_code < 300:
@@ -365,7 +355,7 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
                 learning_id=payload.get("source_learning_id", ""),
             )
             return False
-        except (httpx.HTTPError, OSError) as e:
+        except (httpx.HTTPError, OSError) as e:  # trw-fail-silent-allow: pre-existing; logs a warning first
             logger.warning("learning_post_failed", url=platform_url, error=str(e))
             return False
     return False

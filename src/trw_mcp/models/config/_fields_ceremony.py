@@ -50,7 +50,7 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v27.3_TRW"
+    framework_version: str = "v27.4_TRW"
     aaref_version: str = "v3.2.1"
 
     ambiguity_rate_max: float = 0.05
@@ -168,9 +168,6 @@ class _CeremonyFields:
     dry_check_min_block_size: int = 5
     # max_audit_cycles removed under PRD-CORE-291 (slice 2): no production
     # reader, only a bundled skill doc restating its default.
-    audit_pattern_promotion_threshold: int = Field(
-        default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
-    )
 
     # The one switch for every bundled hook. Hooks cannot walk this cascade, so
     # the resolved value is published to .trw/runtime/hook-flags (state/_hook_flags.py)

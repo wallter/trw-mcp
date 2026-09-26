@@ -154,7 +154,12 @@ class TestCollectLearnings:
 
 
 class TestBatchToolLearnings:
-    def test_pro_with_sidecar_has_learnings(self, tmp_path: Path) -> None:
+    def test_pro_with_batch_sidecar_has_learnings(self, tmp_path: Path) -> None:
+        """PRD-CORE-300: the whole-sidecar batch dump (``compute_before_edit_hint_batch``)
+        is gone; ``trw_code(mode="hint")`` still falls back to the same
+        ``before-edit-batch-<sha>.json`` artifact per file (see
+        test_before_edit_hint_tool.py TestBatchArtifactFallback), and its
+        learnings half must still be populated on that path."""
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_envelope(
@@ -179,9 +184,9 @@ class TestBatchToolLearnings:
             },
         )
         _write_entitlement(tmp_path / ".trw", "pro")
-        from trw_mcp.tools.before_edit_hint_batch import compute_before_edit_hint_batch
+        from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
 
-        r = compute_before_edit_hint_batch(repo_root=str(tmp_path))
+        r = compute_before_edit_hint(file_path="foo.py", repo_root=str(tmp_path))
         assert r.distill_status == "hint_available"
         # learnings field is present (may be 0 on isolated tmp repo)
         assert isinstance(r.learnings, list)
@@ -224,10 +229,10 @@ class TestRiskReportLearnings:
 
 
 class TestC746BackwardCompat:
-    """Verify c746 trw_before_edit_hint still returns learnings at free tier."""
+    """Verify c746 trw_code(mode="hint") still returns learnings at free tier."""
 
     def test_c746_still_returns_learnings_at_free_tier(self, tmp_path: Path) -> None:
-        from trw_mcp.tools.before_edit_hint import compute_before_edit_hint
+        from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
 
         r = compute_before_edit_hint(file_path="foo.py", repo_root=str(tmp_path))
         # c746 collects learnings BEFORE tier gate, so they always appear

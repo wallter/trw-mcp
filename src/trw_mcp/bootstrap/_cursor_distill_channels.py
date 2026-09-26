@@ -86,8 +86,8 @@ def install_cursor_distill_channels(
 
     # 1. PRD-CORE-239: T0 stub MDC files are NO LONGER WRITTEN.
     #    `render_presence_beacon_mdc` hardcoded the rule description to
-    #    "TRW distill data available — quota exceeded, use
-    #    trw_codebase_risk_report() for full analysis" — text Cursor surfaces to
+    #    "TRW distill data available — quota exceeded, use the codebase-risk
+    #    tool for full analysis" — text Cursor surfaces to
     #    the agent as the rule's summary. For a T0 stub that is false twice
     #    over: no data exists, and no quota was ever hit. It shipped on every
     #    `init-project` for every Cursor project regardless of licence.

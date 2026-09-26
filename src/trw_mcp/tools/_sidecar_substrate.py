@@ -8,9 +8,9 @@ cross-package consumer tools without duplicating:
 - Tier-gate decision
 
 Three tools use this substrate as of c747:
-- ``trw_before_edit_hint`` (c746) — single-file hint
-- ``trw_before_edit_hint_batch`` (c747) — batch hint
-- ``trw_codebase_risk_report`` (c747) — risk-report
+- ``trw_code`` hint mode (c746) — single-file hint, batch via ``files=[...]``
+- the codebase-risk-report engine (c747; ``trw-mcp code risk`` CLI as of
+  PRD-CORE-300 slice S4) — risk-report
 
 IP boundary: trw-mcp is PUBLIC; trw-distill is PROPRIETARY. This
 module imports neither — the cross-package contract is the c742

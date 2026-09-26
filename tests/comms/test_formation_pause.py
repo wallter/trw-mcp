@@ -111,19 +111,19 @@ def test_pause_and_resume_are_orchestrator_only_and_single(ps: PauseScene) -> No
 
 
 def test_a_member_is_taught_the_pause_once_then_acks_it(ps: PauseScene) -> None:
-    ps.call("trw_peers", action="list")  # settle the steady state before the pause
+    ps.call("trw_inbox", action="list")  # settle the steady state before the pause
     record = ps.pause()
-    first = ps.call("trw_peers", action="list")
+    first = ps.call("trw_inbox", action="list")
     assert first["state"] == "paused" and first["pause"] == {"pause_id": record.pause_id, "reason": "release cut"}
     assert "ack_pause" in first["guidance"]
-    steady = ps.call("trw_peers", action="list")
+    steady = ps.call("trw_inbox", action="list")
     assert "state" not in steady and "guidance" not in steady, "taught once per state change"
 
-    stale = ps.call("trw_peers", action="ack_pause", pause_id="0" * 16)
+    stale = ps.call("trw_inbox", action="ack_pause", pause_id="0" * 16)
     assert (stale["status"], stale["reason"]) == ("refused", "pause_id_mismatch")
-    acked = ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)
+    acked = ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)
     assert acked["status"] == "ok" and acked["already"] is False and acked["state"] == "paused_acked"
-    again = ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)
+    again = ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)
     assert again["status"] == "ok" and again["already"] is True
     assert pause_roll_call(ps.formation.manifest_path()) == {
         "pause_id": record.pause_id,
@@ -137,7 +137,7 @@ def test_a_member_is_taught_the_pause_once_then_acks_it(ps: PauseScene) -> None:
 def test_an_ack_writes_only_the_callers_own_member(ps: PauseScene) -> None:
     record = ps.pause()
     ps.actor("impl-2")
-    assert ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)["status"] == "ok"
+    assert ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)["status"] == "ok"
     assert set((read_pause(ps.formation.manifest_path()) or record).acks) == {"impl-2"}
 
 
@@ -158,16 +158,16 @@ def test_a_paused_member_may_only_status_or_reply_to_the_orchestrator(ps: PauseS
 
 def test_resume_restores_sends_and_says_resumed(ps: PauseScene) -> None:
     ps.pause()
-    assert ps.call("trw_peers", action="list")["state"] == "paused"
+    assert ps.call("trw_inbox", action="list")["state"] == "paused"
     ps.resume()
-    back = ps.call("trw_peers", action="list")
+    back = ps.call("trw_inbox", action="list")
     assert back["state"] == "enrolled" and back["guidance"].startswith("resumed. ")
     assert ps.send("impl-2", "after")["status"] == "ok"
 
 
 def test_events_land_in_the_orchestrator_run_and_the_ackers_own_run(ps: PauseScene) -> None:
     record = ps.pause()
-    assert ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)["status"] == "ok"
+    assert ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)["status"] == "ok"
     ps.resume()
     lead_types = [e.get("event") for e in ps.events(ps.formation.orchestrator_run)]
     assert "formation_paused" in lead_types and "formation_resumed" in lead_types
@@ -185,7 +185,7 @@ def test_a_late_ack_racing_a_resume_refuses_and_never_recreates_the_file(ps: Pau
         ack_pause(manifest, "impl-1", ps.formation.member_runs["impl-1"], record.pause_id)
     assert late.value.reason == "not_paused"
     assert not pause_path(manifest).exists()
-    refused = ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)
+    refused = ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)
     assert (refused["status"], refused["reason"]) == ("refused", "not_paused")
 
 
@@ -197,7 +197,7 @@ def test_a_terminal_member_cannot_ack(ps: PauseScene) -> None:
         {"impl-1": {"status": "abandoned"}},
         trw_dir=ps.formation.trw_dir,
     )
-    refused = ps.call("trw_peers", action="ack_pause", pause_id=record.pause_id)
+    refused = ps.call("trw_inbox", action="ack_pause", pause_id=record.pause_id)
     assert (refused["status"], refused["reason"]) == ("refused", "member_not_eligible")
     assert (read_pause(ps.formation.manifest_path()) or record).acks == {}
 

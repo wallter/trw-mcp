@@ -70,7 +70,9 @@ _read_trw_nested_config_field() {
     #   channels:
     #     cc03_hook_enabled: true
     # Uses awk: enters parent block on "^parent_key:", exits on next top-level key.
-    # Dependency-free (no jq/yq); optional jq used if available.
+    # Dependency-free (no jq/yq): PRD-FIX-154 removed a dead "optional jq" branch
+    # here that always fell through to this same awk regardless (jq cannot parse
+    # YAML), so it never had an effect.
     _parent="$1"
     _child="$2"
     _default="${3:-}"
@@ -78,11 +80,6 @@ _read_trw_nested_config_field() {
     if [ ! -f "$_config" ]; then
         printf '%s' "$_default"
         return
-    fi
-    # Optional: use jq when available for robustness (handles multi-line + comments)
-    if command -v jq >/dev/null 2>&1; then
-        # jq can't parse YAML, so we still fall through to awk
-        :
     fi
     _val=$(awk -v parent="${_parent}:" -v child="${_child}:" '
         /^[^ \t]/ { in_block = ($0 ~ "^" parent) }
@@ -187,7 +184,103 @@ _is_safe_extension() {
 # ---------------------------------------------------------------------------
 
 _format_t0_beacon() {
-    printf '[TRW] Distill intelligence available — run trw_before_edit_hint for details.'
+    printf '[TRW] Distill intelligence available — run trw_code(mode="hint") for details.'
+}
+
+# ---------------------------------------------------------------------------
+# Session-scoped identical-hint dedup (PRD-CORE-301 cut 2)
+# ---------------------------------------------------------------------------
+#
+# The per-file debounce above bounds HOW OFTEN a hint can fire; it says
+# nothing about whether two hints more than the debounce window apart carry
+# the SAME text. A file edited repeatedly across a long session re-prints an
+# unchanged risk report every time the debounce window lapses, paying its
+# full token cost again for zero new information. This dedups on CONTENT: a
+# hint byte-identical to the last one recorded for this file THIS SESSION is
+# suppressed even outside the debounce window; a changed hint always fires,
+# and the very first hint for a file always fires (nothing recorded yet).
+
+_distill_hint_already_seen() {
+    # Usage: _distill_hint_already_seen <project_root> <file_path> <hint_text>
+    # Returns 0 (true, suppress as a duplicate) or 1 (false, new/changed —
+    # caller should print it). Records the new hash as a side effect either
+    # way, so the state always reflects the most recently COMPUTED hint, not
+    # only the ones that were printed.
+    _dh_root="$1"
+    _dh_file_path="$2"
+    _dh_text="$3"
+    _dh_dir="${_dh_root}/.trw/context/cc03-hint-seen"
+    # Same sanitize-plus-checksum naming as the debounce keys above: the
+    # sanitizer alone collapses distinct paths with the same non-ASCII-free
+    # characters onto the same file.
+    _dh_name=$(printf '%s' "$_dh_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+    _dh_ck=$(printf '%s' "$_dh_file_path" | cksum | cut -d' ' -f1)
+    _dh_record="${_dh_dir}/${_dh_name}-${_dh_ck}.hash"
+    _dh_hash=$(printf '%s' "$_dh_text" | cksum | cut -d' ' -f1)
+    _dh_dup=1
+    # PRD-SEC/RC8: _trw_safe_read/_trw_safe_write treat a symlinked record as
+    # absent and never write through one -- a crafted checkout symlinking
+    # this per-file dedup record to an arbitrary path must not be able to
+    # overwrite it via a normal edit hint. Defined below when this lib is
+    # sourced standalone; when the real hook also sources lib-trw.sh, that
+    # (identical) definition simply wins.
+    _dh_prev=$(_trw_safe_read "$_dh_record") || _dh_prev=""
+    [ "$_dh_prev" = "$_dh_hash" ] && _dh_dup=0
+    printf '%s' "$_dh_hash" | _trw_safe_write "$_dh_record" || true
+    return $_dh_dup
+}
+
+# ---------------------------------------------------------------------------
+# Symlink-safe atomic state write/read (PRD-SEC/RC8)
+# ---------------------------------------------------------------------------
+#
+# Duplicated from hooks/lib-trw.sh so this lib works standalone (its own
+# tests source it alone) and so the same guarantee holds even if a future
+# caller stops co-sourcing lib-trw.sh. A crafted checkout that ships a
+# `.trw/context` state path (or `.trw/context` itself) as a symlink to an
+# arbitrary file must not let a normal edit-hint run truncate or append to
+# it, no race required.
+
+_trw_ancestor_symlinked() {
+    _tas_walk="$1"
+    while [ -n "$_tas_walk" ] && [ "$_tas_walk" != "/" ] && [ "$_tas_walk" != "." ]; do
+        [ -L "$_tas_walk" ] && return 0
+        case "$_tas_walk" in
+            */.trw | .trw) return 1 ;;
+        esac
+        _tas_next=$(dirname "$_tas_walk")
+        [ "$_tas_next" = "$_tas_walk" ] && return 1
+        _tas_walk="$_tas_next"
+    done
+    return 1
+}
+
+_trw_safe_write() {
+    # Usage: printf '%s' "$content" | _trw_safe_write <dest>  (replace only;
+    # lib-trw.sh's copy also appends)
+    _tsw_dest="$1"
+    _tsw_dir=$(dirname "$_tsw_dest")
+    _trw_ancestor_symlinked "$_tsw_dir" && return 1
+    [ -d "$_tsw_dir" ] || mkdir -p "$_tsw_dir" 2>/dev/null || return 1
+    [ -L "$_tsw_dir" ] && return 1
+    # A symlinked leaf would take `mv` into the directory it names.
+    [ -L "$_tsw_dest" ] && return 1
+    [ ! -e "$_tsw_dest" ] || [ -f "$_tsw_dest" ] || return 1
+    # PID-suffixed temp name, not mktemp: mktemp is absent from some
+    # minimal/restricted-PATH environments these hooks run in.
+    _tsw_tmp="${_tsw_dest}.trw-safe-write.$$"
+    rm -f "$_tsw_tmp" 2>/dev/null
+    # noclobber: a temp name planted after the rm is refused, not opened.
+    (set -C; cat > "$_tsw_tmp") 2>/dev/null || { rm -f "$_tsw_tmp" 2>/dev/null; return 1; }
+    mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
+    rm -f "$_tsw_tmp" 2>/dev/null
+    return 1
+}
+
+_trw_safe_read() {
+    [ -L "$1" ] && return 1
+    [ -f "$1" ] || return 1
+    cat "$1" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------

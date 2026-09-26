@@ -131,14 +131,6 @@ class TestFR03ContextReactiveMessages:
         msg = _context_reactive_message(ctx, state)
         assert msg is None
 
-    def test_fr03_prd_create_message(self) -> None:
-        """prd_create tool context returns message mentioning trw_prd_validate."""
-        ctx = NudgeContext(tool_name=ToolName.PRD_CREATE)
-        state = CeremonyState()
-        msg = _context_reactive_message(ctx, state)
-        assert msg is not None
-        assert "trw_prd_validate" in msg
-
     def test_fr03_prd_validate_message(self) -> None:
         """prd_validate tool context returns message mentioning trw_init."""
         ctx = NudgeContext(tool_name=ToolName.PRD_VALIDATE)

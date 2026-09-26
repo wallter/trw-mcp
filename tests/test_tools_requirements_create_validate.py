@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests._test_tools_requirements_support import _get_tools, set_project_root  # noqa: F401
+from trw_mcp.tools.requirements import create_prd
 
 
 def _distinct_key(seed: str) -> str:
@@ -305,11 +306,10 @@ Cache faults must never change validation truth.
 
 
 class TestTrwPrdCreate:
-    """Tests for trw_prd_create tool."""
+    """Tests for create_prd (called from `trw-mcp prd create`)."""
 
     def test_creates_prd(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Add user authentication with OAuth2 support",
             category="CORE",
             priority="P1",
@@ -329,16 +329,14 @@ class TestTrwPrdCreate:
         assert "test_coverage_target:\n" in content
 
     def test_auto_generates_title(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Implement caching layer for API responses",
             category="INFRA",
         )
         assert result["title"] == "Implement caching layer for API responses"
 
     def test_saves_to_disk(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Feature request",
             category="CORE",
             title="Test Feature",
@@ -351,7 +349,7 @@ class TestTrwPrdCreate:
 
         tools = _get_tools()
         with pytest.raises(ValidationError, match="Invalid priority"):
-            tools["trw_prd_create"].fn(
+            create_prd(
                 input_text="test",
                 priority="P99",
             )
@@ -360,7 +358,7 @@ class TestTrwPrdCreate:
         """P0 → 0.9, P1 → 0.7, P2 → 0.6, P3 → 0.5 in both frontmatter and body."""
         tools = _get_tools()
         for priority, expected in [("P0", 0.9), ("P1", 0.7), ("P2", 0.6), ("P3", 0.5)]:
-            result = tools["trw_prd_create"].fn(
+            result = create_prd(
                 input_text=f"Test for {priority}",
                 priority=priority,
                 title=f"Confidence {priority}",
@@ -374,14 +372,14 @@ class TestTrwPrdCreate:
         """When sequence=1 (default), auto-increment from existing PRDs."""
         tools = _get_tools()
 
-        r1 = tools["trw_prd_create"].fn(
+        r1 = create_prd(
             input_text="First PRD",
             category="CORE",
             title="First",
         )
         assert r1["prd_id"] == "PRD-CORE-001"
 
-        r2 = tools["trw_prd_create"].fn(
+        r2 = create_prd(
             input_text="Second PRD",
             category="CORE",
             title="Second",
@@ -390,8 +388,7 @@ class TestTrwPrdCreate:
 
     def test_explicit_sequence_not_overridden(self, tmp_path: Path) -> None:
         """When sequence > 1 is explicitly set, use it as-is."""
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Explicit sequence PRD",
             category="CORE",
             title="Explicit",
@@ -406,8 +403,7 @@ class TestTrwPrdCreate:
         reload_config(TRWConfig(extra_prd_categories=[]))
         (tmp_path / ".trw" / "config.yaml").write_text("extra_prd_categories:\n- CONTENT\n")
 
-        tools = _get_tools()
-        result = tools["trw_prd_create"].fn(
+        result = create_prd(
             input_text="Content PRD",
             category="CONTENT",
             title="Content Category",

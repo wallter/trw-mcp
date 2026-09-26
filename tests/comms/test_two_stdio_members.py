@@ -156,8 +156,8 @@ def test_two_stdio_members_join_one_formation_and_exchange_messages(bench: Bench
 
     # (2) Both enroll. Each server reports its OWN member id, unprompted: no
     # tool argument names a member, so this is the server's binding talking.
-    enroll_a = harness.call_ok(alpha, "trw_peers", {"action": "enroll"})
-    enroll_b = harness.call_ok(beta, "trw_peers", {"action": "enroll"})
+    enroll_a = harness.call_ok(alpha, "trw_inbox", {"action": "enroll"})
+    enroll_b = harness.call_ok(beta, "trw_inbox", {"action": "enroll"})
     assert enroll_a["status"] == "ok" and enroll_a["member_id"] == _MEMBER_A
     assert enroll_b["status"] == "ok" and enroll_b["member_id"] == _MEMBER_B
 
@@ -259,13 +259,13 @@ def test_one_session_id_shared_by_two_children_collapses_to_one_identity(bench: 
 
     # Alpha has lost its own identity: it now answers as the member the
     # surviving pin points at, which is the one beta joined.
-    assert harness.call_ok(alpha, "trw_peers", {"action": "enroll"})["member_id"] == _MEMBER_B
+    assert harness.call_ok(alpha, "trw_inbox", {"action": "enroll"})["member_id"] == _MEMBER_B
 
     # And the collapse is not benign. Both processes resolve to ONE member, so
     # the second enrolment TAKES OVER that member's endpoint (PRD-CORE-274 FR12)
     # and alpha is displaced -- one identity, never two peers.
-    assert harness.call_ok(beta, "trw_peers", {"action": "enroll"})["member_id"] == _MEMBER_B
-    displaced = harness.call_ok(alpha, "trw_peers", {"action": "heartbeat"})
+    assert harness.call_ok(beta, "trw_inbox", {"action": "enroll"})["member_id"] == _MEMBER_B
+    displaced = harness.call_ok(alpha, "trw_inbox", {"action": "heartbeat"})
     assert displaced["reason"] == "endpoint_replaced_by_newer_incarnation"
 
 
@@ -293,7 +293,7 @@ def test_member_pointed_at_its_own_worktree_cannot_see_the_formation(bench: Benc
     assert coord.formation_id in error_text_of(refused_init)
 
     # Its comms calls refuse for the formation reason, NOT "comms_disabled".
-    for tool, args in (("trw_peers", {"action": "enroll"}), ("trw_inbox", {"action": "fetch"})):
+    for tool, args in (("trw_inbox", {"action": "enroll"}), ("trw_inbox", {"action": "fetch"})):
         payload = payload_of(harness.call_result(beta, tool, args))
         assert payload["status"] == "refused"
         assert payload["reason"] == "no_formation"
@@ -334,7 +334,7 @@ def test_undeclared_third_session_cannot_join_or_use_the_mailbox(bench: Bench) -
     stolen = harness.call_result(gamma, "trw_init", _join_args(coord, _MEMBER_A, "worker_c_steal"))
     assert stolen.get("isError"), "a third session must not rebind an already-joined member"
 
-    for tool, args in (("trw_peers", {"action": "enroll"}), ("trw_inbox", {"action": "fetch"})):
+    for tool, args in (("trw_inbox", {"action": "enroll"}), ("trw_inbox", {"action": "fetch"})):
         payload = payload_of(harness.call_result(gamma, tool, args))
         assert payload["status"] == "refused"
         assert payload["reason"] == "no_formation"
@@ -363,8 +363,8 @@ def test_bounded_wait_on_one_real_process_observes_a_message_sent_by_another(ben
     beta = harness.ready_member("beta", session_id=_SESSION_B, project_root=coord.root, cwd=bench.worktrees[_MEMBER_B])
     harness.call_ok(alpha, "trw_init", _join_args(coord, _MEMBER_A, "worker_a_task"))
     harness.call_ok(beta, "trw_init", _join_args(coord, _MEMBER_B, "worker_b_task"))
-    harness.call_ok(alpha, "trw_peers", {"action": "enroll"})
-    harness.call_ok(beta, "trw_peers", {"action": "enroll"})
+    harness.call_ok(alpha, "trw_inbox", {"action": "enroll"})
+    harness.call_ok(beta, "trw_inbox", {"action": "enroll"})
 
     outcome: dict[str, Any] = {}
 

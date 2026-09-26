@@ -3,32 +3,21 @@
 Verifies that assertions flow from trw_learn parameters through LearningParams,
 store_learning, and the delegated store into MemoryEntry.assertions.
 
-PRD-CORE-280 slice e1: ``TestStoredEntryHasAssertions`` only cares that
-assertions round-trip through ``store_learning`` -> ``store.put`` ->
-``MemoryEntry.assertions``, so it routes through ``fake_memory_store``.
-
-``TestStoreLearningThreadsAssertions.test_store_learning_with_assertions`` was
-DELETED (batch 23b): it asserted the SqliteMemoryStore-specific delegation
-from ``store_learning`` to ``memory_adapter.memory_store_impl``, a call that
-now only happens inside the memory daemon's own process -- unreachable to
-patch or observe from this process once a checkout is migrated (PRD-CORE-280
-e3: every migrated checkout goes through ``_daemon_store``, never an
-in-process ``SqliteMemoryStore``). ``memory_store_impl`` itself lives in
-trw-memory now and its assertions-threading is covered there
-(``tests/test_client_store_entry_builder.py``,
-``tests/test_client_store_basic.py``); the round trip through a real daemon
-checkout is covered by ``TestStoredEntryHasAssertions`` above plus the
-``daemon_checkout``-based assertion tests in ``test_core268_recall_evidence.py``,
-``test_recall_assertion_verification.py`` and ``test_trw_recall_verification.py``.
+``TestStoredEntryHasAssertions`` only cares that assertions round-trip through
+``store_learning`` -> ``store.put`` -> ``MemoryEntry.assertions``, so it routes
+through ``fake_memory_store``; ``TestStoreLearningThreadsAssertions`` reads them
+back from the memory daemon.
 """
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import DaemonCheckout
 from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.tools._learning_helpers import LearningParams
 
@@ -118,6 +107,27 @@ class TestStoredEntryHasAssertions:
 
         assert entry is not None
         assert entry.assertions == []
+
+
+class TestStoreLearningThreadsAssertions:
+    """FR05: store_learning threads assertions into the store the daemon writes."""
+
+    def test_store_learning_with_assertions(self, daemon_checkout: DaemonCheckout) -> None:
+        """The assertions land on the daemon's row, validated, in the order given."""
+        from trw_mcp.state import memory_adapter
+
+        result = memory_adapter.store_learning(
+            daemon_checkout.trw_dir,
+            "L-test-assert",
+            "test summary",
+            "test detail",
+            assertions=SAMPLE_ASSERTIONS,
+        )
+
+        assert result["status"] == "recorded"
+        row = asyncio.run(daemon_checkout.client.get("L-test-assert", daemon_checkout.namespace))
+        stored = row["entry"]["assertions"]
+        assert [(a["type"], a["target"]) for a in stored] == [(raw["type"], raw["target"]) for raw in SAMPLE_ASSERTIONS]
 
 
 class TestTrwLearnStoresAssertions:

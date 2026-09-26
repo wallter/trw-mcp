@@ -131,3 +131,102 @@ def test_with_no_parser_it_returns_1_and_prints_nothing(tmp_path: Path) -> None:
 
     assert result.stdout == b""
     assert result.returncode == 1
+
+
+# --- _json_object (PRD-FIX-154 FR01): the write-side counterpart. jq -cn when
+# jq is present; a shell builder using _json_escape otherwise. Neither parser
+# is required on the shell path.
+
+#: (id, args, expected parsed object, exit class)
+_OBJECT_CASES: list[tuple[str, list[str], dict[str, object] | None, str]] = [
+    ("plain-string", ["--str", "a", "plain"], {"a": "plain"}, _OK),
+    ("double-quote", ["--str", "a", 'has"quote'], {"a": 'has"quote'}, _OK),
+    ("backslash", ["--str", "a", "back\\slash"], {"a": "back\\slash"}, _OK),
+    ("newline", ["--str", "a", "line1\nline2"], {"a": "line1\nline2"}, _OK),
+    ("tab", ["--str", "a", "a\tb"], {"a": "a\tb"}, _OK),
+    ("non-ascii", ["--str", "a", "café é"], {"a": "café é"}, _OK),
+    ("quote-then-new-key", ["--str", "a", '","injected":"x'], {"a": '","injected":"x'}, _OK),
+    ("empty-string", ["--str", "a", ""], {"a": ""}, _OK),
+    ("int-plain", ["--int", "n", "42"], {"n": 42}, _OK),
+    ("int-negative", ["--int", "n", "-7"], {"n": -7}, _OK),
+    ("int-zero", ["--int", "n", "0"], {"n": 0}, _OK),
+    ("int-non-numeric-coerced-to-zero", ["--int", "n", "abc"], {"n": 0}, _OK),
+    ("int-empty-coerced-to-zero", ["--int", "n", ""], {"n": 0}, _OK),
+    ("int-double-minus-coerced-to-zero", ["--int", "n", "--5"], {"n": 0}, _OK),
+    (
+        "multi-field",
+        ["--str", "run_path", '/r/"q"\\p', "--int", "active_tasks", "3", "--str", "phase", "implement"],
+        {"run_path": '/r/"q"\\p', "active_tasks": 3, "phase": "implement"},
+        _OK,
+    ),
+    ("no-args-is-empty-object", [], {}, _OK),
+    ("invalid-key-with-space", ["--str", "bad key", "v"], None, _ERR),
+    ("invalid-key-empty", ["--str", "", "v"], None, _ERR),
+    ("unknown-flag", ["--float", "a", "1"], None, _ERR),
+]
+
+#: A C0 control character (other than tab/newline) is dropped by _json_escape;
+#: this is the one documented parity gap between jq and the shell path.
+_OBJECT_CONTROL_CHAR_ID = "control-char-dropped-on-shell-path"
+
+
+def _run_object(args: list[str], path: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["sh", "-c", '. "$TRW_LIB"; _json_object "$@"', "sh", *args],
+        capture_output=True,
+        env={"PATH": path, "TRW_LIB": str(_LIB), "HOME": os.environ.get("HOME", "/tmp")},
+        check=False,
+    )
+
+
+def _assert_object_case(
+    result: subprocess.CompletedProcess[bytes], expected: dict[str, object] | None, exit_class: str
+) -> None:
+    if exit_class == _ERR:
+        assert result.returncode != 0, result.stdout
+        assert result.stdout == b""
+        return
+    assert result.returncode == 0, result.stderr
+    out = result.stdout.decode("utf-8")
+    assert out.endswith("\n")
+    assert "\n" not in out[:-1], "must be one line"
+    assert json.loads(out) == expected
+
+
+@pytest.mark.parametrize(
+    ("case_id", "args", "expected", "exit_class"), _OBJECT_CASES, ids=[c[0] for c in _OBJECT_CASES]
+)
+def test_json_object_shell_path(
+    python_only_path: str, case_id: str, args: list[str], expected: dict[str, object] | None, exit_class: str
+) -> None:
+    _assert_object_case(_run_object(args, python_only_path), expected, exit_class)
+
+
+@pytest.mark.skipif(not HAS_JQ, reason="compares against jq itself; the shell half above runs everywhere")
+@pytest.mark.parametrize(
+    ("case_id", "args", "expected", "exit_class"), _OBJECT_CASES, ids=[c[0] for c in _OBJECT_CASES]
+)
+def test_json_object_jq_path(
+    case_id: str, args: list[str], expected: dict[str, object] | None, exit_class: str
+) -> None:
+    _assert_object_case(_run_object(args, os.environ["PATH"]), expected, exit_class)
+
+
+def test_json_object_shell_path_drops_c0_control_characters(python_only_path: str) -> None:
+    """Documented parity gap (NFR01): _json_escape strips C0 controls other than tab/newline."""
+    result = _run_object(["--str", "a", "x\x01y"], python_only_path)
+    assert result.returncode == 0
+    assert json.loads(result.stdout.decode("utf-8")) == {"a": "xy"}
+
+
+def test_json_object_jq_and_shell_paths_parse_to_equal_objects(tmp_path: Path) -> None:
+    """NFR01 parity: for every non-control-char case, jq and the shell builder agree."""
+    if not shutil.which("jq"):
+        pytest.skip("jq not installed")
+    path_no_jq = path_without(tmp_path, {"jq"})
+    for _case_id, args, expected, exit_class in _OBJECT_CASES:
+        if exit_class != _OK:
+            continue
+        jq_result = _run_object(args, os.environ["PATH"])
+        shell_result = _run_object(args, path_no_jq)
+        assert json.loads(jq_result.stdout) == json.loads(shell_result.stdout) == expected

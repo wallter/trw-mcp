@@ -65,7 +65,7 @@ trw-distill risk data via MCP tools and return structured Markdown reports.
 
 When invoked as `@trw-distill-explorer <file-path>`:
 
-1. Call `trw_before_edit_hint(file_path="<file-path>")` via MCP.
+1. Call `trw_code(mode="hint", files="<file-path>")` via MCP.
 2. Return a Markdown report from `distill_hint`:
    - **Risk Score** (`distill_hint.risk_score`)
    - **Importers** (`distill_hint.importers` list)
@@ -81,7 +81,9 @@ When invoked as `@trw-distill-explorer <file-path>`:
 
 When invoked as `@trw-distill-explorer hotspots`:
 
-1. Call `trw_codebase_risk_report(top_n=20)` via MCP.
+1. A repo-wide hotspots table now needs `trw-mcp code risk --top-n 20`, an
+   operator CLI command; this agent's permissions deny bash, so tell the
+   requester to run it from a shell and paste the output here to format.
 2. Format results as a ranked Markdown table:
    | # | File | Score | Fanin | Churn | Untested |
    |---|------|-------|-------|-------|----------|

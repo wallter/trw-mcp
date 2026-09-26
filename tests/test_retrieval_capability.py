@@ -59,7 +59,7 @@ def _by_name(components: tuple[RetrievalComponent, ...]) -> dict[str, RetrievalC
 def test_a_provisioned_install_is_active_everywhere(world: SimpleNamespace) -> None:
     components = probe_retrieval(_MODEL, embeddings_enabled=True)
 
-    assert [c.name for c in components] == ["vectors", "embeddings", "weights", "bm25"]
+    assert [c.name for c in components] == ["vectors", "embeddings", "weights"]
     assert {c.state for c in components} == {"active"}
     assert retrieval_summary(components) == "active"
     assert retrieval_row(components)[0] == "PASS"
@@ -103,14 +103,14 @@ def test_missing_sentence_transformers_is_degraded_with_the_install_fix(world: S
     assert "pip install 'trw-memory[embeddings]'" in summary
 
 
-def test_uncached_weights_are_degraded_and_the_fix_names_the_configured_model(world: SimpleNamespace) -> None:
+def test_uncached_weights_are_degraded_and_the_fix_is_the_pinned_fetch(world: SimpleNamespace) -> None:
     world.cache = CacheState.ABSENT
 
     weights = _by_name(probe_retrieval(_MODEL, embeddings_enabled=True))["weights"]
 
     assert weights.state == "degraded"
-    assert "absent" in weights.detail
-    assert f"SentenceTransformer('{_MODEL}')" in weights.fix
+    assert f"{_MODEL} cache absent" in weights.detail
+    assert weights.fix == "trw-mcp models fetch"
 
 
 def test_embeddings_disabled_is_keyword_only_not_a_warning(world: SimpleNamespace) -> None:
@@ -127,42 +127,50 @@ def test_embeddings_disabled_is_keyword_only_not_a_warning(world: SimpleNamespac
     assert retrieval_row(components)[0] == "PASS"
 
 
-def test_missing_bm25_is_listed_but_never_degrades_retrieval(world: SimpleNamespace) -> None:
-    world.missing.add("rank_bm25")
+@pytest.mark.parametrize(
+    ("env_model", "expected"),
+    [("org/daemon-model", "org/daemon-model"), (None, _MODEL)],
+    ids=["env-set", "trw-memory-default"],
+)
+def test_the_daemon_model_is_memory_embedding_model(
+    monkeypatch: pytest.MonkeyPatch, env_model: str | None, expected: str
+) -> None:
+    if env_model is None:
+        monkeypatch.delenv("MEMORY_EMBEDDING_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("MEMORY_EMBEDDING_MODEL", env_model)
 
-    components = probe_retrieval(_MODEL, embeddings_enabled=True)
-    bm25 = _by_name(components)["bm25"]
-
-    assert bm25.state == "off"
-    assert "FTS5" in bm25.detail
-    assert retrieval_summary(components) == "active"
-    status, message = retrieval_row(components)
-    assert status == "PASS"
-    assert "bm25 off" in message
+    assert capability.daemon_embedding_model() == expected
 
 
-def test_the_doctor_row_probes_the_configured_model(world: SimpleNamespace, tmp_path: Path) -> None:
+def test_the_doctor_row_probes_the_daemons_model(
+    world: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from trw_mcp.server import _subcommands_doctor as doctor
 
     world.cache = CacheState.INCOMPLETE
-    config = TRWConfig(retrieval_embedding_model="org/configured-model", embeddings_enabled=True)
+    monkeypatch.setenv("MEMORY_EMBEDDING_MODEL", "org/daemon-model")
 
-    result = doctor._check_retrieval(tmp_path, config)
+    result = doctor._check_retrieval(tmp_path, TRWConfig(embeddings_enabled=True))
 
     assert result.name == "retrieval"
     assert result.status == "WARN"
-    assert "org/configured-model" in result.message
-    assert world.probed == ["org/configured-model"]
+    assert "org/daemon-model" in result.message
+    assert world.probed == ["org/daemon-model"]
 
 
-def test_session_start_always_carries_the_retrieval_field(world: SimpleNamespace) -> None:
+def test_session_start_always_carries_the_retrieval_field(
+    world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from trw_mcp.tools import ceremony
     from trw_mcp.tools._ceremony_step_table import SESSION_START_STEPS, SessionStartContext
 
     assert "retrieval" in [step.key for step in SESSION_START_STEPS]
     world.missing.add("sentence_transformers")
+    monkeypatch.setenv("MEMORY_EMBEDDING_MODEL", "org/daemon-model")
     sctx = SimpleNamespace(config=TRWConfig(embeddings_enabled=True), results={})
 
     ceremony._ss_retrieval(cast("SessionStartContext", sctx))
 
     assert sctx.results["retrieval"].startswith("degraded: embeddings")
+    assert world.probed == ["org/daemon-model"]

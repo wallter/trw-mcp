@@ -208,18 +208,38 @@ def test_default_capability_and_effort_posture_matches_runtime_profiles() -> Non
 
 
 @pytest.mark.unit
-def test_codex_docs_distinguish_cli_effort_from_gpt56_api_effort() -> None:
+def test_codex_docs_distinguish_cli_effort_from_gpt6_api_effort() -> None:
     section = _extract_section(_read_client_profiles_doc(), "## Codex Support Surface")
 
-    assert "`gpt-5.6-sol`" in section
-    assert "`gpt-5.6-terra`" in section
-    assert "`gpt-5.6-luna`" in section
+    assert "`gpt-6-astra`" in section
+    assert "`gpt-6-sol`" in section
+    assert "`gpt-6-luna`" in section
+    assert "`dispatch_default_models.codex: gpt-6-sol`" in section
     assert "`local-large` and `local-small` remain local capability classes" in section
     assert "Codex CLI `model_reasoning_effort`" in section
     assert "`minimal|low|medium|high`" in section
     assert "Responses API uses `none|low|medium|high|xhigh|max`" in section
     assert "does not currently ship a direct Responses API effort adapter" in section
     assert "does not alter TRW ceremony depth" in section
+
+
+@pytest.mark.unit
+def test_codex_docs_distinguish_trw_dispatch_from_native_subagents() -> None:
+    section = _extract_section(_read_client_profiles_doc(), "## Codex Support Surface")
+
+    assert "direct user request **or** applicable `AGENTS.md` or skill instructions" in section
+    assert "does not assume always-on delegation" in section
+    assert "only spawn them when the user explicitly asks" not in section
+    assert "`dispatch_default_models.codex`" in section
+    assert "`trw_dispatch.model` wins" in section
+    assert "`[agents].default_subagent_model`" in section
+    assert "`default_subagent_reasoning_effort`" in section
+    assert "explicit spawn values take precedence over `[agents]` defaults" in section
+    assert "custom-agent TOML file can override model or effort" in section
+    assert "Codex uses that model's default effort" in section
+    assert "sets only `model` preserves the previously resolved effort" in section
+    assert "TRW does not silently write these native defaults" in section
+    assert "depends on account, workspace, client and rollout" in section
 
 
 @pytest.mark.unit
@@ -332,7 +352,7 @@ def test_codex_profile_capability_change_alters_write_target_behavior(
 # ``render_delegation_protocol()`` had exactly one call site (codex's
 # dedicated renderer), so claude-code, cursor-ide, copilot, and
 # antigravity-cli — all True — never rendered the block despite
-# ``trw_profile_explain`` (``client_profiles/catalog.py::delegation_enabled``)
+# ``trw-mcp profile explain`` (``client_profiles/catalog.py::delegation_enabled``)
 # reporting it enabled. This section pins each client's REAL instruction
 # surface against its own profile flag.
 
@@ -397,7 +417,7 @@ def test_delegation_block_present_iff_profile_flag_true(client_id: str) -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: str) -> None:
-    """``trw_profile_explain``'s ``delegation_enabled`` must agree with what
+    """``trw-mcp profile explain``'s ``delegation_enabled`` must agree with what
     is actually rendered (the P8 attribution check) — a label with no
     matching content is exactly the wiring defect this fix closes.
     """

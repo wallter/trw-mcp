@@ -427,10 +427,10 @@ class TestRequirementsTools:
     """E2E 6.1-6.4: prd_create, prd_validate."""
 
     def test_prd_create(self, tmp_project: Path) -> None:
-        """6.1: Create a PRD."""
-        server = make_test_server("requirements")
-        fn = extract_tool_fn(server, "trw_prd_create")
-        result = fn(
+        """6.1: Create a PRD via `trw-mcp prd create` (create_prd)."""
+        from trw_mcp.tools.requirements import create_prd
+
+        result = create_prd(
             input_text="Add rate limiting to API endpoints",
             category="CORE",
             priority="P1",
@@ -509,10 +509,16 @@ class TestKnowledgeTools:
     underlying state logic is exercised directly as an internal API."""
 
     def test_knowledge_sync_tool_deregistered(self, tmp_project: Path) -> None:
-        """The knowledge-sync tool is no longer on the registered surface."""
-        server = make_test_server("knowledge")
+        """The knowledge-sync tool is no longer on the registered surface.
 
-        assert "trw_knowledge_sync" not in get_tools_sync(server)
+        PRD-CORE-300-FR11 (S9) later deleted ``tools/knowledge.py``'s own
+        standalone graph-related MCP tool too, so the module registers nothing
+        and the ``"knowledge"`` test-server group no longer exists; check the
+        real registered surface instead.
+        """
+        from trw_mcp.server._tools import raw_registered_tool_names
+
+        assert "trw_knowledge_sync" not in raw_registered_tool_names()
 
     def test_knowledge_sync_internal_dry_run(self, tmp_project: Path) -> None:
         """10.1: the internal execute_knowledge_sync state API still works (dry run)."""

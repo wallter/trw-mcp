@@ -23,7 +23,7 @@ from trw_mcp.state._process_identity import (
     read_process_start_time,
 )
 
-__all__ = ["live_servers"]
+__all__ = ["live_servers", "stray_servers"]
 
 
 def _process_name(pid: int) -> str:
@@ -35,13 +35,13 @@ def _process_name(pid: int) -> str:
     return Path(name).name or "a client"
 
 
-def live_servers(trw_dir: Path) -> list[str]:
-    """One line per live server recorded in *trw_dir*'s pins.json, naming the client to reconnect."""
+def _live(trw_dir: Path) -> list[tuple[int, int | None, float]]:
+    """``(server pid, live client pid or None, recorded epoch)`` per live server in pins.json."""
     try:
         pins = json.loads((trw_dir / "runtime" / "pins.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):  # trw-fail-silent-allow: no readable pins file records no server
         return []
-    lines: list[str] = []
+    found: list[tuple[int, int | None, float]] = []
     for record in pins.values() if isinstance(pins, dict) else ():
         pid = record.get("pid") if isinstance(record, dict) else None
         if not isinstance(pid, int) or pid == os.getpid() or not pid_is_alive(pid):
@@ -50,8 +50,36 @@ def live_servers(trw_dir: Path) -> list[str]:
         if started is None or created is None or started > created.timestamp() + BIRTH_EPOCH_SLACK_SECONDS:
             continue  # the pid was reused after this record was written
         client = record.get("client_pid")
-        if isinstance(client, int) and read_process_start_time(client) == record.get("client_start"):
-            lines.append(f"trw-mcp pid {pid}, launched by {_process_name(client)} (pid {client}): reconnect it")
-        else:
-            lines.append(f"trw-mcp pid {pid} is orphaned (its client exited): stop it with `kill {pid}`")
-    return lines
+        alive = isinstance(client, int) and read_process_start_time(client) == record.get("client_start")
+        found.append((pid, client if alive else None, created.timestamp()))
+    return found
+
+
+def _orphan(pid: int) -> str:
+    return f"trw-mcp pid {pid} is orphaned (its client exited): stop it with `kill {pid}`"
+
+
+def live_servers(trw_dir: Path) -> list[str]:
+    """One line per live server recorded in *trw_dir*'s pins.json, naming the client to reconnect."""
+    return [
+        _orphan(pid)
+        if client is None
+        else f"trw-mcp pid {pid}, launched by {_process_name(client)} (pid {client}): reconnect it"
+        for pid, client, _ in _live(trw_dir)
+    ]
+
+
+def stray_servers(trw_dir: Path) -> list[str]:
+    """Servers no client will use again: orphans, and all but the newest server under one client."""
+    servers = {pid: (client, created) for pid, client, created in _live(trw_dir)}  # a pid pinning two runs counts once
+    newest: dict[int, tuple[float, int]] = {}
+    for pid, (client, created) in servers.items():
+        if client is not None:
+            newest[client] = max((created, pid), newest.get(client, (created, pid)))
+    return [
+        _orphan(pid)
+        if client is None
+        else f"trw-mcp pid {pid} is superseded by a newer server under client pid {client}: stop it with `kill {pid}`"
+        for pid, (client, _) in servers.items()
+        if client is None or newest[client][1] != pid
+    ]

@@ -321,8 +321,8 @@ def production_workspace(
     monkeypatch.setattr("trw_mcp.tools.ceremony._find_active_run_compat", lambda _ctx: run_dir)
     # ``wrap_tool``'s ctx-less ``_resolve_run_dir`` resolves the pin via the
     # process-level session id (``get_session_id``), not the ``TRW_SESSION_ID``
-    # env var. Tools invoked without ``run_path``/``ctx`` (``trw_query_events``,
-    # ``trw_surface_diff``) therefore only land in this run when the process
+    # env var. Tools invoked without ``run_path``/``ctx`` (``trw_recall``,
+    # ``trw_code``) therefore only land in this run when the process
     # session id matches the pin key. Align it for the duration of the test.
     _saved_session_id = get_session_id()
     _reset_session_id("sess-123")
@@ -370,27 +370,15 @@ class TestRepresentativeProductionPaths:
         self,
         production_workspace: Path,
     ) -> None:
+        # The earlier ctx-less exemplars moved to `trw-mcp telemetry` CLI verbs
+        # (PRD-CORE-300 slices S3a, S3b) or were deleted (S11b); trw_recall and
+        # trw_code are the still-registered, ctx-less, no-run_path tools this
+        # test needs to prove more than one wrapped tool name lands. trw_code's
+        # search mode is safe against a repo with no built index: it returns an
+        # empty result rather than raising.
         build_check = _get_production_tool_fn("trw_build_check")
-        query_events = _get_production_tool_fn("trw_query_events")
-        surface_diff = _get_production_tool_fn("trw_surface_diff")
-
-        other_run = production_workspace.parent.parent.parent / "task" / "run-456" / "meta"
-        other_run.mkdir(parents=True)
-        (other_run / "run_surface_snapshot.yaml").write_text(
-            "\n".join(
-                (
-                    "snapshot_id: snap-456",
-                    "artifacts:",
-                    "  - surface_id: FRAMEWORK.md",
-                    "    content_hash: " + ("aa" * 32),
-                    "    version: v1",
-                    "    discovered_at: 2026-04-24T00:00:00Z",
-                    "    source_path: FRAMEWORK.md",
-                )
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        recall = _get_production_tool_fn("trw_recall")
+        code = _get_production_tool_fn("trw_code")
 
         build_check(
             tests_passed=True,
@@ -398,13 +386,16 @@ class TestRepresentativeProductionPaths:
             coverage_pct=98.0,
             options={"mypy_clean": True, "run_path": str(production_workspace)},
         )
-        query_events(session_id="sess-123")
-        surface_diff(snapshot_id_a="snap-123", snapshot_id_b="snap-456")
+        recall(query="test")
+        # production_workspace is the run dir (.trw/runs/task/run-123); the
+        # repo root is .trw's own parent, four levels up.
+        repo_root = production_workspace.parent.parent.parent.parent
+        code(mode="search", repo_root=str(repo_root), query="test")
 
         events_file = next((production_workspace / "meta").glob("events-*.jsonl"))
         tool_rows = [row for row in _read_jsonl(events_file) if row["event_type"] == "tool_call"]
         observed_tools = {str(row["payload"]["tool"]) for row in tool_rows}
-        assert {"trw_build_check", "trw_query_events", "trw_surface_diff"} <= observed_tools
+        assert {"trw_build_check", "trw_recall", "trw_code"} <= observed_tools
 
     def test_tool_call_error_fields_populated_via_wrapped_server_dispatch(
         self,

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from tests._dedup_test_support import mock_embed
 from tests._memory_fixtures import FAKE_NAMESPACE
 from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
@@ -73,9 +72,6 @@ class TestTrwLearnDedup:
         # The exact-content dedup seam reads through the fake store, not the YAML
         # sidecar directly, so the row must exist there too for the match to fire.
         fake_memory_store.put(summary, FAKE_NAMESPACE, {"entry_id": "L-existing99", "detail": detail})
-
-        # Patch embed to return deterministic vectors
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
 
         # Patch generate_learning_id to avoid randomness
         monkeypatch.setattr(
@@ -144,6 +140,7 @@ class TestTrwLearnDedup:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """When a near-duplicate exists, trw_learn returns 'merged'."""
         entries_dir = self._make_entries_dir(tmp_path)
@@ -186,19 +183,13 @@ class TestTrwLearnDedup:
             },
         )
 
-        existing_vec = mock_embed(existing_summary + " " + existing_detail)
-
-        def merge_zone_embed(text: str) -> list[float]:
-            """Return vectors in merge zone (0.85-0.95) for new text."""
-            if "new" in text:
-                mixed = [v * 0.88 + 0.02 * (i % 2) for i, v in enumerate(existing_vec)]
-                norm = sum(v * v for v in mixed) ** 0.5
-                if norm == 0:
-                    return existing_vec
-                return [v / norm for v in mixed]
-            return mock_embed(text)
-
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", merge_zone_embed)
+        # The daemon's encoder, as the fake stands it in: the new text lands at cosine
+        # 0.9 to the stored row, inside the 0.85-0.95 merge band.
+        fake_memory_store.put(
+            existing_summary, FAKE_NAMESPACE, {"entry_id": "L-existingmerge", "detail": existing_detail}
+        )
+        fake_memory_store.stored_vectors["L-existingmerge"] = [1.0, 0.0]
+        fake_memory_store.text_vectors["new similar summary new similar detail about the topic"] = [0.9, 0.43589]
 
         from fastmcp import FastMCP
 
@@ -211,8 +202,7 @@ class TestTrwLearnDedup:
 
         result = tool_fn(summary="new similar summary", detail="new similar detail about the topic")
 
-        # Should be merge, skip, or recorded (all are valid near-duplicate responses)
-        assert result["status"] in ("merged", "skipped", "recorded")
+        assert (result["status"], result["merged_into"]) == ("merged", "L-existingmerge")
 
 
 class TestTrwLearnGracefulDegradation:
@@ -263,8 +253,7 @@ class TestTrwLearnGracefulDegradation:
         """
         tool_fn = self._make_setup(tmp_path, monkeypatch, reader, writer, fake_memory_store)
 
-        # Simulate embed not available
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", lambda text: None)
+        # The daemon has no embedder: the fake knows no text
 
         result = tool_fn(
             summary="graceful dedup fallback test",
@@ -304,8 +293,7 @@ class TestTrwLearnGracefulDegradation:
             },
         )
 
-        # embed returns None for ALL calls
-        monkeypatch.setattr("trw_mcp.state.dedup.embed", lambda text: None)
+        # The daemon has no embedder: the fake knows no text
 
         result = tool_fn(
             summary="new summary different from existing",

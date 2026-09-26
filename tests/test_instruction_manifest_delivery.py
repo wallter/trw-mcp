@@ -15,7 +15,7 @@ class TestDeliveryGateR08Wiring:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         agents = tmp_path / "AGENTS.md"
-        agents.write_text("Use trw_pipeline_health() for diagnostics.\n")
+        agents.write_text("Use trw_dispatch() for diagnostics.\n")
 
         run_path = trw_dir / "runs" / "test-run"
         run_path.mkdir(parents=True)
@@ -31,7 +31,7 @@ class TestDeliveryGateR08Wiring:
 
             result = _check_instruction_tool_parity_gate(run_path)
             assert result is not None
-            assert "trw_pipeline_health" in result
+            assert "trw_dispatch" in result
 
     def test_gate_returns_none_for_all_mode(self, tmp_path: Path) -> None:
         """R-08 gate is a no-op when mode is 'all'."""
@@ -66,7 +66,7 @@ class TestDeliveryGateFullIntegration:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         agents = tmp_path / "AGENTS.md"
-        agents.write_text("Use trw_pipeline_health() for diagnostics.\n")
+        agents.write_text("Use trw_dispatch() for diagnostics.\n")
 
         run_path = trw_dir / "runs" / "test-run"
         (run_path / "meta").mkdir(parents=True)
@@ -80,7 +80,7 @@ class TestDeliveryGateFullIntegration:
             result = check_delivery_gates(run_path, reader)
 
         assert "instruction_parity_warning" in result
-        assert "trw_pipeline_health" in result["instruction_parity_warning"]
+        assert "trw_dispatch" in result["instruction_parity_warning"]
 
     def test_no_warning_when_all_mode(self, tmp_path: Path) -> None:
         """check_delivery_gates has no instruction_parity_warning in 'all' mode."""
@@ -92,7 +92,7 @@ class TestDeliveryGateFullIntegration:
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         agents = tmp_path / "AGENTS.md"
-        agents.write_text("Use trw_pipeline_health() for diagnostics.\n")
+        agents.write_text("Use trw_dispatch() for diagnostics.\n")
 
         run_path = trw_dir / "runs" / "test-run"
         (run_path / "meta").mkdir(parents=True)

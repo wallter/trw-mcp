@@ -77,6 +77,10 @@ class _PathsFields:
     platform_url: str = ""
     platform_urls: list[str] = Field(default_factory=list)
     platform_api_key: SecretStr = SecretStr("")
+    # W38 (7.0.0 security P1): one kill switch for BOTH the session-start
+    # update check and the team-sync pull loop. See
+    # trw_mcp.state._platform_trust.platform_contact_enabled.
+    platform_contact_enabled: bool = True
     installation_id: str = ""
     auto_upgrade: bool = False
 
@@ -148,7 +152,7 @@ class _PathsFields:
     checkpoint_suggest_hours: int = Field(
         default=4,
         ge=1,
-        description="Heartbeat-age threshold (hours) at which trw_heartbeat reports should_checkpoint=True to the caller.",
+        description="Heartbeat-age threshold (hours) at which trw_checkpoint(heartbeat=True) reports should_checkpoint=True to the caller.",
     )
     ctx_isolation_enabled: bool = Field(
         default=True,

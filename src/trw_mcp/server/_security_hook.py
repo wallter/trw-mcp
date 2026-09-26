@@ -46,7 +46,7 @@ def consult_mcp_security(
     the caller proceeds unaffected.
 
     Args:
-        tool: Short tool name (e.g. ``"trw_query_events"``). Already
+        tool: Short tool name (e.g. ``"trw_prd_validate"``). Already
             prefix-stripped — the middleware does additional normalization.
         args: Optional tool arguments dict. ``None`` is treated as empty.
         session_id: Session identifier when resolvable, else ``""``.

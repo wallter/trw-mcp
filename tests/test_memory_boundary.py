@@ -456,10 +456,12 @@ def test_the_store_path_is_the_first_tool_surface_importer() -> None:
 
     This is the counter FR09 hands to the floor check, and it is now non-zero,
     which is what ARMS that check. Each later phase adds importers; this asserts
-    the store path is among them rather than pinning an exact list.
+    the store path is among them rather than pinning an exact list. Since
+    CORE-280 e3 (W09) the store path reaches the tool surface through the daemon
+    store module, not ``memory_adapter``.
     """
     importers = _load_gate().count_tool_surface_imports()
-    assert "state/memory_adapter.py" in importers, importers
+    assert "state/_daemon_store.py" in importers, importers
 
 
 @monorepo_only

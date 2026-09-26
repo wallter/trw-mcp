@@ -1,42 +1,40 @@
-"""TRW self-learning tools — learn, recall, instructions_sync.
+"""TRW self-learning tools — learn, recall.
 
-These 3 self-learning tools manage the .trw/ self-learning layer that makes
+These self-learning tools manage the .trw/ self-learning layer that makes
 AI coding agents progressively more effective in a specific repository over time.
 The ``anthropic`` SDK (optional [ai] dependency) provides LLM-augmented
 behavior for several tools (better summaries, relevance classification).
 
 Heavy business logic is delegated to ``_learn_impl.execute_learn`` and
 ``_recall_impl.execute_recall``; this module retains the FastMCP registration
-closures, backward-compat shim, and module-level imports that test suites
-patch at ``trw_mcp.tools.learning.*``.
+closures and module-level imports that test suites patch at
+``trw_mcp.tools.learning.*``.
 """
 # ruff: noqa: I001 - facade imports stay grouped for monkeypatch seams and LOC ratchet.
 
 from __future__ import annotations
 
-import structlog
 from fastmcp import Context, FastMCP
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
-    ClaudeMdSyncResultDict,
     LearnResultDict,
     RecallResultDict,
 )
+from trw_mcp.tools.knowledge import GraphRelatedResult, graph_related
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     generate_learning_id,
     save_learning_entry,
     update_analytics,
 )
-from trw_mcp.state.claude_md import execute_claude_md_sync, instruction_write_trigger
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
     recall_learnings as adapter_recall,
     store_learning as adapter_store,
     update_learning as adapter_update,
 )
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools._learning_helpers import (
     check_and_handle_dedup,
 )
@@ -44,9 +42,7 @@ from trw_mcp.tools._learn_arg_bags import parse_learn_metadata, parse_learn_upda
 from trw_mcp.tools._learning_module_helpers import _build_call_ctx, _coerce_tags
 from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _is_solution_summary, _validate_learn_enums
 from trw_mcp.tools._learn_update_impl import execute_learn_update
-from trw_mcp.tools._learning_module_helpers import _create_llm_client, _read_injected_ids
-
-logger = structlog.get_logger(__name__)
+from trw_mcp.tools._learning_module_helpers import _read_injected_ids
 
 
 def __getattr__(name: str) -> object:
@@ -184,7 +180,7 @@ def register_learning_tools(server: FastMCP) -> None:
             _check_and_handle_dedup=check_and_handle_dedup,
         )
 
-    @server.tool()
+    @server.tool(output_schema=None)
     def trw_recall(
         ctx: Context | None = None,
         query: str = "",
@@ -193,22 +189,23 @@ def register_learning_tools(server: FastMCP) -> None:
         max_results: int | None = None,
         ids: list[str] | None = None,
         options: dict[str, object] | str = "",
-    ) -> RecallResultDict:
-        """Retrieve prior learnings relevant to your current task.
+        graph_id: str = "",
+    ) -> RecallResultDict | GraphRelatedResult:
+        """Retrieve prior learnings, or with graph_id=<id> that learning's
+        graph neighbours.
 
-        Use when entering unfamiliar code, when a bug may have been seen
-        before, or to pull a narrow slice before delegating.
+        Use when unfamiliar code, a suspected repeat bug, or delegating.
+        Output: ranked stubs {id, claim, anchor}.
 
-        Output: ranked stubs {id, claim, anchor}; omitted counts rows cut.
+        query: keywords, "*"=all. ids: full rows by id. tags: list
+        or string. status: active|resolved|obsolete. max_results default
+        25 (0=unlimited).
 
-        query: keywords; "*" lists all. ids: full rows for these ids instead.
-        tags: list or comma/space string. status: active (default) | resolved
-        | obsolete. max_results defaults 25 (0 = unlimited).
+        options (unknown keys rejected): topic, min_impact, as_of,
+        include_superseded, include_tiers, graph_depth, graph_edge_types,
+        graph_limit.
 
-        options (unknown keys rejected): topic slug, min_impact 0-1, as_of
-        (ISO-8601), include_superseded, include_tiers (["project"] only).
-
-        See Also: trw_learn to record a finding, trw_session_start for both at once.
+        See Also: trw_learn records one.
         """
         # Maintainer notes (kept out of the docstring — callers pay for that text):
         #   Ranking = query relevance (summary/tags/detail) x utility (impact,
@@ -229,6 +226,16 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.tools._tool_options import RecallOptions, parse_options
 
         opts = parse_options(RecallOptions, options)
+
+        if graph_id:
+            # PRD-CORE-300-FR11: graph mode returns exactly what the deleted
+            # standalone graph-related tool returned — no run resolution, no ranking.
+            return graph_related(
+                graph_id,
+                depth=opts.graph_depth,
+                edge_types=opts.graph_edge_types,
+                limit=opts.graph_limit,
+            )
 
         # PRD-CORE-141 FR03: build call_ctx so downstream find_active_run()
         # inside build_recall_context doesn't scan-hijack another session.
@@ -259,65 +266,7 @@ def register_learning_tools(server: FastMCP) -> None:
             _adapter_recall=adapter_recall,
         )
 
-    @server.tool(output_schema=None)
-    def trw_instructions_sync(
-        scope: str = "root",
-        target_dir: str | None = None,
-        client: str = "auto",
-        dry_run: bool = False,
-        force: bool = False,
-    ) -> ClaudeMdSyncResultDict:
-        """Sync TRW protocol and ceremony guidance into the client's instruction file.
-
-        Use when onboarding a project whose instruction file (CLAUDE.md,
-        AGENTS.md, or the client equivalent) lacks the TRW block, after a
-        protocol-template change, or when switching IDE clients. Hand-written
-        content is never truncated — a shrinking write is refused and reported.
-        Learnings are not promoted into the instruction file — trw_session_start() recall covers that.
-
-        Output: {status: "synced" | "unchanged" | "dry_run" | "refused", diffs, refusals}.
-
-        Args:
-            scope: "root" for the project instruction file, "sub" for module-level.
-            target_dir: where to write the sub-scope file.
-            client: "auto" detects from IDE config dirs, a specific client
-                name targets its own file, "all" targets every known surface.
-            dry_run: unified diff per target; writes nothing.
-            force: write even if the guard detects content loss.
-        """
-        # Maintainer note: rendering targets the auto-generated block of whichever
-        # client surface is present. Dropping learning promotion was PRD-CORE-093.
-        # PRD-FIX-123-FR05: this entry point SUPPLIES the provenance trigger; it
-        # is never inferred from a stack walk.
-        config = get_config()
-        reader = FileStateReader()
-        llm = _create_llm_client()
-        with instruction_write_trigger("tool_call", "trw_instructions_sync"):
-            return execute_claude_md_sync(scope, target_dir, config, reader, llm, client, dry_run=dry_run, force=force)
-
-    @server.tool(name="trw_claude_md_sync", output_schema=None)
-    def trw_claude_md_sync(
-        scope: str = "root",
-        target_dir: str | None = None,
-        client: str = "auto",
-        dry_run: bool = False,
-        force: bool = False,
-    ) -> ClaudeMdSyncResultDict:
-        """Deprecated alias for ``trw_instructions_sync`` — call that instead.
-
-        Use when an older caller still references this name; it warns on every
-        invocation and will be removed.
-
-        Output: same as trw_instructions_sync.
-        """
-        logger.warning(
-            "deprecated_tool_alias_used",
-            tool="trw_claude_md_sync",
-            canonical="trw_instructions_sync",
-            note="trw_claude_md_sync is deprecated; use trw_instructions_sync. Alias will be removed in a future release.",
-        )
-        config = get_config()
-        reader = FileStateReader()
-        llm = _create_llm_client()
-        with instruction_write_trigger("tool_call", "trw_claude_md_sync"):
-            return execute_claude_md_sync(scope, target_dir, config, reader, llm, client, dry_run=dry_run, force=force)
+    # PRD-CORE-149-FR11's standalone instructions-sync tool was removed by
+    # PRD-CORE-300 S6b. Its implementation (``state.claude_md.execute_claude_md_sync``)
+    # is now invoked from ``trw-mcp instructions sync``; trw_deliver's own
+    # instruction-sync step calls it directly (unaffected by this cut).

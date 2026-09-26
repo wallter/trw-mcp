@@ -99,10 +99,6 @@ class TestRunAutoMaintenance:
                 return_value={"available": False},
             ),
             patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
-            patch(
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 return_value={"runs_closed": [], "count": 0, "errors": []},
             ),
@@ -410,8 +406,9 @@ def test_every_maintenance_key_is_propagated_or_declared_internal() -> None:
     # three embedding-backfill keys, and PRD-CORE-298 FR01 `embeddings_migration`
     # with the in-process re-embed pass, the daemon cut-over the embedder
     # warm-up key, and 6.0.0 the embeddings advisory and coverage ratio, which
-    # session start now takes from the daemon-measured pipeline health (5 remain).
-    assert len(propagated) >= 5
+    # session start now takes from the daemon-measured pipeline health, and 7.0.0
+    # the WAL checkpoint, which the daemon owns (4 remain).
+    assert len(propagated) >= 4
 
 
 def test_unclassified_maintenance_key_fails_the_totality_check_by_name() -> None:
@@ -433,7 +430,7 @@ def test_dropped_maintenance_results_now_reach_the_payload() -> None:
     from trw_mcp.tools import _ceremony_step_table as table
 
     sweep = {
-        "wal_checkpoint": {"checkpointed": True, "mode": "PASSIVE"},
+        "pending_learns_replayed": {"pending": 1, "replayed": 1},
     }
     results: dict[str, object] = {}
     sctx = table.SessionStartContext(
@@ -447,7 +444,7 @@ def test_dropped_maintenance_results_now_reach_the_payload() -> None:
     with patch("trw_mcp.tools._ceremony_helpers.step_sanitize_and_maintain", return_value=sweep):
         table._ss_sanitize_maintain(sctx)
 
-    assert results["wal_checkpoint"] == sweep["wal_checkpoint"]
+    assert results["pending_learns_replayed"] == sweep["pending_learns_replayed"]
 
 
 # ---------------------------------------------------------------------------
@@ -507,9 +504,8 @@ def test_each_degradation_condition_emits_exactly_one_event(captured_structlog: 
     # ``unmeasured`` list in the returned payload is the aggregate view.
     with patch.object(ph, "probe_sync_push", side_effect=RuntimeError("probe boom")):
         aggregate = ph.step_pipeline_health(Path("/nonexistent"))
-    # DEF-08: bandit_state.json also does not exist under "/nonexistent", so
-    # it too reports unmeasured now (a fabricated healthy 0.0-day age is the
-    # separate defect that fix removed) — assert membership, not exact shape.
+    # Other probes may also report unmeasured under "/nonexistent", so assert
+    # membership, not exact shape.
     assert "sync_push" in aggregate["unmeasured"]
     assert sum(1 for e in captured_structlog if e.get("event") == "pipeline_probe_failed") == 1
     assert sum(1 for e in captured_structlog if e.get("event") == "pipeline_health_unmeasured") == 0

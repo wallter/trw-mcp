@@ -390,7 +390,6 @@ class TestWatchdogCancellation:
         for step in ("_step_auto_prune",):
             monkeypatch.setattr(dd, step, _sleeping_step)
         for step in (
-            "_step_consolidation",
             "_step_tier_sweep",
             "_do_index_sync",
             "_step_auto_progress",
@@ -426,7 +425,7 @@ class TestWatchdogCancellation:
         assert isinstance(watchdog_info, dict)
         assert watchdog_info["status"] == "cancelled"
         # A representative downstream step should have status=cancelled_batch_budget.
-        assert results.get("consolidation") == {"status": "cancelled_batch_budget"}
+        assert results.get("tier_sweep") == {"status": "cancelled_batch_budget"}
 
 
 # --- _step_auto_prune integration with the orchestrator (smoke) ---

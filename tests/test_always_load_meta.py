@@ -22,8 +22,12 @@ WHAT IS PINNED, AND WHY EACH ASSERTION IS NON-VACUOUS
 2. A control asserts some registered tool does NOT carry the key. Without it,
    marking the entire surface always-loaded — which destroys the ~96% deferral
    saving this module exists to preserve — would pass every other assertion.
-3. The floor is capped. The set is a cost, not a convenience list: each entry is
-   a definition every deferring client pays for in every session.
+3. The floor is DERIVED from the post-cut kernel spec (PRD-CORE-300-FR14), never
+   a second hand list, so ``trw_code`` joins it the moment it is registered.
+4. Flag-gated tools (``trw_assess``, ``trw_send``, ``trw_inbox``) carry the key
+   only when their flag is on; ``trw_dispatch`` never carries it.
+5. The generated Claude Code ``.mcp.json`` sets no per-server ``alwaysLoad``: that
+   lever exempts every registered tool, an exposed ``trw_dispatch`` included.
 """
 
 from __future__ import annotations
@@ -34,10 +38,6 @@ from typing import Any
 import pytest
 
 pytestmark = pytest.mark.unit
-
-# Read this file's module docstring in ``server/_always_load.py`` before raising
-# this. Five is the argued cap, not a round number.
-MAX_ALWAYS_LOADED_TOOLS = 5
 
 
 async def _wire_meta() -> dict[str, dict[str, Any]]:
@@ -51,117 +51,214 @@ async def _wire_meta() -> dict[str, dict[str, Any]]:
     return out
 
 
-async def test_ceremony_floor_is_always_loaded_on_the_wire() -> None:
-    """Every ALWAYS_LOAD_TOOLS entry ships the opt-out in its serialized ``_meta``."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ALWAYS_LOAD_TOOLS
+async def _restoring(names: frozenset[str]) -> dict[str, dict[str, Any]]:
+    """Snapshot ``Tool.meta`` for *names* (the registry is a process singleton)."""
+    from trw_mcp.server._app import mcp
+
+    saved: dict[str, dict[str, Any]] = {}
+    for name in names:
+        tool = await mcp.get_tool(name)
+        if tool is not None:
+            saved[name] = dict(tool.meta or {})
+    return saved
+
+
+async def _restore(saved: dict[str, dict[str, Any]]) -> None:
+    from trw_mcp.server._app import mcp
+
+    for name, meta in saved.items():
+        tool = await mcp.get_tool(name)
+        tool.meta = meta
+
+
+def _kernel() -> frozenset[str]:
+    from trw_mcp.models.surface_v2 import POST_CUT_KERNEL
+
+    return frozenset(POST_CUT_KERNEL)
+
+
+def test_the_floor_is_the_always_on_kernel_derived_not_listed() -> None:
+    """FR14: the floor IS the post-cut kernel spec, read from it, not restated."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_TOOLS
+
+    assert ALWAYS_LOAD_TOOLS == _kernel()
+
+
+def test_flag_gated_tools_are_derived_and_dispatch_is_never_among_them() -> None:
+    """FR14: assess/send/inbox follow their flags; trw_dispatch never carries the key."""
+    from trw_mcp.models.surface_v2 import POST_CUT_FLAGGED
+    from trw_mcp.server._always_load import (
+        ALWAYS_LOAD_TOOLS,
+        FLAG_GATED_ALWAYS_LOAD,
+        NEVER_ALWAYS_LOAD,
+    )
+
+    assert NEVER_ALWAYS_LOAD == frozenset({"trw_dispatch"})
+    assert FLAG_GATED_ALWAYS_LOAD == {
+        "trw_assess": "assess_enabled",
+        "trw_send": "comms_enabled",
+        "trw_inbox": "comms_enabled",
+    }
+    assert {**FLAG_GATED_ALWAYS_LOAD, **{t: POST_CUT_FLAGGED[t] for t in NEVER_ALWAYS_LOAD}} == POST_CUT_FLAGGED
+    assert not NEVER_ALWAYS_LOAD & ALWAYS_LOAD_TOOLS
+
+
+async def test_every_registered_kernel_tool_is_always_loaded_on_the_wire() -> None:
+    """Every registered always-on kernel tool ships the opt-out in its serialized ``_meta``."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY
 
     meta = await _wire_meta()
-    missing = sorted(name for name in ALWAYS_LOAD_TOOLS if meta.get(name, {}).get(ALWAYS_LOAD_META_KEY) is not True)
+    registered_kernel = _kernel() & set(meta)
+    assert registered_kernel, "no kernel tool registered, the check below would be vacuous"
+    missing = sorted(n for n in registered_kernel if meta[n].get(ALWAYS_LOAD_META_KEY) is not True)
     assert not missing, (
-        f"These tools are NOT marked always-loaded on the wire: {missing}. "
+        f"These kernel tools are NOT marked always-loaded on the wire: {missing}. "
         "Under Claude Code's default deferral an agent must spend a ToolSearch "
-        "round-trip before it can call them — for trw_session_start that is a "
-        "tax on every session. Check that _register_tools() still calls "
+        "round-trip before it can call them. Check that _register_tools() still calls "
         "_apply_always_load_meta() and that FastMCP still plumbs Tool.meta "
         "into the wire _meta object."
     )
 
 
-async def test_deferral_is_still_the_default_for_the_rest_of_the_surface() -> None:
-    """Control: marking everything always-loaded would defeat the point."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ALWAYS_LOAD_TOOLS
+async def test_nothing_outside_the_floor_is_marked_by_default() -> None:
+    """Control: marking the whole surface always-loaded would defeat deferral."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ALWAYS_LOAD_TOOLS, FLAG_GATED_ALWAYS_LOAD
 
     meta = await _wire_meta()
-    assert meta, "no tools registered — the rest of this file would be vacuous"
+    assert meta, "no tools registered, the rest of this file would be vacuous"
     over_marked = sorted(
-        name for name, m in meta.items() if m.get(ALWAYS_LOAD_META_KEY) is True and name not in ALWAYS_LOAD_TOOLS
+        name
+        for name, m in meta.items()
+        if m.get(ALWAYS_LOAD_META_KEY) is True and name not in ALWAYS_LOAD_TOOLS | set(FLAG_GATED_ALWAYS_LOAD)
     )
     assert not over_marked, (
-        f"Tools marked always-loaded but absent from ALWAYS_LOAD_TOOLS: {over_marked}. "
+        f"Tools marked always-loaded outside the kernel floor and its flag-gated tools: {over_marked}. "
         "Every always-loaded tool is one deferral no longer saves."
     )
-    deferred = [name for name, m in meta.items() if ALWAYS_LOAD_META_KEY not in m]
-    assert deferred, "EVERY registered tool is always-loaded — that discards the deferral saving entirely"
-
-
-async def test_always_load_floor_is_registered_and_capped() -> None:
-    """The floor names real tools, and stays small enough to be worth having."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_TOOLS
-
-    meta = await _wire_meta()
-    unregistered = sorted(ALWAYS_LOAD_TOOLS - set(meta))
-    assert not unregistered, f"ALWAYS_LOAD_TOOLS names tools that are not registered: {unregistered}"
-    assert len(ALWAYS_LOAD_TOOLS) <= MAX_ALWAYS_LOADED_TOOLS, (
-        f"{len(ALWAYS_LOAD_TOOLS)} always-loaded tools exceeds the cap of "
-        f"{MAX_ALWAYS_LOADED_TOOLS}. Raising the cap means every deferring "
-        "client pays another full definition in every session — argue it in "
-        "server/_always_load.py, not here."
-    )
+    assert "trw_dispatch" in meta, "trw_dispatch is not registered; the never-marked control is vacuous"
+    assert ALWAYS_LOAD_META_KEY not in meta["trw_dispatch"]
 
 
 async def test_apply_preserves_existing_meta_and_is_idempotent() -> None:
     """Re-applying must not clobber FastMCP's own ``_meta`` namespace or duplicate."""
-    from trw_mcp.server._always_load import (
-        ALWAYS_LOAD_META_KEY,
-        ALWAYS_LOAD_TOOLS,
-        apply_always_load_meta,
-    )
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, apply_always_load_meta
     from trw_mcp.server._app import mcp
 
+    meta_before = await _wire_meta()
     applied = await apply_always_load_meta(mcp)
-    assert set(applied) == ALWAYS_LOAD_TOOLS, f"applied {sorted(applied)} != floor {sorted(ALWAYS_LOAD_TOOLS)}"
+    expected = _kernel() & set(meta_before)
+    assert set(applied) == expected, f"applied {sorted(applied)} != registered kernel {sorted(expected)}"
 
     meta = await _wire_meta()
-    for name in ALWAYS_LOAD_TOOLS:
+    for name in expected:
         assert meta[name].get(ALWAYS_LOAD_META_KEY) is True
         # FastMCP writes its own namespace into the same object; a naive
         # `tool.meta = {KEY: True}` would silently drop it.
         assert "fastmcp" in meta[name], f"{name}: applying the opt-out destroyed FastMCP's own _meta namespace"
 
 
+class _StubTool:
+    def __init__(self) -> None:
+        self.meta: dict[str, Any] | None = None
+
+
+class _StubServer:
+    """A server that registers exactly *names*: stands in for a future registry."""
+
+    def __init__(self, names: set[str]) -> None:
+        self.tools = {name: _StubTool() for name in names}
+
+    async def get_tool(self, name: str) -> object | None:
+        return self.tools.get(name)
+
+
+async def test_trw_code_joins_the_floor_automatically_once_registered() -> None:
+    """FR14: trw_code carries the key only once registered, with no edit to this module."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, apply_always_load_meta
+
+    without = await apply_always_load_meta(_StubServer(set(_kernel() - {"trw_code"})))  # type: ignore[arg-type]
+    assert "trw_code" not in without
+    assert set(without) == _kernel() - {"trw_code"}
+
+    server = _StubServer(set(_kernel()) | {"trw_dispatch"})
+    applied = await apply_always_load_meta(server)  # type: ignore[arg-type]
+    assert "trw_code" in applied
+    assert server.tools["trw_code"].meta == {ALWAYS_LOAD_META_KEY: True}
+    assert server.tools["trw_dispatch"].meta is None
+
+
 async def test_unresolvable_tool_name_is_survivable() -> None:
     """A renamed or gated tool must degrade to a logged skip, never a boot failure."""
     from trw_mcp.server import _always_load
 
-    class _EmptyServer:
-        async def get_tool(self, name: str) -> object | None:
-            return None
-
-    applied = await _always_load.apply_always_load_meta(_EmptyServer())  # type: ignore[arg-type]
+    applied = await _always_load.apply_always_load_meta(_StubServer(set()))  # type: ignore[arg-type]
     assert applied == (), "an unresolvable floor must yield no applications, not an exception"
 
 
-@pytest.mark.parametrize("assess_enabled", [True, False], ids=["enabled", "disabled"])
-async def test_trw_assess_loads_upfront_only_when_the_project_enabled_it(assess_enabled: bool) -> None:
-    """An opted-in project gets the judge without a ToolSearch; every other install keeps it deferred."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ASSESS_TOOL, apply_always_load_meta
+_FLAG_CASES = [
+    ("trw_assess", "assess_enabled"),
+    ("trw_send", "comms_enabled"),
+    ("trw_inbox", "comms_enabled"),
+]
+
+
+@pytest.mark.parametrize("enabled", [True, False], ids=["on", "off"])
+@pytest.mark.parametrize(("tool_name", "flag"), _FLAG_CASES, ids=[t for t, _ in _FLAG_CASES])
+async def test_flag_gated_tool_loads_upfront_only_when_its_flag_is_on(tool_name: str, flag: str, enabled: bool) -> None:
+    """FR14: an opted-in project gets the tool without a ToolSearch; otherwise it stays deferred."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, apply_always_load_meta
     from trw_mcp.server._app import mcp
 
-    tool = await mcp.get_tool(ASSESS_TOOL)
-    original = dict(tool.meta or {})
+    saved = await _restoring(frozenset({tool_name, "trw_dispatch"}))
     try:
-        applied = await apply_always_load_meta(mcp, assess_enabled=assess_enabled)
-        marked = (await _wire_meta())[ASSESS_TOOL].get(ALWAYS_LOAD_META_KEY) is True
+        (await mcp.get_tool(tool_name)).meta = {k: v for k, v in saved[tool_name].items() if k != ALWAYS_LOAD_META_KEY}
+        applied = await apply_always_load_meta(mcp, flags={flag: enabled, "dispatch_tools_exposed": True})
+        wire = await _wire_meta()
     finally:
-        tool.meta = original  # the registry is a process singleton; leave it as the boot path set it
+        await _restore(saved)
 
-    assert (ASSESS_TOOL in applied, marked) == (assess_enabled, assess_enabled)
+    marked = wire[tool_name].get(ALWAYS_LOAD_META_KEY) is True
+    assert (tool_name in applied, marked) == (enabled, enabled)
+    assert "trw_dispatch" not in applied, "trw_dispatch must never carry the key, even when exposed"
+    assert ALWAYS_LOAD_META_KEY not in wire["trw_dispatch"]
 
 
-async def test_the_boot_hook_reads_assess_enabled_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wiring: the server's boot path passes the project's assess_enabled through, not a constant."""
+async def test_the_boot_hook_reads_every_gating_flag_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wiring: the boot path passes the project's flags through, not constants."""
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.server import _tools
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ASSESS_TOOL
-    from trw_mcp.server._app import mcp
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, FLAG_GATED_ALWAYS_LOAD
 
-    tool = await mcp.get_tool(ASSESS_TOOL)
-    original = dict(tool.meta or {})
-    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: TRWConfig(assess_enabled=True))
+    names = frozenset(FLAG_GATED_ALWAYS_LOAD)
+    saved = await _restoring(names)
     try:
-        await asyncio.to_thread(_tools._apply_always_load_meta)
-        marked = (await _wire_meta())[ASSESS_TOOL].get(ALWAYS_LOAD_META_KEY) is True
-    finally:
-        tool.meta = original
+        for flags_on in (False, True):
+            from trw_mcp.server._app import mcp
 
-    assert marked
+            for name in names:
+                (await mcp.get_tool(name)).meta = {k: v for k, v in saved[name].items() if k != ALWAYS_LOAD_META_KEY}
+            cfg = TRWConfig(assess_enabled=flags_on, comms_enabled=flags_on)
+            monkeypatch.setattr("trw_mcp.models.config.get_config", lambda cfg=cfg: cfg)
+            await asyncio.to_thread(_tools._apply_always_load_meta)
+            wire = await _wire_meta()
+            marked = {name for name in names if wire[name].get(ALWAYS_LOAD_META_KEY) is True}
+            assert marked == (set(names) if flags_on else set()), f"flags_on={flags_on}: marked {sorted(marked)}"
+    finally:
+        await _restore(saved)
+
+
+def test_generated_claude_code_mcp_config_sets_no_per_server_always_load(tmp_path: Any) -> None:
+    """FR14: the per-server lever exempts every registered tool, trw_dispatch included."""
+    import json
+    from pathlib import Path
+
+    import trw_mcp.bootstrap._mcp_json as mcp_json
+
+    source = Path(mcp_json.__file__).read_text(encoding="utf-8")
+    assert "alwaysLoad" not in source  # the PRD's grep_absent assertion
+
+    assert "alwaysLoad" not in mcp_json._generate_mcp_json()
+    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
+    mcp_json._merge_mcp_json(tmp_path, result)
+    written = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+    assert "alwaysLoad" not in written["mcpServers"]["trw"]

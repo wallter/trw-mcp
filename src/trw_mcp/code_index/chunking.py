@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
-from pathlib import Path, PurePosixPath
-from typing import Literal
+import itertools
+from pathlib import PurePosixPath
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from trw_mcp.code_index.discovery import normalize_repo_relative_path
-
 MAX_CHUNK_LINES: int = 80
+_DEFINITIONS = (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+#: Bump whenever the chunks a file yields change: a store built by an older chunker is still read, never reused.
+CHUNK_FORMAT = "2"  # 2: loose module statements become "module" chunks
 
-SymbolKind = Literal["module", "function", "class", "method", "fallback"]
+SymbolKind = Literal["module", "function", "class", "method", "constant", "fallback"]
 
 _LANGUAGE_BY_SUFFIX: dict[str, str] = {
     ".py": "python",
@@ -72,14 +75,10 @@ class CodeChunk(BaseModel):
         return value
 
 
-def chunk_source_file(repo_root: Path | str, file_path: Path | str, *, file_sha256: str) -> tuple[CodeChunk, ...]:
-    """Return deterministic chunks for ``file_path`` without returning full-file responses."""
+def chunk_source(relative_path: str, text: str, *, file_sha256: str) -> tuple[CodeChunk, ...]:
+    """Return deterministic chunks for one file's *text*; the caller read it (``read_indexed_file``)."""
 
-    root = Path(repo_root).resolve()
-    path = Path(file_path).resolve()
-    relative_path = normalize_repo_relative_path(root, path)
     language = language_for_path(relative_path)
-    text = path.read_text(encoding="utf-8")
     if language == "python":
         chunks = _python_chunks(relative_path, language, file_sha256, text)
         if chunks:
@@ -101,41 +100,79 @@ def _python_chunks(path: str, language: str, file_sha256: str, text: str) -> tup
     except SyntaxError:
         return ()
 
+    named = [(node, _top_level_symbol(node)) for node in tree.body]
+    if all(symbol is None for _, symbol in named):
+        return ()  # nothing named: the whole-file fallback indexes every line
+    window = functools.partial(_windowed_chunks, path=path, file_sha256=file_sha256, language=language, lines=lines)
     chunks: list[CodeChunk] = []
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            chunks.append(
-                _chunk_from_lines(
-                    path=path,
-                    file_sha256=file_sha256,
-                    language=language,
-                    symbol_name=node.name,
-                    symbol_kind="class",
-                    start_line=node.lineno,
-                    end_line=_bounded_end_line(node, len(lines)),
-                    lines=lines,
-                    signature=_line_at(lines, node.lineno),
-                    docstring_summary=_summary(ast.get_docstring(node, clean=True)),
-                    ast_available=True,
-                )
-            )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            chunks.append(
-                _chunk_from_lines(
-                    path=path,
-                    file_sha256=file_sha256,
-                    language=language,
-                    symbol_name=node.name,
-                    symbol_kind="function",
-                    start_line=node.lineno,
-                    end_line=_bounded_end_line(node, len(lines)),
-                    lines=lines,
-                    signature=_line_at(lines, node.lineno),
-                    docstring_summary=_summary(ast.get_docstring(node, clean=True)),
-                    ast_available=True,
-                )
+    # Statements that name no symbol -- imports, ``if __name__ == "__main__":`` blocks, calls -- are
+    # indexed as consecutive "module" runs; otherwise a file with any symbol lost them from search.
+    for loose, group in itertools.groupby(named, key=lambda pair: pair[1] is None):
+        run = list(group)
+        if loose:
+            span = (run[0][0].lineno, _node_end_line(run[-1][0]))
+            chunks.extend(window(symbol_name=None, symbol_kind="module", span=span, docstring_summary=""))
+            continue
+        for node, symbol in cast("list[tuple[ast.stmt, tuple[str, SymbolKind]]]", run):  # a named run
+            docstring = ast.get_docstring(node, clean=True) if isinstance(node, _DEFINITIONS) else None
+            span = (node.lineno, _node_end_line(node))
+            chunks.extend(
+                window(symbol_name=symbol[0], symbol_kind=symbol[1], span=span, docstring_summary=_summary(docstring))
             )
     return tuple(chunks)
+
+
+def _top_level_symbol(node: ast.stmt) -> tuple[str, SymbolKind] | None:
+    """Name and kind of a module-level class, function or assignment (PRD-CORE-300-FR15)."""
+
+    if isinstance(node, ast.ClassDef):
+        return node.name, "class"
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return node.name, "function"
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id, "constant"
+    if isinstance(node, ast.Assign):
+        names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        if names:
+            return names[0], "constant"
+    return None
+
+
+def _windowed_chunks(
+    *,
+    path: str,
+    file_sha256: str,
+    language: str,
+    symbol_name: str | None,
+    symbol_kind: SymbolKind,
+    span: tuple[int, int],
+    lines: list[str],
+    docstring_summary: str,
+) -> list[CodeChunk]:
+    """Split a definition into consecutive windows of at most ``MAX_CHUNK_LINES`` lines.
+
+    A long definition used to be cut at 80 lines, so its tail was never
+    searchable. Every window keeps the definition's name and signature.
+    """
+
+    start, end = span[0], min(span[1], len(lines))
+    signature = _line_at(lines, start)
+    return [
+        _chunk_from_lines(
+            path=path,
+            file_sha256=file_sha256,
+            language=language,
+            symbol_name=symbol_name,
+            symbol_kind=symbol_kind,
+            start_line=window_start,
+            end_line=min(window_start + MAX_CHUNK_LINES - 1, end),
+            lines=lines,
+            signature=signature,
+            docstring_summary=docstring_summary,
+            ast_available=True,
+        )
+        for window_start in range(start, end + 1, MAX_CHUNK_LINES)
+    ]
 
 
 def _fallback_chunks(path: str, language: str, file_sha256: str, text: str) -> tuple[CodeChunk, ...]:
@@ -165,11 +202,8 @@ def _fallback_chunks(path: str, language: str, file_sha256: str, text: str) -> t
     return tuple(chunks)
 
 
-def _bounded_end_line(node: ast.AST, file_line_count: int) -> int:
-    raw_end = getattr(node, "end_lineno", None)
-    actual_end = raw_end if isinstance(raw_end, int) else getattr(node, "lineno", 1)
-    max_end = getattr(node, "lineno", 1) + MAX_CHUNK_LINES - 1
-    return min(actual_end, max_end, file_line_count)
+def _node_end_line(node: ast.stmt) -> int:
+    return node.end_lineno if node.end_lineno is not None else node.lineno
 
 
 def _chunk_from_lines(
@@ -240,6 +274,6 @@ __all__ = [
     "MAX_CHUNK_LINES",
     "CodeChunk",
     "SymbolKind",
-    "chunk_source_file",
+    "chunk_source",
     "language_for_path",
 ]

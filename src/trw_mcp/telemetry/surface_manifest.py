@@ -2,8 +2,9 @@
 
 Stamps the resolved :class:`SurfaceSnapshot` to
 ``<run_dir>/run_surface_snapshot.yaml`` once per ``trw_session_start``
-(Wave 2 wiring). Round-trips stable YAML so the Wave 3 ``trw_surface_diff``
-tool can compare two snapshots without re-walking the filesystem.
+(Wave 2 wiring). Round-trips stable YAML so the Wave 3 ``trw-mcp telemetry
+surface-diff`` command (moved off the MCP surface by PRD-CORE-300 slice S3a)
+can compare two snapshots without re-walking the filesystem.
 
 Design invariants:
 

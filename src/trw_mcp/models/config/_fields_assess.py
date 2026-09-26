@@ -21,15 +21,14 @@ class _AssessFields:
     """Decision-support domain mixin — mixed into _TRWConfigFields via MI."""
 
     #: Expose the ``assess_support`` capability pack (``trw_assess``) on
-    #: the resolved MCP tool surface. OFF by default: the tool ships
-    #: registered either way, but with this false it is reachable only via
-    #: trw_request_tool_access, mirroring comms_enabled/dispatch_tools_exposed.
+    #: the resolved MCP tool surface. OFF by default; there is no per-call
+    #: grant path, so the flag is the only way to turn it on.
     #: Read by ``middleware/surface_authority`` -> ``resolve_tool_surface``.
     assess_enabled: bool = Field(
         default=False,
         description=(
             "Expose the assess_support capability pack (trw_assess) on the resolved tool "
-            "surface. Off by default; otherwise reachable only via trw_request_tool_access. This "
+            "surface. Off by default; there is no per-call grant. This "
             "same field, in a project's .trw/config.yaml, ALSO now counts as the project-scope "
             "layer of the backend's own enablement cascade (2026-09-23) -- process env beats "
             "project scope beats the operator's ~/.trw/config.yaml beats off -- so trw_assess "

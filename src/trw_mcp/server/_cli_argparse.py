@@ -13,9 +13,17 @@ import argparse
 
 from trw_mcp import __version__
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
+from trw_mcp.server._cli_argparse_code import add_code_subcommands
 from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import _ide_choice, add_project_subcommands
+from trw_mcp.tools._delivery_cli import add_delivery_subcommands
+from trw_mcp.tools._experiment_cli import add_experiment_subcommands
+from trw_mcp.tools._instructions_cli import add_instructions_subcommands
+from trw_mcp.tools._prd_cli import add_prd_create_diff_subcommands
+from trw_mcp.tools._profile_cli import add_profile_subcommands
+from trw_mcp.tools._run_cli import add_run_subcommands
+from trw_mcp.tools._telemetry_cli import add_telemetry_subcommands
 
 #: CLIENT-REMOVE (PRD-INFRA-192-FR09): the installable client set for
 #: ``uninstall --ide`` (the one spelling; ``--remove-ide`` was removed, not aliased). Deliberately excludes "all" (that is the plain
@@ -277,6 +285,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit run directory path (auto-detects if omitted)",
     )
+    # PRD-CORE-300-FR02 slice S0: the CLI-replacement contract requires every
+    # registry entry to support --json (one parseable document, nothing else
+    # on stdout).
+    local_deliver.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a single JSON document (run_id, run_path, gate_evaluated) instead of human text",
+    )
+
+    # code (PRD-CORE-300-FR06 slice S4): local code-index build + risk report,
+    # the CLI replacements for two former code-navigation MCP tools (see
+    # server/_cli_replacements.py::CLI_REPLACEMENTS for the exact names).
+    add_code_subcommands(subparsers)
 
     # gc (PRD-CORE-141 FR11) — stale-run sweep CLI
     gc_parser = subparsers.add_parser(
@@ -327,5 +348,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # / tendencies / version-status / tier) live in a sibling module to keep this
     # parser builder under the 350 effective-LOC module gate (PRD-DIST-243).
     add_operational_subcommands(subparsers)
+
+    # probe / meta-tune: the experimentation tools, moved to the CLI (PRD-CORE-300-FR04).
+    add_experiment_subcommands(subparsers)
+
+    # delivery recover: delivery recovery, moved to the CLI (PRD-CORE-300-FR03).
+    add_delivery_subcommands(subparsers)
+
+    # telemetry: read-only query/security/classify/channel-stats tools (PRD-CORE-300-FR04
+    # slice S3a) and pipeline-health (FR05 slice S3b), moved to the CLI.
+    add_telemetry_subcommands(subparsers)
+
+    # prd create / diff: moved to the CLI (PRD-CORE-300-FR07); registered next
+    # to prd-state / prd-epoch (add_operational_subcommands above).
+    add_prd_create_diff_subcommands(subparsers)
+
+    # profile explain: replaces the profile-explain MCP tool (PRD-CORE-300 S11b).
+    add_profile_subcommands(subparsers)
+    # run adopt / instructions sync: run maintenance, moved to the CLI (PRD-CORE-300 S6b).
+    add_run_subcommands(subparsers)
+    add_instructions_subcommands(subparsers)
 
     return parser

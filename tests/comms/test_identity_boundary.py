@@ -40,7 +40,7 @@ class Scene:
         arguments: dict[str, Any] = {"action": action}
         if cursor is not None:
             arguments["cursor"] = cursor
-        result = asyncio.run(self.server.call_tool("trw_peers", arguments))
+        result = asyncio.run(self.server.call_tool("trw_inbox", arguments))
         payload = result.structured_content
         assert isinstance(payload, dict), "public route did not return structured payload"
         return payload

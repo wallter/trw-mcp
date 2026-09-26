@@ -19,7 +19,7 @@ from trw_mcp.tools._sidecar_substrate import (
     resolve_repo_root,
 )
 
-_SIDECAR_FEATURE = "trw_before_edit_hint:distill_sidecar"
+_SIDECAR_FEATURE = "trw_code:distill_sidecar"
 
 
 def _write_entitlement(trw_dir: Path, tier: str) -> None:
@@ -215,7 +215,7 @@ class TestTierGate:
     def test_no_entitlement_returns_free_blocked(self, tmp_path: Path) -> None:
         from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
 
-        r = check_tier_for_feature(tmp_path, "trw_before_edit_hint:distill_sidecar")
+        r = check_tier_for_feature(tmp_path, "trw_code:distill_sidecar")
         assert r.allowed is False
         assert r.tier == "free"
 
@@ -224,7 +224,7 @@ class TestTierGate:
         from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
 
         monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
-        r = check_tier_for_feature(tmp_path, "trw_before_edit_hint:distill_sidecar")
+        r = check_tier_for_feature(tmp_path, "trw_code:distill_sidecar")
         assert r.allowed is True
         assert r.tier == "proprietary"
         assert r.reason == "distill_installed"

@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "6.1.0"
+version = "7.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -72,7 +72,7 @@ dependencies = [
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=3.1.0,<4.0.0",
+    "trw-memory>=4.0.0,<5.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -122,7 +122,6 @@ dev = [
     "mypy>=1.11.0,<2.0",  # pin to the 1.x line: mypy 2.x is a major release with behavior changes (set-literal `in` narrowing, stricter unused-ignore) that a raw `pip install .[dev]` would otherwise resolve (2.3.0), diverging from the verified uv.lock (1.20.2). Migrate to 2.x deliberately, not via CI drift.
     "types-pyyaml>=6.0.0",
     "hypothesis>=6.0.0",
-    "rank-bm25>=0.2.0",
     "ruff>=0.15.0,<0.16",  # CI installs .[dev]; a newer minor adds rules the repo has not adopted yet
     "pip-audit>=2.7.0",
     "vulture>=2.11",
@@ -191,9 +190,6 @@ DEP001 = ["tiktoken"]
 # intentional direct security-floor pin for FastMCP's transitive web surface.
 DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
 DEP003 = ["opentelemetry", "tiktoken"]
-# rank_bm25 is an optional quality booster; retrieval degrades gracefully when
-# the import is absent, so it stays out of the required runtime set.
-DEP004 = ["rank_bm25"]
 
 [tool.ruff]
 target-version = "py310"
@@ -361,8 +357,9 @@ markers = [
     "e2e: End-to-end workflow tests covering full phase sequences",
     "slow: Tests taking >5s individually (bootstrap, consolidation)",
     "smoke: Minimal sanity check tests",
-    "requires_published_lock: needs uv.lock refreshed against the published trw-memory; deselected by the paired pre-cut check (release_public.py check --with-local)",
+    "requires_published_lock: needs uv.lock refreshed against the published trw-memory; deselected by the paired pre-cut check (release_public.py check --with-local) and by the C1 release gate -- release_public.py all's post-lock-refresh check trw-mcp runs it unfiltered and fails the cut if it fails",
     "requires_local_timing: a host-resource budget (wall-clock, throughput, RSS); skipped on CI runners, measured by the non-gating timing job (PRD-QUAL-141)",
+    "live: spawns a real external CLI (agy, grok, codex, claude, ...); always skipped, a manual-probe placeholder only",
 ]
 timeout = 120
 

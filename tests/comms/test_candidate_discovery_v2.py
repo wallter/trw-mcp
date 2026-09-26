@@ -26,7 +26,7 @@ from trw_mcp.tools.swarm_comms import register_swarm_comms_tools
 cfg.get_config = lambda: TRWConfig(comms_enabled=True)
 server = FastMCP('candidate-process')
 register_swarm_comms_tools(server)
-result = asyncio.run(server.call_tool('trw_peers', {'action': 'announce'}))
+result = asyncio.run(server.call_tool('trw_inbox', {'action': 'announce'}))
 print(json.dumps(result.structured_content))
 """
 
@@ -121,10 +121,10 @@ def test_discover_caps_candidate_page_and_reports_truncation(
     assert isinstance(cursor, str)
     import asyncio
 
-    invalid = asyncio.run(bootstrap_scene.call_tool("trw_peers", {"action": "discover", "cursor": cursor + "x"}))
+    invalid = asyncio.run(bootstrap_scene.call_tool("trw_inbox", {"action": "discover", "cursor": cursor + "x"}))
     assert invalid.structured_content["reason"] == "invalid_cursor"
     while cursor is not None:
-        result = asyncio.run(bootstrap_scene.call_tool("trw_peers", {"action": "discover", "cursor": cursor}))
+        result = asyncio.run(bootstrap_scene.call_tool("trw_inbox", {"action": "discover", "cursor": cursor}))
         page = result.structured_content
         assert isinstance(page, dict) and page["status"] == "ok", page
         ids = {item["candidate_id"] for item in page["candidates"]}

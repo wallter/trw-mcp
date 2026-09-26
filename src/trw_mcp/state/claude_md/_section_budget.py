@@ -48,8 +48,8 @@ _POINTER_BODY = (
     "**Call `trw_session_start()` before your first edit in this directory** — it loads prior "
     "learnings and recovers any active run. The full TRW protocol (tool lifecycle, memory routing, "
     "deliver gate) is carried by the repository-root `CLAUDE.md`, which your client loads alongside "
-    "this file; call `trw_skill_discovery()` for the live tool surface and `trw_status()` for the "
-    "phase you are in."
+    'this file; call `trw_status(detail="surface")` for the live tool surface and `trw_status()` '
+    "for the phase you are in."
 )
 
 

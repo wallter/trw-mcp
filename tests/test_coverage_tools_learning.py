@@ -10,6 +10,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.learning import register_learning_tools
 
 
+@pytest.mark.usefixtures("fake_memory_store")
 class TestLearningExceptionPaths:
     """Coverage branches in tools/learning.py."""
 
@@ -89,14 +90,16 @@ class TestLearningExceptionPaths:
 
         assert result["status"] == "updated"
 
-    def test_trw_claude_md_sync_failure_propagates(self, tmp_path: Path) -> None:
-        tool = self._register_and_get("trw_claude_md_sync")
+    def test_instructions_sync_failure_propagates(self, tmp_path: Path) -> None:
+        """PRD-CORE-300 S6b folded the tool into ``trw-mcp instructions sync``."""
+        from tests._tools_learning_shared import instructions_sync_fn
 
-        with patch("trw_mcp.tools.learning.execute_claude_md_sync", side_effect=RuntimeError("sync exploded")):
+        with patch("trw_mcp.state.claude_md.execute_claude_md_sync", side_effect=RuntimeError("sync exploded")):
             with pytest.raises(RuntimeError, match="sync exploded"):
-                tool(scope="root")
+                instructions_sync_fn(scope="root")
 
 
+@pytest.mark.usefixtures("fake_memory_store")
 class TestLearningDistributionSkipsInactiveEntries:
     """CD: capture no longer traverses old entries for distribution."""
 

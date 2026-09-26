@@ -154,8 +154,8 @@ def claim_resumed_pin(pin_key: str) -> None:
 
     A managed restart relaunches the server in a new process under the same pin
     key. Until something re-stamps the entry it names the dead predecessor, TTL
-    expiry falls back to the heartbeat alone, and only ``trw_heartbeat`` or a
-    session start refreshes that -- so a live, working server lost its pin once
+    expiry falls back to the heartbeat alone, and only a heartbeat checkpoint
+    call or a session start refreshes that -- so a live, working server lost its pin once
     the TTL passed. A live creator (an older server kept beside a new one after
     ``/mcp``) is never re-stamped. Compare-and-swap on ``pid`` under the store
     lock; client lineage (``client_pid``/``client_start``) does not move, because

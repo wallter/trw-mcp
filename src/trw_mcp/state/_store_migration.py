@@ -54,6 +54,7 @@ __all__ = [
     "MigrationRetryError",
     "apply_migration",
     "preview_migration",
+    "reembed_checkout",
     "rollback_migration",
 ]
 
@@ -97,6 +98,13 @@ def _set_pin(trw_dir: Path, namespace: str | None) -> None:
         with io.StringIO() as buffer:
             yaml.dump(config, buffer)
             FileStateWriter().write_text(path, buffer.getvalue())
+
+
+def _write_manifest(path: Path, manifest: dict[str, object]) -> None:
+    """Publish *manifest* whole or not at all: a stop mid-write keeps the previous one readable."""
+    from trw_mcp.state.persistence import FileStateWriter
+
+    FileStateWriter().write_text(path, json.dumps(manifest, indent=2))
 
 
 def _sha256(path: Path) -> str:
@@ -289,22 +297,27 @@ def apply_migration(trw_dir: Path) -> Path:
                 "backup_sha256": _sha256(backup),
                 "rows": [_manifest_row(entry, namespace) for entry in rows],
             }
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            _write_manifest(manifest_path, manifest)
             client = _client(trw_dir, namespace, paths, mint=not pinned)
-            found = _call(client.import_checkout(namespace, str(work), [entry.id for entry in rows]))["held"]
-            expected = {"rows": len(rows), "vectors": vectors, "edges": edges}
+            reply = _call(client.import_checkout(namespace, str(work), [entry.id for entry in rows]))
+            found, not_carried = reply["held"], sorted(reply.get("vectors_not_carried", []))
+            expected = {"rows": len(rows), "vectors": vectors - len(not_carried), "edges": edges}
             # Every id must land. Vectors and edges may exceed the copy's: an id the
-            # destination already held keeps its own (the destination wins).
-            if found["rows"] != len(rows) or found["vectors"] < vectors or found["edges"] < edges:
+            # destination already held keeps its own (the destination wins). A vector from
+            # another embedding space cannot land; the daemon names it, and the re-embed after
+            # the pin rebuilds it.
+            if found["rows"] != len(rows) or found["vectors"] < expected["vectors"] or found["edges"] < edges:
                 raise MigrationRetryError(
                     f"the daemon holds {found} of the migrated ids, not {expected}; config.yaml and the project "
                     f"store are untouched -- rerun --apply, or {_DOCTOR}"
                 )
             manifest["user_store"] = {"path": str(paths.store.resolve()), "identity": _identity(paths.store)}
+            if not_carried:
+                manifest["vectors_not_carried"] = not_carried
             # The cutover is recorded before the pin, its last write: a stop in between leaves an unpinned
             # checkout that --apply resumes, never a pin whose manifest cannot roll back.
             manifest["cutover_at"] = _now().isoformat()
-            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            _write_manifest(manifest_path, manifest)
             if not pinned:
                 _set_pin(trw_dir, namespace)
             with contextlib.closing(sqlite3.connect(":memory:")) as empty:
@@ -312,6 +325,22 @@ def apply_migration(trw_dir: Path) -> Path:
         finally:
             shutil.rmtree(work.parent, ignore_errors=True)
     return manifest_path
+
+
+def reembed_checkout(trw_dir: Path) -> dict[str, object]:
+    """Re-encode the checkout's vectors in the daemon's active space (PRD-CORE-302 FR07).
+
+    ``memory migrate --apply`` calls it after the pin, so the migration stands
+    whatever this answers; ``memory reembed`` calls it on demand. An unattached
+    checkout or a daemon that cannot encode is an answer, not an exception.
+    """
+    from trw_mcp.state._store_selection import StoreUnavailableError, selected_store
+
+    try:
+        store, namespace = selected_store(trw_dir)
+    except StoreUnavailableError as exc:
+        return {"status": "unavailable", "error": str(exc)}
+    return store.reembed(namespace)
 
 
 def _manifest_row(entry: Any, namespace: str) -> dict[str, object]:
@@ -355,10 +384,17 @@ def rollback_migration(trw_dir: Path, manifest_path: Path) -> int:
         staging = trw_dir / "memory" / f"migration-rollback-{_now().strftime('%Y%m%dT%H%M%SZ')}"
         staging.mkdir()
         try:
-            restored = _copy_namespace(paths.store, namespace, staging / "memory.db")
+            restored, vectorless = _copy_namespace(paths.store, namespace, staging / "memory.db")
             _swap(trw_dir, staging / "memory.db")
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+        # Vectors from another embedding space never reached the daemon, and no re-embed rebuilt them
+        # since: the rows come back without them. Said, not silent (``memory reembed`` rebuilds them in
+        # the active space; the pre-migration backup keeps the originals), and recorded before the pin
+        # goes, so a stop in between leaves a rollback that reruns rather than one that lost the note.
+        if missing := sorted(set(manifest.get("vectors_not_carried", [])) & vectorless):
+            manifest["rollback_vectors_missing"] = missing
+            _write_manifest(manifest_path, manifest)
         _set_pin(trw_dir, None)
     return restored
 
@@ -392,8 +428,9 @@ def _census(store: Any, namespace: str) -> tuple[int, int, int]:
     )
 
 
-def _copy_namespace(user_store: Path, namespace: str, target: Path) -> int:
-    """Copy every row, vector and edge of *namespace* under ``default`` into a fresh store at *target*."""
+def _copy_namespace(user_store: Path, namespace: str, target: Path) -> tuple[int, set[str]]:
+    """Copy every row, vector and edge of *namespace* under ``default`` into a fresh store at *target*;
+    returns the rows copied and the ids that had no vector to copy."""
     from trw_memory.integrations._backend import create_backend_from_config
     from trw_memory.models.config import MemoryConfig
     from trw_memory.storage.interface import EntryCursor
@@ -411,14 +448,15 @@ def _copy_namespace(user_store: Path, namespace: str, target: Path) -> int:
                 ids.extend(entry.id for entry in page)
                 cursor = EntryCursor.from_entry(page[-1])
             records = source.get_vector_records(ids, namespace=namespace)
-            for entry_id, embedding in source.get_stored_embeddings(ids, namespace=namespace).items():
+            embeddings = source.get_stored_embeddings(ids, namespace=namespace)
+            for entry_id, embedding in embeddings.items():
                 record = records.get(entry_id)
                 proof = {"provenance": record.provenance} if record is not None and record.provenance else {}
                 copy.upsert_vector(entry_id, embedding, namespace=_SOURCE, **proof)
             copy.add_graph_edges(_SOURCE, source.graph_edges(namespace))
         if (held := _census(copy, _SOURCE)) != (want := _census(source, namespace)):
             raise MigrationRefusedError(f"the copy holds {held} (rows, vectors, edges), not {want}; nothing changed")
-        return held[0]
+        return held[0], set(ids) - set(embeddings)
     finally:
         copy.close()
         source.close()

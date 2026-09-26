@@ -61,7 +61,9 @@ CONFIG_MODEL_NAME = "TRWConfig"
 #: field copied the pattern, which is how the 115-field backlog accumulated
 #: in the first place. 276 after merging batch 17 into PRD-CORE-294 FR02, which
 #: retired the two session_start_recent_bypass_* fields.
-SELF_REFERENTIAL_WITH_READER_CEILING = 276
+#: 250 after PRD-CORE-300 S11a/S11b retired the phase-exposure, tool-access-grant and
+#: skill-lifecycle fields.
+SELF_REFERENTIAL_WITH_READER_CEILING = 250
 
 
 class ConsumerClaimReport(BaseModel):

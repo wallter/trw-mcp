@@ -6,8 +6,8 @@ itself under a tighter 350 RAW-line ceiling than the repo default
 has two independent inputs — the client profile and a config field — so it is
 worth naming rather than inlining as a conditional expression.
 
-**The rule.** A full-ceremony client gets a POINTER to the two tools that
-enumerate the live surface. A hand-copied table of 2,777 characters is 53 percent
+**The rule.** A full-ceremony client gets a POINTER to the tool that
+enumerates the live surface. A hand-copied table of 2,777 characters is 53 percent
 of the block and can drift from what the server actually exposes; a pointer
 cannot. A light-ceremony client keeps the VERBATIM table unconditionally,
 whatever ``instruction_catalogue_mode`` says, because for those clients the
@@ -25,7 +25,7 @@ from __future__ import annotations
 CEREMONY_POINTER = (
     "### Tool Lifecycle\n"
     "\n"
-    "Call `trw_skill_discovery()` for the live tool and skill surface, and `trw_status()` for "
+    'Call `trw_status(detail="surface")` for the live tool surface, and `trw_status()` for '
     "the phase you are in and what it expects next. Both read the running server, so neither "
     "can drift from what is actually exposed to you.\n"
     "\n"

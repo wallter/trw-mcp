@@ -84,18 +84,6 @@ class TestFR01ToolDescriptionCues:
         for field in ("failed_command", "residual_risk", "owner", "expiry_iso"):
             assert field in normalized
 
-    def test_fr01_trw_prd_create_docstring_has_when_to_call(self) -> None:
-        """trw_prd_create docstring includes temporal anchoring cue."""
-        from tests.conftest import get_tools_sync, make_test_server
-
-        server = make_test_server("requirements")
-        tools = get_tools_sync(server)
-        prd_tool = tools.get("trw_prd_create")
-        assert prd_tool is not None
-        desc = prd_tool.description or ""
-        # AC01: Temporal anchoring — before writing code
-        assert "before" in desc.lower()
-
     def test_fr01_tool_descriptions_under_200_words(self) -> None:
         """AC03: All updated tool descriptions stay under 200 words."""
         from tests.conftest import get_tools_sync, make_test_server
@@ -103,7 +91,7 @@ class TestFR01ToolDescriptionCues:
         server = make_test_server("learning", "orchestration", "ceremony", "requirements")
         tools = get_tools_sync(server)
 
-        for tool_name in ("trw_learn", "trw_checkpoint", "trw_deliver", "trw_prd_create"):
+        for tool_name in ("trw_learn", "trw_checkpoint", "trw_deliver", "trw_prd_validate"):
             tool = tools.get(tool_name)
             assert tool is not None, f"Tool {tool_name} not found"
             desc = tool.description or ""

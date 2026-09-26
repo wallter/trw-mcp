@@ -7,15 +7,11 @@ ratified flipping the in-code default to True (Option A+), with a non-blocking
 first-recall download warm-up and graceful keyword degradation while the
 warm-up is incomplete.
 
-These tests pin:
-  - the new default value on a fresh ``TRWConfig``
-  - that ``trw_session_start`` stays cold-load-free: probing the embedder with
-    ``get_initialized_embedder`` never loads a model, even with embeddings on.
+These tests pin the default value on a fresh ``TRWConfig``. trw-mcp loads no
+model at all since PRD-CORE-302 FR05; the daemon owns it.
 """
 
 from __future__ import annotations
-
-from unittest.mock import patch
 
 from trw_mcp.models.config import TRWConfig
 
@@ -32,29 +28,3 @@ class TestEmbeddingsEnabledDefault:
         """Operators can still opt OUT explicitly."""
         config = TRWConfig(embeddings_enabled=False)
         assert config.embeddings_enabled is False
-
-
-class TestSessionStartStaysColdLoadFree:
-    """The MCP hot path must never pay a synchronous cold model load."""
-
-    def test_get_initialized_embedder_returns_none_before_warmup(self) -> None:
-        """Before any cold init, get_initialized_embedder yields None.
-
-        This is the guard that keeps trw_session_start from blocking on a
-        sentence-transformers download/load even with embeddings_enabled=True:
-        get_initialized_embedder() returns None until an explicit embedding op
-        (learn-time dedup) has initialized the singleton.
-        """
-        from trw_mcp.state import _memory_connection
-
-        _memory_connection.reset_embedder()
-        try:
-            # Even with a config that would enable embeddings, the no-cold-init
-            # accessor must not construct/load anything.
-            with patch(
-                "trw_mcp.models.config.get_config",
-                return_value=TRWConfig(embeddings_enabled=True),
-            ):
-                assert _memory_connection.get_initialized_embedder() is None
-        finally:
-            _memory_connection.reset_embedder()

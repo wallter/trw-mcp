@@ -16,7 +16,6 @@ from tests._delivery_support import (
     project_metadata_snapshot,
     strong_capability,
 )
-from tests.conftest import extract_tool_fn
 from trw_mcp.tools._delivery_effect_registry import DELIVERY_EFFECT_REGISTRY
 from trw_mcp.tools._delivery_models import OperationState, StepState
 from trw_mcp.tools._delivery_status import build_status_projection
@@ -367,16 +366,14 @@ def test_status_only_shows_request_digest_prefix(tmp_path) -> None:
 
 def test_prd_core_215_fr05(tmp_path, monkeypatch) -> None:
     """FR05: every CORE-208 state/reason code projects losslessly into the common
-    envelope, exactly one delivery effect occurs on replay, the existing status
-    tool remains authoritative (envelope added alongside), and status routed to a
-    non-owner is refused typed.
+    envelope, exactly one delivery effect occurs on replay, and the delivery status
+    read remains authoritative (envelope added alongside).
     """
     from trw_mcp.models.tool_result import CeremonyExecutionClass, Outcome
     from trw_mcp.tools import delivery_ops
     from trw_mcp.tools._delivery_models import OperationState
     from trw_mcp.tools._operation_owner_adapter import (
         _STATE_OUTCOME,
-        route_status_query,
         status_envelope,
     )
 
@@ -411,29 +408,10 @@ def test_prd_core_215_fr05(tmp_path, monkeypatch) -> None:
     status = coord.project_status(did)
     assert status["steps_succeeded"] == 1  # the single effect ran exactly once
 
-    # The existing trw_delivery_status tool stays authoritative and now carries the
-    # typed envelope alongside its legacy shape (FR02 wiring / FR05 projection).
+    # The delivery status read (trw_status's delivery mode, PRD-CORE-300-FR03)
+    # stays authoritative and carries the typed envelope alongside its legacy shape.
     monkeypatch.setattr(delivery_ops, "_coordinator", lambda: coord)
-    status_fn = extract_tool_fn(_delivery_server(), "trw_delivery_status")
-    tool_out = status_fn(delivery_id=did)
+    tool_out = delivery_ops.delivery_status(did)
     assert tool_out["result"] == "ok"  # legacy authority preserved
     assert tool_out["envelope"]["outcome"] in {o.value for o in Outcome}
     assert tool_out["envelope"]["operation_id"] == did
-
-    # Status routed to a non-owner tool is refused (typed); the declared owner serves it.
-    refused = route_status_query("trw_status", delivery_id=did)
-    assert refused["result"] == "owner_routing_refused"
-    assert refused["reason_code"] == "not_delivery_owner"
-    routed = route_status_query("trw_delivery_status", delivery_id=did, coordinator_factory=lambda: coord)
-    assert routed["result"] == "ok"
-    assert "envelope" in routed
-
-
-def _delivery_server():  # type: ignore[no-untyped-def]
-    from fastmcp import FastMCP
-
-    from trw_mcp.tools.delivery_ops import register_delivery_tools
-
-    server = FastMCP("test")
-    register_delivery_tools(server)
-    return server

@@ -26,9 +26,9 @@ ASSESS_ADMISSIONS: dict[str, ConfigAdmission] = {
             "trw_mcp.tools.assess.trw_assess reads it directly for the disabled fast path"
         ),
         default_rationale=(
-            "false. The tool registers either way, but with this off it is reachable only via "
-            "trw_request_tool_access and its handler returns {status: disabled} with no network "
-            "call and no judge construction, mirroring comms_enabled/dispatch_tools_exposed. "
+            "false. The tool registers either way, but with this off its handler returns "
+            "{status: disabled} with no network call and no judge construction, and there is no "
+            "per-call grant path, mirroring comms_enabled/dispatch_tools_exposed. "
             "As of 2026-09-23 this same field, read from a PROJECT's .trw/config.yaml, is also the "
             "project-scope layer of the backend's own enablement cascade "
             "(trw_memory.decisions.judge_from_env / resolve_backend_enablement: process env beats "
@@ -42,13 +42,13 @@ ASSESS_ADMISSIONS: dict[str, ConfigAdmission] = {
             "cannot narrow one, and it is not consulted at all under tool_resolution_mode='all'. "
             "It is dominated by surface_role='reviewer', which REPLACES the surface before any mode "
             "or pack is read, so it can never widen a dispatched reviewer (trw_assess is excluded "
-            "from REVIEWER_TOOLS and STANDARD_TASK_PACKS by design). Turning it on changes the "
+            "from REVIEWER_TOOLS by design). Turning it on changes the "
             "advertised catalogue, so a client that listed tools at connect needs the list_changed "
             "push the same middleware emits."
         ),
         deprecation_plan=(
-            "Retire only if the assess_support pack graduates into a standard task pack or is "
-            "removed; until then this is the sole surface-admission switch for trw_assess."
+            "Retire only if trw_assess graduates into the always-on kernel or is removed; until "
+            "then this is the sole surface-admission switch for trw_assess."
         ),
         docs_pointer=_ARCH_DOC,
         test_pointer="trw-mcp/tests/test_assess_tool.py",

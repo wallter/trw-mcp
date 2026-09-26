@@ -90,9 +90,7 @@ _AGENT_TOOLS = [
     "grep_search",
     "list_directory",
     "mcp_trw_trw_recall",
-    "mcp_trw_trw_before_edit_hint",
-    "mcp_trw_trw_codebase_risk_report",
-    "mcp_trw_trw_code_search",
+    "mcp_trw_trw_code",
 ]
 
 # Mutation tools are prohibited (FR10). The antigravity-cli format registry
@@ -237,9 +235,7 @@ description: >
   This agent surfaces hotspot risk scores and edge cases before file edits.
 tools:
   - mcp__trw__trw_recall
-  - mcp__trw__trw_before_edit_hint
-  - mcp__trw__trw_codebase_risk_report
-  - mcp__trw__trw_code_search
+  - mcp__trw__trw_code
 model: {_MODEL_CAPABILITY_TIER}
 ---
 
@@ -256,7 +252,7 @@ regenerate: trw-mcp init-project --client antigravity-cli
 Stay in **read-only** exploration mode. Do NOT edit files, run tests,
 or call mutation tools. Surface risk data and evidence only.
 
-Before reading any file, call `{{tool:trw_before_edit_hint}}` — its
+Before reading any file, call `{{tool:trw_code}}` with `mode="hint"` — its
 `distill_hint` carries the importers, inferred tests and co-change neighbours
 you need for risky callers and downstream dependencies.
 
@@ -270,8 +266,10 @@ you need for risky callers and downstream dependencies.
 
 ### Workflow
 
-1. Call `{{tool:trw_before_edit_hint}}` with the target file path.
-2. Call `{{tool:trw_codebase_risk_report}}` for full risk analysis.
+1. Call `{{tool:trw_code}}` with `mode="hint"` and the target file path.
+2. For a full repo-wide risk report, tell the requester to run `trw-mcp code
+   risk` from a shell — this read-only agent has no shell tool to run it
+   itself.
 3. Read files with `read_file` / `read_many_files`, search with `grep_search`.
 4. Call `{{tool:trw_recall}}` to check if the topic has been investigated before.
 5. Report findings — do NOT propose edits unless explicitly asked.

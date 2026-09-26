@@ -160,6 +160,49 @@ def test_phase_guidance_still_suppressed_and_logged_as_cached(tmp_path: Path) ->
 
 
 # --------------------------------------------------------------------------
+# PRD-CORE-301 cut 1 — "none" phase cadence cap
+# --------------------------------------------------------------------------
+
+
+def test_none_phase_reminder_caps_at_five_prompt_cadence(tmp_path: Path) -> None:
+    """PRD-CORE-301 cut 1: "none" has no phase transition to suppress on, so
+    an agent that never calls trw_session_start would otherwise see this line
+    on EVERY prompt for the rest of the session. It must fire on the first
+    prompt, stay silent for the next four, then fire again on the sixth.
+    """
+    hook_path = _HOOK_PATHS[1]
+    outcomes = []
+    result = None
+    for _ in range(6):
+        result = _run_hook(
+            tmp_path,
+            hook_path,
+            prompt="entirely unrelated sourdough baking question",
+            phase="none",
+        )
+        outcomes.append("TRW: Call trw_session_start" in result.stdout)
+
+    assert outcomes == [True, False, False, False, False, True], outcomes
+    # The counter is scoped to this project's .trw/context, not to the test.
+    assert result is not None
+    assert (result.project_root / ".trw" / "context" / "none_phase_prompt_count").read_text(encoding="utf-8") == "6"
+
+
+def test_none_phase_reminder_resets_cadence_after_a_real_phase(tmp_path: Path) -> None:
+    """A session that returns to "none" (e.g. a retired pin) restarts the cadence
+    from prompt one rather than resuming mid-count from an earlier "none" streak.
+    """
+    hook_path = _HOOK_PATHS[1]
+    for _ in range(3):
+        _run_hook(tmp_path, hook_path, prompt="baking question", phase="none")
+    # A real phase in between clears the "none" streak counter.
+    _run_hook(tmp_path, hook_path, prompt="baking question", phase="implement")
+    result = _run_hook(tmp_path, hook_path, prompt="baking question", phase="none")
+
+    assert "TRW: Call trw_session_start" in result.stdout
+
+
+# --------------------------------------------------------------------------
 # FR05 — one diagnostic record per prompt
 # --------------------------------------------------------------------------
 

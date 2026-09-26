@@ -16,7 +16,7 @@ def test_irreversible_closure_survives_reactivation_and_process_restart(
 
     s = crash_scene
     receiver = driver_factory("pin-b")
-    assert receiver.call("trw_peers", action="enroll")["status"] == "ok"
+    assert receiver.call("trw_inbox", action="enroll")["status"] == "ok"
     sender = driver_factory("pin-a")
     args = {"recipient_member_id": "impl-2", "request_key": "retained", "body": "retained"}
     original = sender.call("trw_send", **args)
@@ -71,24 +71,24 @@ def test_real_process_takeover_fences_the_old_process_and_the_queue_survives(
     once, the displaced one is refused, and the message admitted before is delivered."""
     s = crash_scene
     old_receiver = driver_factory("pin-b")
-    assert old_receiver.call("trw_peers", action="enroll")["status"] == "ok"
+    assert old_receiver.call("trw_inbox", action="enroll")["status"] == "ok"
     old_incarnation = s.rows("SELECT incarnation FROM endpoints")[0][0]
     sender = driver_factory("pin-a")
     args = {"recipient_member_id": "impl-2", "request_key": "retained", "body": "old traffic"}
     original = sender.call("trw_send", **args)
     message_id = original["receipt"]["message_id"]
     replacement = driver_factory("pin-b")
-    assert replacement.call("trw_peers", action="enroll")["status"] == "ok", "no lease wait"
+    assert replacement.call("trw_inbox", action="enroll")["status"] == "ok", "no lease wait"
     assert s.rows("SELECT incarnation FROM endpoints")[0][0] != old_incarnation
     assert s.rows("SELECT generation FROM endpoints") == [(2,)]
     assert s.rows("SELECT state FROM admissions") == [("pending",)], "replacement expires nothing"
-    assert old_receiver.call("trw_peers", action="heartbeat")["reason"] == "endpoint_replaced_by_newer_incarnation"
+    assert old_receiver.call("trw_inbox", action="heartbeat")["reason"] == "endpoint_replaced_by_newer_incarnation"
     assert old_receiver.call("trw_inbox")["reason"] == "endpoint_replaced_by_newer_incarnation"
     assert (
         old_receiver.call("trw_inbox", action="ack", message_ids=[message_id])["reason"]
         == "endpoint_replaced_by_newer_incarnation"
     )
-    assert old_receiver.call("trw_peers", action="enroll")["reason"] == "endpoint_replaced_by_newer_incarnation"
+    assert old_receiver.call("trw_inbox", action="enroll")["reason"] == "endpoint_replaced_by_newer_incarnation"
     delivered = replacement.call("trw_inbox")["items"]
     assert delivered == [{**original["receipt"], "body": "old traffic"}], "first preparation: no redelivery flag"
     assert replacement.call("trw_inbox", action="ack", message_ids=[message_id])["status"] == "ok"

@@ -34,94 +34,6 @@ class TestColdArchiveWarmRemoveException:
         assert len(cold_files) == 1
 
 
-class TestColdPromoteEdgeCases:
-    """Test cold_promote error handling branches."""
-
-    def test_cold_promote_yaml_read_error_skips_file(self, tmp_path: Path) -> None:
-        """Lines 515-516: unreadable YAML in cold archive is skipped."""
-        trw_dir = tmp_path / ".trw"
-        cold_dir = trw_dir / "memory" / "cold" / "2026" / "01"
-        cold_dir.mkdir(parents=True, exist_ok=True)
-
-        writer = FileStateWriter()
-        writer.write_yaml(
-            cold_dir / "target-entry.yaml",
-            {"id": "target-entry", "summary": "target", "last_accessed_at": "2026-01-01"},
-        )
-        (cold_dir / "corrupt.yaml").write_text("{invalid yaml[", encoding="utf-8")
-
-        reader = MagicMock(spec=FileStateReader)
-        reader.read_yaml.side_effect = [
-            Exception("parse error"),
-            {"id": "target-entry", "summary": "target", "last_accessed_at": "2026-01-01"},
-        ]
-
-        mgr = TierManager(trw_dir, reader=reader, writer=FileStateWriter())
-        result = mgr.cold_promote("target-entry")
-        assert result is not None
-        assert isinstance(result, dict)
-        assert result["id"] == "target-entry"
-        assert "summary" in result
-
-    def test_cold_promote_id_mismatch_skips_file(self, tmp_path: Path) -> None:
-        """Line 518: entry whose ID does not match is skipped."""
-        trw_dir = tmp_path / ".trw"
-        cold_dir = trw_dir / "memory" / "cold" / "2026" / "01"
-        cold_dir.mkdir(parents=True, exist_ok=True)
-
-        writer = FileStateWriter()
-        writer.write_yaml(
-            cold_dir / "other.yaml",
-            {"id": "other-id", "summary": "not the one"},
-        )
-        writer.write_yaml(
-            cold_dir / "target.yaml",
-            {"id": "wanted-id", "summary": "the target", "last_accessed_at": "2026-01-01"},
-        )
-
-        mgr = TierManager(trw_dir)
-        result = mgr.cold_promote("wanted-id")
-        assert result is not None
-        assert isinstance(result, dict)
-        assert result["id"] == "wanted-id"
-        assert result.get("summary") == "the target"
-
-    def test_cold_promote_not_found_returns_none(self, tmp_path: Path) -> None:
-        """Line 538: no matching entry in cold archive returns None."""
-        trw_dir = tmp_path / ".trw"
-        cold_dir = trw_dir / "memory" / "cold" / "2026" / "01"
-        cold_dir.mkdir(parents=True, exist_ok=True)
-
-        writer = FileStateWriter()
-        writer.write_yaml(
-            cold_dir / "other.yaml",
-            {"id": "some-other-id", "summary": "not the one"},
-        )
-
-        mgr = TierManager(trw_dir)
-        result = mgr.cold_promote("nonexistent-id")
-        assert result is None
-
-    def test_cold_promote_write_failure_returns_none(self, tmp_path: Path) -> None:
-        """Lines 529-538: write failure during cold promote returns None."""
-        trw_dir = tmp_path / ".trw"
-        cold_dir = trw_dir / "memory" / "cold" / "2026" / "01"
-        cold_dir.mkdir(parents=True, exist_ok=True)
-
-        writer_mock = MagicMock(spec=FileStateWriter)
-        writer_mock.write_yaml.side_effect = OSError("disk full")
-
-        real_writer = FileStateWriter()
-        real_writer.write_yaml(
-            cold_dir / "target.yaml",
-            {"id": "target-id", "summary": "target", "last_accessed_at": "2026-01-01"},
-        )
-
-        mgr = TierManager(trw_dir, reader=FileStateReader(), writer=writer_mock)
-        result = mgr.cold_promote("target-id")
-        assert result is None
-
-
 class TestColdSearchReadError:
     """Test cold_search when a YAML file is unreadable."""
 
@@ -190,17 +102,6 @@ class TestColdSearchEmptyQuery:
 
         mgr = TierManager(trw_dir)
         assert mgr.cold_search([]) == []
-
-
-class TestColdPromoteNoColdDir:
-    """Test cold_promote when cold directory doesn't exist at all."""
-
-    def test_cold_promote_no_cold_dir_returns_none(self, tmp_path: Path) -> None:
-        """No cold directory means immediate None return."""
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir(parents=True, exist_ok=True)
-        mgr = TierManager(trw_dir)
-        assert mgr.cold_promote("any-id") is None
 
 
 class TestColdArchiveReadFailureRaises:

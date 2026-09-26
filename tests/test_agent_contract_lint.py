@@ -95,8 +95,12 @@ def test_unknown_mcp_tool_in_a_grant_is_reported(tmp_path: Path) -> None:
 
 
 def test_registry_scan_finds_the_tool_package() -> None:
-    """An empty registry would make the unknown-tool rule vacuous."""
-    assert len(_lint.registered_trw_tools()) > 20
+    """An empty registry would make the unknown-tool rule vacuous.
+
+    PRD-CORE-300 cut the registered surface to 15 tools; this only needs to
+    prove the scan is non-vacuous, not track the exact post-cut count.
+    """
+    assert len(_lint.registered_trw_tools()) > 10
 
 
 def test_granted_tools_applies_denials_before_the_allowlist() -> None:

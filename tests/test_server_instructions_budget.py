@@ -100,19 +100,19 @@ def _load_bare() -> str:
     return get_message("server_instructions")
 
 
-async def test_the_routing_map_covers_the_always_loaded_floor_and_beyond() -> None:
-    """The map earns its bytes only if it reaches tools that are NOT always-loaded.
+async def test_the_routing_map_reaches_beyond_the_always_loaded_floor() -> None:
+    """The map earns its bytes only if it reaches a tool that is NOT always-loaded.
 
-    Non-vacuity control. A map listing only the five always-loaded ceremony
-    tools would tell the agent nothing it did not already have expanded, while
-    still passing every other assertion here.
+    Non-vacuity control. Since PRD-CORE-300-FR14 the whole always-on kernel
+    loads up front on Claude Code, so a map naming only kernel tools would tell
+    the agent nothing its expanded schemas do not. No count is pinned: the
+    deferred surface shrinks slice by slice through the cut.
     """
     from trw_mcp.server._always_load import ALWAYS_LOAD_TOOLS
 
     referenced = set(re.findall(r"\btrw_[a-z0-9_]+\b", _load_bare()))
     deferred_referenced = referenced - ALWAYS_LOAD_TOOLS
-    assert len(deferred_referenced) >= 10, (
-        "The instructions routing map references only "
-        f"{sorted(deferred_referenced)} beyond the always-loaded floor. Its whole "
-        "purpose is to make DEFERRED tools discoverable."
+    assert deferred_referenced, (
+        "The instructions routing map references no tool beyond the always-loaded "
+        "floor. Its purpose is to make DEFERRED tools discoverable."
     )

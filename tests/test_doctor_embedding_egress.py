@@ -2,8 +2,8 @@
 
 An operator reasoning about egress had two surfaces for consent flags and none
 for embedding traffic, which is governed by the cache and the offline switches
-instead. This pins the ``embedding_egress`` row in both the human and JSON
-outputs, for each of the three postures.
+instead. Runtime loads are cache-only (PRD-CORE-302 W40), so the row reports
+the cache state and, when the model is missing, the fetch command.
 """
 
 from __future__ import annotations
@@ -28,12 +28,6 @@ def _row(results: list[CheckResult], name: str) -> CheckResult:
         if result.name == name:
             return result
     raise AssertionError(f"no {name!r} row in {[r.name for r in results]}")
-
-
-@pytest.fixture(autouse=True)
-def _no_offline_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("TRW_OFFLINE", "HF_HUB_OFFLINE", "MEMORY_LOCAL_ONLY"):
-        monkeypatch.delenv(var, raising=False)
 
 
 def _stub_probe(monkeypatch: pytest.MonkeyPatch, state_value: str) -> None:
@@ -62,7 +56,7 @@ def test_doctor_reports_cache_state_and_posture(
     assert "embedding_egress" in rows
     message = rows["embedding_egress"]["message"]
     assert "cache complete" in message
-    assert "posture cache-first" in message
+    assert "no huggingface.co request" in message
 
 
 def test_complete_cache_reports_cache_first_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,25 +64,19 @@ def test_complete_cache_reports_cache_first_pass(tmp_path: Path, monkeypatch: py
     row = _row(_doctor_core(tmp_path, _config(tmp_path)), "embedding_egress")
     assert row.status == "PASS"
     assert "cache complete" in row.message
-    assert "posture cache-first" in row.message
+    assert "fetch" not in row.message
 
 
-def test_absent_cache_without_switch_warns_network_capable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_probe(monkeypatch, "absent")
+@pytest.mark.parametrize("state", ["absent", "incomplete"])
+def test_uncached_model_warns_with_the_fetch_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    _stub_probe(monkeypatch, state)
     row = _row(_doctor_core(tmp_path, _config(tmp_path)), "embedding_egress")
     assert row.status == "WARN"
-    assert "cache absent" in row.message
-    assert "posture network-capable" in row.message
-
-
-def test_offline_switch_reports_offline_forced_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_probe(monkeypatch, "incomplete")
-    monkeypatch.setenv("TRW_OFFLINE", "1")
-    row = _row(_doctor_core(tmp_path, _config(tmp_path)), "embedding_egress")
-    assert row.status == "PASS"
-    assert "cache incomplete" in row.message
-    assert "posture offline-forced" in row.message
-    assert "TRW_OFFLINE" in row.message
+    assert f"cache {state}" in row.message
+    assert "runtime never downloads" in row.message
+    assert "fix: trw-mcp models fetch" in row.message
 
 
 def test_probe_failure_is_reported_not_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,7 +103,7 @@ def test_row_appears_in_human_output(
         _run_doctor(argparse.Namespace(target_dir=str(tmp_path), format="human", fix=False))
     human = capsys.readouterr().out
     assert "embedding_egress" in human
-    assert "posture cache-first" in human
+    assert "cache complete" in human
 
 
 def test_check_is_registered_in_the_catalogue() -> None:
@@ -123,32 +111,18 @@ def test_check_is_registered_in_the_catalogue() -> None:
     assert ("embedding_egress", "_check_embedding_egress") in doctor._CHECKS
 
 
-def test_embedder_wrapper_degrades_to_keyword_only_on_remote_code_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """NFR02: RemoteCodeNotPermittedError reaches trw-mcp as "no embedder", not a crash.
+def test_row_probes_the_daemons_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The model is the daemon's MEMORY_EMBEDDING_MODEL, the one it actually loads."""
+    from trw_memory.embeddings import _hf_cache
 
-    The wrapper's contract is that a loader failure degrades recall to
-    keyword-only rather than erroring; the new fail-closed security refusal must
-    travel that same path.
-    """
-    from trw_memory.exceptions import RemoteCodeNotPermittedError
+    probed: list[str] = []
 
-    from trw_mcp.state import _memory_connection
+    def _probe(model_name: str) -> object:
+        probed.append(model_name)
+        return _hf_cache.CacheProbe(_hf_cache.CacheState.ABSENT)
 
-    class _RefusingProvider:
-        def __init__(self, model_name: str, dim: int) -> None:
-            pass
-
-        def available(self) -> bool:
-            raise RemoteCodeNotPermittedError("embedding_trust_remote_code is False")
-
-    monkeypatch.setattr(
-        "trw_memory.embeddings.local.LocalEmbeddingProvider",
-        _RefusingProvider,
-    )
-    _memory_connection.reset_embedder()
-    try:
-        assert _memory_connection.get_embedder() is None
-    finally:
-        _memory_connection.reset_embedder()
+    monkeypatch.setenv("MEMORY_EMBEDDING_MODEL", "org/daemon-model")
+    monkeypatch.setattr(_hf_cache, "probe_model_cache", _probe)
+    row = doctor._check_embedding_egress(tmp_path, _config(tmp_path))
+    assert probed == ["org/daemon-model"]
+    assert "org/daemon-model" in row.message

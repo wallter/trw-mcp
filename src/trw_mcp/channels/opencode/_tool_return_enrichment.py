@@ -1,4 +1,4 @@
-"""opencode tool-return enrichment helpers for trw_before_edit_hint and friends.
+"""opencode tool-return enrichment helpers for trw_code and friends.
 
 # Managed by TRW — no trw_distill imports permitted.
 

@@ -1,7 +1,8 @@
 """Meta-tune stats reporting — ChannelStatsReport + human table.
 
 Computes per-channel correlation stats for reporting via CLI
-(channel-doctor stats) and MCP tool (trw_channel_stats).
+(channel-doctor stats and, since PRD-CORE-300 slice S3a, trw-mcp telemetry
+channel-stats — formerly a sibling MCP tool).
 
 The tier-current column and throttle_status field were removed 2026-09-22
 (RC-014) with the throttle engine (``meta_tune/_throttle.py``) that produced

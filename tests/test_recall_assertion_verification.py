@@ -4,20 +4,19 @@ These tests run against a real ``SQLiteBackend`` and the real
 ``verify_assertions`` implementation — the whole point of FR02 is that the
 verdict survives storage, which a mocked backend cannot prove.
 
-NOT PORTED (PRD-CORE-280 slice e1): every test above ``test_keep_retrieval_
-order_demotes_only_failed_evidence`` drives ``trw_memory.lifecycle.
-verification_pass.run_verification_pass``/``persist_verification_outcome``
-directly against a real ``SQLiteBackend`` (via the module-level ``backend``
-fixture and ``_wire``, which patches ``memory_adapter.get_backend``).
-``persist_verification_outcome`` takes a synchronous ``Store``
-object, not the async, remote ``DaemonClient`` ``daemon_checkout`` provides,
-so there is no daemon-route equivalent; ``fake_memory_store`` cannot stand in
-either, since it does not implement real anchor/assertion verification.
-These are left unchanged and unmigrated (still construct ``SQLiteBackend``
-directly) — see the batch report. ``test_stale_verdict_survives_a_fresh_
-connection`` (explicit close + reopen of the same sqlite file to prove
-durability across a process restart) was DELETED as SQLite-internals-shaped
-per the batch contract, not ported.
+Every test above ``test_keep_retrieval_order_demotes_only_failed_evidence``
+drives ``trw_memory.lifecycle.verification_pass.run_verification_pass``/
+``persist_verification_outcome`` directly against the ``backend`` fixture's
+real ``SQLiteBackend`` — the maintenance-owner sweep, not any trw-mcp state
+seam, so ``_refresh_evidence`` takes that backend and project root as plain
+arguments rather than resolving them through ``memory_adapter`` (PRD-CORE-280
+slice e removed that resolver; ``persist_verification_outcome`` takes a
+synchronous backend ``Store`` object, not the async, remote ``DaemonClient``
+``daemon_checkout`` provides, and ``fake_memory_store`` does not implement
+real anchor/assertion verification, so neither has a route to stand in here).
+``test_stale_verdict_survives_a_fresh_connection`` (explicit close + reopen
+of the same sqlite file to prove durability across a process restart) was
+DELETED as SQLite-internals-shaped per the batch contract, not ported.
 
 Everything from ``test_keep_retrieval_order_demotes_only_failed_evidence``
 onward touches no memory store at all (plain dicts) and needed no change.
@@ -25,7 +24,6 @@ onward touches no memory store at all (plain dicts) and needed no change.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -49,13 +47,6 @@ def project(tmp_path: Path) -> Path:
 @pytest.fixture()
 def backend(tmp_path: Path) -> SQLiteBackend:
     return SQLiteBackend(tmp_path / "store" / "memory.db")
-
-
-def _wire(monkeypatch: pytest.MonkeyPatch, backend: SQLiteBackend, project: Path) -> None:
-    """Point the verification pass at the real test backend + project root."""
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: project / ".trw")
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: backend)
 
 
 def _store(backend: SQLiteBackend, entry_id: str, assertions: list[Assertion]) -> None:
@@ -87,12 +78,16 @@ def _rank(entries: list[dict[str, object]], *_args: Any, **_kwargs: Any) -> list
     return entries
 
 
-def _refresh_evidence(entries: list[dict[str, object]], _tokens: list[str], config: TRWConfig, _ranker: Any) -> None:
+def _refresh_evidence(
+    entries: list[dict[str, object]],
+    _tokens: list[str],
+    config: TRWConfig,
+    _ranker: Any,
+    backend: SQLiteBackend,
+    project_root: Path,
+) -> None:
     """Explicit maintenance-owner exercise; recall no longer refreshes evidence."""
     from trw_memory.lifecycle.verification_pass import persist_verification_outcome, run_verification_pass
-
-    from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-    from trw_mcp.state.memory_adapter import get_backend
 
     for entry in entries:
         outcome = run_verification_pass(
@@ -102,71 +97,46 @@ def _refresh_evidence(entries: list[dict[str, object]], _tokens: list[str], conf
             assertion_failure_penalty=config.assertion_failure_penalty,
             assertion_stale_threshold_days=config.assertion_stale_threshold_days,
             anchor_validity_verified_floor=config.anchor_validity_verified_floor,
-            project_root=resolve_project_root(),
+            project_root=project_root,
         )
-        persist_verification_outcome(get_backend(resolve_trw_dir()), outcome)
+        persist_verification_outcome(backend, outcome)
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_verification_pass/persist_verification_outcome need a synchronous SQLiteBackend/Store (via get_backend); daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion verification",
-)
-def test_recent_failure_is_not_persisted_stale(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
+def test_recent_failure_is_not_persisted_stale(backend: SQLiteBackend, project: Path) -> None:
     """A failure younger than the threshold records no adverse verdict."""
     from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
-    _wire(monkeypatch, backend, project)
     config = TRWConfig()
     recent = datetime.now(timezone.utc) - timedelta(days=1)
 
     _store(backend, "L-recent", [_failing_assertion(recent)])
-    _verify_assertions([_learning("L-recent", [_failing_assertion(recent)])], ["q"], config, _rank)
+    _verify_assertions([_learning("L-recent", [_failing_assertion(recent)])], ["q"], config, _rank, backend, project)
 
     persisted = backend.get("L-recent", namespace="default")
     assert persisted is not None
     assert persisted.verification_status is None
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_verification_pass/persist_verification_outcome need a synchronous SQLiteBackend/Store (via get_backend); daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion verification",
-)
-def test_no_persist_drift_warning_on_the_happy_path(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
+def test_no_persist_drift_warning_on_the_happy_path(backend: SQLiteBackend, project: Path) -> None:
     """NFR02: the self-check stays silent when the write actually landed."""
     from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
-    _wire(monkeypatch, backend, project)
     config = TRWConfig()
     old_failure = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 5)
     _store(backend, "L-nodrift", [_failing_assertion(old_failure)])
 
     with structlog.testing.capture_logs() as logs:
-        _verify_assertions([_learning("L-nodrift", [_failing_assertion(old_failure)])], ["q"], config, _rank)
+        _verify_assertions(
+            [_learning("L-nodrift", [_failing_assertion(old_failure)])], ["q"], config, _rank, backend, project
+        )
 
     assert [entry for entry in logs if entry["event"] == "verification_status_persist_drift"] == []
 
 
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_verification_pass/persist_verification_outcome need a synchronous SQLiteBackend/Store (via get_backend); daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion verification",
-)
-def test_persist_drift_warning_fires_when_the_write_is_lost(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
+def test_persist_drift_warning_fires_when_the_write_is_lost(backend: SQLiteBackend, project: Path) -> None:
     """NFR02: a backend that silently drops the verdict is reported, not ignored."""
     from trw_memory.lifecycle.verification_pass import persist_verification_outcome, run_verification_pass
 
-    _wire(monkeypatch, backend, project)
     config = TRWConfig()
     old_failure = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 5)
     _store(backend, "L-drift", [_failing_assertion(old_failure)])
@@ -212,16 +182,9 @@ def test_persist_drift_warning_fires_when_the_write_is_lost(
 
 
 @pytest.mark.parametrize("result", [True, False, None])
-@pytest.mark.skipif(
-    os.environ.get("TRW_E1_ORACLE") == "1",
-    reason="BLOCKED-ON-E3: run_verification_pass/persist_verification_outcome need a synchronous SQLiteBackend/Store (via get_backend); daemon_checkout only exposes an async remote DaemonClient with no matching call, and fake_memory_store doesn't implement real anchor/assertion verification",
-)
-def test_recall_does_not_mutate_claims_or_q(
-    monkeypatch: pytest.MonkeyPatch, backend: SQLiteBackend, project: Path, result: bool | None
-) -> None:
+def test_recall_does_not_mutate_claims_or_q(backend: SQLiteBackend, result: bool | None) -> None:
     from trw_mcp.tools._recall_impl import _verify_assertions
 
-    _wire(monkeypatch, backend, project)
     assertion = _failing_assertion(None)
     assertion.last_result = result
     assertion.last_verified_at = datetime.now(timezone.utc)

@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, cast
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
-    from trw_memory.embeddings.provenance import EmbeddingSpace
     from trw_memory.lifecycle.correction import LearningPatch
+    from trw_memory.lifecycle.dedup import DedupResult
     from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings
     from trw_memory.models.memory import Anchor, Assertion, Confidence, MemoryEntry, MemoryType, ProtectionTier
     from trw_memory.sync import AdmissionOutcome
@@ -85,6 +85,38 @@ class NamespaceHealth(TypedDict):
     max_recall_count: int
 
 
+class VectorCoverage(TypedDict):
+    """``memory_status``'s ``coverage`` block (PRD-CORE-302 C3, FR07): where *namespace*'s vectors stand.
+
+    ``outside_active_space`` counts stored vectors dense recall refuses (other
+    space or no provenance), what ``memory_reembed`` re-encodes. It and the space
+    counts are ``None`` until the daemon has loaded its model.
+    """
+
+    active_space: int | None
+    other_space: int | None
+    unknown_provenance: int
+    outside_active_space: int | None
+    no_vector: int
+
+
+class EmbedderStatus(TypedDict, total=False):
+    """``memory_status``'s ``embedder`` block (PRD-CORE-302 C3): whether the store can encode.
+
+    ``reason`` names why not (``model_not_cached``, ``embedder_error``) and ``fix``
+    the command that repairs it; ``space`` is ``None`` until the model is loaded.
+    Reading it never loads the model.
+    """
+
+    available: bool
+    model: str
+    revision: str
+    space: dict[str, object] | None
+    loaded: bool
+    reason: str | None
+    fix: str
+
+
 @dataclass(frozen=True)
 class RecallSpec:
     """One recall over a store: a query, or the ids of an ``ids=`` fetch (PRD-CORE-280 FR01).
@@ -131,6 +163,18 @@ class MemoryStore(Protocol):
 
     def health(self, namespace: str) -> NamespaceHealth:
         """The store's own measure of *namespace*: what pipeline health and the inventory surfaces read."""
+        ...
+
+    def embedder_status(self, namespace: str) -> EmbedderStatus:
+        """Whether the store can encode text, read without loading a model (PRD-CORE-302 FR05)."""
+        ...
+
+    def coverage(self, namespace: str) -> VectorCoverage | None:
+        """Where *namespace*'s vectors stand against the active space, or ``None`` without a census."""
+        ...
+
+    def reembed(self, namespace: str) -> dict[str, object]:
+        """Re-encode *namespace*'s vectors outside the active space: counts, or why nothing was (FR07)."""
         ...
 
     def list_entries(
@@ -180,8 +224,11 @@ class MemoryStore(Protocol):
         """
         ...
 
-    def vectors(self, ids: list[str], space: EmbeddingSpace) -> dict[str, list[float]]:
-        """Stored vectors of the project rows *ids* that were encoded in *space*; others are left out."""
+    def vectors(self, ids: list[str]) -> VectorSet | None:
+        """The project rows *ids*' vectors in the store's active space, with its collapse threshold.
+
+        ``None`` when the store has no embedder (PRD-CORE-302 C2): recall then collapses exact content only.
+        """
         ...
 
     def verify(self, namespace: str, project_root: Path | None, settings: VerifySettings) -> MaintainVerifySummary:
@@ -217,41 +264,47 @@ class MemoryStore(Protocol):
         """
         ...
 
-    def maintain(self, namespace: str) -> dict[str, Any]:
-        """Run the store's maintenance for *namespace*: ``{"status", "passes": {"decay": {...}, ...}}``."""
+    def maintain(self, namespace: str, consolidation: dict[str, object]) -> dict[str, Any]:
+        """Run the store's maintenance for *namespace*: ``{"status", "passes": {"decay": {...}, ...}}``.
+
+        *consolidation* is this project's policy for the consolidation pass (``enabled``,
+        ``similarity_threshold``, ``min_cluster``, ``max_per_cycle``); the store's own
+        config serves every project, so the policy travels with the request.
+        """
         ...
 
-    def similar(self, namespace: str, vector: list[float], space: EmbeddingSpace | None, top_k: int) -> SimilarWindow:
-        """*namespace*'s KNN window for *vector*: its size and the comparable hits (encoded in *space*).
+    def similar(
+        self, namespace: str, text: str, skip_threshold: float, merge_threshold: float, top_k: int
+    ) -> DedupResult | None:
+        """The store's skip/merge/store verdict for a new learning's *text* against reference-scale thresholds.
 
-        ``hits`` is ``None`` when the window cannot support a dense verdict (a neighbour
-        from another space, or rows past it unproven); with no *space* it is empty.
+        ``None`` means no semantic verdict can be had -- no embedder, or empty text -- and the
+        caller stores after its exact-content check (PRD-CORE-302 C4). Any other refusal raises.
         """
         ...
 
 
-class SimilarHit(NamedTuple):
-    """One neighbour of a dedup KNN window."""
+class VectorSet(NamedTuple):
+    """Stored vectors in one embedding space, with that space's recall collapse threshold (one answer)."""
 
-    entry_id: str
-    similarity: float
-    active: bool
-
-
-class SimilarWindow(NamedTuple):
-    """A dedup KNN window: how many stored vectors it held, and the comparable hits (``None``: incomplete)."""
-
-    size: int
-    hits: list[SimilarHit] | None
+    vectors: dict[str, list[float]]
+    dup_threshold: float
 
 
-def similar_window(answer: Mapping[str, object]) -> SimilarWindow:
-    """A ``memory_similar`` answer as a window. A refusal raises."""
-    if answer.get("status") != "ok":
-        raise ValueError(f"memory_similar refused: {answer.get('error')}")
-    rows = cast("list[dict[str, object]]", answer["hits"])
-    hits = [SimilarHit(str(row["id"]), float(cast("float", row["similarity"])), bool(row["active"])) for row in rows]
-    return SimilarWindow(int(cast("int", answer["window"])), hits if answer["complete"] else None)
+def dedup_answer(answer: Mapping[str, object]) -> DedupResult | None:
+    """A ``memory_similar`` answer as a verdict; ``None`` when unavailable or the text is empty; else raise."""
+    from trw_memory.lifecycle.dedup import DedupResult
+
+    status = answer.get("status")
+    if status == "ok":
+        existing = answer["existing_id"]
+        action = cast("Literal['skip', 'merge', 'store']", answer["action"])
+        return DedupResult(
+            action, str(existing) if existing is not None else None, float(cast("float", answer["similarity"]))
+        )
+    if status == "unavailable" or (status == "invalid" and answer.get("code") == "empty_text"):
+        return None
+    raise ValueError(f"memory_similar refused: {answer.get('error') or answer}")
 
 
 #: False while a caller only measures (pipeline health, store counts): an unpinned

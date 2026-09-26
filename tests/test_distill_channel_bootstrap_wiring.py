@@ -185,7 +185,7 @@ def test_cursor_distill_channels_no_longer_write_mdc_stubs(tmp_path: Path) -> No
     """PRD-CORE-239: the T0 MDC stubs are gone, and that is the fix.
 
     `render_presence_beacon_mdc` hardcoded the rule description to "TRW distill
-    data available — quota exceeded, use trw_codebase_risk_report() for full
+    data available — quota exceeded, use the codebase-risk tool for full
     analysis". Cursor surfaces that string to the agent as the rule's summary,
     so every Cursor project was told data existed and had been truncated by a
     quota — when in fact nothing had ever been generated and no quota was hit.
@@ -365,9 +365,9 @@ def test_opencode_explorer_withheld_without_a_licence(tmp_path: Path) -> None:
     only by inspection is how the third quietly becomes the next defect.
 
     The custom commands are deliberately NOT gated and must survive: their
-    bodies call free MCP tools (`trw_before_edit_hint`, `trw_codebase_risk_report`,
-    `trw_recall`), so withholding them would break the free tier to protect a
-    paid one.
+    bodies call free MCP tools (`trw_code(mode="hint")`, `trw_recall`) and run
+    the free `trw-mcp code risk` CLI command, so withholding them would break
+    the free tier to protect a paid one.
     """
     from trw_mcp.bootstrap._opencode_distill_channels import (
         install_opencode_distill_channels,
@@ -403,7 +403,7 @@ def test_public_opencode_and_antigravity_artifacts_do_not_require_distill_cli(tm
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in generated if path.is_file())
     assert "trw-distill self-improve" not in text
-    assert "trw_codebase_risk_report" in text
+    assert "trw-mcp code risk" in text
 
 
 # ---------------------------------------------------------------------------

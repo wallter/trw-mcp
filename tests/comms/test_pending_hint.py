@@ -222,7 +222,7 @@ def test_an_empty_recorded_run_never_matches_even_from_the_member_run(
 def test_a_relaunched_server_session_start_rebinds_the_same_pin_to_the_new_client(
     scene: SendScene, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Lane B restart option (c), lead board 727: no trw_adopt_run on the child surface is needed.
+    """Lane B restart option (c), lead board 727: no run-adoption call on the child surface is needed.
 
     The prior server AND its client are dead. A new server under the SAME
     TRW_SESSION_ID resolves pins[P] (pins survive restarts until the dead-pid AND

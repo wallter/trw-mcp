@@ -73,7 +73,6 @@ class TestWalCheckpointTunables:
         for name in (
             "wal_checkpoint_threshold_mb",
             "wal_checkpoint_max_age_seconds",
-            "wal_checkpoint_idle_interval_seconds",
             "boot_deferred_work_budget_ms",
             "pin_ttl_hours",
         ):
@@ -90,17 +89,14 @@ class TestWalCheckpointTunables:
         cfg = TRWConfig()
         assert cfg.wal_checkpoint_threshold_mb == 10  # unchanged by NFR05
         assert cfg.wal_checkpoint_max_age_seconds == 3600  # the wal_liveness SLO period
-        assert cfg.wal_checkpoint_idle_interval_seconds == 60
         assert cfg.boot_deferred_work_budget_ms == 5000
 
     def test_wal_tunables_are_env_overridable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_WAL_CHECKPOINT_MAX_AGE_SECONDS", "900")
-        monkeypatch.setenv("TRW_WAL_CHECKPOINT_IDLE_INTERVAL_SECONDS", "15")
         monkeypatch.setenv("TRW_BOOT_DEFERRED_WORK_BUDGET_MS", "500")
         _reset_config()
         cfg = TRWConfig()
         assert cfg.wal_checkpoint_max_age_seconds == 900
-        assert cfg.wal_checkpoint_idle_interval_seconds == 15
         assert cfg.boot_deferred_work_budget_ms == 500
 
     def test_wal_tunables_reject_out_of_range_values(self) -> None:
@@ -109,7 +105,6 @@ class TestWalCheckpointTunables:
         for name, value in (
             ("wal_checkpoint_threshold_mb", 0),
             ("wal_checkpoint_max_age_seconds", 10),
-            ("wal_checkpoint_idle_interval_seconds", 1),
             ("boot_deferred_work_budget_ms", 1),
         ):
             with pytest.raises(pydantic.ValidationError):
@@ -122,7 +117,6 @@ class TestWalCheckpointTunables:
         admissions = build_field_admissions()
         for name in (
             "wal_checkpoint_max_age_seconds",
-            "wal_checkpoint_idle_interval_seconds",
             "boot_deferred_work_budget_ms",
         ):
             record = admissions[name]

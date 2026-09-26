@@ -22,9 +22,9 @@ from pathlib import Path
 from trw_mcp.dispatch._client_spec_types import ClientSpec
 from trw_mcp.dispatch._normalize import _strip_ansi
 
-__all__ = ["unadvertised_flags"]
+__all__ = ["HELP_TIMEOUT_S", "unadvertised_flags"]
 
-_HELP_TIMEOUT_S = 15
+HELP_TIMEOUT_S = 15
 _help_cache: dict[tuple[str, int, tuple[str, ...]], str] = {}
 
 
@@ -43,7 +43,7 @@ def _help_text(binary: str, subcommands: tuple[str, ...], env: Mapping[str, str]
                 capture_output=True,
                 text=True,
                 errors="replace",
-                timeout=_HELP_TIMEOUT_S,
+                timeout=HELP_TIMEOUT_S,
                 env=dict(env),
                 cwd=cwd,
                 check=False,

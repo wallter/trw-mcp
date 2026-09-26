@@ -6,18 +6,12 @@ compatibility; this package aggregates their public API.
 
 Usage::
 
-    from trw_mcp.state.memory import embed_text, dedup_verdict, MemoryStore
+    from trw_mcp.state.memory import dedup_verdict, store_learning
 """
 
 from __future__ import annotations
 
-# --- Deduplication & consolidation ---
-from trw_mcp.state.consolidation import (
-    consolidate_cycle as consolidate_cycle,
-)
-from trw_mcp.state.consolidation import (
-    find_clusters as find_clusters,
-)
+# --- Deduplication ---
 from trw_mcp.state.dedup import (
     DedupResult as DedupResult,
 )
@@ -28,40 +22,17 @@ from trw_mcp.state.dedup import (
     merge_into_survivor as merge_into_survivor,
 )
 
-# --- Embedding operations ---
-from trw_mcp.state.memory_adapter import (
-    check_embeddings_status as check_embeddings_status,
-)
-
 # --- CRUD operations ---
 from trw_mcp.state.memory_adapter import (
     count_entries as count_entries,
 )
-from trw_mcp.state.memory_adapter import (
-    embed_text as embed_text,
-)
-from trw_mcp.state.memory_adapter import (
-    embed_text_batch as embed_text_batch,
-)
-from trw_mcp.state.memory_adapter import (
-    embedding_available as embedding_available,
-)
 
-# --- Connection & backend management ---
-from trw_mcp.state.memory_adapter import (
-    ensure_migrated as ensure_migrated,
-)
+# --- Lookups ---
 from trw_mcp.state.memory_adapter import (
     find_entry_by_id as find_entry_by_id,
 )
 from trw_mcp.state.memory_adapter import (
     find_yaml_path_for_entry as find_yaml_path_for_entry,
-)
-from trw_mcp.state.memory_adapter import (
-    get_backend as get_backend,
-)
-from trw_mcp.state.memory_adapter import (
-    get_embedder as get_embedder,
 )
 from trw_mcp.state.memory_adapter import (
     list_active_learnings as list_active_learnings,
@@ -76,21 +47,10 @@ from trw_mcp.state.memory_adapter import (
     record_surfaced as record_surfaced,
 )
 from trw_mcp.state.memory_adapter import (
-    reset_backend as reset_backend,
-)
-from trw_mcp.state.memory_adapter import (
-    reset_embedder as reset_embedder,
-)
-from trw_mcp.state.memory_adapter import (
     store_learning as store_learning,
 )
 from trw_mcp.state.memory_adapter import (
     update_learning as update_learning,
-)
-
-# --- Vector store ---
-from trw_mcp.state.memory_store import (
-    MemoryStore as MemoryStore,
 )
 
 # --- Recall tracking & analytics ---
@@ -108,30 +68,18 @@ from trw_mcp.state.tiers import (
 
 __all__ = [
     "DedupResult",
-    "MemoryStore",
     "TierManager",
-    "check_embeddings_status",
     "compute_importance_score",
-    "consolidate_cycle",
     "count_entries",
     "dedup_verdict",
-    "embed_text",
-    "embed_text_batch",
-    "embedding_available",
-    "ensure_migrated",
-    "find_clusters",
     "find_entry_by_id",
     "find_yaml_path_for_entry",
-    "get_backend",
-    "get_embedder",
     "list_active_learnings",
     "list_entries_by_status",
     "merge_into_survivor",
     "recall_learnings",
     "record_recall",
     "record_surfaced",
-    "reset_backend",
-    "reset_embedder",
     "store_learning",
     "update_learning",
 ]

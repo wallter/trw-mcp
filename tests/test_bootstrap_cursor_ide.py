@@ -15,11 +15,16 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 
+#: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
+#: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+
+
 def _make_git_repo(tmp_path: Path) -> Path:
     """Initialize a minimal git repo so init_project succeeds."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     subprocess.run(
-        ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(tmp_path), *_NO_HOOKS, "commit", "--allow-empty", "-m", "init"],
         check=True,
         capture_output=True,
         env={
@@ -187,10 +192,9 @@ class TestUpdateCursorArtifactsCursorIde:
         the surface grew past the ceiling the sentence warns about and the test
         stayed green, because it asserted the number rather than the claim.
         """
-        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS, PACK_TOOLS
+        from trw_mcp.models.surface_packs import PACK_TOOLS
 
-        registered = {name for tools in PACK_TOOLS.values() for name in tools}
-        return len(registered - set(OPERATOR_ONLY_TOOLS))
+        return len({name for tools in PACK_TOOLS.values() for name in tools})
 
     def test_bootstrap_emits_tool_ceiling_advisory(self, tmp_path: Path) -> None:
         """cursor-ide bootstrap includes tool-ceiling advisory in result['info']."""

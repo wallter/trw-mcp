@@ -21,6 +21,7 @@ import time
 from typing import Any
 
 import httpx
+import pytest
 
 
 def _slow_then_concurrent_handler(delay: float) -> Any:
@@ -52,9 +53,15 @@ async def _fast_coroutine_with_external_start(start: float) -> float:
     return time.monotonic() - start
 
 
-async def test_pull_does_not_block_concurrent_coroutine() -> None:
+async def test_pull_does_not_block_concurrent_coroutine(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 1s slow pull must not stall a parallel fast coroutine for the full 1s."""
+    from trw_mcp.sync import pull
     from trw_mcp.sync.pull import SyncPuller
+
+    # The suite-wide autouse guard turns platform contact off, which makes the
+    # pull return before any request. The transport below is mocked, so this
+    # test opts back in to reach the slow handler.
+    monkeypatch.setattr(pull, "platform_contact_enabled", lambda: True)
 
     puller = SyncPuller(
         backend_url="http://test.invalid",

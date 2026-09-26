@@ -10,7 +10,6 @@ The function builds a ``RecallContext`` from:
   * git HEAD diff (best-effort)
   * config-resolved client profile + model family (models/config)
   * active-run PRD knowledge ids (state/_paths + state/persistence)
-  * local bandit-params intel cache (sync/cache)
 
 It has no dependency on anything under ``trw_mcp/tools/``.
 """
@@ -18,7 +17,7 @@ It has no dependency on anything under ``trw_mcp/tools/``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -28,7 +27,6 @@ from trw_mcp.state.persistence import FileStateReader
 logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
-    from trw_mcp.scoring._recall import _IntelCacheProtocol
     from trw_mcp.state._paths import TRWCallContext
 
 
@@ -44,22 +42,6 @@ def _detect_surface_phase(call_ctx: TRWCallContext | None = None) -> str:
         return phase.upper() if phase else ""
     except Exception:  # justified: fail-open, phase detection is optional
         return ""
-
-
-def _load_recall_intel_cache(trw_dir: Path) -> _IntelCacheProtocol | None:
-    """Return the local intelligence cache when it has bandit params."""
-    try:
-        from trw_mcp.models.config import get_config
-        from trw_mcp.sync.cache import IntelligenceCache
-
-        config = get_config()
-        cache = IntelligenceCache(
-            trw_dir,
-            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
-        )
-        return cast("_IntelCacheProtocol", cache) if cache.get_bandit_params() is not None else None
-    except Exception:  # justified: fail-open, intel cache wiring is optional
-        return None
 
 
 def build_recall_context(
@@ -130,9 +112,7 @@ def build_recall_context(
     except Exception:  # justified: fail-open, PRD knowledge ID loading is best-effort
         logger.debug("recall_context_prd_knowledge_probe_failed", exc_info=True)
 
-    intel_cache = _load_recall_intel_cache(trw_dir)
-
-    if not current_phase and not inferred_domains and not prd_knowledge_ids and intel_cache is None:
+    if not current_phase and not inferred_domains and not prd_knowledge_ids:
         return None
 
     logger.debug(
@@ -151,5 +131,4 @@ def build_recall_context(
         client_profile=client_profile,
         model_family=model_family,
         prd_knowledge_ids=prd_knowledge_ids,
-        intel_cache=intel_cache,
     )

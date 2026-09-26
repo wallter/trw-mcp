@@ -55,9 +55,9 @@ def test_explorer_agent_three_modes_in_body() -> None:
 
     content = get_explorer_agent_content()
     # Mode A — single-file
-    assert "trw_before_edit_hint" in content
-    # Mode B — hotspots
-    assert "trw_codebase_risk_report" in content
+    assert "trw_code" in content
+    # Mode B — hotspots (moved to the trw-mcp code risk CLI, PRD-CORE-300 S4)
+    assert "trw-mcp code risk" in content
     # Mode C — conventions (single trw_recall call — P2-09)
     assert "trw_recall" in content
 
