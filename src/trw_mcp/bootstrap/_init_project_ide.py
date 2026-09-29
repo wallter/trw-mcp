@@ -4,8 +4,7 @@ Belongs to the ``_init_project.py`` facade. Re-exported there for back-compat
 with `_client_integrations.py` which imports the per-IDE installers via
 the parent.
 
-Per-IDE artifact installers + the shared `_extend_result` helper +
-`_load_model_family` opencode model detection + `_CopilotInstaller`
+Per-IDE artifact installers + the shared `_extend_result` helper + `_CopilotInstaller`
 Protocol + `_run_copilot_installer` runner.
 """
 
@@ -44,22 +43,12 @@ def _extend_result(
         result["created"].extend(update.get("updated", []))
     result["skipped"].extend(update.get("preserved", []))
     result["errors"].extend(update.get("errors", []))
-
-
-def _load_model_family(opencode_path: Path) -> str:
-    """Best-effort model-family detection for OpenCode instructions."""
-    from ._opencode import detect_model_family
-
-    if not opencode_path.exists():
-        return "generic"
-
-    import json
-
-    try:
-        opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return "generic"
-    return detect_model_family(opencode_data)
+    # A sub-installer's warnings (e.g. the global antigravity config it refused to replace) must reach the caller.
+    # A sub-installer's removals (e.g. a withdrawn CC-03 hook moved to .trw/trash) are reported too.
+    for key in ("warnings", "removed", "trashed"):
+        items = update.get(key)
+        if isinstance(items, list):
+            result.setdefault(key, []).extend(items)
 
 
 def _install_opencode_artifacts(
@@ -81,19 +70,13 @@ def _install_opencode_artifacts(
     )
 
     try:
-        instructions_result = generate_opencode_instructions(
-            target_dir,
-            _load_model_family(target_dir / "opencode.json"),
-            force=force,
-        )
+        instructions_result = generate_opencode_instructions(target_dir, force=force)
         _extend_result(result, instructions_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result.setdefault("warnings", []).append(f".opencode/INSTRUCTIONS.md generation skipped: {exc}")
 
     try:
-        from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
-
-        agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force, client_id="opencode")
+        agents_result = generate_agents_md(target_dir, force=force, client_id="opencode")
         _extend_result(result, agents_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
@@ -222,64 +205,16 @@ def _install_cursor_cli_artifacts(
     except Exception as exc:  # justified: fail-open, cli.json update is best-effort
         result.setdefault("warnings", []).append(f".cursor/cli.json generation skipped: {exc}")
 
-    # The documented rules mechanism. Cursor's CLI docs: "The CLI agent supports
-    # the same rules system as the editor. You can create rules in the
-    # .cursor/rules directory", and "The CLI also reads AGENTS.md and CLAUDE.md
-    # at the project root". TRW generated that rule file for cursor-ide only, so
-    # cursor-cli fell back to AGENTS.md — and the profile then described AGENTS.md
-    # as its "ONLY instruction carrier", which was TRW's own omission written up
-    # as a vendor limitation.
-    #
-    # Both surfaces read the SAME file, so on a dual-surface install only one
-    # body can exist and it must be the IDE's: that body is the shared protocol
-    # PLUS the cursor-ide appendix, a strict superset of what the CLI section
-    # carries, and the CLI reads the same `.cursor/rules` directory. Writing the
-    # CLI body second is how a Cursor IDE user ended up with 50 lines of an
-    # `alwaysApply: true` carrier instead of 158. A second filename was the
-    # alternative and was rejected: it would duplicate always-applied content for
-    # every dual-surface user, and the update path (`_ide_targets`) has only the
-    # cursor-ide writer, so the IDE body is already the steady state after any
-    # `update-project` — matching it here makes install and update agree instead
-    # of alternating.
-    if "cursor-ide" in (ide_targets or []):
-        result.setdefault("info", []).append(
-            ".cursor/rules/trw-ceremony.mdc: cursor-cli shares the cursor-ide rule body (superset)"
-        )
-    else:
-        try:
-            from ._cursor import generate_cursor_rules_mdc
-            from ._cursor_cli import _cursor_cli_trw_section
-
-            rules_result = generate_cursor_rules_mdc(
-                target_dir,
-                _cursor_cli_trw_section(),
-                client_id="cursor-cli",
-                force=force,
-            )
-            _extend_result(result, rules_result, include_updated=True)
-        except Exception as exc:  # justified: fail-open, rule generation is best-effort
-            result.setdefault("warnings", []).append(f".cursor/rules (cursor-cli) generation skipped: {exc}")
-
+    # PRD-CORE-301-FR14: cursor-cli auto-loads both .cursor/rules and AGENTS.md, so it
+    # writes the protocol to AGENTS.md only (below). The rule file is cursor-ide's; an
+    # older cursor-cli copy is reported by update and doctor, never deleted
+    # (_retired_artifacts, the PRD-INFRA-200 FR05 precedent).
     # FR04: AGENTS.md with TRW sentinel block
     try:
-        # PRD-CORE-240-FR06: AGENTS.md stays until `alwaysApply` is CONFIRMED for
-        # the CLI. Cursor documents "the same rules system as the editor", which
-        # implies the metadata carries over, but its CLI page does not say so
-        # outright — and "implies" is exactly the reasoning that shipped a copilot
-        # include no IDE could resolve. Until then the rule file is additive and
-        # AGENTS.md keeps the guarantee.
-        #
-        # It renders the LIGHT body: its
-        # profile declares ceremony_mode="light", and the sync path already picks
-        # render_minimal_protocol() on that basis (state/claude_md/_agents_md).
-        # This install path was passing the FULL section regardless, so a light
-        # client was carrying the heavy body — 105 lines where its own profile
-        # asks for the compact one. FRAMEWORK.md's floor still holds: the
-        # minimal body states the deliver gate and the rigid tool set verbatim.
-        from ._cursor_cli import _cursor_cli_trw_section
-
-        trw_section = _cursor_cli_trw_section()
-        agents_result = generate_cursor_cli_agents_md(target_dir, trw_section, force=force)
+        # AGENTS.md is cursor-cli's one carrier (PRD-CORE-301-FR14): it links the shared
+        # .trw/INSTRUCTIONS.md (PRD-CORE-341), whose body comes from the one renderer
+        # every writer uses, so this installer and `instructions sync` never rewrite each other.
+        agents_result = generate_cursor_cli_agents_md(target_dir, force=force)
         _extend_result(result, agents_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) generation skipped: {exc}")
@@ -294,8 +229,6 @@ def _install_cursor_cli_artifacts(
 
 def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
     """Install Codex-specific bootstrap artifacts."""
-    from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
     from ._codex import (
         codex_hooks_enabled,
         codex_hooks_review_warning,
@@ -303,7 +236,7 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
         generate_codex_hooks,
         install_codex_skills,
     )
-    from ._opencode import generate_agents_md, generate_codex_instructions
+    from ._opencode import generate_codex_instructions
 
     _extend_result(result, generate_codex_config(target_dir, force=force), include_updated=True)
 
@@ -320,12 +253,6 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
         _extend_result(result, instructions_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, INSTRUCTIONS.md update is best-effort
         result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
-
-    try:
-        agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force, client_id="codex")
-        _extend_result(result, agents_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
-        result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")
 
     # Distill channel bootstrap (FR41-FR43)
     try:

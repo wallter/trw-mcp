@@ -24,8 +24,6 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 
 logger = structlog.get_logger(__name__)
 
-LANE_SCHEMA = "prd-validation-lane/v1"
-
 
 @dataclass(slots=True)
 class ValidationLaneResult:

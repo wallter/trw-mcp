@@ -19,20 +19,8 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.tools.checkpoint import (
-    _maybe_auto_checkpoint,
-    _reset_tool_call_counter,
     execute_pre_compact_checkpoint,
 )
-
-# --- Fixtures ---
-
-
-@pytest.fixture(autouse=True)
-def _clean_counter() -> Any:
-    """Reset the tool call counter before and after each test."""
-    _reset_tool_call_counter()
-    yield
-    _reset_tool_call_counter()
 
 
 @pytest.fixture(autouse=True)
@@ -62,157 +50,13 @@ def run_dir(tmp_path: Path) -> Path:
 class TestAutoCheckpointConfigDefaults:
     """Verify PRD-CORE-053 config fields exist with correct defaults."""
 
-    def test_auto_checkpoint_enabled_default(self) -> None:
-        cfg = TRWConfig()
-        assert cfg.auto_checkpoint_enabled is True
-
-    def test_auto_checkpoint_tool_interval_default(self) -> None:
-        cfg = TRWConfig()
-        assert cfg.auto_checkpoint_tool_interval == 25
-
     def test_auto_checkpoint_pre_compact_default(self) -> None:
         cfg = TRWConfig()
         assert cfg.auto_checkpoint_pre_compact is True
 
     def test_config_fields_overridable(self) -> None:
-        cfg = TRWConfig(
-            auto_checkpoint_enabled=False,
-            auto_checkpoint_tool_interval=10,
-            auto_checkpoint_pre_compact=False,
-        )
-        assert cfg.auto_checkpoint_enabled is False
-        assert cfg.auto_checkpoint_tool_interval == 10
+        cfg = TRWConfig(auto_checkpoint_pre_compact=False)
         assert cfg.auto_checkpoint_pre_compact is False
-
-
-# --- _maybe_auto_checkpoint ---
-
-
-class TestMaybeAutoCheckpoint:
-    """Tool call counter and interval-based auto-checkpoint triggering."""
-
-    def test_triggers_at_interval(self, run_dir: Path) -> None:
-        """Counter reaches configured interval -> checkpoint is created."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=5)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            # Calls 1-4 should return None
-            for _ in range(4):
-                result = _maybe_auto_checkpoint()
-                assert result is None
-
-            # Call 5 should trigger
-            result = _maybe_auto_checkpoint()
-
-        assert result is not None
-        assert result["auto_checkpoint"] is True
-        assert result["tool_calls"] == 5
-
-        # Verify checkpoint was written
-        cp_path = run_dir / "meta" / "checkpoints.jsonl"
-        assert cp_path.exists()
-        data = json.loads(cp_path.read_text(encoding="utf-8").strip())
-        assert "auto-checkpoint after 5 tool calls" in data["message"]
-
-    def test_skips_between_intervals(self, run_dir: Path) -> None:
-        """Counter not at interval -> returns None, no checkpoint."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=10)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            for _ in range(9):
-                result = _maybe_auto_checkpoint()
-                assert result is None
-
-        # No checkpoint should have been written
-        cp_path = run_dir / "meta" / "checkpoints.jsonl"
-        assert not cp_path.exists()
-
-    def test_disabled_via_config(self, run_dir: Path) -> None:
-        """Config disabled -> never triggers regardless of count."""
-        cfg = TRWConfig(auto_checkpoint_enabled=False, auto_checkpoint_tool_interval=1)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            for _ in range(5):
-                result = _maybe_auto_checkpoint()
-                assert result is None
-
-    def test_no_active_run(self) -> None:
-        """No active run -> returns None even at interval."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=1)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=None):
-            result = _maybe_auto_checkpoint()
-        assert result is None
-
-    def test_exception_in_checkpoint_is_swallowed(self) -> None:
-        """Exceptions during checkpoint are caught (best-effort)."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=1)
-        _reset_config(cfg)
-
-        with (
-            patch("trw_mcp.tools.checkpoint.find_active_run", side_effect=OSError("boom")),
-        ):
-            result = _maybe_auto_checkpoint()
-        assert result is None
-
-    def test_triggers_multiple_times(self, run_dir: Path) -> None:
-        """Counter triggers at every multiple of the interval."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=3)
-        _reset_config(cfg)
-
-        triggered: list[dict[str, object]] = []
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            for _ in range(9):
-                result = _maybe_auto_checkpoint()
-                if result is not None:
-                    triggered.append(result)
-
-        assert len(triggered) == 3
-        assert triggered[0]["tool_calls"] == 3
-        assert triggered[1]["tool_calls"] == 6
-        assert triggered[2]["tool_calls"] == 9
-
-    def test_zero_interval_never_triggers(self) -> None:
-        """Zero interval value -> never triggers (guard against division by zero)."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=0)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=None):
-            for _ in range(5):
-                result = _maybe_auto_checkpoint()
-                assert result is None
-
-
-# --- _reset_tool_call_counter ---
-
-
-class TestResetToolCallCounter:
-    """Counter reset behavior."""
-
-    def test_reset_clears_counter(self, run_dir: Path) -> None:
-        """After reset, counter starts from zero again."""
-        cfg = TRWConfig(auto_checkpoint_enabled=True, auto_checkpoint_tool_interval=3)
-        _reset_config(cfg)
-
-        with patch("trw_mcp.tools.checkpoint.find_active_run", return_value=run_dir):
-            # Count to 2
-            _maybe_auto_checkpoint()
-            _maybe_auto_checkpoint()
-
-            # Reset
-            _reset_tool_call_counter()
-
-            # Count to 3 again — should trigger at the new 3rd call
-            _maybe_auto_checkpoint()
-            _maybe_auto_checkpoint()
-            result = _maybe_auto_checkpoint()
-
-        assert result is not None
-        assert result["tool_calls"] == 3
 
 
 # --- execute_pre_compact_checkpoint (trw_checkpoint(pre_compact=True) impl) ---

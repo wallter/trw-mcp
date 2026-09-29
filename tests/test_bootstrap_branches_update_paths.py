@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +12,8 @@ from trw_mcp.bootstrap import update_project
 from trw_mcp.bootstrap._update_project import _run_auto_maintenance
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 
 @pytest.mark.unit
@@ -33,12 +34,12 @@ class TestDryRunReportsTheScratchDiff:
         assert f".claude/hooks/{hook}" in result["created"]
         assert ".claude/agents/trw-implementer.md" in result["created"]
         assert any(p.startswith(".claude/skills/") for p in result["created"])
-        assert "CLAUDE.md" in result["created"]
+        assert "AGENTS.md" in result["created"]
         assert ".mcp.json" in result["created"]
         # Nothing the report names was written. (Whole-tree byte identity is
         # pinned out-of-process in test_update_project_determinism.py: this
         # harness reroutes resolve_trw_dir to the fixture root.)
-        for rel in (".claude", "CLAUDE.md", ".mcp.json"):
+        for rel in (".claude", "AGENTS.md", ".mcp.json"):
             assert not (fake_git_repo / rel).exists()
 
     def test_dry_run_warns_and_reports_nothing_for_a_current_install(self, initialized_repo: Path) -> None:
@@ -71,42 +72,36 @@ class TestUpdateOSErrorPaths:
 
     def test_hook_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during hook copy adds to errors."""
-        from trw_mcp.bootstrap import _DATA_DIR
 
-        if not (_DATA_DIR / "hooks").is_dir():
-            pytest.skip("no bundled hooks")
+        # An identical destination is never rewritten (FR03), so remove one to force a copy;
+        # without this the test passed only while some installed hook still differed from the bundle.
+        (initialized_repo / ".claude" / "hooks" / "session-start.sh").unlink()
 
-        original_copy2 = shutil.copy2
+        from trw_mcp._checkout_write import write_checkout_file
 
-        def selective_fail(src: Path | str, dst: Path | str, **kwargs: object) -> None:
-            src_path = Path(str(src))
-            if src_path.suffix == ".sh":
+        def selective_fail(root: Path, dst: Path, data: str | bytes) -> None:
+            if dst.suffix == ".sh":
                 raise OSError("permission denied")
-            return original_copy2(src, dst, **kwargs)
+            write_checkout_file(root, dst, data)
 
-        with patch("shutil.copy2", side_effect=selective_fail):
+        with patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=selective_fail):
             result = update_project(initialized_repo)
         assert any("Failed to copy" in e or "Failed to snapshot" in e for e in result["errors"])
 
     def test_skill_copy_oserror(self, initialized_repo: Path) -> None:
         """OSError during skill file copy adds to errors."""
-        from trw_mcp.bootstrap import _DATA_DIR
 
-        if not (_DATA_DIR / "skills").is_dir():
-            pytest.skip("no bundled skills")
         # An identical destination is never rewritten (FR03), so remove one to force a copy.
         (initialized_repo / ".claude" / "skills" / "trw-learn" / "SKILL.md").unlink()
 
-        original_copy2 = shutil.copy2
-        call_count = [0]
+        from trw_mcp._checkout_write import write_checkout_file
 
-        def fail_after_n(src: Path | str, dst: Path | str, **kwargs: object) -> None:
-            call_count[0] += 1
-            if "skills" in str(src):
+        def fail_skills(root: Path, dst: Path, data: str | bytes) -> None:
+            if "skills" in str(dst):
                 raise OSError("skill copy failed")
-            return original_copy2(src, dst, **kwargs)
+            write_checkout_file(root, dst, data)
 
-        with patch("shutil.copy2", side_effect=fail_after_n):
+        with patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=fail_skills):
             result = update_project(initialized_repo)
         assert any("skill" in e.lower() or "Failed to copy" in e for e in result["errors"])
 
@@ -117,21 +112,18 @@ class TestUpdateOSErrorPaths:
         (``_install_one_agent`` → ``Path.write_text``), not ``shutil.copy2``, so
         the failure is scoped to the ``.claude/agents/`` destination write.
         """
-        from trw_mcp.bootstrap import _DATA_DIR
 
-        if not (_DATA_DIR / "agents").is_dir():
-            pytest.skip("no bundled agents")
         # An identical destination is never rewritten (FR03), so remove one to force a write.
         (initialized_repo / ".claude" / "agents" / "trw-implementer.md").unlink()
 
-        original_write = Path.write_text
+        from trw_mcp._checkout_write import write_checkout_file
 
-        def fail_agent_write(self: Path, *args: object, **kwargs: object) -> int:
-            if f"{'/.claude/agents/'}" in str(self) and self.suffix == ".md":
+        def fail_agent_write(root: Path, dst: Path, data: str | bytes) -> None:
+            if "/.claude/agents/" in str(dst) and dst.suffix == ".md":
                 raise OSError("agent write failed")
-            return original_write(self, *args, **kwargs)  # type: ignore[arg-type]
+            write_checkout_file(root, dst, data)
 
-        with patch.object(Path, "write_text", fail_agent_write):
+        with patch("trw_mcp.bootstrap._init_project_skills.write_checkout_file", side_effect=fail_agent_write):
             result = update_project(initialized_repo)
         assert any("Failed to write" in e for e in result["errors"])
 
@@ -144,7 +136,6 @@ class TestRunAutoMaintenance:
 
         with (
             patch("trw_mcp.bootstrap._update_external._logger", mock_logger),
-            patch("trw_mcp.models.config._reset_config", side_effect=[None, None]),
             patch(
                 "trw_mcp.models.config.get_config",
                 side_effect=RuntimeError("maintenance failed"),
@@ -159,25 +150,6 @@ class TestRunAutoMaintenance:
             exc_info=True,
         )
         assert result["warnings"] == ["Auto-maintenance skipped: maintenance failed"]
-
-    def test_config_reset_failure_logs_debug(self, tmp_path: Path) -> None:
-        result = {"updated": [], "warnings": []}
-        mock_logger = MagicMock()
-
-        with (
-            patch("trw_mcp.bootstrap._update_external._logger", mock_logger),
-            patch(
-                "trw_mcp.models.config._reset_config",
-                side_effect=[None, RuntimeError("reset failed")],
-            ),
-            patch("trw_mcp.models.config.get_config", return_value=MagicMock(embeddings_enabled=False)),
-        ):
-            _run_auto_maintenance(tmp_path, result)
-
-        mock_logger.debug.assert_called_once_with(
-            "auto_maintenance_config_reset_failed",
-            exc_info=True,
-        )
 
 
 @pytest.mark.unit

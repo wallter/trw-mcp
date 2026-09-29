@@ -15,7 +15,7 @@ from trw_mcp.state import _paths
 from trw_mcp.state.claude_md import _write_guard
 from trw_mcp.state.persistence import FileStateWriter
 
-_TARGETS = ("CLAUDE.md", "AGENTS.md")
+_TARGETS = ("AGENTS.md",)
 _BODY = "\n".join(f"# line {i}" for i in range(2000)) + "\n"
 
 
@@ -35,7 +35,7 @@ def measure_sync(
     """Measure each root write inside actual sync, with identical cold config setup."""
     (root / ".trw").mkdir(parents=True)
     (root / ".trw/config.yaml").write_text(
-        "claude_md_max_lines: 3000\nmax_auto_lines: 3000\nagents_md_enabled: true\n",
+        "max_auto_lines: 3000\nagents_md_enabled: true\n",
         encoding="utf-8",
     )
     for name in _TARGETS:
@@ -54,7 +54,7 @@ def measure_sync(
             FileStateWriter().write_text(target, candidate)
             verdict = _write_guard.InstructionWriteVerdict(written=True, total_lines=len(candidate.split("\n")))
         else:
-            # Preserve every real argument, including CLAUDE's omitted config.
+            # Preserve every real argument.
             verdict = original_guard(target, candidate, **kwargs)
         timings[target.name] = (clock() - start) * 1000
         assert verdict.written, verdict
@@ -77,21 +77,9 @@ def measure_sync(
             cold_sync_ms = (time.perf_counter() - start) * 1000
             reload_config(None)
     assert result["status"] == "synced", result
-    assert set(timings) == set(_TARGETS), "both root files must reach the measured write seam"
+    assert set(timings) == set(_TARGETS), "every root file must reach the measured write seam"
     contents = {name: (root / name).read_text(encoding="utf-8") for name in _TARGETS}
     for content in contents.values():
         assert content.startswith(_BODY), "sync lost or changed the original user lines"
         assert content != _BODY, "sync must write a generated section, not skip or rewrite identical bytes"
     return SyncMeasurement(timings, contents, cold_sync_ms)
-
-
-def assert_guard_budget(guarded: SyncMeasurement, baseline: SyncMeasurement) -> None:
-    """NFR01 measures added per-file time, never total sync time divided by two."""
-    assert guarded.contents == baseline.contents
-    for name in _TARGETS:
-        delta = guarded.target_ms[name] - baseline.target_ms[name]
-        assert delta < 50.0, (
-            f"{name} guard added {delta:.1f} ms; "
-            f"guarded={guarded.target_ms}, baseline={baseline.target_ms}; "
-            f"cold full sync ms: guarded={guarded.cold_sync_ms:.1f}, baseline={baseline.cold_sync_ms:.1f}"
-        )

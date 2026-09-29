@@ -11,7 +11,6 @@ description: >
   (use trw-adversarial-auditor).
 model: frontier
 maxTurns: 200
-memory: project
 tools:
   - Read
   - Glob

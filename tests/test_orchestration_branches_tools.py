@@ -11,7 +11,7 @@ import trw_mcp.tools.orchestration as orch_mod
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._tools_orchestration_support import orch_tools, set_project_root  # noqa: F401
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 
 class TestTrwInitConfigOverrides:
@@ -66,93 +66,6 @@ class TestTrwInitConfigOverrides:
         reader = FileStateReader()
         data = reader.read_yaml(tmp_path / ".trw" / "config.yaml")
         assert data.get("sentinel_key") == "original"
-
-
-class TestTrwStatusWaveData:
-    """Lines 214, 242-248: wave_manifest.yaml reading in trw_status."""
-
-    def test_wave_manifest_in_meta_dir_fallback(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """wave_manifest.yaml under meta/ is used when shards/ location is absent (line 214)."""
-        init_result = orch_tools["trw_init"].fn(task_name="wave-meta-task")
-        run_path = Path(init_result["run_path"])
-
-        wave_data: dict[str, object] = {
-            "waves": [
-                {"wave": 1, "status": "complete", "shards": ["s1"]},
-            ],
-        }
-        writer = FileStateWriter()
-        writer.write_yaml(run_path / "meta" / "wave_manifest.yaml", wave_data)
-
-        status = orch_tools["trw_status"].fn(run_path=str(run_path))
-
-        assert "waves" in status
-        waves = status["waves"]
-        assert isinstance(waves, list)
-        assert len(waves) == 1
-
-    def test_wave_manifest_in_shards_dir_primary(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """wave_manifest.yaml under shards/ is preferred over meta/ (primary path)."""
-        init_result = orch_tools["trw_init"].fn(task_name="wave-shards-task")
-        run_path = Path(init_result["run_path"])
-
-        wave_data: dict[str, object] = {
-            "waves": [
-                {"wave": 1, "status": "active", "shards": ["sA", "sB"]},
-                {"wave": 2, "status": "pending", "shards": []},
-            ],
-        }
-        writer = FileStateWriter()
-        writer.write_yaml(run_path / "shards" / "wave_manifest.yaml", wave_data)
-
-        status = orch_tools["trw_status"].fn(run_path=str(run_path))
-
-        assert "waves" in status
-        waves = status["waves"]
-        assert isinstance(waves, list)
-        assert len(waves) == 2
-
-    def test_wave_progress_computed_when_waves_present(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """wave_progress key appears in status when wave data is present (lines 244-248)."""
-        init_result = orch_tools["trw_init"].fn(task_name="wave-progress-task")
-        run_path = Path(init_result["run_path"])
-
-        wave_data: dict[str, object] = {
-            "waves": [
-                {"wave": 1, "status": "complete", "shards": ["s1", "s2"]},
-                {"wave": 2, "status": "active", "shards": ["s3"]},
-            ],
-        }
-        writer = FileStateWriter()
-        writer.write_yaml(run_path / "shards" / "wave_manifest.yaml", wave_data)
-
-        status = orch_tools["trw_status"].fn(run_path=str(run_path))
-
-        assert "wave_progress" in status
-        wp = status["wave_progress"]
-        assert isinstance(wp, dict)
-        assert wp["total_waves"] == 2
-        assert wp["completed_waves"] == 1
-
-    def test_no_wave_manifest_means_no_wave_keys(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """When no wave_manifest.yaml exists, status has no 'waves' or 'wave_progress' keys."""
-        init_result = orch_tools["trw_init"].fn(task_name="no-wave-status-task")
-        status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
-
-        assert "waves" not in status
-        assert "wave_progress" not in status
 
 
 class TestTrwStatusVersionWarning:
@@ -325,7 +238,6 @@ class TestFormationStatusRollUp:
                 assemble_status_result(
                     {"run_id": run.name, "task": run.name, "phase": "implement"},
                     [],
-                    {},
                     run,
                     FileStateReader(),
                     run / "meta",

@@ -64,21 +64,6 @@ def safe_float(data: Mapping[str, object], key: str, default: float = 0.0) -> fl
         return default
 
 
-def safe_str(data: Mapping[str, object], key: str, default: str = "") -> str:
-    """Safely extract a string from a dict with heterogeneous values.
-
-    Args:
-        data: Mapping with mixed-type values (dict or TypedDict).
-        key: Key to extract.
-        default: Fallback value if key is missing.
-
-    Returns:
-        String value, or default if missing.
-    """
-    val = data.get(key, default)
-    return str(val) if val is not None else default
-
-
 # ---------------------------------------------------------------------------
 # Learning text helpers
 # ---------------------------------------------------------------------------

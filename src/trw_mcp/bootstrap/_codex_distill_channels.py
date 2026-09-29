@@ -27,6 +27,7 @@ from typing import Any
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._codex_hooks import codex_hooks_review_warning
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result, read_json_object
@@ -36,6 +37,7 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "bootstrap_codex_channel_manifest",
+    "codex_pre_edit_hint_registered",
     "install_codex_distill_channels",
     "merge_distill_hook_into_hooks_json",
 ]
@@ -133,9 +135,8 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
     existing["hooks"] = hooks_section
 
     try:
-        hooks_json_path.parent.mkdir(parents=True, exist_ok=True)
-        hooks_json_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(target_dir, hooks_json_path, json.dumps(existing, indent=2) + "\n")
+    except (OSError, UnsafeWriteError) as exc:
         log.warning(
             "codex_distill_hooks_json_write_failed",
             path=str(hooks_json_path),
@@ -151,6 +152,84 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
         outcome="written",
     )
     return {"written": True, "path": str(hooks_json_path), "skipped": False, "error": None}
+
+
+#: The CC-03 script Codex runs before apply_patch (PRD-CORE-336-FR04). Codex's
+#: PreToolUse contract takes the same hookSpecificOutput.additionalContext shape
+#: Claude Code does (developers.openai.com/codex/hooks), so one installed file
+#: serves both clients.
+_PRE_EDIT_HINT_SCRIPT = "pre-tool-distill-hint.sh"
+
+
+def _pre_edit_hint_group() -> dict[str, Any]:
+    """The TRW-managed Codex PreToolUse group that runs the CC-03 hint hook."""
+    from trw_mcp.bootstrap._codex_hooks import _trw_hook_group
+
+    return dict(
+        _trw_hook_group(
+            event="PreToolUse",
+            script_name=_PRE_EDIT_HINT_SCRIPT,
+            status_message="Loading TRW pre-edit hint",
+            matcher="apply_patch",
+            timeout=3,
+        )
+    )
+
+
+def _is_pre_edit_hint_group(group: object) -> bool:
+    return isinstance(group, dict) and any(
+        isinstance(hook, dict) and f"/.claude/hooks/{_PRE_EDIT_HINT_SCRIPT}" in str(hook.get("command", ""))
+        for hook in group.get("hooks") or []
+    )
+
+
+def codex_pre_edit_hint_registered(target_dir: Path) -> bool:
+    """Whether the CC-03 PreToolUse group is ACTUALLY present in ``.codex/hooks.json``.
+
+    Reads the file back rather than trusting ``cc03_hook_enabled`` (doctor
+    ``hook_channel`` row, release-window fix 2026-09-27) -- the same
+    false-PASS shape ``_claude_code_distill_channels.cc03_registered_in_settings``
+    fixes for Claude Code's own registration file.
+    """
+    data = read_json_object(target_dir / _CODEX_HOOKS_JSON, context="doctor_hook_channel")
+    hooks = data.get("hooks") if data is not None else None
+    groups = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    return isinstance(groups, list) and any(_is_pre_edit_hint_group(group) for group in groups)
+
+
+def set_pre_edit_hint_registration(target_dir: Path, *, present: bool) -> bool:
+    """Add or remove the pre-edit hint group in ``.codex/hooks.json``; return whether the file changed.
+
+    Registered only while ``cc03_hook_enabled`` is on, because the script it
+    runs is shipped only then: a registration pointing at a withdrawn file would
+    fail on every patch. An unreadable hooks.json is left untouched.
+    """
+    hooks_json_path = target_dir / _CODEX_HOOKS_JSON
+    existing: dict[str, Any] = {}
+    if hooks_json_path.exists():
+        parsed = read_json_object(hooks_json_path, context="codex_pre_edit_hint")
+        if parsed is None:
+            return False
+        existing = dict(parsed)
+    elif not present:
+        return False
+    hooks_section = existing.get("hooks")
+    hooks: dict[str, Any] = dict(hooks_section) if isinstance(hooks_section, dict) else {}
+    raw_groups = hooks.get("PreToolUse")
+    groups = (
+        [group for group in raw_groups if not _is_pre_edit_hint_group(group)] if isinstance(raw_groups, list) else []
+    )
+    if present:
+        groups.append(_pre_edit_hint_group())
+    if groups == (raw_groups if isinstance(raw_groups, list) else []):
+        return False
+    if groups:
+        hooks["PreToolUse"] = groups
+    else:
+        hooks.pop("PreToolUse", None)
+    existing["hooks"] = hooks
+    write_checkout_file(target_dir, hooks_json_path, json.dumps(existing, indent=2) + "\n")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +344,18 @@ def install_codex_distill_channels(
     except Exception as exc:  # justified: fail-open, hooks.json merge is best-effort
         log.warning("codex_hooks_json_merge_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"hooks.json merge failed: {exc}")
+
+    # 1c. Pre-edit hint (PRD-CORE-336-FR04): ship the CC-03 script to .claude/hooks
+    #     and register it for apply_patch while cc03_hook_enabled is on.
+    try:
+        from trw_mcp.bootstrap._claude_code_distill_channels import sync_cc03_hook_files
+
+        enabled = sync_cc03_hook_files(target_dir, result)
+        if set_pre_edit_hint_registration(target_dir, present=enabled):
+            result["updated"].append(_CODEX_HOOKS_JSON)
+    except Exception as exc:  # justified: fail-open, the hint is advisory
+        log.warning("codex_pre_edit_hint_install_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"Codex pre-edit hint hook install failed: {exc}")
 
     # 2. Bootstrap channel manifest (two codex channel entries)
     try:

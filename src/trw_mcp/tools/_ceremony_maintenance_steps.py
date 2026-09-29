@@ -85,11 +85,15 @@ def _check_version_sentinel(
     # downgrade or a server that out-lived the on-disk install. That produced
     # the confusing "vOLD was installed but still running vNEW — reload"
     # advisory the operator reported (reloading would DOWN-grade, not update).
-    # Reuse the canonical semver comparator so the direction logic lives in one
-    # place; it fails closed (no advisory) on any unparseable version.
-    from trw_mcp.state.auto_upgrade import _compare_versions
+    # PEP 440 ordering (packaging), failing closed (no advisory) on any
+    # unparseable version.
+    from packaging.version import InvalidVersion, Version
 
-    if _compare_versions(running_version, installed_version) and "update_advisory" not in maintenance:
+    try:
+        newer_on_disk = Version(installed_version) > Version(running_version)
+    except InvalidVersion:  # trw-fail-silent-allow: an unparseable version is no evidence of a newer install
+        return
+    if newer_on_disk:
         maintenance["update_advisory"] = (
             f"trw-mcp {installed_version} is installed on disk but this MCP server is still "
             f"running {running_version}. Run /mcp to reload."

@@ -11,7 +11,7 @@ import pytest
 
 from trw_mcp.models._evidence_core import ReceiptState
 from trw_mcp.models._evidence_plans import ReviewVerdict
-from trw_mcp.tools._evidence_gates import select_typed_review_state, validate_review_receipt
+from trw_mcp.tools._evidence_gates import validate_review_receipt
 from trw_mcp.tools._review_manual import handle_manual_mode
 from trw_mcp.tools._review_receipt_writer import load_latest_review_evidence
 from trw_mcp.tools._review_reviewer_family import digest_external_receipt
@@ -79,25 +79,6 @@ class TestReviewGateDerivesSubstanceFromCurrentReceipt:
         result = validate_review_receipt(receipt, plan, project)
         assert result.state is ReceiptState.STALE_CONTENT
         assert not result.is_positive
-
-
-class TestTypedPresentNoFallback:
-    def test_typed_absent_allows_legacy(self, tmp_path: Path) -> None:
-        run = tmp_path / "run"
-        (run / "meta").mkdir(parents=True)
-        result = select_typed_review_state(run)
-        assert result.state is ReceiptState.LEGACY_UNBOUND
-        assert result.typed_present is False
-
-    def test_typed_present_malformed_blocks_legacy(self, tmp_path: Path) -> None:
-        run = tmp_path / "run"
-        rdir = run / "meta" / "receipts" / "review"
-        rdir.mkdir(parents=True)
-        (rdir / "review-bad.json").write_text('{"broken": true}', encoding="utf-8")
-        result = select_typed_review_state(run)
-        assert result.typed_present is True
-        assert not result.is_positive
-        assert result.state is ReceiptState.INVALID
 
 
 # ---------------------------------------------------------------------------

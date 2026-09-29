@@ -327,6 +327,7 @@ def test_formation_readiness_is_registered_in_the_doctor_catalogue() -> None:
         "retrieval",
         "stray_servers",
         "claude_code_version",
+        "hook_python",
     ]
     after = names[names.index("formation_readiness") + 1 :]
     assert [name for name in after if name in later] == later
@@ -512,12 +513,16 @@ def test_doctor_warns_on_version_status_incompatible(tmp_path: Path, monkeypatch
 def test_doctor_is_silent_when_version_status_is_compatible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The common path (compatible=true) adds no noise: PASS, not a row nobody reads."""
     import trw_mcp.server._subcommands_release as release_mod
-    from trw_mcp.server._doctor_version_status import version_status_row
+    from trw_mcp.server import _doctor_version_status as row_module
 
     fabricated = {"compatible": True, "mismatches": []}
     monkeypatch.setattr(release_mod, "collect_version_status", lambda project_root=None: fabricated)
+    # Isolate from B71-111's stale-editable-metadata check (a separate concern,
+    # covered by test_doctor_stale_editable_metadata.py): this test's "compatible"
+    # path must not depend on the ambient dev venv's dist-info matching source.
+    monkeypatch.setattr(row_module, "stale_editable_metadata", list)
 
-    status, _message = version_status_row(tmp_path)
+    status, _message = row_module.version_status_row(tmp_path)
 
     assert status == "PASS"
 

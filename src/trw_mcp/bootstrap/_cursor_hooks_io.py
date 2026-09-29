@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 from typing import Any
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.bootstrap._cursor_models import CursorHooksV1Config, HookHandlerEntry
 from trw_mcp.bootstrap._file_ops import read_json_object
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
@@ -86,7 +86,7 @@ def generate_cursor_hook_scripts(
         # caller that passes nothing.
         refreshable = existed and manifest_hashes is not None and not _is_user_modified(dst, name, manifest_hashes)
         if not existed or force or refreshable:
-            shutil.copy2(str(src), str(dst))
+            write_checkout_file(target_dir, dst, src.read_bytes())
             os.chmod(str(dst), 0o755)  # noqa: S103 -- hook scripts must be executable
             rel = f".cursor/hooks/{name}"
             if existed:
@@ -135,8 +135,14 @@ def smart_merge_cursor_json(
     target_path: Path,
     trw_entries: CursorHooksV1Config | dict[str, object],
     identity_prefix: str,
+    *,
+    root: Path,
 ) -> BootstrapFileResult:
     """Idempotent JSON merge for Cursor config files (PRD-CORE-136-FR02).
+
+    Written beneath *root* (the project root) without following a symlink
+    (PRD-CORE-337): a symlinked target or directory below *root* raises
+    ``UnsafeWriteError`` and nothing is written.
 
     Reads the existing JSON document at ``target_path``, removes prior TRW
     entries identified by ``command.startswith(identity_prefix)`` (for hook
@@ -168,8 +174,6 @@ def smart_merge_cursor_json(
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     rel = str(target_path)
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
     if target_path.exists():
         # ``read_json_object`` is the shared bootstrap seam: it collapses
         # unreadable / non-UTF-8 / malformed / non-object-root into one ``None``
@@ -187,7 +191,7 @@ def smart_merge_cursor_json(
                 path=rel,
                 action="overwrite",
             )
-            target_path.write_text(json.dumps(trw_entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            write_checkout_file(root, target_path, json.dumps(trw_entries, indent=2, sort_keys=True) + "\n")
             result["updated"].append(rel)
             return result
         existing: dict[str, Any] = existing_obj
@@ -237,10 +241,10 @@ def smart_merge_cursor_json(
             else:
                 existing[key] = value
 
-        target_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_checkout_file(root, target_path, json.dumps(existing, indent=2, sort_keys=True) + "\n")
         result["updated"].append(rel)
     else:
-        target_path.write_text(json.dumps(trw_entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_checkout_file(root, target_path, json.dumps(trw_entries, indent=2, sort_keys=True) + "\n")
         result["created"].append(rel)
 
     logger.debug(

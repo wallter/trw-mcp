@@ -17,7 +17,6 @@ trw-mcp/tests/test_auto_checkpoint.py
 trw-mcp/tests/test_auto_progress.py
 trw-mcp/tests/test_auto_recall.py
 trw-mcp/tests/test_auto_stale_marking.py
-trw-mcp/tests/test_auto_upgrade.py
 trw-mcp/tests/test_bayesian_calibration.py
 trw-mcp/tests/test_behavioral_equiv.py
 trw-mcp/tests/test_boosts.py

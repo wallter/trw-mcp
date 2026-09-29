@@ -22,8 +22,7 @@ MAX_INDEXED_FILE_BYTES: int = 1024 * 1024  # just over the 1,000,000-byte config
 #: SQLITE_LIMIT_LENGTH on every store connection: the most bytes one value or one row may hold. A row carries a
 #: chunk's text plus a signature and docstring summary drawn from that same chunk, and fixed-width hashes, so four
 #: files' worth never refuses a real row. A crafted store computes values inside one VM step (hex(zeroblob(N)) in a
-#: view), where the deadline's progress handler cannot act; this limit fails that value as too big (rc7 C12). It also
-#: bounds one row's LIKE scan, which runs inside a single VM step: 64 terms over a 4 MiB row is ~75 ms.
+#: view), where the deadline's progress handler cannot act; this limit fails that value as too big (rc7 C12).
 STORE_LENGTH_LIMIT: int = 4 * MAX_INDEXED_FILE_BYTES
 
 
@@ -39,6 +38,22 @@ class CodeIndexBounds(BaseModel):
     query_max_chars: int = Field(default=1_000, ge=1, description="Query text length, as trw-memory's FTS leg.")
     query_max_terms: int = Field(
         default=64, ge=1, description="Distinct query terms; each adds a LIKE per scanned row, as trw-memory's FTS leg."
+    )
+    like_scan_max_bytes: int = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "Leading bytes of each LIKE-scanned column (symbol_name, signature, docstring_summary, text, path) "
+            "one row's per-term scan reads, via substr(CAST(column AS BLOB), 1, N) -- CAST to BLOB first because "
+            "substr on TEXT counts characters, not bytes, so a column packed with multi-byte UTF-8 content could "
+            "otherwise scan up to 4x this bound's advertised byte count. Bounds the scan's own cost independent "
+            "of the row's stored length up to STORE_LENGTH_LIMIT (PRD-CORE-316 FR05). Measured directly against "
+            "a real published store's connection (test_one_adversarial_rows_like_scan_stays_under_its_measured_"
+            "budget, minimum over several reps to filter scheduling noise): one STORE_LENGTH_LIMIT-sized "
+            "adversarial row against 64 non-matching terms took ~113 ms unbounded and ~2 ms bounded to 4096 "
+            "leading bytes (about 1.6% of the unbounded cost) -- replacing the docstring's previous unverified "
+            "'~75 ms' estimate with a number a test proves."
+        ),
     )
     query_max_rows: int = Field(default=200_000, ge=1, description="Store rows scanned per query.")
     query_max_response_bytes: int = Field(default=256 * 1024, ge=1, description="Serialized response size.")

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from datetime import date
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -200,6 +200,13 @@ class IsolatedReviewSpec(BaseModel):
     strip_paths: tuple[str, ...] = Field(default=(), description="Repo-relative files removed from the snapshot.")
 
 
+class OAuthLogin(NamedTuple):
+    """Where a client keeps its OAuth login, relative to HOME, and how to read its metadata (never a token)."""
+
+    file: str
+    shape: Literal["openai_tokens", "claude_ai_oauth"]  # claude_ai_oauth falls back to the (unread) keychain
+
+
 class ClientSpec(BaseModel):
     """One client's dispatch policy, as data.
 
@@ -317,6 +324,12 @@ class ClientSpec(BaseModel):
             "launch, so 'TRW's server is present' is never reported as 'the child is isolated'."
         ),
     )
+    # For a client whose own MCP servers inherit its environment (agy's global `trw` entry sets
+    # no env), TRW_SURFACE_ROLE=reviewer here bounds TRW's tools to the reviewer surface in a lane
+    # already read-only for files. Never a reviewer posture: posture_enforced stays template-derived.
+    read_only_env: Mapping[str, str] = Field(
+        default_factory=dict, description="Env injected into the direct child of every READ-ONLY dispatch."
+    )
     reviewer_env: Mapping[str, str] = Field(
         default_factory=dict,
         description=(
@@ -373,12 +386,14 @@ class ClientSpec(BaseModel):
             "own default; a flag is never inferred from a sibling client."
         ),
     )
+    #: ``-c KEY=VALUE`` carrier for clients taking effort as a config override; exclusive with effort_flag.
+    effort_config_key: str | None = None
     effort_levels: tuple[str, ...] = Field(
         default=(),
         description=(
-            "The effort values this client's flag accepts, as its --help enumerates them. "
-            "Required with effort_flag: a flag whose value vocabulary is unknown is not "
-            "emitted (a guessed value fails at argv parse)."
+            "The effort values this client's flag or config key accepts, as the client "
+            "documents them. Required with effort_flag or effort_config_key: a carrier whose "
+            "value vocabulary is unknown is not emitted (a guessed value fails at argv parse)."
         ),
     )
     cwd_flag: str | None = Field(
@@ -420,13 +435,20 @@ class ClientSpec(BaseModel):
             "environment (PRD-CORE-266-NFR03)."
         ),
     )
-    instruction_files: tuple[str, ...] = ()
+    #: A rotating OAuth login in a file under HOME (PRD-CORE-304-FR02): dispatches take the host
+    #: credential lock near its expiry. None: not an OAuth-file client.
+    oauth_login: OAuthLogin | None = None
+    #: AGENTS.md is the portable instruction carrier every registered client reads; a client that reads another
+    #: file too (copilot) overrides this.
+    instruction_files: tuple[str, ...] = ("AGENTS.md",)
     profile_id: str | None = Field(
         default=None,
         description="Client-profile id, when this client has one. None means it is absent from that registry.",
     )
     sub_agents: SubAgentSupport
     sandbox: SandboxPosture
+    #: The command that installs or upgrades this CLI, named in a capability refusal (DISPATCH-CLIENT-GAPS).
+    install_hint: str = ""
     verification: ClientVerification
 
     @property
@@ -537,10 +559,10 @@ class ClientSpec(BaseModel):
 
     @model_validator(mode="after")
     def _effort_flag_has_a_vocabulary(self) -> ClientSpec:
-        if bool(self.effort_flag) != bool(self.effort_levels):
+        carriers = [c for c in (self.effort_flag, self.effort_config_key) if c]
+        if len(carriers) > 1 or bool(carriers) != bool(self.effort_levels):
             raise ValueError(
-                f"{self.client_id!r}: effort_flag and effort_levels must be set together; a flag "
-                "with no known values cannot be emitted, and values with no flag have no carrier"
+                f"{self.client_id!r}: one of effort_flag/effort_config_key, and effort_levels, must be set together"
             )
         unknown = [level for level in self.effort_levels if level not in EFFORT_LEVELS]
         if unknown:

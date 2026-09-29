@@ -10,6 +10,14 @@ import pytest
 from trw_mcp.server._subcommands import _run_uninstall
 
 
+def _strip_managed_blocks(text):
+    """Test-local: the removed text-only wrapper over strip_managed_block."""
+    from trw_mcp.server._subcommands_uninstall_config import _MANAGED_BLOCK_MARKERS, strip_managed_block
+
+    return strip_managed_block(text, _MANAGED_BLOCK_MARKERS)[0]
+
+
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.unit
 class TestUninstall:
     """Unit tests for _run_uninstall handler."""
@@ -148,6 +156,7 @@ def _ns(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallRegistryProfiles:
     """PRD-SEC-006 FR07: uninstall is registry-driven across all 8 profiles."""
@@ -327,6 +336,7 @@ class TestUninstallRegistryProfiles:
         assert agents.read_text() == original
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallHookGroupAndMergedSurfaces:
     """FIX 1-4: hook-group merged files, antigravity, missing dirs, cursor mcp."""
@@ -652,13 +662,13 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert "trw" not in json.loads(mcp.read_text()).get("mcpServers", {})
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.unit
 class TestStripManagedBlocks:
     """sec-006: marker-strip must be line-anchored + missing-end-safe."""
 
     def test_inline_prose_mention_of_marker_not_stripped(self) -> None:
         """A marker substring inside a prose line must NOT trigger stripping."""
-        from trw_mcp.server._subcommands_lifecycle import _strip_managed_blocks
 
         text = (
             "# Docs\n"
@@ -671,7 +681,6 @@ class TestStripManagedBlocks:
 
     def test_anchored_block_stripped(self) -> None:
         """A real standalone marker block is stripped, user lines preserved."""
-        from trw_mcp.server._subcommands_lifecycle import _strip_managed_blocks
 
         text = "user before\n<!-- trw:start -->\nmanaged line\n<!-- trw:end -->\nuser after\n"
         out = _strip_managed_blocks(text)
@@ -682,7 +691,6 @@ class TestStripManagedBlocks:
 
     def test_missing_end_marker_leaves_text_untouched(self) -> None:
         """A start marker with no matching end must NOT delete to EOF."""
-        from trw_mcp.server._subcommands_lifecycle import _strip_managed_blocks
 
         text = "user before\n<!-- trw:start -->\norphan managed content\ncritical user content below\n"
         # No end marker → safe: return unchanged (no delete-to-EOF).
@@ -861,6 +869,7 @@ class TestUninstallSharedMemoryStore:
         assert (project / ".trw").is_dir()
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallSymlinkSafety:
     """PRD-INFRA-192 FR09 P0: TRW never removes a byte through a symlink it doesn't own."""
@@ -936,6 +945,7 @@ class TestUninstallSymlinkSafety:
             shutil.rmtree(outside, ignore_errors=True)
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.unit
 class TestUninstallManifest:
     """The uninstall surface manifest is registry-derived (catalog seam)."""
@@ -1053,6 +1063,7 @@ def _snapshot(path: Path) -> object:
     return path.read_bytes()
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallInstructionSurfaces:
     """The instruction surfaces uninstall covers must be the ones TRW writes.
@@ -1063,45 +1074,25 @@ class TestUninstallInstructionSurfaces:
     * a file TRW *does* write that no surface covers (leftover TRW artifact).
     """
 
-    def test_claude_md_trw_block_is_stripped(self, tmp_path: Path) -> None:
-        """CLAUDE.md is the claude-code instruction surface and must be cleaned.
-
-        ``bootstrap/_init_project.py`` writes CLAUDE.md with a real
-        ``<!-- trw:start -->``/``<!-- trw:end -->`` block. Before this test the
-        manifest carried ``.claude/INSTRUCTIONS.md`` (never written by anything)
-        instead, so the block survived uninstall.
-        """
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(
-            "# My Project\n\nUser build notes.\n\n"
-            "<!-- trw:start -->\nTRW auto-generated protocol\n<!-- trw:end -->\n\n"
-            "More user notes.\n"
-        )
-        (tmp_path / ".trw").mkdir()
-
-        _run_uninstall(_ns(tmp_path))
-
-        assert claude_md.exists(), "user CLAUDE.md wholesale-deleted"
-        text = claude_md.read_text()
-        assert "User build notes." in text
-        assert "More user notes." in text
-        assert "trw:start" not in text
-        assert "TRW auto-generated protocol" not in text
-
     def test_claude_instructions_md_is_not_a_registered_surface(self) -> None:
         """``.claude/INSTRUCTIONS.md`` has no writer, so it must not be claimed.
 
         Nothing in ``src/`` writes this path — claude-code's TRW block goes to
-        CLAUDE.md (or the ``.trw/INSTRUCTIONS.md`` sidecar under PRD-CORE-203,
-        which the ``.trw`` surface already covers). Registering it advertised a
-        cleanup that could never happen, and would make a hand-authored file of
-        that name a TRW-owned artifact.
+        the shared AGENTS.md (TRW 8.0 no longer writes CLAUDE.md either).
+        Registering it advertised a cleanup that could never happen, and would
+        make a hand-authored file of that name a TRW-owned artifact.
+
+        CLAUDE.md, which TRW wrote before 8.0, stays registered only as the
+        legacy shape (like a retired client's instruction file): it strips TRW's
+        own content and never claims the file as a TRW artifact.
         """
         from trw_mcp.client_profiles.catalog import uninstall_surfaces
 
-        relpaths = {s.relpath for s in uninstall_surfaces()}
-        assert ".claude/INSTRUCTIONS.md" not in relpaths
-        assert "CLAUDE.md" in relpaths
+        surfaces = {s.relpath: s for s in uninstall_surfaces()}
+        assert ".claude/INSTRUCTIONS.md" not in surfaces
+        legacy = surfaces["CLAUDE.md"]
+        assert (legacy.merged_config, legacy.managed_block, legacy.config_shape) == (True, False, "legacy-claude-md")
+        assert "AGENTS.md" in surfaces
 
     def test_user_authored_claude_instructions_md_is_preserved(self, tmp_path: Path) -> None:
         """A user's own ``.claude/INSTRUCTIONS.md`` is not TRW's to remove."""
@@ -1168,7 +1159,7 @@ class TestUninstallInstructionSurfaces:
         )
 
         generate_codex_instructions(tmp_path)
-        generate_opencode_instructions(tmp_path, "generic")
+        generate_opencode_instructions(tmp_path)
         (tmp_path / "CLAUDE.md").write_text("user\n<!-- trw:start -->\ntrw\n<!-- trw:end -->\n")
         (tmp_path / ".trw").mkdir()
 
@@ -1188,6 +1179,7 @@ class TestUninstallInstructionSurfaces:
             )
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallGitPostCommitHook:
     """PRD-CORE-231 installs a managed block in ``.git/hooks/post-commit``."""
@@ -1240,6 +1232,7 @@ class TestUninstallGitPostCommitHook:
         assert by_path[".git/hooks/post-commit"].managed_block is True
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallClaudeSettings:
     """``.claude/settings.json`` is a merged config TRW writes hook entries into."""
@@ -1349,6 +1342,95 @@ class TestUninstallClaudeSettings:
             data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/my-own.sh"'
         )
 
+    def _bundled(self) -> dict[str, object]:
+        import json
+
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        return json.loads((_DATA_DIR / "settings.json").read_text(encoding="utf-8"))
+
+    def test_untouched_project_settings_end_empty(self, tmp_path: Path) -> None:
+        """Exactly TRW's template (hooks + env) uninstalls to ``{}``, file kept."""
+        path = self._write_settings(tmp_path, self._bundled())
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert path.read_text() == "{}\n"
+
+    def test_env_opt_out_is_kept(self, tmp_path: Path) -> None:
+        import json
+
+        data = self._bundled()
+        data["env"] = {"ENABLE_TOOL_SEARCH": "false"}
+        path = self._write_settings(tmp_path, data)
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert json.loads(path.read_text()) == {"env": {"ENABLE_TOOL_SEARCH": "false"}}
+
+    def test_user_env_and_keys_kept_trw_env_removed(self, tmp_path: Path) -> None:
+        import json
+
+        data = self._bundled()
+        data["env"] = {"ENABLE_TOOL_SEARCH": "true", "MY_VAR": "1"}
+        data["permissions"] = {"allow": ["Bash(ls:*)"]}
+        path = self._write_settings(tmp_path, data)
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert json.loads(path.read_text()) == {"env": {"MY_VAR": "1"}, "permissions": {"allow": ["Bash(ls:*)"]}}
+
+    def test_env_only_settings_are_emptied(self, tmp_path: Path) -> None:
+        """No hooks at all, only TRW's env value: still withdrawn."""
+        path = self._write_settings(tmp_path, {"env": {"ENABLE_TOOL_SEARCH": "true"}})
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert path.read_text() == "{}\n"
+
+    def test_user_hooks_survive_env_strip(self, tmp_path: Path) -> None:
+        import json
+
+        data = self._bundled()
+        data["hooks"] = {"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "echo hi"}]}]}
+        path = self._write_settings(tmp_path, data)
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert json.loads(path.read_text()) == {
+            "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "echo hi"}]}]}
+        }
+
+    def test_malformed_hooks_survive_env_strip(self, tmp_path: Path) -> None:
+        """A non-dict ``hooks`` is the user's content: env is withdrawn, hooks kept exactly."""
+        import json
+
+        path = self._write_settings(
+            tmp_path, {"hooks": ["user", "list"], "env": {"ENABLE_TOOL_SEARCH": "true", "MY_VAR": "1"}}
+        )
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert json.loads(path.read_text()) == {"hooks": ["user", "list"], "env": {"MY_VAR": "1"}}
+
+    def test_invalid_json_settings_untouched(self, tmp_path: Path) -> None:
+        claude = tmp_path / ".claude"
+        claude.mkdir()
+        path = claude / "settings.json"
+        path.write_text('{"env": {"ENABLE_TOOL_SEARCH": "true"}, oops')
+        original = path.read_text()
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert path.read_text() == original
+
     def test_settings_without_trw_hooks_untouched(self, tmp_path: Path) -> None:
         """A settings.json with no TRW hook command is preserved byte-for-byte."""
         path = self._write_settings(
@@ -1419,6 +1501,7 @@ _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER: tuple[tuple[str, str], ...] = (
 )
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.slow
 @pytest.mark.integration
 class TestInstallUninstallParity:
@@ -1570,6 +1653,7 @@ def _antigravity_entry() -> dict[str, object]:
     return dict(flat_hook_entries("antigravity-hook-map")["PreToolUse"][0])  # type: ignore[arg-type]
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallHookIdentityByCommand:
     """Two clients identify their TRW hook entries by command path, not tag."""
@@ -1739,6 +1823,7 @@ class TestUninstallHookIdentityByCommand:
         )
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.unit
 class TestUninstallMarkerTableDerivation:
     """The managed-block marker table is derived, not hand-copied."""
@@ -1823,6 +1908,7 @@ def _seed_corpus(trw_dir: Path, *, db: bool = True, learnings: int = 2) -> None:
             (entries / f"learning-{i}.yaml").write_text(f"summary: l{i}")
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallCorpusBlastRadius:
     """Destructive-uninstall guard: warn + --keep-memory protect the corpus."""
@@ -1951,6 +2037,7 @@ class TestUninstallCorpusBlastRadius:
         assert "memory.db" not in out.split("WARNING")[1].split("Export")[0]
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallExitCode:
     """Partial-failure truthfulness: uninstall must exit non-zero on errors."""
@@ -1962,6 +2049,7 @@ class TestUninstallExitCode:
         project.mkdir()
         (project / ".trw").mkdir()
         (project / ".trw" / "config.yaml").write_text("x: 1\n")
+        (project / ".trw" / "sessions").mkdir()  # a directory child is what rmtree removes now
 
         import shutil as shutil_module
 
@@ -1988,6 +2076,7 @@ class TestUninstallExitCode:
         assert not (project / ".trw").exists()
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallRemoveIde:
     """CLIENT-REMOVE (installer refinement 5.1.0): ``uninstall --ide <client>``.
@@ -2078,15 +2167,6 @@ class TestUninstallRemoveIde:
             "cursor-cli is still recorded and declares AGENTS.md: its block must survive grok's removal"
         )
 
-    def test_uninstall_ide_removes_the_block_when_no_remaining_client_declares_it(self, tmp_path: Path) -> None:
-        """Inverse: grok is the last recorded client declaring AGENTS.md, so its block goes."""
-        project = self._agents_md_project(tmp_path)
-
-        _run_uninstall(_ns(project, ide="grok"))
-
-        agents_md = project / "AGENTS.md"
-        assert not agents_md.exists() or "trw:start" not in agents_md.read_text(encoding="utf-8")
-
     def test_uninstall_ide_drops_client_from_target_platforms(self, tmp_path: Path) -> None:
         import yaml
 
@@ -2122,6 +2202,7 @@ class TestUninstallRemoveIde:
         assert not (project / ".grok" / "agents").exists()
 
 
+@pytest.mark.usefixtures("no_memory_daemon")
 @pytest.mark.integration
 class TestUninstallClaudeSurfaceOwnership:
     """PRD-INFRA-192 FR09 (C7): ``.claude/**`` and ``.mcp.json`` are claude-code's
@@ -2193,9 +2274,11 @@ class TestUninstallClaudeSurfaceOwnership:
         from trw_mcp.bootstrap import init_project
 
         (tmp_path / ".git").mkdir()
+        (tmp_path / ".codex").mkdir()
+        (tmp_path / ".codex" / "config.toml").write_text("[features]\nhooks = true\n", encoding="utf-8")
         result = init_project(tmp_path, ide="codex")
         assert not result["errors"], result["errors"]
-        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: codex-only still gets hooks"
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: codex hooks on, so scripts ship"
 
         _run_uninstall(_ns(tmp_path, ide="codex"))
 

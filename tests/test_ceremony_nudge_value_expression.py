@@ -10,7 +10,6 @@ from trw_mcp.state.ceremony_nudge import (
     ToolName,
     _context_reactive_message,
     _select_nudge_message,
-    compute_nudge,
 )
 
 
@@ -83,57 +82,6 @@ class TestNudgeValueExpression:
         result = _select_nudge_message("session_start", state, available_learnings=8)
         assert "8" in result
         assert any(word in result.lower() for word in ("context", "discover", "prior", "past"))
-
-    def test_fr02_no_prescriptive_language(self, tmp_path: Path) -> None:
-        """No 'you must', 'critical', 'always', 'never' in any nudge output across all states."""
-        forbidden_prescriptive = ["you must", "critical", "always", "never"]
-        states = [
-            CeremonyState(session_started=False),
-            CeremonyState(session_started=False, nudge_counts={"session_start": 3}),
-            CeremonyState(session_started=False, nudge_counts={"session_start": 7}),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=5),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=5, nudge_counts={"checkpoint": 3}),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=5, nudge_counts={"checkpoint": 6}),
-            CeremonyState(session_started=True, checkpoint_count=1, phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1, phase="validate", nudge_counts={"build_check": 5}),
-            CeremonyState(
-                session_started=True,
-                checkpoint_count=1,
-                build_check_result="passed",
-                phase="deliver",
-                learnings_this_session=2,
-            ),
-            CeremonyState(
-                session_started=True,
-                checkpoint_count=1,
-                build_check_result="passed",
-                phase="deliver",
-                learnings_this_session=2,
-                nudge_counts={"deliver": 6},
-            ),
-        ]
-        for state in states:
-            result = compute_nudge(state, available_learnings=5).lower()
-            for word in forbidden_prescriptive:
-                assert word not in result, (
-                    f"Forbidden prescriptive language '{word}' found for state {state!r}:\n{result!r}"
-                )
-
-    def test_fr02_no_decision_language(self, tmp_path: Path) -> None:
-        """No 'consider', 'you may want to', 'perhaps' in any nudge output."""
-        forbidden_decision = ["consider", "you may want to", "perhaps"]
-        states = [
-            CeremonyState(session_started=False),
-            CeremonyState(session_started=True, checkpoint_count=0),
-            CeremonyState(session_started=True, checkpoint_count=1, phase="validate"),
-            CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed", phase="deliver"),
-        ]
-        for state in states:
-            result = compute_nudge(state, available_learnings=3).lower()
-            for word in forbidden_decision:
-                assert word not in result, (
-                    f"Forbidden decision language '{word}' found for state {state!r}:\n{result!r}"
-                )
 
     def test_fr02_build_check_nudge_content(self, tmp_path: Path) -> None:
         """Build check nudge includes fact (not run) AND consequence (ships broken code)."""

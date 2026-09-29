@@ -61,9 +61,7 @@ def _register_review_tool(server: FastMCP) -> None:
         review_completed: bool = False,
         options: dict[str, object] | str = "",
     ) -> dict[str, object]:
-        """Compute a pass/warn/block review verdict and persist review.yaml.
-
-        Use when gating a PR/delivery for a verdict with receipts.
+        """Use when gating a PR/delivery for a verdict with receipts.
 
         Modes: manual (default; empty findings need review_completed=True),
         auto (reviewer_findings), cross_model, reconcile (options.prd_ids vs

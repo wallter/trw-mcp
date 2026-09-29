@@ -5,7 +5,6 @@ Contains:
   - _compute_reflection_metrics: Count reflections from event stream.
   - _compute_last_activity_ts: Extract last activity timestamp.
   - _parse_timestamp_hours: ISO timestamp to hours-since.
-  - _update_wave_status: Update wave status in run.yaml.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.models.typed_dicts import StatusReflectionDict
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +37,9 @@ def _phase_duration_summary(events: list[dict[str, object]], current_phase: str)
     durations: dict[str, float] = {}
     for index, (phase, started_at) in enumerate(phase_entries):
         ended_at = phase_entries[index + 1][1] if index + 1 < len(phase_entries) else datetime.now(timezone.utc)
-        durations[phase] = round(max(0.0, (ended_at - started_at).total_seconds()), 3)
+        # PRD-CORE-338-FR05: a re-entered phase sums its intervals, never overwrites them.
+        interval = max(0.0, (ended_at - started_at).total_seconds())
+        durations[phase] = round(durations.get(phase, 0.0) + interval, 3)
     active_started_at = phase_entries[-1][1].isoformat() if phase_entries else ""
     return {
         "active_phase": current_phase,
@@ -96,31 +97,6 @@ def _parse_timestamp_hours(ts: str) -> float | None:
     except (ValueError, TypeError):
         logger.debug("timestamp_parse_failed", timestamp=ts)
         return None
-
-
-def _update_wave_status(
-    reader: FileStateReader,
-    writer: FileStateWriter,
-    meta_path: Path,
-    wave_id: str,
-    ts: str,
-    message: str,
-) -> None:
-    """Update wave status in run.yaml with checkpoint metadata."""
-    del reader, writer  # kept for callers; the locked N1 path owns the read and the write
-    try:
-        from trw_mcp.state._run_yaml_update import update_run_yaml
-
-        def _stamp_wave(run_data: dict[str, object]) -> None:
-            wave_status = run_data.get("wave_status", {})
-            if not isinstance(wave_status, dict):
-                wave_status = {}
-            wave_status[wave_id] = {"last_checkpoint": ts, "message": message}
-            run_data["wave_status"] = wave_status
-
-        update_run_yaml(meta_path.parent, _stamp_wave)
-    except Exception:  # justified: fail-open, wave status metadata update must not block checkpoint
-        logger.debug("wave_status_update_failed", wave_id=wave_id)
 
 
 def _apply_ceremony_status(

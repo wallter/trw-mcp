@@ -21,8 +21,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from trw_mcp.state.validation.template_variants import get_required_sections
-
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
@@ -37,18 +35,12 @@ _PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Legacy feature-section surface; canonical definitions live in template_variants.
-_EXPECTED_SECTION_NAMES: list[str] = get_required_sections("CORE")
-
 # Sections with higher weight in density scoring
 _HIGH_WEIGHT_SECTIONS: dict[str, float] = {
     "Problem Statement": 2.0,
     "Functional Requirements": 2.0,
     "Traceability Matrix": 1.5,
 }
-
-# Section weights used by external consumers
-_SECTION_WEIGHTS: dict[str, float] = _HIGH_WEIGHT_SECTIONS
 
 # Pre-compiled regexes for ambiguity rate computation (FR02 -- PRD-FIX-054).
 # Word-boundary matching avoids false positives on substrings.

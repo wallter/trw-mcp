@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 from ruamel.yaml import YAML
 
-from trw_mcp.tools._evidence_writers import parse_build_command_results
+from trw_mcp.tools._command_results import parse_build_command_results
 
 
 def _entry(**overrides: object) -> dict[str, object]:
@@ -211,6 +211,17 @@ class TestReconciliationDiagnosis:
         result = build_check_invoke(tests_passed=None, command_results=results)
         assert result["tests_passed"] is False
         assert result["static_checks_clean"] is True
+
+    def test_integration_claims_reach_the_live_response(self, build_check_invoke: Any) -> None:
+        """PRD-CORE-320 FR03: a wired claim with a revert proof, and an isolated one, come back rendered."""
+        results = _both_passing()
+        results[0].update(integration="wired", call_site="pkg/mod.py:3", mutation_proof="reverted; failed; restored")
+        results[1].update(integration="isolated")
+        result = build_check_invoke(tests_passed=None, command_results=results)
+        assert result["integration_claims"] == {
+            results[0]["command_id"]: "wired, revert-proven: reverted; failed; restored",
+            results[1]["command_id"]: "isolated",
+        }
 
     def test_extra_command_ids_beyond_the_required_two_are_allowed(self, build_check_invoke: Any) -> None:
         results = [*_both_passing(), _entry(command_id="schema", label="alembic check", command_class="schema")]

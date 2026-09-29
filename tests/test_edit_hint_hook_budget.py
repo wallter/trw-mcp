@@ -43,10 +43,12 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 import trw_mcp
+from trw_mcp.tools._before_edit_hint_core import BeforeEditHintStatus
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data"
 
@@ -60,8 +62,9 @@ _ENV_ASSIGNMENT = "TRW_EMBEDDINGS_ENABLED=false"
 #: interpreter it runs and the deadline is asserted separately.
 _PY_CALL = re.compile(r'^\s*"\$_py"\s+-c\s')
 
-#: The portable outer bound that must wrap it.
-_BOUND = re.compile(r"_trw_bounded_python\s+[\d.]+")
+#: The portable outer bound that must wrap it: a literal number of seconds, or an
+#: env override with a numeric default (``"${TRW_CC03_BOUND_S:-2.5}"``).
+_BOUND = re.compile(r'_trw_bounded_python\s+(?:[\d.]+|"\$\{\w+:-[\d.]+\}")')
 
 
 def _bounded_hint_hooks() -> list[Path]:
@@ -212,11 +215,17 @@ def test_hint_path_loads_no_embedding_model_when_disabled(tmp_path: Path) -> Non
         "r = compute_before_edit_hint(file_path='a.py', repo_root=os.environ['REPO'])\n"
         "print(r.distill_status, 'torch' in sys.modules, 'sentence_transformers' in sys.modules)\n"
     )
-    # The child must import the trw_mcp under test, not whatever the interpreter's
-    # site-packages holds (a dev venv's editable install can point at another checkout).
+    # The child must import the trw_mcp and trw_memory under test, not whatever the interpreter's
+    # site-packages holds (a dev venv's editable install can point at another checkout); trw_mcp
+    # imports trw_memory.safe_fs, so a trw_mcp-only path runs a mixed tree.
     env = {
         "PATH": os.environ.get("PATH", ""),
-        "PYTHONPATH": str(Path(trw_mcp.__file__).resolve().parents[1]),
+        "PYTHONPATH": os.pathsep.join(
+            [
+                str(Path(trw_mcp.__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[2] / "trw-memory" / "src"),
+            ]
+        ),
         "HOME": str(tmp_path),
         "REPO": str(tmp_path),
         "TRW_PROJECT_DIR": str(tmp_path),
@@ -236,6 +245,107 @@ def test_hint_path_loads_no_embedding_model_when_disabled(tmp_path: Path) -> Non
     status, torch_loaded, st_loaded = completed.stdout.strip().split()
     # Non-vacuity: the call must actually have RUN and produced a real status,
     # not failed early in a way that trivially avoids importing torch.
-    assert status in {"sidecar_missing", "no_git_sha", "tier_required", "no_repo_root"}
+    assert status in {"sidecar_missing", "sidecar_too_far_behind", "no_git_sha", "tier_required", "no_repo_root"}
     assert torch_loaded == "False"
     assert st_loaded == "False"
+
+
+def test_hint_path_imports_stay_off_the_heavy_modules(tmp_path: Path) -> None:
+    """Everything an edit hook imports to build and render a hint, in a clean interpreter.
+
+    Measured 2026-09-25 in the C14 cursor fixture: the hook ran 2.42-2.47 s against its
+    2.4 s bound, so the hint it printed (T1, T0 or nothing) depended on timing. Three
+    imports were paid on every edit for nothing the hook uses: ``fastmcp.server`` via the
+    daemon client's version-gate import and numpy via ``trw_memory.retrieval``'s eager
+    re-exports. nacl and cryptography (~0.1-0.2 s) came in through recall admission's
+    ``trw_memory.security`` import, whose package re-exported ``keys`` eagerly and whose
+    ``provenance`` imported nacl at module level; the hook's recall verifies no signature,
+    so both now load only where a key or a signature check is actually used (2026-09-27).
+    The ``trw_mcp.channels`` facade stays eager: it costs ~10 ms, and
+    PRD-DIST-2400 documents ``from trw_mcp.channels import ChannelEntry`` style imports.
+    """
+    program = (
+        "import sys\n"
+        "import trw_mcp.channels.claude_code._hook_helpers\n"
+        "import trw_mcp.tools._before_edit_hint_core\n"
+        "import trw_mcp.state.memory_adapter\n"
+        "import trw_mcp.state._recall_admission\n"
+        "import trw_memory.daemon.client\n"
+        "heavy = ('fastmcp', 'mcp', 'fastmcp.server', 'numpy', 'trw_memory.daemon._version_gate', 'trw_memory.tools',\n"
+        "         'uvicorn', 'nacl', 'cryptography', 'trw_memory.security.keys')\n"
+        "print(' '.join(sorted(m for m in sys.modules if m in heavy or m.startswith('fastmcp.server.'))) or 'none')\n"
+    )
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": os.pathsep.join(
+            [
+                str(Path(trw_mcp.__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[2] / "trw-memory" / "src"),
+            ]
+        ),
+        "HOME": str(tmp_path),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, check=False, env=env, timeout=120
+    )
+
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert completed.stdout.strip() == "none"
+
+
+def test_hint_path_calling_compute_hint_stays_off_the_heavy_modules(tmp_path: Path) -> None:
+    """A REAL ``compute_before_edit_hint`` call, daemon faked unreachable, still loads no heavy module.
+
+    The import-only check above proves the hook's own imports are clean; it never actually
+    calls the function, so it cannot see an import paid only when the anchored-recall branch
+    RUNS. ``trw_mcp.state._anchored_lookup.anchored_page`` imported ``fastmcp.exceptions.ToolError``
+    unconditionally, before the daemon call it claimed to already be "loaded by" ever ran --
+    so a fresh interpreter cold-loaded the whole ``fastmcp`` package (~0.2s, PRD-DIST-2400
+    latency notes) on every anchored lookup, whether or not it ever raised. The daemon here is
+    faked (no live socket, no ``daemon.json``): ``_store_selection.selected_store`` is patched to
+    hand back a real ``DaemonMemoryStore`` wrapping a stub client whose ``anchored`` answers
+    instantly with an empty page, so the run stays fast and deterministic while exercising the
+    real production call site (``DaemonMemoryStore._page`` -> ``anchored_page``).
+    """
+    program = (
+        "import sys\n"
+        "from trw_mcp.state import _store_selection\n"
+        "from trw_mcp.state._daemon_store import DaemonMemoryStore\n"
+        "\n"
+        "class _FakeClient:\n"
+        "    async def anchored(self, *, namespace, file, limit, status):\n"
+        "        return {'memories': []}\n"
+        "\n"
+        "_fake_store = DaemonMemoryStore(_FakeClient(), 'test-ns')\n"
+        "_store_selection.selected_store = lambda trw_dir: (_fake_store, 'test-ns')\n"
+        "\n"
+        "from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint\n"
+        "r = compute_before_edit_hint(file_path='a.py', repo_root=None)\n"
+        "heavy = ('fastmcp', 'mcp', 'numpy', 'trw_memory.daemon._version_gate', 'trw_memory.tools',\n"
+        "         'uvicorn', 'nacl', 'cryptography', 'trw_memory.security.keys')\n"
+        "print(r.distill_status)\n"
+        "print(' '.join(sorted(m for m in sys.modules if m in heavy)) or 'none')\n"
+    )
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": os.pathsep.join(
+            [
+                str(Path(trw_mcp.__file__).resolve().parents[1]),
+                str(Path(__file__).resolve().parents[2] / "trw-memory" / "src"),
+            ]
+        ),
+        "HOME": str(tmp_path),
+        "TRW_EMBEDDINGS_ENABLED": "false",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, check=False, env=env, timeout=120
+    )
+
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    lines = completed.stdout.strip().splitlines()
+    # Non-vacuity: the call must actually have RUN and produced a real status.
+    known_statuses = {leaf for member in get_args(BeforeEditHintStatus) for leaf in get_args(member)}
+    assert lines[0] in known_statuses
+    assert lines[1] == "none"

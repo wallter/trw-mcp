@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import Field
 
+from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.models.config._fields_ceremony import NudgeMessengerLiteral
 
 
@@ -71,6 +72,16 @@ class _NudgeFields:
     # read from TRWConfig by the SAME function -- two neighbours in one config
     # family wired, four not, which is what made this the sharpest case in the
     # census. Five trw-eval ablation arms rode on these and were retired first.
+    #
+    # PRD-CORE-335 restores the project-level lever as ONE structured field of
+    # the existing NudgePoolWeights type (its sum-to-100 validator applies
+    # unchanged), wired from its first commit: select_pool reads it through
+    # TRWConfig.effective_nudge_pool_weights, which wins over the run's
+    # task_profile tuple and then the client profile.
+    nudge_pool_weights: NudgePoolWeights | None = Field(
+        default=None,
+        description="Project override for nudge pool routing weights (must sum to 100); None defers to profile.",
+    )
     nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
     nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
     nudge_pool_cooldown_wall_clock_max_hours: int = Field(

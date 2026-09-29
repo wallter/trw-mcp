@@ -143,6 +143,8 @@ def build_validate_payload(
         "integrity_warnings": v2_result.integrity_warnings,
         # PRD-CORE-190 FR03: full wiring set, un-truncated (helper docs).
         "wiring_gate_warnings": extract_wiring_warnings(v2_result),
+        # PRD-QUAL-148-FR03: pass|partial|unwired|not_applicable|not_evaluated.
+        "wiring_verdict": v2_result.wiring_verdict,
         "cache": {
             "hit": cache_hit,
             "key": cache_key,

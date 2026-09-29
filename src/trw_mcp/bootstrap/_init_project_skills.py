@@ -20,6 +20,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.agents.tier_resolver import materialize_agent
 from trw_mcp.models.skill_manifest import validate_skill_markdown
 
@@ -142,9 +143,11 @@ def _install_skills(
 
     skills_source = _data_dir() / "skills"
     if skills_source.is_dir():
-        retire_disabled_skills(target_dir / ".claude" / "skills", skills_source, result, ".claude/skills")
+        retire_disabled_skills(
+            target_dir / ".claude" / "skills", skills_source, result, ".claude/skills", project_root=target_dir
+        )
         for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir() and skill_enabled(skill_dir.name):
+            if skill_dir.is_dir() and skill_enabled(skill_dir.name, target_dir):
                 is_valid, reason = _validate_skill(skill_dir)
                 if not is_valid:
                     logger.warning(
@@ -269,6 +272,7 @@ def _install_agents_for_client(
             result=result,
             on_progress=on_progress,
             client=client,
+            root=target_dir,
         )
 
 
@@ -280,8 +284,12 @@ def _install_one_agent(
     result: dict[str, list[str]],
     on_progress: ProgressCallback,
     client: str,
+    root: Path | None = None,
 ) -> None:
     """Install a single bundled agent, materialized for *client*.
+
+    Written beneath *root* (the project root; default: *dest*'s own directory, which checks only
+    the file) without following a symlink (PRD-CORE-337).
 
     Idempotent: if *dest* already exists and *force* is False, the file
     is skipped (matching :func:`trw_mcp.bootstrap._utils._copy_file`
@@ -328,9 +336,10 @@ def _install_one_agent(
         return
 
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(rewritten, encoding="utf-8")
-    except OSError as exc:
+        anchor = root or dest.parent
+        anchor.mkdir(parents=True, exist_ok=True)  # the trusted root itself, created by name as before
+        write_checkout_file(anchor, dest, rewritten)
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {dest}: {exc}")
         if on_progress:
             on_progress("Error", str(dest))

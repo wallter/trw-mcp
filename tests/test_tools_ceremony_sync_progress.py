@@ -15,7 +15,7 @@ from ._tools_ceremony_support import trw_project  # noqa: F401
 
 
 class TestDoClaudeMdSync:
-    """CLAUDE.md sync during delivery ceremony."""
+    """Instruction-file sync during delivery ceremony."""
 
     def test_creates_or_updates_claude_md(self, trw_project: Path) -> None:
         trw_dir = trw_project / ".trw"
@@ -25,10 +25,10 @@ class TestDoClaudeMdSync:
         ):
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
-        assert "learnings_promoted" in result
+        assert "learnings_promoted" not in result
 
     def test_deliver_includes_ceremony_sections(self, trw_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync."""
+        """trw_deliver path produces AGENTS.md via canonical execute_claude_md_sync."""
         trw_dir = trw_project / ".trw"
         with (
             patch("trw_mcp.state._paths.resolve_project_root", return_value=trw_project),
@@ -37,19 +37,14 @@ class TestDoClaudeMdSync:
             result = _do_instruction_sync(trw_dir)
         assert result["status"] == "success"
 
-        claude_md = trw_project / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        assert "## TRW Behavioral Protocol (Auto-Generated)" in content
-        assert "`trw_session_start()`" in content
-        assert "`trw_deliver()`" in content
-        assert "`trw_checkpoint(message)`" in content
-        assert "`trw_learn(summary, detail)`" in content
-        # The compact CLAUDE.md opener carries the delegation guidance inline
-        # (the full orchestration briefing moved to the session-start hook per
-        # PRD-CORE-093); assert the delegation note rather than the removed
-        # "orchestration" wording of the pre-rewrite opener (commit 0ce5ce422).
+        # PRD-CORE-341: AGENTS.md links the generated file, which carries the protocol.
+        assert "@.trw/INSTRUCTIONS.md" in (trw_project / "AGENTS.md").read_text(encoding="utf-8").splitlines()
+        content = (trw_project / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        assert "trw_session_start()" in content
+        assert "trw_deliver" in content
+        assert "trw_checkpoint" in content
+        assert "trw_learn" in content
         assert "Delegation" in content
-        assert "/trw-ceremony-guide" in content
         assert "{{imperative_opener}}" not in content
         assert "{{ceremony_quick_ref}}" not in content
         assert "{{ceremony_phases}}" not in content

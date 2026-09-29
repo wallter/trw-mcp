@@ -27,6 +27,9 @@ from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.state._store_selection import VectorSet
 from trw_mcp.tools._recall_impl import _dedup_ranked_learnings
 
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
+
 # -- 1. default model --------------------------------------------------------
 
 
@@ -336,7 +339,7 @@ def test_publisher_body_has_no_embedding_key(tmp_path: Path) -> None:
 
     captured_payloads: list[dict[str, object]] = []
 
-    def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+    def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
         captured_payloads.append(payload)
         return True
 

@@ -13,7 +13,6 @@ Result keys written:
   * ``resolved_profile``     — effective surface (non-None fields only).
   * ``profile_layers_applied`` — layers that contributed, in chain order.
   * ``profile_snapshot_id``  — persistent-surface content hash (FR-13).
-  * ``session_override_hash`` — session-layer delta hash (FR-13).
 
 Per-field attribution is built only by ``trw_status(detail="surface")`` on demand.
 
@@ -55,8 +54,7 @@ def step_resolve_profile(
     No-op (block omitted) when ``profile_system_enabled`` is False. A layer that
     fails to load writes ``profile_resolution_error`` and returns; any other
     failure raises :class:`SessionStartStepError` for the runner's critical
-    branch (PRD-CORE-263-FR01). Reads the SCALE-001 session-layer file at
-    ``{run_dir}/meta/session_profile.yaml`` when present.
+    branch (PRD-CORE-263-FR01).
     """
     if not getattr(config, "profile_system_enabled", True):
         return
@@ -69,7 +67,6 @@ def step_resolve_profile(
         try:
             resolved = resolve_session_profile(
                 config,
-                run_dir=run_dir,
                 trw_dir=trw_dir,
             )
         except LayerLoadError as exc:
@@ -89,14 +86,10 @@ def step_resolve_profile(
             return
         results["resolved_profile"] = resolved.profile.model_dump(exclude_none=True, mode="json")
         results["profile_layers_applied"] = list(resolved.layers_applied)
-        # PRD-FIX-141-FR06: state WHAT this was resolved from. session_start runs
-        # before trw_init, so the Scout's session layer usually does not exist
-        # yet and the tier comes from defaults; trw_status(detail="surface"), called
-        # later, legitimately sees a different one. Same resolver, same block,
-        # so a reader can reconcile the two instead of choosing between them.
+        # PRD-FIX-141-FR06: state WHAT this was resolved from, so a reader can
+        # reconcile this block with the one trw_status(detail="surface") returns.
         results["profile_resolution_basis"] = resolution_basis(resolved, run_dir=run_dir)
         results["profile_snapshot_id"] = resolved.surface_snapshot_id
-        results["session_override_hash"] = resolved.session_override_hash
         logger.debug(
             "profile_resolved",
             layers_applied=resolved.layers_applied,

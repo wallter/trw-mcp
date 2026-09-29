@@ -12,7 +12,11 @@ def test_analytics_facade_exports_only_public_names() -> None:
 
 
 def test_analytics_facade_keeps_private_compatibility_attributes() -> None:
-    for name in ("_safe_float", "_safe_int", "_TOPIC_KEYWORD_MAP"):
+    # _safe_float (the state/analytics/core.py one) was deleted outright as a
+    # dead symbol in 83754efb3 (PRD-CORE-313 FR01+FR06, 8.0 removals); only
+    # channels/_tool_return_tiers.py has a same-named function now, which is
+    # unrelated to this facade. Dropped from this compatibility list.
+    for name in ("_safe_int", "_TOPIC_KEYWORD_MAP"):
         assert hasattr(analytics, name)
 
 

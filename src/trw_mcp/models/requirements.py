@@ -13,7 +13,7 @@ from datetime import date
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -255,6 +255,30 @@ class PRDDates(BaseModel):
     target_completion: date | None = None
 
 
+class PRDTimeSlice(BaseModel):
+    """One slice's estimate as a range in hours (PRD-CORE-338-FR04); actuals come from events."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    id: str = Field(min_length=1)
+    estimate_hours_min: float = Field(gt=0.0, le=10_000.0)
+    estimate_hours_max: float = Field(gt=0.0, le=10_000.0)
+
+    @model_validator(mode="after")
+    def _min_not_above_max(self) -> PRDTimeSlice:
+        if self.estimate_hours_min > self.estimate_hours_max:
+            raise ValueError("estimate_hours_min must not exceed estimate_hours_max")
+        return self
+
+
+class PRDTime(BaseModel):
+    """Declared slice estimates for a multi-slice PRD (PRD-CORE-338-FR04)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    slices: list[PRDTimeSlice] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # PRD frontmatter (aggregate model)
 # ---------------------------------------------------------------------------
@@ -297,6 +321,8 @@ class PRDFrontmatter(BaseModel):
     quality_gates: PRDQualityGates = Field(default_factory=PRDQualityGates)
     verification: PRDVerification = Field(default_factory=PRDVerification)
     dates: PRDDates = Field(default_factory=PRDDates)
+    # PRD-CORE-338-FR04: declared because pydantic drops unknown keys silently.
+    time: PRDTime | None = None
 
     # Lifecycle governance (PRD-FIX-056)
     approved_by: str | None = None
@@ -325,7 +351,6 @@ from trw_mcp.models._requirements_execution import (
     AcceptanceManifest as AcceptanceManifest,
     ReflectionActionState as ReflectionActionState,
     SeamEntry as SeamEntry,
-    Requirement as Requirement,
     ValidationFailure as ValidationFailure,
     ValidationResult as ValidationResult,
     SectionScore as SectionScore,
@@ -333,5 +358,4 @@ from trw_mcp.models._requirements_execution import (
     SmellFinding as SmellFinding,
     ImprovementSuggestion as ImprovementSuggestion,
     ValidationResultV2 as ValidationResultV2,
-    TraceabilityResult as TraceabilityResult,
 )

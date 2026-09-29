@@ -15,18 +15,6 @@ from __future__ import annotations
 
 import re
 
-# Known test file naming conventions supported by _TEST_REF_RE.
-_KNOWN_TEST_PATTERNS: dict[str, str] = {
-    "python": "test_*.py or test_*.py::test_func (pytest prefix convention)",
-    "typescript": "*.test.ts, *.test.tsx (Jest/Vitest suffix convention)",
-    "javascript": "*.test.js, *.spec.js (Jest/Jasmine conventions)",
-    "go": "*_test.go (Go testing suffix convention)",
-    "rust": "tests/*.rs (Rust integration tests directory convention)",
-    "java": "*Test.java, *Tests.java (JUnit suffix convention)",
-    "ruby": "*_spec.rb (RSpec suffix convention)",
-    "generic_spec": "*.spec.ts, *.spec.tsx (spec suffix, any extension)",
-}
-
 # Backtick-wrapped test-file references covering Python prefix, TS/JS
 # suffix, Go/Ruby suffix, Java suffix, and tests/ directory conventions.
 _TEST_REF_RE = re.compile(

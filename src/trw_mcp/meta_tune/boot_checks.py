@@ -141,43 +141,6 @@ def _validate_sandbox(image_tag: str) -> BootValidationFailure | None:
     return None
 
 
-def audit_defaults(config: TRWConfig | None = None, *, repo_root: Path | None = None) -> dict[str, Any]:
-    cfg = config or TRWConfig()
-    root = _resolve_repo_root(repo_root=repo_root)
-    kill_switch = resolve_kill_switch_path(cfg.meta_tune, repo_root=root)
-    audit_log = _resolve_repo_path(cfg.meta_tune.audit_log_path, repo_root=root)
-    corpus_path = _resolve_repo_path(cfg.meta_tune.corpus_path, repo_root=root)
-    fixture_path = _resolve_repo_path(cfg.meta_tune.eval_gaming_fixture_path, repo_root=root)
-    sandbox_failure = _validate_sandbox(cfg.meta_tune.sandbox_image_tag)
-    fixture_count = len(list(fixture_path.glob("*.yaml"))) if fixture_path.exists() else 0
-    return {
-        "kill_switch_path": {
-            "resolved": kill_switch.exists(),
-            "parent_writable": _ensure_parent_writable(kill_switch),
-            "path": str(kill_switch),
-        },
-        "audit_log_path": {
-            "parent_writable": _ensure_parent_writable(audit_log),
-            "path": str(audit_log),
-        },
-        "corpus_path": {
-            "resolved": corpus_path.exists(),
-            "has_version_subdir": any(p.is_dir() for p in corpus_path.iterdir()) if corpus_path.exists() else False,
-            "path": str(corpus_path),
-        },
-        "eval_gaming_fixture_path": {
-            "resolved": fixture_path.exists(),
-            "fixture_count": fixture_count,
-            "path": str(fixture_path),
-        },
-        "sandbox": {
-            "ready": sandbox_failure is None,
-            "image_tag": cfg.meta_tune.sandbox_image_tag,
-            "reason": sandbox_failure.actual if sandbox_failure else None,
-        },
-    }
-
-
 def validate_defaults(config: TRWConfig | None = None, *, repo_root: Path | None = None) -> None:
     cfg = config or TRWConfig()
     root = _resolve_repo_root(repo_root=repo_root)
@@ -269,7 +232,6 @@ def validate_defaults(config: TRWConfig | None = None, *, repo_root: Path | None
 
 __all__ = [
     "BootValidationFailure",
-    "audit_defaults",
     "resolve_kill_switch_path",
     "validate_defaults",
 ]

@@ -1,52 +1,67 @@
 ---
 name: trw-delegate
 description: >-
-  Dispatch an isolated, read-only second-opinion review to another coding-agent CLI. Use an explicit client or model when provider diversity matters; defaults may select the same client as the host.
+  Hand work to other agent CLIs (codex, agy, grok, claude, ...) with one trw_dispatch call: review, critique, plan or implement, on one harness or fanned out to several. Use when asked to "get codex/agy/grok to review / critique / plan", or when a second opinion from another model would help.
 user-invocable: true
-argument-hint: "[client] [role] [what to review]"
+argument-hint: "[targets] [role] [what to review]"
 ---
 
-# Cross-Client Second-Opinion Delegate
+# Delegate to Other Harnesses
 
-Use for a bias-breaking review or focused audit. Dispatch is read-only by default and sanitizes the child environment;
-it does not guarantee a different provider or model unless the caller explicitly selects one.
+"Get codex, agy and grok to critique this" is ONE tool call. Never hand-roll `codex exec`, `agy -p`, `grok -p`
+or a wrapper script: `trw_dispatch` already launches each CLI with the right flags, sandbox, timeout and output parsing.
 
-## Run
+## Copy-paste
 
-Prefer MCP, especially in shell-less harnesses:
+```
+trw_dispatch(
+    client="codex,agy,grok:grok-4.7",   # one name, "client:model", or a comma list to fan out
+    role="critique",                     # optional preset: review | critique | plan | audit | implement
+    prompt="Critique the retry logic in src/foo/retry.py. Be specific.",
+    wait=True,                           # inline, <=120s; returns every answer together
+)
+# -> {"status": "3/3 succeeded", "results": [{"target": "codex", "ok": true, "text": "..."}, ...]}
+```
 
-1. Call `trw_dispatch(prompt=..., role=..., client=..., wait=False)`.
-2. Poll `trw_dispatch(action="status", target=job_id)` until `succeeded`, `failed`, `timed_out`, or `cancelled`.
-3. Read the redacted result and report failures or isolation limitations. Never imply a review completed from a
-   non-terminal job.
+- Names: `trw_dispatch(action="clients")` lists every client, whether it is installed, aliases (`sonnet`,
+  `haiku`, `opus` mean claude with that model; `antigravity` means agy) and the roles.
+- The prompt goes as-is by default. A role is only a preset: `review`, `critique`, `plan` and `audit` prepend a
+  reviewer contract and default to read-only; `implement` lets the child write. A role never sets a posture or
+  refuses a client.
+- Variants: `prompt=["variant A", "variant B"]` runs every variant (on every listed client) in parallel.
+- Posture: `posture="reviewer"` asks for TRW's read-only tool surface, best effort; `posture_note` in the result
+  says what the child actually got when a client cannot carry it. The trailing `!` in `"reviewer!"` means required:
+  the dispatch refuses rather than run without it.
+- A failed lane carries `error` (stderr tail) and `reason`; the other lanes still return.
 
-Use `wait=True` only for short work; synchronous MCP dispatch is capped at 120 seconds. When MCP dispatch is unavailable
-and a shell exists, use `trw-mcp dispatch --help` and the CLI as a fallback rather than reproducing its mutable flags here.
+## Long work
+
+`wait=True` only for short work (MCP dispatch is capped at 120s). For longer work:
+
+1. Call `trw_dispatch(prompt=..., role=..., client=..., wait=False)` — a fan-out returns one job per target and
+   a ready-made `poll` call.
+2. Poll `trw_dispatch(action="status", target=job_id)` (comma-separate several ids) until terminal. Never imply
+   a review completed from a non-terminal job.
+
+No MCP but a shell exists: use `trw-mcp dispatch --help` and the CLI as a fallback; its flags are not repeated here.
 
 ## When the dispatch tools are not listed
 
-They are off, not missing. `trw_dispatch` needs `dispatch_tools_exposed: true` in `.trw/config.yaml` — the client must
-refresh its tool list after the flag flips (a reconnect if it cannot). There is no alternative grant path.
+They are off, not missing. `trw_dispatch` needs `dispatch_tools_exposed: true` in `.trw/config.yaml` — refresh the
+tool list after the flag flips. There is no alternative grant path. A reviewer-bounded session is refused
+regardless; that is not a transient error.
 
-A reviewer-bounded session is refused regardless of the flag; do not treat that refusal as a transient error.
+## Resolution
 
-## Resolution and roles
-
-Omitted client, model, and timeout values resolve from `.trw/config.yaml`. Client precedence is explicit selection,
-then the selected role's mapping, then the configured default; disabled clients fail closed. Supported targets and exact
-options come from the live runtime/config, not this skill.
-
-Optional roles are `code-review`, `design-audit`, `architectural-audit`, and `adversarial-audit`. A role adds the
-runtime-owned read-only review contract; omit it for a bare prompt.
+Omitted client, model, and timeout values resolve from `.trw/config.yaml`: an explicit client, else the configured
+default; disabled clients fail closed. A model rides in the client (`"grok:grok-4.7"`). Supported targets
+and options come from the live runtime (`action="clients"`), not this skill.
 
 ## Safety
 
-- Keep `read_only=True` and isolation enabled for second opinions. Write access or reduced isolation must be explicit,
-  rare, and justified by the caller.
-- Isolation is strongest where the target supports config/MCP isolation. Some targets may still load project or user
-  configuration; disclose that limitation instead of claiming uniform independence.
-- The child runs against the real project directory so it can inspect the requested code. Treat its output as review
-  evidence, not authority; verify actionable findings locally.
-- Prompts are redacted from returned argv/log metadata. Do not place secrets in prompts anyway.
-- On failure or timeout, report the terminal status and available redacted diagnostics. Do not silently retry with
-  weaker isolation or write access.
+- Keep `read_only=True` (default) and isolation on for second opinions. Write access or reduced isolation must be explicit,
+  rare, and justified.
+- Some targets may still load project or user configuration; disclose that instead of claiming uniform isolation.
+- The child inspects the real project. Treat its output as review evidence, not authority; verify locally.
+- Prompts are redacted from returned metadata; still no secrets in prompts.
+- On failure or timeout, report the lane's `error`. Never silently retry with weaker isolation or write access.

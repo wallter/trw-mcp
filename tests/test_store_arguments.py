@@ -31,6 +31,7 @@ def _args(**overrides: Any) -> Any:
         "assertions": None,
         "type": "pattern",
         "confidence": "unverified",
+        "evidence_level": "unknown",
         "domain": None,
         "phase_affinity": None,
         "protection_tier": "normal",

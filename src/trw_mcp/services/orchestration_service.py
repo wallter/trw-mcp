@@ -143,7 +143,6 @@ def write_checkpoint(
     *,
     run_path: Path | None = None,
     shard_id: str | None = None,
-    wave_id: str | None = None,
 ) -> CheckpointResult:
     """Append a checkpoint record to checkpoints.jsonl.
 
@@ -155,7 +154,6 @@ def write_checkpoint(
         message: Checkpoint description (what was done, what comes next).
         run_path: Explicit path to the run directory.
         shard_id: Optional shard identifier.
-        wave_id: Optional wave identifier.
 
     Returns:
         Dict with ``timestamp``, ``status``, and ``message``.
@@ -179,8 +177,6 @@ def write_checkpoint(
     }
     if shard_id:
         checkpoint["shard_id"] = shard_id
-    if wave_id:
-        checkpoint["wave_id"] = wave_id
 
     checkpoints_path = meta_path / "checkpoints.jsonl"
     _append_jsonl(checkpoints_path, checkpoint)
@@ -188,8 +184,6 @@ def write_checkpoint(
     event_data: dict[str, object] = {"message": message}
     if shard_id:
         event_data["shard_id"] = shard_id
-    if wave_id:
-        event_data["wave_id"] = wave_id
     _append_event(meta_path / "events.jsonl", "checkpoint", event_data)
 
     _logger.info(
@@ -215,6 +209,7 @@ def write_local_learning(
     impact: float = 0.5,
     type: str = "pattern",
     confidence: str = "unverified",
+    evidence_level: str = "unknown",  # PRD-CORE-312-FR01
 ) -> dict[str, object]:
     """Write a local learning through the same learn implementation used by MCP.
 
@@ -251,7 +246,9 @@ def write_local_learning(
     if not detail:
         raise ValueError("detail is required")
     resolved_type = _coerce_learn_type(type)
-    enum_reject = _validate_learn_enums(type=resolved_type, confidence=confidence, protection_tier="normal")
+    enum_reject = _validate_learn_enums(
+        type=resolved_type, confidence=confidence, protection_tier="normal", evidence_level=evidence_level
+    )
     if enum_reject is not None:
         return dict(enum_reject)
     marked_tags = list(tags or [])
@@ -268,6 +265,7 @@ def write_local_learning(
             impact=impact,
             type=resolved_type,
             confidence=confidence,
+            evidence_level=evidence_level,
             source_identity=LOCAL_CLI_SOURCE_IDENTITY,
         )
     )

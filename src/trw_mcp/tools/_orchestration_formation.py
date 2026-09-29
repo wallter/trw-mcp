@@ -21,11 +21,22 @@ import structlog
 from trw_mcp.exceptions import StateError
 
 if TYPE_CHECKING:
+    from trw_mcp.formation import FormationManifest
     from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["apply_formation_init", "record_member_delivery"]
+__all__ = [
+    "DEFAULT_ORCHESTRATOR_MEMBER_ID",
+    "apply_formation_init",
+    "create_formation",
+    "record_member_delivery",
+    "resolve_orchestrator_member_id",
+]
+
+#: The id ``formation init`` gives the orchestrator member unless the payload (or CLI flag)
+#: names another; an empty or null ``orchestrator_member_id`` opts out (PRD-CORE-340-FR18).
+DEFAULT_ORCHESTRATOR_MEMBER_ID = "orchestrator"
 
 #: The only keys a ``join_formation`` payload may carry. Refused, not ignored —
 #: a typo'd key here would otherwise join the caller to nothing while ``trw_init``
@@ -41,7 +52,7 @@ def apply_formation_init(
     result: dict[str, str],
 ) -> None:
     """Create or join a formation, recording the outcome on *result*."""
-    from trw_mcp.formation import FormationError, create, join
+    from trw_mcp.formation import FormationError, join
 
     if formation is not None and join_formation is not None:
         raise StateError(
@@ -50,7 +61,7 @@ def apply_formation_init(
         )
     try:
         if formation is not None:
-            manifest = create(run_root, formation)
+            manifest = create_formation(run_root, formation, ctx)
             result["formation_id"] = manifest.formation_id
             result["formation_manifest"] = str(run_root / "formation.yaml")
             result["formation_members"] = ",".join(m.member_id for m in manifest.members)
@@ -77,6 +88,50 @@ def apply_formation_init(
         # reports every other refused ``advanced`` payload — one failure shape
         # for the caller, with the facade's own sentence preserved verbatim.
         raise StateError(str(exc)) from exc
+
+
+def resolve_orchestrator_member_id(formation: dict[str, object]) -> str | None:
+    """The orchestrator member id to register, applying the experimental gate (PRD-CORE-340-FR11/FR12).
+
+    Unspecified means the default id, but only when the factory gate is enabled: otherwise init
+    behaves exactly as before FR18 (no member, and no refusal of the ordinary init). An explicit
+    id under a gate that refuses raises ``FormationError``; null/empty opts out.
+    """
+    from trw_mcp.formation import FormationError
+    from trw_mcp.state._factory_experiment import check
+
+    explicit = "orchestrator_member_id" in formation
+    lead = formation.get("orchestrator_member_id", DEFAULT_ORCHESTRATOR_MEMBER_ID)
+    if not lead:
+        return None
+    gate = check()
+    if gate.enabled:
+        return str(lead)
+    if explicit:
+        raise FormationError(f"the orchestrator member is experimental: {gate.reason} ({gate.message})")
+    return None
+
+
+def create_formation(
+    run_root: Path, formation: dict[str, object], ctx: object | None, *, pin_key: str | None = None
+) -> FormationManifest:
+    """``formation.create`` with the orchestrator member (PRD-CORE-340-FR18), for the tool and the CLI.
+
+    ``orchestrator_member_id`` in *formation* names the member (default
+    ``orchestrator`` when the factory gate is enabled); null or empty leaves the orchestrator unaddressable. An
+    explicit *pin_key* (the key that found the pinned run) beats re-resolving from *ctx*.
+    """
+    from trw_mcp.formation import create
+
+    payload = dict(formation)
+    lead = resolve_orchestrator_member_id(payload)
+    payload.pop("orchestrator_member_id", None)
+    return create(
+        run_root,
+        payload,
+        orchestrator_member_id=lead,
+        orchestrator_pin_key=pin_key or _resolve_pin_key(ctx),
+    )
 
 
 def _resolve_pin_key(ctx: object | None) -> str | None:

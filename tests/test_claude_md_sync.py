@@ -10,8 +10,6 @@ Covers:
 from __future__ import annotations
 
 import hashlib
-import re
-import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -103,28 +101,16 @@ class TestInstructionsSync:
     ``.opencode/INSTRUCTIONS.md``.
     """
 
-    def test_fr13_backward_compat_no_client_writes_claude_md(self, tmp_path: Path) -> None:
-        """Calling without client parameter still writes CLAUDE.md (backward compat)."""
-        (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
-
+    def test_fr13_default_client_writes_agents_md_not_claude_md(self, tmp_path: Path) -> None:
+        """Calling without client parameter writes the claude-code carrier: AGENTS.md, never CLAUDE.md."""
         result = _run_sync(tmp_path)
 
         assert result["status"] == "synced"
-        claude_md = tmp_path / "CLAUDE.md"
-        assert claude_md.exists()
-        content = claude_md.read_text(encoding="utf-8")
+        assert result["agents_md_synced"] is True
+        content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert TRW_MARKER_START in content
         assert TRW_MARKER_END in content
-
-    def test_fr13_no_opencode_dir_does_not_write_agents_md(self, tmp_path: Path) -> None:
-        """With no opencode config present, AGENTS.md is not created by auto-detection."""
-        result = _run_sync(tmp_path)
-
-        agents_md = tmp_path / "AGENTS.md"
-        # agents_md_synced should be False when opencode not detected
-        assert result["agents_md_synced"] is False
-        # AGENTS.md should not exist (was not created)
-        assert not agents_md.exists()
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_fr13_opencode_dir_detected_does_not_write_shared_agents_md(self, tmp_path: Path) -> None:
         """With .opencode/ auto-detected, the shared AGENTS.md is NOT written.
@@ -173,35 +159,29 @@ class TestInstructionsSync:
         assert codex_file.is_file(), "codex still gets its own file"
         assert "OpenAI developer docs MCP server" in codex_file.read_text(encoding="utf-8")
 
-    def test_fr13_claude_plus_codex_writes_claude_md_and_the_codex_file(self, tmp_path: Path) -> None:
-        """Each client gets ITS surface, and neither drags in the shared AGENTS.md."""
+    def test_fr13_claude_plus_codex_writes_agents_md_and_the_codex_file(self, tmp_path: Path) -> None:
+        """Each client gets ITS surface: claude-code the shared AGENTS.md, codex its own file."""
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".codex").mkdir()
-        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="auto")
 
-        assert TRW_MARKER_START in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert TRW_MARKER_START in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert (tmp_path / ".codex" / "INSTRUCTIONS.md").is_file()
-        assert result["agents_md_synced"] is False
-        assert not (tmp_path / "AGENTS.md").exists()
+        assert result["agents_md_synced"] is True
+        assert not (tmp_path / "CLAUDE.md").exists()
 
-    def test_fr13_claude_plus_opencode_writes_claude_md_only(self, tmp_path: Path) -> None:
-        """A co-detected client that has NO AGENTS.md claim must not drag the surface in.
-
-        The mixed-detection counterpart of the FR04 withdrawal: claude-code is
-        detected (so CLAUDE.md is written) but opencode is the only other client,
-        and it no longer claims AGENTS.md — so no shared surface is created.
-        """
+    def test_fr13_claude_plus_opencode_writes_agents_md_and_the_opencode_file(self, tmp_path: Path) -> None:
+        """claude-code's claim writes AGENTS.md; opencode still gets only its own file."""
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".opencode").mkdir()
-        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="auto")
 
-        assert TRW_MARKER_START in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-        assert result["agents_md_synced"] is False
-        assert not (tmp_path / "AGENTS.md").exists()
+        assert TRW_MARKER_START in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file()
+        assert result["agents_md_synced"] is True
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_fr13_client_override_opencode_only(self, tmp_path: Path) -> None:
         """client='opencode' writes its OWN instruction file, not CLAUDE.md or AGENTS.md.
@@ -256,7 +236,9 @@ class TestInstructionsSync:
         # This is the assertion that proves withdrawing AGENTS.md moved the
         # content rather than dropping it.
         content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
-        assert "## Codex Workflow" in content
+        # PRD-CORE-301-FR02: codex framing around the shared block, not a codex-only workflow.
+        assert content.startswith("# Codex TRW Instructions\n")
+        assert "## Workflow" in content
         assert "OpenAI developer docs MCP server" in content
         assert result["agents_md_synced"] is False
 
@@ -289,34 +271,27 @@ class TestInstructionsSync:
         )
 
     def test_fr13_client_override_claude_code_only(self, tmp_path: Path) -> None:
-        """client='claude-code' writes only CLAUDE.md, not AGENTS.md."""
-        (tmp_path / ".opencode").mkdir()  # presence should not trigger AGENTS.md
+        """client='claude-code' writes AGENTS.md and never touches a user's CLAUDE.md."""
         (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="claude-code")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert not agents_md.exists(), "AGENTS.md must NOT be created with client='claude-code'"
-        assert result["agents_md_synced"] is False
-
-        claude_md = tmp_path / "CLAUDE.md"
-        assert TRW_MARKER_START in claude_md.read_text(encoding="utf-8")
+        assert result["agents_md_synced"] is True
+        assert TRW_MARKER_START in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "# My Project\n"
 
     def test_fr13_client_all_writes_both(self, tmp_path: Path) -> None:
-        """client='all' writes both CLAUDE.md and AGENTS.md regardless of detection."""
-        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
-
+        """client='all' writes AGENTS.md regardless of detection, and no CLAUDE.md."""
         result = _run_sync(tmp_path, client="all")
 
-        assert (tmp_path / "CLAUDE.md").exists()
+        assert not (tmp_path / "CLAUDE.md").exists()
         assert (tmp_path / "AGENTS.md").exists()
         assert result["agents_md_synced"] is True
 
     def test_fr13_agents_md_has_platform_generic_content(self, tmp_path: Path) -> None:
-        """AGENTS.md gets platform-generic content, distinct from CLAUDE.md."""
+        """AGENTS.md links to a platform-generic instructions file."""
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".opencode").mkdir()
-        (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
 
         from trw_mcp.models.config import TRWConfig
 
@@ -330,40 +305,28 @@ class TestInstructionsSync:
 
         _run_sync(tmp_path, client="all", config=config)
 
-        claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-        agents_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert TRW_MARKER_START in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        # PRD-CORE-341: AGENTS.md holds the link; the platform-generic block is the file it names.
+        agents_content = (tmp_path / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
 
-        # Both must have TRW markers
-        assert TRW_MARKER_START in claude_content
-        assert TRW_MARKER_START in agents_content
-
-        # AGENTS.md should have platform-generic content (no Claude-specific terms)
+        # The instructions file should have platform-generic content (no Claude-specific terms)
         assert ("Agent " + "Teams") not in agents_content
         assert "subagents" not in agents_content
         assert "/trw-ceremony-guide" not in agents_content
-        assert "MCP (Model Context Protocol)" in agents_content
-
-        # CLAUDE.md should carry the richer Claude profile while avoiding the
-        # retired beta "agent teams"/orchestration framing.
-        assert "/trw-ceremony-guide" in claude_content
-        assert ("Agent " + "Teams") not in claude_content
+        # PRD-CORE-301-FR13 dropped the MCP intro paragraph; the block points at the live surface.
+        assert 'trw_status(detail="surface")' in agents_content
 
     def test_fr13_auto_no_ide_defaults_to_claude(self, tmp_path: Path) -> None:
-        """With client='auto' and no IDE dirs, defaults to writing CLAUDE.md only."""
-        (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
-
+        """With client='auto' and no IDE dirs, defaults to claude-code: AGENTS.md only."""
         result = _run_sync(tmp_path, client="auto")
 
-        claude_md = tmp_path / "CLAUDE.md"
-        assert claude_md.exists()
-        assert TRW_MARKER_START in claude_md.read_text(encoding="utf-8")
-        # No opencode detected, so AGENTS.md should not exist
-        assert not (tmp_path / "AGENTS.md").exists()
-        assert result["agents_md_synced"] is False
+        assert TRW_MARKER_START in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert not (tmp_path / "CLAUDE.md").exists()
+        assert result["agents_md_synced"] is True
 
     def test_fr13_result_agents_md_path_none_when_not_written(self, tmp_path: Path) -> None:
         """Result has agents_md_path=None when AGENTS.md is not written."""
-        result = _run_sync(tmp_path, client="claude-code")
+        result = _run_sync(tmp_path, client="opencode")
 
         assert result["agents_md_path"] is None
 
@@ -387,7 +350,7 @@ class TestMarkerPreservation:
 
     def test_markers_preserved_after_sync(self, tmp_path: Path) -> None:
         """Running sync twice is idempotent — markers remain exactly once."""
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         claude_md.write_text("# Project\n\nUser prose.\n", encoding="utf-8")
 
         _run_sync(tmp_path)
@@ -402,19 +365,18 @@ class TestMarkerPreservation:
         # User content preserved.
         assert "User prose." in second
 
-    def test_sync_does_not_recreate_markers_in_trw_mcp_claude_md(self, tmp_path: Path) -> None:
-        """FR05/FR11: sync operates on the project root CLAUDE.md only — it must
-        not rewrite the package-local ``trw-mcp/CLAUDE.md`` which now lives
-        without trw markers and instead points at the canonical docs.
+    def test_sync_does_not_recreate_markers_in_nested_agents_md(self, tmp_path: Path) -> None:
+        """FR05/FR11: root sync operates on the project root AGENTS.md only — it
+        must not rewrite a package-local ``trw-mcp/AGENTS.md``.
         """
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         claude_md.write_text("# Project\n", encoding="utf-8")
 
         # Simulate the package-local file under a nested path — sync should
-        # not touch it because its target is the root-level CLAUDE.md.
+        # not touch it because its target is the root-level AGENTS.md.
         nested = tmp_path / "trw-mcp"
         nested.mkdir()
-        nested_claude = nested / "CLAUDE.md"
+        nested_claude = nested / "AGENTS.md"
         nested_claude.write_text("# trw-mcp\n\nNo markers here.\n", encoding="utf-8")
 
         _run_sync(tmp_path)
@@ -436,29 +398,13 @@ _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 _OPENCODE_SHA_PATH = _FIXTURE_DIR / "opencode_agents_md_baseline.sha256"
 
 
-def _normalize_agents_md_for_parity(content: str) -> str:
-    """Remove the dynamic scale claim before hashing rendered AGENTS.md.
-
-    PRD-FIX-141-FR04 made the claim name its population, so it now varies by
-    store inventory as well as by the analytics counters. Normalising the whole
-    clause (rather than the two counts inside the old sentence) keeps this
-    parity hash about the SURFACE and not about the corpus that rendered it.
-    """
-    return re.sub(
-        r"it loads .*? and recovers any active run",
-        "it loads <scale-claim> and recovers any active run",
-        content,
-    )
-
-
 class TestOpencodeParity:
     """FR06 acceptance: sanity-check a second profile's rendered artifact is stable."""
 
     def test_opencode_parity(self, tmp_path: Path) -> None:
         """Render AGENTS.md via opencode profile; assert SHA256 matches baseline.
 
-        If the baseline fixture is absent, capture it (``--fixture-generated``
-        semantics) so a subsequent run enforces stability.
+        The baseline is a committed fixture: a missing one fails rather than being captured and skipped.
         """
         (tmp_path / ".opencode").mkdir()
 
@@ -467,17 +413,12 @@ class TestOpencodeParity:
         agents_md = tmp_path / ".opencode" / "INSTRUCTIONS.md"
         assert agents_md.exists(), "opencode sync must produce its own instruction file"
 
-        content = _normalize_agents_md_for_parity(agents_md.read_text(encoding="utf-8")).encode()
+        content = agents_md.read_bytes()
         actual_sha = hashlib.sha256(content).hexdigest()
 
-        if not _OPENCODE_SHA_PATH.exists():
-            # First-run capture: write baseline so the next run enforces parity.
-            _OPENCODE_SHA_PATH.write_text(actual_sha + "\n", encoding="utf-8")
-            pytest.skip(
-                f"Captured opencode AGENTS.md baseline SHA at {_OPENCODE_SHA_PATH.name} "
-                "(--fixture-generated). Re-run to enforce."
-            )
-
+        assert _OPENCODE_SHA_PATH.is_file(), (
+            f"{_OPENCODE_SHA_PATH.name} is the committed baseline; regenerate it deliberately"
+        )
         expected_sha = _OPENCODE_SHA_PATH.read_text(encoding="utf-8").strip()
         assert actual_sha == expected_sha, (
             f"opencode AGENTS.md SHA256 drifted: expected {expected_sha}, got {actual_sha}. "
@@ -509,57 +450,6 @@ class TestOpencodeParity:
             "opencode AGENTS.md contains a literal 'Claude Code' string — "
             "profile-awareness regression. Every nudge/protocol template "
             "must use {client_display_name} substitution (PRD-CORE-149 FR02)."
-        )
-
-
-# ---------------------------------------------------------------------------
-# PRD-QUAL-075 US-002 acceptance: canonical-edit-propagates.
-# ---------------------------------------------------------------------------
-
-
-class TestCanonicalEditPropagates:
-    """US-002 acceptance: edits to canonical docs propagate via instructions sync.
-
-    Per exec plan W2: the renderer does NOT currently read canonical files; it
-    renders from static strings. This test documents the expected future
-    behavior and is marked xfail until a follow-up PRD (PRD-QUAL-076) wires the
-    renderer to the canonical docs.
-    """
-
-    @pytest.mark.xfail(
-        reason=(
-            "FR03/FR04 extraction is doc-only this sprint; sync still renders "
-            "from static strings. Propagation to be wired in follow-up PRD-QUAL-076."
-        ),
-        strict=False,
-    )
-    def test_canonical_edit_propagates(self, tmp_path: Path) -> None:
-        sentinel = f"<!-- EDIT-TEST-{uuid.uuid4()} -->"
-
-        # Locate the canonical tool-lifecycle doc (read-only snapshot — we are
-        # not mutating the real file; we mock renderer resolution through a
-        # temporary copy).
-        repo_root = Path(__file__).resolve().parents[2]
-        canonical = repo_root / "docs" / "documentation" / "tool-lifecycle.md"
-        if not canonical.exists():
-            pytest.skip("canonical tool-lifecycle.md not found — FR03 not yet landed")
-
-        # Simulate "edit": create a tmp copy with the sentinel injected near the top.
-        tmp_canonical = tmp_path / "tool-lifecycle.md"
-        original_text = canonical.read_text(encoding="utf-8")
-        edited_text = sentinel + "\n" + original_text
-        tmp_canonical.write_text(edited_text, encoding="utf-8")
-
-        # Run sync. If renderer reads canonical docs, sentinel will appear in
-        # the rendered CLAUDE.md. Under current (static-string) renderer, it
-        # will not — so this xfails as expected.
-        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
-        _run_sync(tmp_path)
-
-        rendered = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-        assert sentinel in rendered, (
-            "Canonical edit did not propagate to rendered CLAUDE.md — "
-            "renderer still reads from static strings (expected until PRD-QUAL-076)."
         )
 
 

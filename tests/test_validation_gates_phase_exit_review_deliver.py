@@ -75,7 +75,7 @@ class TestCheckPhaseExitReview:
         result = check_phase_exit(Phase.REVIEW, run_dir, config)
         refl_f = [f for f in result.failures if f.rule == "reflection_required"]
         assert len(refl_f) == 1
-        assert "trw_reflect()" in refl_f[0].message
+        assert "trw_deliver()" in refl_f[0].message
 
     def test_review_exit_no_reflection_warning_with_reflection_event(
         self,

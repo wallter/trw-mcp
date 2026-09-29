@@ -2,7 +2,7 @@
 
 **Give your coding agent a memory that carries over from one session to the next.**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![License: BSL 1.1](https://img.shields.io/badge/License-BSL_1.1-orange.svg)](https://trwframework.com/license)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green)](https://modelcontextprotocol.io/)
 [![Docs](https://img.shields.io/badge/docs-trwframework.com-blue)](https://trwframework.com/docs)
@@ -11,7 +11,7 @@ trw-mcp is a local [MCP](https://modelcontextprotocol.io/) server for the coding
 
 Local-first · MCP-native · source-available (BSL 1.1)
 
-**[Quick start](#quick-start)** · **[What's new in 7.x](#whats-new-in-7x)** · **[Upgrading](#upgrading)** · **[Tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Network and security](#network-and-security)** · **[Troubleshooting](#troubleshooting)**
+**[Quick start](#quick-start)** · **[What's new in 8.x](#whats-new-in-8x)** · **[Upgrading](#upgrading)** · **[Tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Network and security](#network-and-security)** · **[Troubleshooting](#troubleshooting)**
 
 ## Why TRW
 
@@ -60,24 +60,34 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 
 **Supported clients** (`--ide` id): Antigravity CLI (`antigravity-cli`), Claude Code (`claude-code`), Codex (`codex`), GitHub Copilot CLI (`copilot`), Cursor CLI (`cursor-cli`), Cursor IDE (`cursor-ide`), Grok Build CLI (`grok`) and OpenCode (`opencode`). `--ide all` sets up every client, which suits a repository shared across tools. Without `--ide`, `init-project` detects the client. Per-client details: [trwframework.com/docs/clients](https://trwframework.com/docs/clients).
 
-**Requirements:** Python 3.11 to 3.14 and a git repository, on macOS (arm64, x86_64) or Linux with glibc (x86_64, aarch64). On Windows, run it inside WSL2, which works as Linux. Native Windows is not supported in 7.0: the installer stops and points to WSL2. Alpine is not supported, because `sqlite-vec` publishes no musl wheel. Python 3.10 still runs TRW, but code search (`trw_code`) and moving a checkout's old memory store into your user store (`trw-mcp memory migrate`) need 3.11 or later. If you are on 3.10 and have a store to migrate, upgrade Python first.
+**Requirements:** Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv --> to <!-- inv:python_max_trw_mcp -->3.14<!-- /inv --> and a git repository, on macOS (arm64, x86_64) or Linux with glibc (x86_64, aarch64). On Windows, run it inside WSL2, which works as Linux. Native Windows is not supported: the installer stops and points to WSL2. Alpine is not supported, because `sqlite-vec` publishes no musl wheel.
 
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
-## What's new in 7.x
-<!-- whats-new: 7.0.1 -->
+## What's new in 8.x
+<!-- whats-new: 8.0.0 -->
 
-- **7.0.1: previews that only preview.** `instructions sync --dry-run` writes nothing, and a scoped `trw-mcp code index --paths` update keeps edited files searchable.
-- **Fewer tools, better picks.** 51 tools became 15. In our tool-selection eval, correct first picks rose from 30% to 73% (Claude Code) and 0% to 80% (Codex).
-- **One tool for code.** `trw_code` searches a bounded index, finds symbols and gives before-edit hints. Other removed tools became modes or `trw-mcp` commands, or were deleted.
-- **Safer memory.** trw-memory 4.0.0 fixes store corruption and lost first writes from earlier releases, and a recall crash on default installs.
-- **Nothing left hanging, lanes bounded.** A crashed daemon no longer strands clients, the server exits with its client, and a dispatched reviewer gets only `trw_recall` and `trw_code`.
-- **No model in the MCP server.** The memory daemon embeds and dedups, and models download only via `trw-mcp models fetch` or the installer, with the embedding model pinned.
-- **Your platform key stays with trusted hosts.** A host you have not trusted at user level gets requests without it; `platform_contact_enabled: false` stops the update check and team sync.
+- **Half the instruction weight, every turn.** One shared renderer writes every client's instructions; the per-turn block fell from about 3,400 tokens to 1,500-1,700 (claude-code 3,421 → 1,713).
+- **One stable import path.** `trw_mcp.api` is the public, compatibility-promised module, and 280 dead symbols and nine unread config keys are gone.
+- **Lessons with their context.** `trw_recall` names a lesson's source, scope and successor.
+- **`trw_code` text search retired.** `mode="search"` (full-text lexical search) is gone; use `rg`/`grep` for text search or the `trw-distill` CLI for codebase intelligence. `mode="symbol"` and `mode="hint"` (now the default) stay.
+- **Writes that can't be redirected.** Project state and credentials files refuse a planted symlink, and credentials are created owner-only (0600) from the first byte.
+- **AGENTS.md for Claude Code.** The claude-code profile writes `AGENTS.md`, which Claude Code reads natively, and `update-project` removes a TRW-only `CLAUDE.md`.
+- **Failures that name their fix.** A failed dispatch says why (capacity, quota, auth) and retries a transient failure once; `trw-mcp doctor` checks credential health and the memory daemon.
+- **Nothing phones home by default.** The in-process self-updater is gone. Telemetry, learning sharing, team sync and remote backup each stay off until you turn them on.
 
-Full list: [CHANGELOG.md](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md)
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.0.0. 8.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
+
+From 7.x to 8.0.0:
+
+1. **Use Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv --> or newer**, then **install trw-memory 5.0.0 first**, then trw-mcp 8.0.0: `pip install -U "trw-memory>=5,<6"` and `pip install -U "trw-mcp>=8,<9"`.
+2. **Run `trw-mcp update-project`** in each project. It writes `AGENTS.md` for Claude Code, removes a TRW-only `CLAUDE.md`, and refreshes every client's instructions.
+3. **If you use formations**, run `trw-mcp formation comms-upgrade` once per mailbox, from the formation's orchestrator session, to move it to schema v5.
+4. **Stop the old memory daemon (manual in 8.0.0), then restart the MCP server.** Upgrading does not restart the running 7.x daemon. Until you stop it, the first memory call is refused with `daemon_version_mismatch ... The user should stop the old daemon (process <pid>) ... Agents must not stop or remove it themselves; report this to the user.`, and the refusal touches no data; `trw-mcp doctor` names the pid too. Stop that process (after checking it is `python -m trw_memory.server`), or delete a stale `~/.trw/memory/daemon.json`, and the next memory call starts a 5.0.0 daemon. The memory store migrates to schema v13 on first open, after one automatic backup of a store that already holds entries. `trw-mcp doctor` should then show `memory_daemon` PASS at version `5.0.0`.
+
+Every breaking change, with its migration, is in the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md).
 
 From 6.x to 7.0.0:
 
@@ -95,13 +105,13 @@ From 6.x to 7.0.0:
 
 `install-trw.py --upgrade` covers steps 1 and 3, and step 4 only when the deployed framework is out of date. It never stops the memory daemon.
 
-Also in 7.0.0 (every change is in the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md)):
+Also carried from 7.0.0, if you are coming from 6.x (every change is in the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md)):
 
 - **51 tools became 15.** Removed tools have no aliases: each is now a mode of a tool that stays, a `trw-mcp` command, or deleted. The CHANGELOG maps every name.
 - **`trw_dispatch` needs `dispatch_tools_exposed: true`** in `.trw/config.yaml`; there is no per-call grant any more.
-- **One network switch.** The old offline environment variable is gone: runtime model loads never download, and `platform_contact_enabled: false` turns off the update check and team sync.
+- **One network switch.** The old offline environment variable is gone: runtime model loads never download, and `platform_contact_enabled: false` turns off team sync.
 - **Retired config keys** log a warning ([list](https://github.com/wallter/trw-mcp/blob/main/src/trw_mcp/data/config-retired-keys.json)); a profile that still sets `allowed_tools_by_phase` fails validation.
-- **Rebuild the code index:** delete `.trw/code-index/chunks.json`, then run `trw-mcp code index`.
+- **Rebuild the code index:** run `trw-mcp code index`; the build deletes any legacy `.trw/code-index/chunks.json` itself.
 
 ## How it works
 
@@ -120,22 +130,22 @@ trw-mcp exposes <!-- inv:tools -->15<!-- /inv --> tools. The most used:
 |------|-------|
 | Session and runs | `trw_session_start`, `trw_init`, `trw_status`, `trw_checkpoint` (`heartbeat=True` / `pre_compact=True` modes); CLI `trw-mcp run adopt` |
 | Memory | `trw_learn`, `trw_recall` (incl. graph mode); CLI `trw-mcp instructions sync` |
-| Verification and delivery | `trw_build_check`, `trw_review`, `trw_deliver` (its status: `trw_status(delivery=...)`) |
+| Verification and delivery | `trw_build_check`, `trw_review`, `trw_deliver` (its status: `trw_status(delivery=...)`); experimental CLI `trw-mcp receipt verify` records a receiver's intended-use check as a content-bound receipt (Alpha, off unless `factory_enabled: true`, refuses after 2026-12-27; `trw-mcp factory status --run RUN` is the read-only companion report) |
 | Requirements | `trw_prd_validate`; CLI `trw-mcp prd create` / `trw-mcp prd diff` |
-| Code intelligence | `trw_code` (`mode="search"` / `"symbol"` / `"hint"`); CLI `trw-mcp code index` / `trw-mcp code risk` |
+| Code intelligence | `trw_code` (`mode="hint"` default / `"symbol"`); CLI `trw-mcp code index` / `trw-mcp code risk` |
 | Coordination (optional) | `trw_send`, `trw_inbox`, `trw_dispatch` |
 | Surface and diagnostics | `trw_status(detail="surface")`; CLI `trw-mcp profile explain [--json]`, `trw-mcp telemetry events` / `trw-mcp telemetry security` |
 | Experimental, off by default | `trw_assess` |
 
 The [tool reference](https://trwframework.com/docs/tools) covers the rest.
 
-**Skills (<!-- inv:skills -->26<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
+**Skills (<!-- inv:skills -->23<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
 
-- Delivery: `/trw-deliver`, `/trw-commit`, `/trw-reflect`, `/trw-sprint-init`, `/trw-sprint-finish`
+- Delivery: `/trw-deliver`, `/trw-commit`, `/trw-reflect`
 - Requirements: `/trw-prd-new`, `/trw-prd-ready`
 - Review and quality: `/trw-audit`, `/trw-self-review`, `/trw-security-check`, `/trw-test-strategy`, `/trw-dry-check`, `/trw-delegate`, `/trw-plan-review`
 - Memory: `/trw-learn`, `/trw-memory-audit`, `/trw-memory-optimize`
-- Framework: `/trw-ceremony-guide`, `/trw-framework-check`, `/trw-project-health`, `/trw-code-search`, `/trw-feedback`
+- Framework: `/trw-ceremony-guide`, `/trw-framework-check`, `/trw-project-health`, `/trw-feedback`
 
 **Agents (<!-- inv:agents -->8<!-- /inv --> bundled).** Optional role definitions for clients that support delegation: trw-lead, trw-implementer, trw-researcher, trw-reviewer, trw-auditor, trw-adversarial-auditor, trw-prd-groomer and trw-requirement-reviewer. TRW does not need multiple agents; the same lifecycle works in one session.
 
@@ -185,7 +195,7 @@ None of these switches grants permission to modify files or bypass review gates,
 
 trw-mcp is local-first. Tool-call telemetry is recorded locally in `.trw/logs/tool-telemetry.jsonl` (`telemetry_enabled`, on by default). Learning content and usage telemetry are uploaded only if you turn on `learning_sharing_enabled` or `platform_telemetry_enabled`; both are off by default.
 
-**Platform connection.** A signed-in `install.sh` install connects the project to the TRW platform: it adds `platform_urls` (`https://api.trwframework.com`) to `.trw/config.yaml` and stores your API key in `.trw/credentials.yaml`. With a platform URL configured, TRW checks for updates at each session start (throttled to once per 24h) and polls for team learnings every five minutes by default. The API key is attached only when the target host is on a trusted-host allowlist — the official platform host, or a host you add via `~/.trw/config.yaml` (`platform_trusted_hosts`) or `TRW_PLATFORM_TRUSTED_HOSTS`; a project's own tracked `.trw/config.yaml` can point `platform_urls`/`backend_url` at any host, but doing so never makes that host trusted, so a cloned repo cannot redirect your key by editing tracked config. To turn the connection off, set `platform_contact_enabled: false` (or `TRW_PLATFORM_CONTACT_ENABLED=false`), or remove `platform_urls` (and `platform_url` or `backend_url`, if set) from `.trw/config.yaml` and `~/.trw/config.yaml`. A pip install with `trw-mcp init-project` does not configure one.
+**Platform connection.** A signed-in `install.sh` install connects the project to the TRW platform: it adds `platform_urls` (`https://api.trwframework.com`) to `.trw/config.yaml` and stores your API key in `.trw/credentials.yaml`. Each session start compares the version the installer last recorded in `.trw/installed-version.json` with the running server, locally and without a network call, and suggests a reconnect if the recorded version is newer than the running server. With a platform URL configured, TRW also polls for team learnings every five minutes by default. The API key is attached only when the target host is on a trusted-host allowlist — the official platform host, or a host you add via `~/.trw/config.yaml` (`platform_trusted_hosts`) or `TRW_PLATFORM_TRUSTED_HOSTS`; a project's own tracked `.trw/config.yaml` can point `platform_urls`/`backend_url` at any host, but doing so never makes that host trusted, so a cloned repo cannot redirect your key by editing tracked config. To turn the connection off, set `platform_contact_enabled: false` (or `TRW_PLATFORM_CONTACT_ENABLED=false`), or remove `platform_urls` (and `platform_url` or `backend_url`, if set) from `.trw/config.yaml` and `~/.trw/config.yaml`. A pip install with `trw-mcp init-project` does not configure one.
 
 These are the surfaces that can reach the network:
 
@@ -193,7 +203,6 @@ These are the surfaces that can reach the network:
 |---------|------|---------|-------------------|
 | Installer sign-in | `install.sh` device login and installer download from trwframework.com | on for `install.sh` | `--allow-unauthenticated`, or install with pip |
 | Model fetch | Only when you ask: the installer, or `trw-mcp models fetch`. Downloads the embedding model (default `BAAI/bge-small-en-v1.5`, pinned to one Hub commit) and the re-ranker into the local Hugging Face cache. At runtime, models load from that cache only, so recall and store make **zero** huggingface.co requests | runs only when invoked | don't run it; copy a populated cache instead |
-| Update check | Each `trw_session_start`, when a platform URL is configured (throttled to once per 24h): `GET <platform URL>/v1/releases/latest`. The API key is attached as a bearer token only when the target host is on the trusted-host allowlist over HTTPS (or HTTP to localhost); an untrusted host still gets the request, just without the key. It only checks; installing needs `auto_upgrade: true` (off by default) | on with a platform URL | `platform_contact_enabled: false`, or remove the platform URL |
 | Team sync pull | Every `sync_interval_seconds` (default 300), when a platform URL and API key are configured: `GET /v1/intel/state` with this client's id, the model family and the framework version. The API key is attached only when the target host is on the trusted-host allowlist over HTTPS (never over plain HTTP to a non-localhost host); pulled team learnings are merged only with `team_sync_enabled: true` (off by default) | on with a platform URL and key | `platform_contact_enabled: false`, or remove the platform URL |
 | Usage telemetry | Only when enabled | off (`platform_telemetry_enabled: false`) | leave it off |
 | Learning publishing | Only when enabled | off (`learning_sharing_enabled: false`) | leave it off |
@@ -211,10 +220,12 @@ Model downloads are not a runtime behavior, so no consent flag governs them: `le
 | Secrets in memory writes | refused | with PII detection on (`pii_enabled`, the default), a write containing a recognized API-key pattern is refused; a secret in a shape the patterns do not recognize is not caught. Other detected PII (emails, phone numbers) is recorded as metadata and stored as written |
 | Recall output filter | redact | flagged values are masked in recall results (`recall_filter_mode: redact`) |
 | Memory poisoning detection | observe | anomalies are recorded, not quarantined |
-| Learning and telemetry upload | off | `learning_sharing_enabled: false`, `platform_telemetry_enabled: false`; the update check and team-sync pull are separate (see above) |
+| Learning and telemetry upload | off | `learning_sharing_enabled: false`, `platform_telemetry_enabled: false`; the team-sync pull is separate (see above) |
 | File permissions | `0700` / `0600` | `.trw/` state directories are owner-only; `memory.db` and secret files are owner read/write |
 
 The memory security settings (RBAC, the recall filter, canary, poisoning detection, trust scoring and provenance) are daemon-wide, because one daemon serves every checkout. Set them as `MEMORY_*` variables in the environment the daemon starts from; a trw-mcp process that resolves a different value is refused and told which variable to set.
+
+**Trust boundary.** A checkout's memory grant (`.trw/runtime/memory-token`) covers its own project namespace and your shared `user:local` namespace, so a checkout cannot reach another checkout's project namespace through the daemon, and the grant files are owner-only (`0600`, in a `0700` directory). The boundary is your OS user account: grants scope what a checkout may reach, they are not isolation from same-user processes. Any process running as the same user can read those files and the store itself, so run untrusted code under a different account.
 
 For an air-gapped or compliance-sensitive setup: run `trw-mcp models fetch` once while online (or copy a populated model cache), set `platform_contact_enabled: false` and export `TRW_CONFIG_STRICT=1`, and leave `platform_telemetry_enabled`, `learning_sharing_enabled` and `assess_enabled` off. Then check that `.trw/` directories are `0700`, the daemon's store is `0600`, and `trw_session_start` makes no outbound connection.
 
@@ -241,7 +252,7 @@ For an air-gapped or compliance-sensitive setup: run `trw-mcp models fetch` once
 
 **Recall is keyword-only.** Check the `retrieval` row of `trw-mcp doctor`, which names the missing piece and its fix. Usually `trw-memory[embeddings]` is not installed in the interpreter trw-mcp runs from (the daemon uses the same one). Install it, stop the memory daemon (send SIGTERM to the pid in `daemon.json` beside the store) so the next call starts a fresh one, and reconnect the client. `embeddings_enabled: false` is reported as a choice, not a fault.
 
-**Memory tools fail closed and print a `memory migrate` command.** The checkout still has learnings in its old `.trw/memory/memory.db`, from before the per-user store. Run the printed command (`trw-mcp memory migrate --to user` previews; add `--apply`, which backs up first). It needs Python 3.11 or later for trw-mcp and its memory daemon: on 3.10 the daemon answers `unsupported_runtime`, so upgrade Python, then run it.
+**Memory tools fail closed and print a `memory migrate` command.** The checkout still has learnings in its old `.trw/memory/memory.db`, from before the per-user store. Run the printed command (`trw-mcp memory migrate --to user` previews; add `--apply`, which backs up first).
 
 **Memory is refused after moving a checkout.** Mint a grant for the namespace it was pinned to: `trw-mcp memory token --namespace <pinned namespace>`.
 

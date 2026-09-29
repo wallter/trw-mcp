@@ -50,6 +50,7 @@ def execute_learn_update(
     tags: list[str] | str | None,
     type: str | None,
     confidence: str | None,
+    evidence_level: str | None = None,  # PRD-CORE-312-FR01
     upd: LearnUpdateFields,
 ) -> dict[str, str]:
     """Apply one partial update; return ``{status, learning_id, changes}`` or ``{error, status}``."""
@@ -67,6 +68,7 @@ def execute_learn_update(
         "tags": tags,
         "type": type,
         "confidence": confidence,
+        "evidence_level": evidence_level,
         **upd.model_dump(exclude={"reverify_anchors"}, exclude_none=True),
     }
     # Validate before any side effect: a rejected patch must not re-verify anchors.

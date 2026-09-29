@@ -34,13 +34,7 @@ from trw_mcp.state.claude_md.sections._delegation import (
     render_agents_trw_section as render_agents_trw_section,
 )
 from trw_mcp.state.claude_md.sections._delegation import (
-    render_codex_trw_section as render_codex_trw_section,
-)
-from trw_mcp.state.claude_md.sections._delegation import (
     render_delegation_protocol as render_delegation_protocol,
-)
-from trw_mcp.state.claude_md.sections._delegation import (
-    render_rationalization_watchlist as render_rationalization_watchlist,
 )
 from trw_mcp.state.claude_md.sections._feedback import (
     FEEDBACK_MARKER_END as FEEDBACK_MARKER_END,
@@ -64,16 +58,10 @@ from trw_mcp.state.claude_md.sections._memory_routing import (
     _load_analytics_counts as _load_analytics_counts,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
-    bundled_memory_routing_hash_prefix as bundled_memory_routing_hash_prefix,
-)
-from trw_mcp.state.claude_md.sections._memory_routing import (
     load_memory_routing as load_memory_routing,
 )
 from trw_mcp.state.claude_md.sections._memory_routing import (
     render_memory_harmonization as render_memory_harmonization,
-)
-from trw_mcp.state.claude_md.sections._memory_routing import (
-    render_shared_learnings as render_shared_learnings,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     DELIVER_GATE_PHRASE as DELIVER_GATE_PHRASE,
@@ -113,7 +101,6 @@ __all__ = [
     "_format_learning_session_claim",
     "_load_analytics_counts",
     "bundled_lifecycle_hash_prefix",
-    "bundled_memory_routing_hash_prefix",
     "generate_behavioral_protocol_md",
     "load_memory_routing",
     "load_tool_lifecycle",
@@ -124,7 +111,6 @@ __all__ = [
     "render_ceremony_table",
     "render_closing_reminder",
     "render_codex_instructions",
-    "render_codex_trw_section",
     "render_delegation_protocol",
     "render_deliver_gate_statement",
     "render_feedback_reporting",
@@ -134,6 +120,4 @@ __all__ = [
     "render_minimal_protocol",
     "render_opencode_instructions",
     "render_phase_descriptions",
-    "render_rationalization_watchlist",
-    "render_shared_learnings",
 ]

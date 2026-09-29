@@ -12,11 +12,12 @@ from pathlib import Path
 import pytest
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
+from tests._layout import subprocess_pythonpath
 from tests.comms.conftest import enable_comms
 from tests.comms.test_candidate_admission import _lead_formation, _peers, bootstrap_scene  # noqa: F401
 from trw_mcp import formation
 
-_SRC = Path(__file__).resolve().parents[2] / "src"
+_SRC = subprocess_pythonpath()
 _ANNOUNCE = """
 import asyncio, json
 from fastmcp import FastMCP

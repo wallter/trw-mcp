@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
-__all__ = ["STATE_ASSERTION_MARKERS", "propose_validity_window", "validity_window_nudge"]
+__all__ = ["propose_validity_window", "validity_window_nudge"]
 
 #: Phrases that mark a claim about *current* state rather than an invariant.
 #: Each is matched case-insensitively on a word boundary. Every one of them is
@@ -45,9 +45,6 @@ _MARKER_PHRASES = (
 )
 
 _MARKER_PATTERNS = tuple(re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE) for phrase in _MARKER_PHRASES)
-
-#: Exposed for tests and for the tool docstring that explains the nudge.
-STATE_ASSERTION_MARKERS = _MARKER_PHRASES
 
 
 def propose_validity_window(

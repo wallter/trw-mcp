@@ -2,7 +2,7 @@
 """IDE-specific artifact update logic.
 
 Extracted from ``_template_updater.py`` to keep the facade focused on
-CLAUDE.md marker management and framework file copying.  All public
+instruction-file marker management and framework file copying.  All public
 names are re-exported from ``_template_updater.py`` so existing import
 paths are preserved.
 
@@ -10,7 +10,7 @@ Covers:
 - OpenCode artifact updates (FR15)
 - Cursor artifact updates (FR05, FR06, FR07)
 - Config target_platforms patching
-- CLAUDE.md sync (learnings promotion during update)
+- instruction-file sync (learnings promotion during update)
 """
 
 from __future__ import annotations
@@ -29,16 +29,17 @@ from ._ide_targets_finalize import (
 from ._ide_targets_finalize import (
     _update_config_target_platforms as _update_config_target_platforms,
 )
-from ._utils import _minimal_claude_md, resolve_ide_targets
+from ._utils import resolve_ide_targets
 
 logger = structlog.get_logger(__name__)
 
-# CLAUDE.md markers — needed by _extract_trw_section_content and _run_claude_md_sync
+# Instruction-file markers, re-exported for back-compat
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
-_TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
-_SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
+# ``trashed`` is what tells the uncommitted-changes guard a retired file was moved to .trw/trash on purpose;
+# without it a copy with no recorded hash (an orphaned install) is restored right after it was retired.
+_SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors", "warnings", "trashed")
 
 #: Cursor IDE's approximate combined-MCP tool ceiling (PRD-CORE-136 NFR). A
 #: vendor figure, so it is a named constant rather than derivable — unlike the
@@ -111,7 +112,6 @@ def _update_opencode_artifacts(
     break the overall update flow.
     """
     from ._opencode import (
-        detect_model_family,
         generate_agents_md,
         generate_opencode_config,
         generate_opencode_instructions,
@@ -135,42 +135,16 @@ def _update_opencode_artifacts(
 
     # Update AGENTS.md with platform-generic TRW section
     try:
-        from trw_mcp.models.config import get_config
-        from trw_mcp.state.claude_md._static_sections import (
-            render_agents_trw_section,
-            render_minimal_protocol,
-        )
-
-        _cfg = get_config()
-        if _cfg.effective_ceremony_mode == "light":
-            agents_section = render_minimal_protocol()
-        else:
-            agents_section = render_agents_trw_section()
-        agents_result = generate_agents_md(target_dir, agents_section, client_id="opencode")
+        agents_result = generate_agents_md(target_dir, client_id="opencode")
         result["created"].extend(agents_result.get("created", []))
         result["updated"].extend(agents_result.get("updated", []))
         result["errors"].extend(agents_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md update skipped: {exc}")
 
-    # Update .opencode/INSTRUCTIONS.md with model-specific content (FR01)
+    # Update .opencode/INSTRUCTIONS.md (PRD-CORE-301-FR02: the shared block plus opencode framing)
     try:
-        opencode_path = target_dir / "opencode.json"
-        model_family = "generic"
-        if opencode_path.exists():
-            import json
-
-            try:
-                opencode_data = json.loads(opencode_path.read_text(encoding="utf-8"))
-                model_family = detect_model_family(opencode_data)
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        instructions_result = generate_opencode_instructions(
-            target_dir,
-            model_family,
-            manifest_hashes=manifest_hashes,
-        )
+        instructions_result = generate_opencode_instructions(target_dir, manifest_hashes=manifest_hashes)
         result["created"].extend(instructions_result.get("created", []))
         result["updated"].extend(instructions_result.get("updated", []))
         result["preserved"].extend(instructions_result.get("preserved", []))
@@ -216,9 +190,6 @@ def _update_codex_artifacts(
         generate_codex_hooks,
         install_codex_skills,
     )
-    from ._opencode import (
-        generate_agents_md,
-    )
 
     ide_targets = _update_targets(target_dir, ide_override)
     if "codex" not in ide_targets:
@@ -252,16 +223,6 @@ def _update_codex_artifacts(
         result["errors"].extend(skills_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, codex update is best-effort
         result.setdefault("warnings", []).append(f".agents/skills update skipped: {exc}")
-
-    try:
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-        agents_md_result = generate_agents_md(target_dir, render_codex_trw_section(), client_id="codex")
-        result["created"].extend(agents_md_result.get("created", []))
-        result["updated"].extend(agents_md_result.get("updated", []))
-        result["errors"].extend(agents_md_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, AGENTS update is best-effort
-        result.setdefault("warnings", []).append(f"Codex AGENTS.md update skipped: {exc}")
 
     try:
         from ._opencode import generate_codex_instructions
@@ -394,15 +355,9 @@ def _update_antigravity_artifacts(
 def _extract_trw_section_content() -> str:
     """Return the shared TRW protocol body for cursor-ide's always-applied rule.
 
-    Sourced from the shared renderer. It used to slice the block out of the
-    ``_minimal_claude_md()`` scaffold, which made cursor-ide the one client
-    whose protocol came from a hardcoded second copy — and that copy was
-    missing the deliver-gate statement every other client's carrier states.
-    Cursor resolves this file eagerly (`alwaysApply: true`), so it is
-    cursor-ide's protocol carrier and has to carry the whole protocol.
-
-    Falls back to the old extraction if the renderer is unavailable, because a
-    weaker rule file still beats an empty one.
+    Sourced from the shared renderer. Cursor resolves this file eagerly
+    (`alwaysApply: true`), so it is cursor-ide's protocol carrier and has to
+    carry the whole protocol.
     """
     try:
         from trw_mcp.models.config._profiles import resolve_client_profile
@@ -414,13 +369,8 @@ def _extract_trw_section_content() -> str:
         rendered = render_agents_trw_section(client_profile=resolve_client_profile("cursor-ide")).strip()
         if rendered:
             return rendered
-    except Exception:  # justified: fail-open — a rule file with the old body beats none
+    except Exception:  # justified: fail-open — the caller writes no rule body rather than failing the install
         logger.warning("cursor_rule_shared_renderer_unavailable", exc_info=True)
-
-    full = _minimal_claude_md()
-    start_idx, end_idx = full.find(_TRW_START_MARKER), full.find(_TRW_END_MARKER)
-    if start_idx != -1 and end_idx != -1:
-        return full[start_idx + len(_TRW_START_MARKER) : end_idx].strip()
     return ""
 
 
@@ -578,19 +528,10 @@ def _update_cursor_cli_artifacts(
 
     # FR04: AGENTS.md with TRW sentinel block
     try:
-        # PRD-CORE-240-FR06: cursor-cli cannot resolve any include, so AGENTS.md
-        # is its ONLY protocol carrier and the block must stay inline — which makes
-        # minimising it the obligation instead. It renders the LIGHT body: its
-        # profile declares ceremony_mode="light", and the sync path already picks
-        # render_minimal_protocol() on that basis (state/claude_md/_agents_md).
-        # This install path was passing the FULL section regardless, so a light
-        # client was carrying the heavy body — 105 lines where its own profile
-        # asks for the compact one. FRAMEWORK.md's floor still holds: the
-        # minimal body states the deliver gate and the rigid tool set verbatim.
-        from ._cursor_cli import _cursor_cli_trw_section
-
-        trw_section = _cursor_cli_trw_section()
-        agents_result = generate_cursor_cli_agents_md(target_dir, trw_section)
+        # PRD-CORE-341: cursor-cli reads only AGENTS.md, which links the shared
+        # .trw/INSTRUCTIONS.md; the body is rendered by the one function every writer
+        # uses, so this installer and `instructions sync` never rewrite each other.
+        agents_result = generate_cursor_cli_agents_md(target_dir)
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md (cursor-cli) update skipped: {type(exc).__name__}: {exc}")

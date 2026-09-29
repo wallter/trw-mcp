@@ -107,6 +107,7 @@ def _run_local(args: argparse.Namespace) -> None:
                 impact=float(getattr(args, "impact", 0.5) or 0.5),
                 type=str(getattr(args, "type", "pattern") or "pattern"),
                 confidence=str(getattr(args, "confidence", "unverified") or "unverified"),
+                evidence_level=str(getattr(args, "evidence_level", "unknown") or "unknown"),
             )
             if result.get("status") == "rejected":
                 print(f"Error: {result.get('message', result.get('reason', 'rejected'))}")
@@ -134,7 +135,29 @@ def _run_local(args: argparse.Namespace) -> None:
                 max_results=getattr(args, "max_results", None),
             )
         except Exception as exc:
-            print(f"Error: cannot read the memory store ({type(exc).__name__}: {exc})")
+            # A raised exception (store open failed outright, before execute_recall
+            # could even attempt the query) is reported the same way as the
+            # in-band ``store_unavailable`` signal below: stderr, non-zero, with a
+            # remedy — never printed as if it were an empty result.
+            print(
+                f"Error: cannot read the memory store ({type(exc).__name__}: {exc}). "
+                "Start the memory daemon or run `trw-mcp doctor` to diagnose.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        # PRD-CORE-247-FR03 / L-PbZW: an unopenable store is not an empty one.
+        # ``execute_recall`` reports this in-band via ``store_unavailable`` rather
+        # than raising (see trw_mcp.state._memory_recall.recall_learnings), so the
+        # CLI must check for it explicitly — otherwise a daemon-down/store-refused
+        # recall silently prints "No matching learnings." and exits 0, a false
+        # success indistinguishable from a genuinely empty store.
+        store_unavailable = recall_result.get("store_unavailable")
+        if store_unavailable:
+            print(
+                f"Error: memory store unavailable ({store_unavailable}). "
+                "Start the memory daemon or run `trw-mcp doctor` to diagnose.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         for line in format_local_recall(recall_result):
             print(line)

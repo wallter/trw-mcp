@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.server._cli_argparse_backup import add_backup_subcommands
 from trw_mcp.server._cli_argparse_memory import add_memory_subcommands, add_models_subcommands
 from trw_mcp.server._cli_argparse_prd import add_prd_subcommands
 from trw_mcp.tools._formation_cli import add_formation_subcommands
@@ -364,3 +365,4 @@ def add_operational_subcommands(
 
     add_memory_subcommands(subparsers)
     add_models_subcommands(subparsers)
+    add_backup_subcommands(subparsers)

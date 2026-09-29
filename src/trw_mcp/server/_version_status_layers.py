@@ -43,6 +43,7 @@ def _expected_generation() -> tuple[str | None, dict[str, str] | None]:
         return registry.digest, managed_source_digests(registry)
     except Exception:  # justified: unreadable registry -> unknown, never fabricated
         logger.debug("expected_generation_unavailable", exc_info=True)
+        # trw-fail-silent-allow: unreadable-registry failure already logged above.
         return None, None
 
 

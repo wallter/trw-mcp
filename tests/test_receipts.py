@@ -8,10 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.receipts import log_recall_receipt, prune_recall_receipts
+from trw_mcp.state.receipts import log_recall_receipt
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -111,89 +109,3 @@ class TestLogRecallReceipt:
         # Should not raise
         dt = datetime.fromisoformat(record["ts"])
         assert dt.tzinfo is not None  # timezone-aware
-
-
-# ---------------------------------------------------------------------------
-# TestPruneRecallReceipts
-# ---------------------------------------------------------------------------
-
-
-class TestPruneRecallReceipts:
-    """Tests for prune_recall_receipts function."""
-
-    def test_no_file_returns_zero(self, tmp_project: Path) -> None:
-        """Returns 0 when receipt file does not exist."""
-        trw_dir = tmp_project / ".trw"
-        removed = prune_recall_receipts(trw_dir)
-        assert removed == 0
-
-    def test_under_limit_no_pruning(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Returns 0 when records are within the limit."""
-        trw_dir = tmp_project / ".trw"
-
-        # Set a high limit so no pruning occurs
-        config = TRWConfig(recall_receipt_max_entries=100)
-        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
-
-        # Add 3 records
-        for i in range(3):
-            log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[f"L-{i:03d}"])
-
-        removed = prune_recall_receipts(trw_dir)
-        assert removed == 0
-
-    def test_over_limit_prunes_oldest(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Prunes oldest records, keeping only the most recent `limit` entries."""
-        trw_dir = tmp_project / ".trw"
-
-        config = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
-
-        # Add 5 records
-        for i in range(5):
-            log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[f"L-{i:03d}"])
-
-        removed = prune_recall_receipts(trw_dir)
-        assert removed == 2
-
-        # Check that the file now has 3 records
-        path = _receipt_path(trw_dir)
-        lines = [json.loads(line) for line in path.read_text().splitlines() if line]
-        assert len(lines) == 3
-        # The oldest (q0, q1) should be removed
-        queries = [r["query"] for r in lines]
-        assert "q0" not in queries
-        assert "q1" not in queries
-        assert "q2" in queries
-        assert "q4" in queries
-
-    def test_prune_at_exact_limit(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When records == limit, no pruning occurs."""
-        trw_dir = tmp_project / ".trw"
-
-        config = TRWConfig(recall_receipt_max_entries=3)
-        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
-
-        for i in range(3):
-            log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[f"L-{i:03d}"])
-
-        removed = prune_recall_receipts(trw_dir)
-        assert removed == 0
-
-    def test_prune_limit_one_keeps_latest(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Limit of 1 keeps only the most recent record."""
-        trw_dir = tmp_project / ".trw"
-
-        config = TRWConfig(recall_receipt_max_entries=1)
-        monkeypatch.setattr("trw_mcp.state.receipts.get_config", lambda: config)
-
-        for i in range(4):
-            log_recall_receipt(trw_dir, query=f"q{i}", matched_ids=[])
-
-        removed = prune_recall_receipts(trw_dir)
-        assert removed == 3
-
-        path = _receipt_path(trw_dir)
-        lines = [json.loads(line) for line in path.read_text().splitlines() if line]
-        assert len(lines) == 1
-        assert lines[0]["query"] == "q3"

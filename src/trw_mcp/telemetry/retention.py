@@ -10,7 +10,6 @@ collected.
 from __future__ import annotations
 
 import gzip
-import shutil
 import time
 from pathlib import Path
 
@@ -19,27 +18,6 @@ import structlog
 from trw_mcp._locking import _lock_ex, _lock_un
 
 logger = structlog.get_logger(__name__)
-
-
-def rotate_telemetry_log(path: Path, *, max_bytes: int, compress: bool = True) -> dict[str, object]:
-    """Rotate a telemetry JSONL file when it exceeds ``max_bytes``."""
-    if max_bytes <= 0:
-        raise ValueError("max_bytes must be positive")
-    if not path.exists() or path.stat().st_size <= max_bytes:
-        return {"rotated": False, "path": str(path)}
-    rotated = path.with_suffix(path.suffix + ".1")
-    if rotated.exists():
-        rotated.unlink()
-    path.rename(rotated)
-    path.touch()
-    output = rotated
-    if compress:
-        compressed = rotated.with_suffix(rotated.suffix + ".gz")
-        with rotated.open("rb") as src, gzip.open(compressed, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-        rotated.unlink()
-        output = compressed
-    return {"rotated": True, "path": str(path), "archive_path": str(output), "compressed": compress}
 
 
 def rotate_and_compress(
@@ -66,9 +44,8 @@ def rotate_and_compress(
     skipped: list[dict[str, str]] = []
     corrupt: list[str] = []
 
-    # Size rotation into the NEXT FREE numbered segment — unlike the legacy
-    # rotate_telemetry_log, an existing closed segment is never clobbered, so
-    # closed data stays complete and ordered.
+    # Size rotation into the NEXT FREE numbered segment — an existing closed segment is
+    # never clobbered, so closed data stays complete and ordered.
     rotated = False
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
@@ -132,6 +109,17 @@ def rotate_and_compress(
             corrupt.append(segment.name)
             continue
         tmp.replace(segment.with_name(segment.name + ".gz"))
+        # A writer that still held this segment open after the rotation append can extend it
+        # while we compress; the archive then lacks those bytes, so keep the original (the
+        # next run recompresses it over the archive) instead of unlinking unseen data.
+        try:
+            after = segment.stat()
+            unchanged = (after.st_size, after.st_mtime_ns) == (st.st_size, st.st_mtime_ns)
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            skipped.append({"segment": segment.name, "reason": "changed_during_compress"})
+            continue
         segment.unlink()
         compressed.append(segment.name + ".gz")
 

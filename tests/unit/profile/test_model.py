@@ -13,6 +13,8 @@ from pydantic import ValidationError
 
 from trw_mcp.profile import PROFILE_SURFACE_KEYS, Profile
 
+pytestmark = pytest.mark.unit
+
 
 def test_surface_keys_enumerate_exactly_the_model_fields() -> None:
     """FR-1: PROFILE_SURFACE_KEYS is exactly the override fields on Profile.

@@ -22,6 +22,9 @@ import pytest
 from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import extract_tool_fn, get_tools_sync, make_test_server
 
+pytestmark = pytest.mark.e2e
+
+
 _LEARNING_ID_RE = re.compile(r"^L-[A-Za-z0-9]+$")
 
 

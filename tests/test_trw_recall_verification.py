@@ -57,7 +57,6 @@ def recall(entry, monkeypatch):
 
         guard.setattr("trw_memory.lifecycle.verification_pass.run_verification_pass", forbidden)
         guard.setattr("trw_memory.lifecycle.verification_pass.persist_verification_outcome", forbidden)
-        guard.setattr("trw_mcp.tools._verification_cache.warm_verified_verdict", forbidden)
         rank = MagicMock(side_effect=lambda rows, *a, **kw: rows)
         rows = _verify_assertions([entry], ["test"], TRWConfig(), rank)
         return rows[0], rank

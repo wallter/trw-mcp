@@ -37,9 +37,10 @@ from trw_mcp.models.config._fields_paths import _PathsFields
 from trw_mcp.models.config._fields_prd import _PRDFields
 from trw_mcp.models.config._fields_profile import _ProfileFields
 from trw_mcp.models.config._fields_scoring import _ScoringFields
-from trw_mcp.models.config._fields_scout import _ScoutFields
+from trw_mcp.models.config._fields_shared_mcp import _SharedMcpFields
 from trw_mcp.models.config._fields_sync import _SyncFields
 from trw_mcp.models.config._fields_telemetry import _TelemetryFields
+from trw_mcp.models.config._fields_time import _TimeFields
 from trw_mcp.models.config._fields_tools import _ToolsFields
 from trw_mcp.models.config._fields_trust import _TrustFields
 from trw_mcp.models.config._fields_verification import _VerificationFields
@@ -52,6 +53,7 @@ class _TRWConfigFields(
     _LearnJournalFields,
     _OrchestrationFields,
     _TelemetryFields,
+    _TimeFields,
     _CeremonyFields,
     _DegenerateResultFields,
     _DegradedModeFields,
@@ -70,9 +72,9 @@ class _TRWConfigFields(
     _PathsFields,
     _PRDFields,
     _ProfileFields,
-    _ScoutFields,
     _VerificationFields,
     _BootMaintenanceFields,
+    _SharedMcpFields,
     BaseSettings,
 ):
     """All TRW configuration fields.

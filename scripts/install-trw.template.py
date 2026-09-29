@@ -53,7 +53,7 @@ MEMORY_WHEEL_FILENAME = "{{MEMORY_WHEEL_FILENAME}}"
 # SHA-256 checksums (substituted by build_installer.py, empty = skip verification)
 WHEEL_SHA256 = "{{WHEEL_SHA256}}"
 MEMORY_WHEEL_SHA256 = "{{MEMORY_WHEEL_SHA256}}"
-MIN_PYTHON_VERSION = (3, 10)
+MIN_PYTHON_VERSION = (3, 11)
 DOCS_BASE = "https://trwframework.com/docs"
 # PRD-SEC-004-FR08 (telemetry-privacy-8): the consent prompt's "learn more"
 # link MUST resolve. The marketing privacy policy lives at the ROOT route
@@ -310,7 +310,7 @@ class UI:
 
         A warning printed while the spinner thread is repainting the same line
         is overwritten and lost — which is how ``update-project``'s policy
-        refusals (the operator's only signal that their CLAUDE.md was left
+        refusals (the operator's only signal that their AGENTS.md was left
         stale) disappeared in interactive mode. With no spinner running there is
         nothing to wait for, so the warning is emitted immediately.
         """
@@ -1785,7 +1785,7 @@ def run_with_progress(
 
     A watchdog timer kills the subprocess if it hasn't exited after *timeout*
     seconds (default 180).  This prevents the installer from hanging
-    indefinitely when the child stalls (e.g. during CLAUDE.md sync).
+    indefinitely when the child stalls (e.g. during the instruction sync).
     """
     try:
         proc = subprocess.Popen(
@@ -1797,7 +1797,7 @@ def run_with_progress(
     except FileNotFoundError:
         return False
 
-    assert proc.stdout is not None
+    assert proc.stdout is not None  # noqa: S101  # trw:intentional Popen(stdout=PIPE) guarantees non-None .stdout
 
     killed_by_watchdog = False
 
@@ -1818,14 +1818,14 @@ def run_with_progress(
                 line = line.strip()
                 if output is not None:
                     output.append(line)
-                # Phase markers update the status message (e.g., "Phase: Syncing CLAUDE.md...")
+                # Phase markers update the status message (e.g., "Phase: Syncing instruction files...")
                 if line.startswith("Phase:"):
                     phase_label = line.partition(":")[2].strip()
                     ui.update_spinner(f"{fallback_msg} ({file_count} files) {phase_label}")
                 elif _WARNING_LINE_RE.match(line):
                     # A warning is the one child line the operator MUST still
                     # see after the spinner has scrolled away (e.g. an
-                    # update-project refusal that left their CLAUDE.md stale).
+                    # update-project refusal that left their AGENTS.md stale).
                     ui.defer_warn(_WARNING_LINE_RE.sub("", line, count=1).strip())
                 elif _PROGRESS_LINE_RE.match(line):
                     file_count += 1
@@ -2263,6 +2263,92 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
         )
 
     _write_version_yaml_metadata(target_dir)
+
+
+# PRD-INFRA-200 FR02: the one line of stdout the daemon-stop verdict is read from.
+_DAEMON_STOP_LINE_PREFIX = "TRW_DAEMON_STOP="
+
+# Run in the TARGET interpreter, so the version compared is the trw-memory this
+# run installed (not TRW_VERSION, which is trw-mcp's) and the stop goes through
+# trw-memory's own identity check (pid plus OS start). argv[1] is the project.
+_DAEMON_STOP_SOURCE = (
+    "import json, sys\n"
+    "from pathlib import Path\n"
+    "from trw_memory import __version__\n"
+    "from trw_memory.daemon import DaemonPaths, stop_outdated_daemon\n"
+    "from trw_mcp.server._doctor_launcher_divergence import present_managed_configs\n"
+    "result = stop_outdated_daemon(DaemonPaths.resolve(create=False), __version__)\n"
+    "configs = present_managed_configs(Path(sys.argv[1]))\n"
+    f"print({_DAEMON_STOP_LINE_PREFIX!r} + json.dumps("
+    "{'outcome': result.outcome, 'detail': result.detail, 'configs': configs}))\n"
+)
+
+
+def _daemon_stop_verdict(python: str, target_dir: Path, env: dict[str, str]) -> tuple[dict[str, object] | None, str]:
+    """Run :data:`_DAEMON_STOP_SOURCE`; ``(verdict, "")``, or ``(None, why no verdict came back)``."""
+    try:
+        proc = subprocess.run(  # noqa: S603 -- installer executes its own fixed probe
+            [python, "-B", "-c", _DAEMON_STOP_SOURCE, str(target_dir)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:  # trw-fail-silent-allow: the reason is returned and printed
+        return None, f"{type(exc).__name__}: {exc}"
+    for line in reversed(proc.stdout.splitlines()):
+        if line.startswith(_DAEMON_STOP_LINE_PREFIX):
+            try:
+                verdict = json.loads(line[len(_DAEMON_STOP_LINE_PREFIX) :])
+            except ValueError as exc:  # trw-fail-silent-allow: the reason is returned and printed
+                return None, f"an unparseable verdict ({exc})"
+            return (verdict, "") if isinstance(verdict, dict) else (None, "an unparseable verdict")
+    stderr_tail = (proc.stderr or "").strip().splitlines()
+    return None, stderr_tail[-1] if stderr_tail else f"exit code {proc.returncode}"
+
+
+def stop_outdated_memory_daemon(python: str, target_dir: Path, ui: UI, pip_target: str = "") -> None:
+    """``--upgrade``: stop a memory daemon serving another version, then name the clients to reconnect.
+
+    A client refuses only a major mismatch, so after a minor or patch upgrade the
+    old daemon kept serving old code until someone killed it (PRD-INFRA-200 FR02).
+    The environment is this process's own plus the ``--pip-target`` import path:
+    the pip runtime env rewrites ``XDG_DATA_HOME``, which would move the user
+    memory directory and miss the running daemon's record.
+    """
+    env = dict(os.environ)
+    if pip_target:
+        env["PYTHONPATH"] = pip_target + os.pathsep + env.get("PYTHONPATH", "")
+    verdict, failure = _daemon_stop_verdict(python, target_dir, env)
+    configs: object = None
+    if verdict is None:
+        ui.step_warn(f"Could not check the trw-memory daemon ({failure}).")
+        ui.step_warn("  If one runs an older version, stop it: its pid is in daemon.json in the TRW memory dir.")
+    else:
+        detail = verdict.get("detail", "")
+        if verdict.get("outcome") == "stopped":
+            ui.step_ok(f"Memory daemon {detail}; the next client call starts the new one")
+        elif verdict.get("outcome") in ("unproven", "invalid"):
+            ui.step_warn(f"The running memory daemon was not stopped: {detail}")
+            # trw_memory's own remedy text is deliberately agent-safe (it never says
+            # "kill <pid>", so an agent reading it cannot copy-execute it — HB-2,
+            # DoD-5 run 2026-09-26). This installer prints for the human operator
+            # running --upgrade directly, so it names the manual remedy explicitly
+            # here (docs/sprint-next/UPGRADE-NOTES-8.0.0.md's "Stop the old memory
+            # daemon" step): stop only the pid the detail itself names, never guess one.
+            pid_match = re.search(r"\bpid (\d+)\b", detail)
+            if pid_match:
+                pid = pid_match.group(1)
+                ui.step_warn(
+                    f"  Stop it by hand: verify pid {pid} is python -m trw_memory.server, then run: kill {pid}"
+                )
+        configs = verdict.get("configs")
+    # Every running stdio trw-mcp still runs the old code, whatever the daemon check found.
+    named = configs if isinstance(configs, list) else []
+    ui.step_warn(f"Reconnect every MCP client so it runs the upgraded trw-mcp (e.g. /mcp in Claude Code){':' if named else '.'}")
+    for rel in named:
+        ui.step_warn(f"  reconnect the client configured by {rel}")
 
 
 def _same_file(a: str, b: str) -> bool | None:
@@ -3476,6 +3562,76 @@ def _write_proprietary_console_wrappers(python: str, target_dir: str, installed:
     return written
 
 
+class CrossOriginRedirectError(RuntimeError):
+    """A redirect pointed outside the origins the request was pinned to (PRD-SEC-021).
+
+    Raised from the redirect handler BEFORE any request reaches the target.
+    A RuntimeError, so every installer caller that downgrades on RuntimeError
+    still does; never an OSError/URLError, so the retry loop does not treat it
+    as a transient network failure. Carries only the target origin.
+    """
+
+    def __init__(self, target_origin: str) -> None:
+        super().__init__(f"refused redirect to a different origin: {target_origin}")
+        self.target_origin = target_origin
+
+
+def _url_origin(url: str) -> tuple[str, str, int]:
+    """Return *url*'s (scheme, host, port) origin; an unparseable port is -1 (never allowed)."""
+    import urllib.parse
+
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port if parts.port is not None else {"http": 80, "https": 443}.get(scheme, -1)
+    except ValueError:
+        port = -1
+    return scheme, (parts.hostname or "").lower(), port
+
+
+def _backend_redirect_origins(url: str) -> frozenset[tuple[str, str, int]]:
+    """The origins a backend call to *url* may be redirected to: its own, plus the same-host https upgrade."""
+    scheme, host, port = _url_origin(url)
+    upgrade = {("https", host, 443)} if (scheme, port) == ("http", 80) else set()
+    return frozenset({(scheme, host, port), *upgrade})
+
+
+def _origin_pinned_opener(allowed_origins: frozenset[tuple[str, str, int]]) -> Any:
+    """Build a urllib opener whose redirects may only land on *allowed_origins*.
+
+    The installer's ONE outbound redirect policy (PRD-SEC-021): FR01 pins the
+    backend license/entitlement calls to the backend's own origin; FR02's wheel
+    download reuses this with the entitlement's allowed origins. Every hop is
+    re-checked, and a refused hop raises CrossOriginRedirectError.
+    """
+    import urllib.parse
+    import urllib.request
+
+    def _refuse_unless_allowed(url: str, fp: Any) -> None:
+        origin = _url_origin(url)
+        if origin not in allowed_origins:
+            if fp is not None:
+                fp.close()
+            raise CrossOriginRedirectError(f"{origin[0]}://{origin[1]}:{origin[2]}")
+
+    class _OriginPinnedRedirectHandler(urllib.request.HTTPRedirectHandler):
+        # Checked on entry too: urllib refuses an unsupported Location scheme
+        # (file:, data:, ...) with an HTTPError 3xx the retry loop would retry.
+        def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
+            location = headers.get("location") or headers.get("uri")
+            if location:
+                _refuse_unless_allowed(urllib.parse.urljoin(req.full_url, location), fp)
+            return super().http_error_302(req, fp, code, msg, headers)
+
+        http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+            _refuse_unless_allowed(newurl, fp)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return urllib.request.build_opener(_OriginPinnedRedirectHandler())
+
+
 def _call_backend_json_with_retry(
     req: Any,
     timeout: int,
@@ -3489,16 +3645,18 @@ def _call_backend_json_with_retry(
     decode errors retry; exhausted retries raise RuntimeError. Secrets never
     appear in raised messages (PRD-INFRA-129 NFR04). Callers validate the
     payload AFTER return — a malformed success response must raise without
-    burning retries, exactly as both inlined originals behaved.
+    burning retries, exactly as both inlined originals behaved. Redirects stay
+    on the backend's origin (PRD-SEC-021 FR01): a cross-origin hop raises
+    CrossOriginRedirectError, which is permanent and never retried.
     """
     import urllib.error
-    import urllib.request
 
+    opener = _origin_pinned_opener(_backend_redirect_origins(req.full_url))
     delays = (1.0, 2.0, 4.0)
     last_err: Exception | None = None
     for attempt, delay in enumerate(delays):
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — trusted backend
+            with opener.open(req, timeout=timeout) as resp:  # noqa: S310 — backend URL, redirects origin-pinned
                 return cast("dict[str, Any]", json.loads(resp.read().decode()))
         except urllib.error.HTTPError as exc:
             if 400 <= exc.code < 500:
@@ -3533,12 +3691,11 @@ def _fetch_proprietary_license(
 
     req = urllib.request.Request(
         f"{backend_url.rstrip('/')}/me/proprietary-license",
-        headers={
-            "Authorization": f"Bearer {platform_api_key}",
-            "Accept": "application/json",
-        },
+        headers={"Accept": "application/json"},
         method="GET",
     )
+    # PRD-SEC-021 FR01: an unredirected header is never copied onto a redirect hop.
+    req.add_unredirected_header("Authorization", f"Bearer {platform_api_key}")
     payload = _call_backend_json_with_retry(req, timeout, "auto-license denied", "auto-license network failure")
     license_key = payload.get("license_key")
     if not isinstance(license_key, str) or not license_key:
@@ -3651,7 +3808,13 @@ def _resolve_proprietary_license(
         detail = str(exc)
         # Distinguish a permanent denial (plan/scope/key) from a transient
         # network blip so the operator knows whether re-running will help.
-        if "denied" in detail:
+        if isinstance(exc, CrossOriginRedirectError):
+            hint = (
+                " The backend redirected the credentialed request to a different "
+                "origin, which the installer never follows. Check the configured "
+                "backend URL, then re-run."
+            )
+        elif "denied" in detail:
             hint = (
                 " This is a permanent denial (org plan, key scope, or unknown "
                 "key). A platform key auto-derives a proprietary:install-scoped "
@@ -3671,12 +3834,15 @@ def _post_proprietary_entitlement(
     package: str,
     version: str,
     timeout: int = 10,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Call POST /proprietary/entitlement with up-to-3 retries on transient errors.
 
     Returns the decoded JSON response on success. Raises RuntimeError on
     permanent failure (4xx, malformed response, exhausted retries). License
-    key never appears in raised messages (NFR04).
+    key never appears in raised messages (NFR04). ``allowed_origins`` (PRD-
+    SEC-021 FR03) is intentionally NOT required here \u2014 its absence is a
+    distinct, named failure raised later by ``_download_proprietary_wheel``
+    (FR02 OQ-003), not conflated with this generic malformed-response check.
     """
     import urllib.request
 
@@ -3693,10 +3859,122 @@ def _post_proprietary_entitlement(
     return payload
 
 
-def _download_proprietary_wheel(url: str, expected_sha256: str, dest_dir: Path) -> Path:
-    """Stream-download URL to dest_dir, verify SHA-256, return wheel path."""
+class MissingAllowedOriginsError(RuntimeError):
+    """The entitlement response omitted ``allowed_origins`` entirely (PRD-SEC-021 FR02 OQ-003).
+
+    Distinct from WheelOriginNotAllowedError: this means the backend predates
+    FR03 (an old backend), not that a present-but-unlisted origin was
+    supplied (a compromised/misconfigured backend). Both fail closed and
+    refuse the download; the distinct class is what lets a caller's log line
+    tell the two apart without guessing.
+    """
+
+
+class WheelOriginNotAllowedError(RuntimeError):
+    """The presigned wheel URL failed the https+allowed-origin check (PRD-SEC-021 FR02).
+
+    Raised before any connection is attempted: the initial URL fails the
+    check, a later redirect hop does (enforced by the same
+    _origin_pinned_opener FR01 introduced, re-checking every hop), or the
+    entitlement's own allowed_origins list itself carries a non-https or
+    malformed entry (round-1 review P1 \u2014 see _wheel_allowed_origins).
+    """
+
+    def __init__(self, target_origin: str) -> None:
+        super().__init__(f"origin not in the allowed list: {target_origin}")
+        self.target_origin = target_origin
+
+
+def _wheel_allowed_origins(allowed_origins: list[object]) -> frozenset[tuple[str, str, int]]:
+    """Convert the entitlement response's https origin strings to origin tuples.
+
+    Reuses ``_url_origin`` (FR01) so the wheel download shares the exact same
+    origin-comparison semantics as the license/entitlement redirect pinning \u2014
+    one origin-equality definition for the whole installer (PRD-SEC-021 OQ-001).
+
+    Fails CLOSED and loud on any entry that is not a bare https origin (round-1
+    review P1): a non-https scheme, a missing host, or one carrying a
+    path/query/fragment/userinfo is refused with WheelOriginNotAllowedError
+    before any request \u2014 never silently dropped from the set. Admitting a
+    non-https sibling entry for the same host (e.g. both "https://good" and
+    "http://good" in the same list) would let an https download be redirected
+    to plain http on that host, since _origin_pinned_opener only checks set
+    membership, not scheme; a malformed entry is treated as a server
+    misconfiguration to refuse, not a value to sanitize.
+
+    Round-2 review: the entitlement payload is untyped JSON, so an entry can
+    be anything JSON allows (``None``, a number, a list, a dict) \u2014 not just
+    a wrong-shaped string. A non-string entry is refused the same way a
+    malformed string is (WheelOriginNotAllowedError), rather than escaping
+    this function as a bare TypeError/AttributeError from ``urlsplit``.
+    """
     import urllib.parse
-    import urllib.request
+
+    origins: set[tuple[str, str, int]] = set()
+    for entry in allowed_origins:
+        if not isinstance(entry, str):
+            raise WheelOriginNotAllowedError(f"malformed allowed_origins entry (not a string): {entry!r}")
+        try:
+            parts = urllib.parse.urlsplit(entry)
+            scheme, host, port = _url_origin(entry)
+        except ValueError:
+            raise WheelOriginNotAllowedError(f"malformed allowed_origins entry: {entry!r}") from None
+        malformed = (
+            scheme != "https"
+            or not host
+            or port == -1
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+            or parts.username is not None
+            or parts.password is not None
+        )
+        if malformed:
+            raise WheelOriginNotAllowedError(f"malformed allowed_origins entry: {entry!r}")
+        origins.add((scheme, host, port))
+    return frozenset(origins)
+
+
+def _download_proprietary_wheel(
+    url: str,
+    expected_sha256: str,
+    dest_dir: Path,
+    allowed_origins: "object | None",
+) -> Path:
+    """Stream-download URL to dest_dir, verify SHA-256, return wheel path.
+
+    PRD-SEC-021 FR02: refuses before connecting if url is non-https or its
+    origin is not in allowed_origins (the entitlement response's own list),
+    and re-validates every redirect hop against the same set by reusing FR01's
+    ONE redirect policy, ``_origin_pinned_opener`` (OQ-001) \u2014 no second
+    redirect/origin policy is introduced here. ``allowed_origins is None``
+    means the entitlement payload omitted the key entirely (a pre-FR03
+    backend): that raises MissingAllowedOriginsError, never the same
+    exception class as an empty/non-matching list (WheelOriginNotAllowedError)
+    (OQ-003), so an operator's log can tell "old backend" apart from
+    "compromised/misconfigured backend" without guessing.
+
+    Round-2 review: the parameter type is intentionally ``object | None``, not
+    ``list[str] | None`` \u2014 the entitlement payload is untyped JSON
+    (``dict[str, Any]``), so a present-but-wrong-shaped ``allowed_origins``
+    (a bare string, a number, a dict) is a real reachable input, not a typing
+    fiction. Only ``None`` (the key was absent, or the decoder handed us
+    JSON ``null``) is the "old backend" case (MissingAllowedOriginsError);
+    any other non-list shape is a malformed PRESENT field and raises
+    WheelOriginNotAllowedError \u2014 same disposition as a malformed entry
+    inside an otherwise-valid list (_wheel_allowed_origins), before any
+    request is attempted.
+    """
+    import urllib.parse
+
+    if allowed_origins is None:
+        raise MissingAllowedOriginsError("entitlement response predates the allowed-origins field")
+    if not isinstance(allowed_origins, list):
+        raise WheelOriginNotAllowedError(f"allowed_origins is not a list: {type(allowed_origins).__name__}")
+    pinned = _wheel_allowed_origins(allowed_origins)
+    scheme, host, port = _url_origin(url)
+    if scheme != "https" or (scheme, host, port) not in pinned:
+        raise WheelOriginNotAllowedError(f"{scheme}://{host}:{port}")
 
     parsed_path = urllib.parse.urlparse(url).path
     filename = Path(parsed_path).name or "proprietary.whl"
@@ -3704,8 +3982,9 @@ def _download_proprietary_wheel(url: str, expected_sha256: str, dest_dir: Path) 
         filename = filename + ".whl"
     dest = dest_dir / filename
     h = hashlib.sha256()
+    opener = _origin_pinned_opener(pinned)
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 \u2014 presigned URL
+        with opener.open(url, timeout=60) as resp:  # noqa: S310 \u2014 presigned URL, origin-pinned
             with dest.open("wb") as f:
                 for chunk in iter(lambda: resp.read(65536), b""):
                     h.update(chunk)
@@ -3887,7 +4166,12 @@ def phase_install_proprietary(
                     installed.append(f"{package} {resolved_version}")
                     continue
                 ui.start_spinner(f"Downloading {package} {resolved_version}...")
-                wheel = _download_proprietary_wheel(payload["url"], wheel_sha256, tmpdir)
+                # PRD-SEC-021 FR02: pass the entitlement's own allowed_origins
+                # (None if the key is absent — a pre-FR03 backend) so the
+                # download refuses an unvalidated destination distinguishably.
+                wheel = _download_proprietary_wheel(
+                    payload["url"], wheel_sha256, tmpdir, payload.get("allowed_origins")
+                )
                 ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
                 downloaded.append((package, wheel, resolved_version, wheel_sha256))
             except RuntimeError as exc:
@@ -4217,7 +4501,7 @@ def phase_project_setup(
             targets = _normalize_ide_targets([str(t) for t in prior_targets])
             if not targets:
                 # Defaulting to claude-code here would scaffold a client surface
-                # the user never asked for (.claude/, CLAUDE.md, hooks) into a
+                # the user never asked for (.claude/, AGENTS.md, hooks) into a
                 # project that records none. An upgrade is not the place to guess
                 # — say what is missing and let the operator name the client.
                 ui.step_warn(
@@ -4750,21 +5034,25 @@ def _prompt_project_name(ui: UI, default: str) -> str:
 
 
 def _prompt_api_key(ui: UI) -> str:
-    """Interactive API key prompt -- tries device auth first, falls back to manual paste.
+    """Interactive API key prompt -- asks consent, then tries device auth, falls back to manual paste.
 
-    Device authorization (RFC 8628) opens a browser for passwordless login.
-    If device auth is unavailable or user declines, falls back to manual key entry.
+    Device authorization (RFC 8628) opens a browser for passwordless login and
+    posts a device-code request to the platform before any key is entered.
+    PRD-INFRA-200 FR06: that network call and browser tab must never fire
+    without the operator saying yes first. Declining (or a non-interactive run,
+    where ``prompt_yes_no``'s own no-TTY fallback returns the default "n") skips
+    straight to the manual-paste fallback with zero calls made.
     """
-    # Try device auth flow first
-    try:
-        result = _device_auth_login(API_BASE, interactive=True)
-        if result and isinstance(result.get("api_key"), str) and result["api_key"]:
-            key = str(result["api_key"])
-            if validate_api_key(key):
-                ui.step_ok("Authenticated via device flow")
-                return key
-    except Exception:  # device auth is best-effort, fall back to manual
-        pass
+    if prompt_yes_no("Sign in via browser (device authorization)?", default="n"):
+        try:
+            result = _device_auth_login(API_BASE, interactive=True)
+            if result and isinstance(result.get("api_key"), str) and result["api_key"]:
+                key = str(result["api_key"])
+                if validate_api_key(key):
+                    ui.step_ok("Authenticated via device flow")
+                    return key
+        except Exception:  # device auth is best-effort, fall back to manual
+            pass
 
     # Fallback: manual key entry
     print()
@@ -4995,9 +5283,27 @@ def main() -> None:
     parser.add_argument(
         "--version",
         dest="pin_version",
-        default="",
+        default=os.environ.get("TRW_VERSION", ""),
         metavar="VER",
         help="Pin the trw-mcp release version to install (or set TRW_VERSION). Bootstrap verifies its published checksum.",
+    )
+    # Canary channel v1 slice 2: this template bundles ONE fixed wheel pair
+    # baked in at build time (TRW_VERSION, __WHEEL_DATA__/__MEMORY_WHEEL_DATA__
+    # below) -- it cannot fetch a DIFFERENT pair from a wheelhouse or PyPI
+    # itself. --channel is accepted here for flag/env parity with
+    # scripts/install.sh and to name the gap explicitly rather than silently
+    # ignoring a channel request this copy cannot honor (see the refusal in
+    # main()).
+    parser.add_argument(
+        "--channel",
+        dest="channel",
+        default=os.environ.get("TRW_CHANNEL", "stable"),
+        choices=("local", "canary", "stable"),
+        help=(
+            "Where the pinned pair comes from (or set TRW_CHANNEL). This bundled-wheel installer only "
+            "ever carries the 'stable' pair it was built with -- 'local'/'canary' refuse with guidance "
+            "to scripts/install.sh, which resolves those channels against a wheelhouse or PyPI directly."
+        ),
     )
     # PRD-SEC-006-FR09: offline / air-gapped install from embedded wheels.
     parser.add_argument(
@@ -5059,6 +5365,25 @@ def main() -> None:
         ide_targets = _parse_ide_argument(args.ide)
     except ValueError as exc:
         parser.error(str(exc))
+
+    # Canary channel v1 slice 2: this bundled-wheel installer carries exactly
+    # one pair (TRW_VERSION, baked in at build time). A --channel other than
+    # "stable", or a --version that does not match the bundled one, asks for a
+    # pair this copy cannot fetch -- refuse clearly instead of silently
+    # installing the bundled pair anyway (the prior behavior: the flag parsed
+    # but was never read past this point).
+    if args.channel != "stable":
+        parser.error(
+            f"--channel {args.channel} is not supported by this bundled installer (it only ever carries "
+            f"the {TRW_VERSION} stable pair it was built with). Use scripts/install.sh TRW_CHANNEL={args.channel} "
+            "instead, which resolves 'local' against a wheelhouse and 'canary' against PyPI --pre directly."
+        )
+    if args.pin_version and args.pin_version != TRW_VERSION:
+        parser.error(
+            f"--version {args.pin_version} does not match the pair bundled in this installer ({TRW_VERSION}). "
+            f"This copy cannot fetch a different release -- use scripts/install.sh TRW_VERSION={args.pin_version} "
+            "(PyPI-direct) or download the installer built for that version."
+        )
 
     # ── Proprietary install env-var fallback + pin validation ────────
     with_proprietary = bool(args.with_proprietary) or bool(_env_flag("TRW_WITH_PROPRIETARY"))
@@ -5343,6 +5668,8 @@ def main() -> None:
 
         # Post-install: restart MCP servers and health-check backends
         _restart_mcp_servers(target_dir, ui)
+        if args.upgrade:
+            stop_outdated_memory_daemon(python, target_dir, ui, pip_target=args.pip_target or "")
 
         backend_results: list[dict[str, object]] = []
         if (

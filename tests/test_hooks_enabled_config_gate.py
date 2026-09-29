@@ -1,7 +1,8 @@
 """``hooks_enabled: false``, as ``TRWConfig`` resolves it, silences every bundled hook.
 
 Before 2026-09-23 no hook read the config key: ``lib-trw.sh`` honoured only the
-client-profile ``HOOKS_ENABLED`` in ``hook-env.sh`` (or ``TRW_HOOKS_ENABLED``),
+client-profile ``HOOKS_ENABLED`` in a per-client ``hook-env.d/<key>.sh``
+(or ``TRW_HOOKS_ENABLED``),
 and only four hooks checked even that. trw-eval ablates by writing the key into
 the project config, so every ``hooks_enabled: false`` arm ran with hooks on.
 The one read point is now ``lib-trw.sh``, which every hook sources; it reads the
@@ -16,7 +17,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from ruamel.yaml import YAML
 
 from trw_mcp.bootstrap._file_ops import _write_hook_env_file
 from trw_mcp.models.config._profiles import resolve_client_profile
@@ -84,8 +84,21 @@ def test_hooks_enabled_false_means_no_output_and_no_side_effects(hook: Path, tmp
 
 
 def test_the_resolved_switch_outranks_the_profile_policy_file(tmp_path: Path) -> None:
+    """A hand-crafted per-client hook-env file cannot override the resolved switch.
+
+    ``session-start.sh`` runs straight from ``HOOKS_DIR`` (the bundled source
+    tree, not an installed ``.claude/hooks/``), so lib-trw.sh derives the
+    ``"data"`` key from its own location -- see
+    ``hook_env_key_for_hooks_dir``. Writing under any OTHER key would never be
+    read at all, which would pass this test vacuously.
+    """
+    from trw_mcp.bootstrap._file_ops import hook_env_key_for_hooks_dir
+
     root = _project(tmp_path / "project", "hooks_enabled: false\n")
-    (root / ".trw" / "runtime" / "hook-env.sh").write_text("export HOOKS_ENABLED=true\n", encoding="utf-8")
+    key = hook_env_key_for_hooks_dir(HOOKS_DIR)
+    hook_env_dir = root / ".trw" / "runtime" / "hook-env.d"
+    hook_env_dir.mkdir(parents=True, exist_ok=True)
+    (hook_env_dir / f"{key}.sh").write_text("export HOOKS_ENABLED=true\n", encoding="utf-8")
 
     assert _run(HOOKS_DIR / "session-start.sh", root).stdout == b""
 
@@ -98,41 +111,43 @@ def test_with_the_key_on_a_hook_still_speaks(tmp_path: Path) -> None:
 
 
 def test_hook_env_no_longer_carries_a_hooks_switch(tmp_path: Path) -> None:
-    _write_hook_env_file(tmp_path / ".trw", resolve_client_profile("claude-code"))
+    written = _write_hook_env_file(tmp_path / ".trw", resolve_client_profile("claude-code"))
 
-    assert "HOOKS_ENABLED" not in (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
+    assert written == tmp_path / ".trw" / "runtime" / "hook-env.d" / "claude.sh"
+    assert "HOOKS_ENABLED" not in written.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
-    ("client", "existing", "expected"),
+    ("client", "existing", "published_hooks"),
     [
-        ("opencode", "task_root: docs\n", {"task_root": "docs", "hooks_enabled": False}),
-        ("opencode", "{task_root: docs}\n", {"task_root": "docs", "hooks_enabled": False}),
-        ("opencode", "", {"hooks_enabled": False}),
-        ("opencode", "hooks_enabled: true\n", {"hooks_enabled": True}),
-        ("opencode", "{hooks_enabled: true}\n", {"hooks_enabled": True}),
-        ("opencode", '"hooks_enabled": true\n', {"hooks_enabled": True}),
-        ("claude-code", "task_root: docs\n", {"task_root": "docs"}),
+        ("opencode", "task_root: docs\n", True),
+        ("opencode", "{task_root: docs}\n", True),
+        ("opencode", "", True),
+        ("opencode", "hooks_enabled: false\n", False),
+        ("grok", "{hooks_enabled: true}\n", True),
+        ("claude-code", '"hooks_enabled": false\n', False),
     ],
     ids=[
-        "hooks-off-profile-seeds-false",
-        "seeds-into-a-flow-mapping",
-        "seeds-an-empty-config",
-        "operator-value-wins",
-        "operator-value-wins-in-a-flow-mapping",
-        "operator-value-wins-under-a-quoted-key",
-        "hooks-on-profile-adds-nothing",
+        "hookless-profile-writes-nothing",
+        "a-flow-mapping-is-left-as-is",
+        "an-empty-config-stays-empty",
+        "the-operator-off-still-publishes-off",
+        "the-operator-on-still-publishes-on",
+        "a-quoted-operator-key-is-read",
     ],
 )
-def test_the_profile_only_seeds_the_config_default(
-    tmp_path: Path, client: str, existing: str, expected: dict[str, object]
+def test_no_profile_writes_the_shared_config_and_the_operator_value_decides(
+    tmp_path: Path, client: str, existing: str, published_hooks: bool
 ) -> None:
+    """worker-3 P1: a hookless client (opencode, grok) used to seed hooks_enabled: false into the
+    project-wide config, which switched every other client's hooks off. The operator's own value is
+    the only thing that publishes the switch."""
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
     (trw_dir / "config.yaml").write_text(existing, encoding="utf-8")
 
     _write_hook_env_file(trw_dir, resolve_client_profile(client))
 
-    assert YAML(typ="safe").load((trw_dir / "config.yaml").read_text(encoding="utf-8")) == expected
+    assert (trw_dir / "config.yaml").read_text(encoding="utf-8") == existing
     published = hook_flags_path(trw_dir).read_text(encoding="utf-8")
-    assert f"hooks_enabled={str(expected.get('hooks_enabled', True)).lower()}\n" in published
+    assert f"hooks_enabled={str(published_hooks).lower()}\n" in published

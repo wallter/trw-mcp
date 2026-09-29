@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from trw_mcp.bootstrap import (
-    _generate_mcp_json,
     _get_bundled_names,
     _merge_mcp_json,
     _trw_mcp_server_entry,
@@ -61,7 +60,7 @@ class TestMergeMcpJson:
         mcp_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
 
         result: dict[str, list[str]] = {"created": [], "errors": []}
-        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        with patch("trw_mcp.bootstrap._mcp_json.write_checkout_file", side_effect=OSError("disk full")):
             _merge_mcp_json(tmp_path, result)
 
         assert any("Failed to write" in e for e in result["errors"])
@@ -69,7 +68,7 @@ class TestMergeMcpJson:
     def test_write_error_new_mcp_json(self, tmp_path: Path) -> None:
         """OSError creating new .mcp.json → error."""
         result: dict[str, list[str]] = {"created": [], "errors": []}
-        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        with patch("trw_mcp.bootstrap._mcp_json.write_checkout_file", side_effect=OSError("disk full")):
             _merge_mcp_json(tmp_path, result)
 
         assert any("Failed to write" in e for e in result["errors"])
@@ -213,26 +212,25 @@ enabled = true
 
         assert any("direct TRW MCP HTTP URL" in w for w in result["warnings"])
 
-    def test_claude_md_missing_markers_warns(self, tmp_path: Path) -> None:
-        """CLAUDE.md without TRW markers → warning.
+    def test_agents_md_missing_markers_warns(self, tmp_path: Path) -> None:
+        """claude-code's AGENTS.md without TRW markers → warning.
 
         ``target_platforms`` is recorded explicitly so this test's outcome does
         not depend on ``detect_ide``'s machine-global Cursor-binary signal
         (a Cursor install on the host resolves an evidence-free tmp_path to
-        cursor-ide, which does not declare CLAUDE.md as a write target).
+        cursor-ide, which does not declare AGENTS.md as a write target).
         """
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         (trw_dir / "config.yaml").write_text("target_platforms:\n  - claude-code\n", encoding="utf-8")
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps({"mcpServers": {"trw": {}}}), encoding="utf-8")
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text("# My Project\n", encoding="utf-8")
+        (tmp_path / "AGENTS.md").write_text("# My Project\n", encoding="utf-8")
 
         result: dict[str, list[str]] = {"warnings": []}
         _verify_installation(tmp_path, result)
 
-        assert any("missing TRW" in w for w in result["warnings"])
+        assert any("AGENTS.md missing TRW" in w for w in result["warnings"])
 
     def test_codex_project_leftover_claude_md_not_flagged(self, tmp_path: Path) -> None:
         """A codex-only project's carrier is ``.codex/INSTRUCTIONS.md``, never ``CLAUDE.md``.
@@ -289,24 +287,6 @@ enabled = true
             w for w in result["warnings"] if "not executable" in w or "missing" in w.lower() or "not valid" in w
         ]
         assert len(health_warnings) == 0
-
-
-@pytest.mark.unit
-class TestGenerateMcpJson:
-    """Cover _generate_mcp_json legacy helper."""
-
-    def test_returns_valid_json(self) -> None:
-        """Returns valid JSON string with trw entry."""
-        result_str = _generate_mcp_json()
-        data = json.loads(result_str)
-        assert "mcpServers" in data
-        assert "trw" in data["mcpServers"]
-        assert "command" in data["mcpServers"]["trw"]
-
-    def test_ends_with_newline(self) -> None:
-        """Generated JSON ends with newline."""
-        result_str = _generate_mcp_json()
-        assert result_str.endswith("\n")
 
 
 @pytest.mark.unit

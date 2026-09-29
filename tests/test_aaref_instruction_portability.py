@@ -9,14 +9,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 AAREF = ROOT / "docs" / "requirements-aare-f"
 
-if not AAREF.is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only AARE-F instruction invariant", allow_module_level=True)
 
 
 def test_aaref_has_one_client_neutral_policy_owner() -> None:
     canonical = (AAREF / "AGENTS.md").read_text(encoding="utf-8")
-    claude = (AAREF / "CLAUDE.md").read_text(encoding="utf-8")
-    assert claude == "# AARE-F Requirements\n\n@AGENTS.md\n"
+    assert not (AAREF / "CLAUDE.md").exists()  # Claude Code reads AGENTS.md natively
 
     for marker in (
         "extra_prd_categories",

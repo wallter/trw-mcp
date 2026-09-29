@@ -7,7 +7,7 @@ progressively more effective in a specific repository.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from enum import Enum
 from typing import Literal
 
@@ -38,6 +38,7 @@ class LearningType(str, Enum):
     CONVENTION = "convention"
     HYPOTHESIS = "hypothesis"
     WORKAROUND = "workaround"
+    DECISION = "decision"  # PRD-CORE-334 FR01, as trw_memory's MemoryType
 
 
 class LearningConfidence(str, Enum):
@@ -104,6 +105,13 @@ class LearningEntry(BaseModel):
     confidence: LearningConfidence = Field(
         default=LearningConfidence.UNVERIFIED,
         description="Validation confidence level.",
+    )
+    # PRD-CORE-312-FR01: plain str (not a re-declared enum) -- the YAML sidecar
+    # mirrors the SQLite row for rollback safety, so it need not own a second
+    # validated vocabulary; the SQLite write already coerces/rejects it.
+    evidence_level: str = Field(
+        default="unknown",
+        description="Author-claimed evidence level (observed/verified/inferred/unknown).",
     )
     task_type: str = Field(
         default="",
@@ -242,39 +250,6 @@ class LearningEntry(BaseModel):
     )
 
 
-class LearningIndex(BaseModel):
-    """Index of all learning entries in .trw/learnings/index.yaml."""
-
-    model_config = ConfigDict(strict=True)
-
-    entries: list[LearningEntry] = Field(default_factory=list)
-    total_count: int = 0
-    last_pruned: date | None = None
-
-
-class Reflection(BaseModel):
-    """Post-run/session reflection log in .trw/reflections/.
-
-    Captures what worked, what failed, what was repeated,
-    and what was surprising during a work session.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    id: str
-    run_id: str | None = None
-    scope: str = "session"
-    timestamp: datetime
-    events_analyzed: int = 0
-    what_worked: list[str] = Field(default_factory=list)
-    what_failed: list[str] = Field(default_factory=list)
-    repeated_patterns: list[str] = Field(default_factory=list)
-    surprises: list[str] = Field(default_factory=list)
-    new_learnings: list[str] = Field(default_factory=list)
-    patterns_updated: list[str] = Field(default_factory=list)
-    scripts_refined: list[str] = Field(default_factory=list)
-
-
 class Pattern(BaseModel):
     """Discovered codebase pattern in .trw/patterns/.
 
@@ -292,64 +267,3 @@ class Pattern(BaseModel):
     first_seen: date = Field(default_factory=date.today)
     last_seen: date = Field(default_factory=date.today)
     occurrences: int = Field(ge=1, default=1)
-
-
-class PatternIndex(BaseModel):
-    """Index of all patterns in .trw/patterns/index.yaml."""
-
-    model_config = ConfigDict(strict=True)
-
-    patterns: list[Pattern] = Field(default_factory=list)
-
-
-class Script(BaseModel):
-    """Reusable script in .trw/scripts/.
-
-    Scripts are saved, refined, and reused across sessions.
-    Usage tracking identifies which scripts are most valuable.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    name: str
-    description: str
-    filename: str
-    language: str = "bash"
-    usage_count: int = Field(ge=0, default=0)
-    last_refined: date = Field(default_factory=date.today)
-    created: date = Field(default_factory=date.today)
-
-
-class ScriptIndex(BaseModel):
-    """Index of all scripts in .trw/scripts/index.yaml."""
-
-    model_config = ConfigDict(strict=True)
-
-    scripts: list[Script] = Field(default_factory=list)
-
-
-class ContextArchitecture(BaseModel):
-    """Discovered architecture facts in .trw/context/architecture.yaml."""
-
-    model_config = ConfigDict(strict=True)
-
-    language: str = ""
-    framework: str = ""
-    build_system: str = ""
-    test_framework: str = ""
-    key_directories: dict[str, str] = Field(default_factory=dict)
-    entry_points: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-
-
-class ContextConventions(BaseModel):
-    """Discovered coding conventions in .trw/context/conventions.yaml."""
-
-    model_config = ConfigDict(strict=True)
-
-    naming_style: str = ""
-    import_style: str = ""
-    error_handling: str = ""
-    test_patterns: list[str] = Field(default_factory=list)
-    commit_style: str = ""
-    notes: list[str] = Field(default_factory=list)

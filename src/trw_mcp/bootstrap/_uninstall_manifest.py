@@ -22,13 +22,30 @@ behavior for those, unchanged.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
 
-from ._safe_remove import path_refusal
+from ._safe_remove import _SHA256_RE, path_refusal, remove_if_hash
+from ._uninstall_skill_dir import (
+    _RERUN_CAN_CHANGE as _RERUN_CAN_CHANGE,
+)
+from ._uninstall_skill_dir import (
+    _TOO_LARGE as _TOO_LARGE,
+)
+from ._uninstall_skill_dir import (
+    _hash_regular_file as _hash_regular_file,
+)
+from ._uninstall_skill_dir import (
+    _lexists_strict as _lexists_strict,
+)
+from ._uninstall_skill_dir import (
+    _remove_skill_dir as _remove_skill_dir,
+)
+from ._uninstall_skill_dir import (
+    prune_empty_dirs as prune_empty_dirs,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -46,6 +63,7 @@ class KeyDisposition:
     action: Action
     detail: str = ""
     is_dir: bool = False
+    recorded_hash: str = ""
 
 
 #: Printed for every plain surface rule 3 keeps (PRD-INFRA-192 FR09 C3): no
@@ -60,7 +78,7 @@ class SurfaceDisposition:
 
     relpath: str
     path: Path
-    action: str  # "remove" | "kept"
+    action: str  # "remove" | "kept" | "refused" (path_refusal said no: nothing was judged, residue may be TRW's)
     detail: str = ""
 
 
@@ -82,7 +100,7 @@ def plan_uncovered_surface(path: Path, relpath: str, root: Path) -> SurfaceDispo
     """
     refusal = path_refusal(path, root)
     if refusal:
-        return SurfaceDisposition(relpath, path, "kept", refusal)
+        return SurfaceDisposition(relpath, path, "refused", refusal)
     if path.is_dir():
         return SurfaceDisposition(relpath, path, "kept", _UNCOVERED_NOTE)
     from ._managed_client_artifacts import bundled_content_for
@@ -170,17 +188,24 @@ def plan_manifest_removal(
         if any(o in remaining_targets for o in remaining_owners):
             dispositions.append(KeyDisposition(key, delete_path, "kept-shared-owner", f"owned by {remaining_owners}"))
             continue
+        if is_dir and not _lexists_strict(resolved):
+            # SKILL.md is gone (an earlier run deleted it, keeping the record for a TRW-owned sibling): a directory
+            # still there is re-evaluated so the record can converge; both gone means nothing is left to track.
+            if _lexists_strict(delete_path) and not delete_path.is_symlink() and delete_path.is_dir():
+                dispositions.append(KeyDisposition(key, delete_path, "remove", "", True, recorded_hash))
+            elif not _lexists_strict(delete_path):
+                dispositions.append(KeyDisposition(key, delete_path, "remove", "already gone", True, recorded_hash))
+            continue
         if not resolved.is_file():
             continue
-        try:
-            current_hash = hashlib.sha256(resolved.read_bytes()).hexdigest()
-        except OSError:
+        current_hash, why = _hash_regular_file(resolved)
+        if current_hash is None and why != _TOO_LARGE:
             dispositions.append(KeyDisposition(key, delete_path, "rejected-unsafe", "unreadable"))
             continue
         if current_hash != recorded_hash:
             dispositions.append(KeyDisposition(key, delete_path, "preserved-edited", "", is_dir))
             continue
-        dispositions.append(KeyDisposition(key, delete_path, "remove", "", is_dir))
+        dispositions.append(KeyDisposition(key, delete_path, "remove", "", is_dir, recorded_hash))
     return dispositions
 
 
@@ -200,72 +225,75 @@ def apply_removal(
     """
     removed_keys: set[str] = set()
     errors = 0
-    for d in dispositions:
+    # Files with their own manifest key (e.g. a client's generated ``*-contract.md``) are decided by that key's
+    # disposition, which runs BEFORE any skill directory so the directory sees what is really left on disk.
+    own_keys = {d.path: d.action for d in dispositions if not d.is_dir}
+    for d in sorted(dispositions, key=lambda d: d.is_dir):
         if d.action == "preserved-edited":
             result.setdefault("preserved", []).append(f"{d.path} (edited)")
             continue
         if d.action != "remove":
             continue
-        refusal = path_refusal(d.path, target)
-        if refusal:
-            errors += 1
-            result.setdefault("errors", []).append(f"Refused to remove {d.path}: {refusal}")
-            continue
         try:
             if d.is_dir:
-                kept = _remove_skill_dir(d.path)
-                result.setdefault("preserved", []).extend(f"{path} (not TRW's bundled content)" for path in kept)
-            elif d.path.is_file():
-                d.path.unlink()
+                refusal = path_refusal(d.path, target)
+                if refusal:
+                    errors += 1
+                    result.setdefault("errors", []).append(f"{d.path}: {refusal}")
+                    continue
+                kept, failures, trw_left = _remove_skill_dir(d.path, target, d.recorded_hash, own_keys)
+                # A kept file that has its own disposition was already reported by it.
+                result.setdefault("preserved", []).extend(
+                    f"{path} ({why})" for path, why in kept if path not in own_keys
+                )
+                for path, why in failures:
+                    errors += 1
+                    result.setdefault("errors", []).append(f"{path}: {why}")
+                if any(why in _RERUN_CAN_CHANGE for _path, why in kept if _path not in own_keys):
+                    result.setdefault("trw_left", []).append(str(d.path))
+                if trw_left or failures:
+                    # A TRW-owned file remains (edited, unreadable) or a delete failed: the record stays so a
+                    # rerun still finds it. Only user-owned leftovers mean nothing is left to track.
+                    continue
+            else:
+                # Planning hashed the file; an edit saved since must survive (HB-2). remove_if_hash captures
+                # the file into .trw/trash, re-hashes THOSE bytes and links them back on a mismatch; it never
+                # unlinks. removed/absent drop the record; kept/retained keep it so a rerun sees it again.
+                refusal = path_refusal(d.path, target)  # the documented re-check right before the act
+                if refusal:
+                    errors += 1
+                    result.setdefault("errors", []).append(f"{d.path}: {refusal}")
+                    continue
+                if _SHA256_RE.fullmatch(d.recorded_hash) is None:
+                    errors += 1
+                    result.setdefault("errors", []).append(f"{d.path}: kept (no valid recorded hash)")
+                    continue
+                outcome = remove_if_hash(d.path, target, d.recorded_hash, key=d.key)
+                if outcome.status == "removed":
+                    # ``trashed_at`` stays index-aligned with ``trashed`` ("" when the capture is not visible) so
+                    # uninstall can move these captures on to the system Trash.
+                    result.setdefault("trashed", []).append(str(d.path))
+                    result.setdefault("trashed_at", []).append(str(outcome.retained_at or ""))
+                elif outcome.status == "kept" and outcome.published is None and outcome.retained_at is not None:
+                    # The folder moved mid-removal: the bytes are not at d.path; say where a copy is.
+                    errors += 1
+                    result.setdefault("errors", []).append(
+                        f"{d.path}: kept ({outcome.reason}); a copy is in {outcome.retained_at}"
+                    )
+                    continue
+                elif outcome.status == "kept" and outcome.reason.startswith("bytes differ"):
+                    result.setdefault("preserved", []).append(f"{d.path} (edited: {outcome.reason})")
+                    continue
+                elif outcome.status in ("kept", "retained"):
+                    where = f"; your bytes are in {outcome.retained_at}" if outcome.status == "retained" else ""
+                    errors += 1
+                    result.setdefault("errors", []).append(f"{d.path}: kept ({outcome.reason}){where}")
+                    continue
             removed_keys.add(d.key)
         except OSError as exc:
             errors += 1
-            result.setdefault("errors", []).append(f"Failed to remove {d.path}: {exc}")
+            result.setdefault("errors", []).append(f"{d.path}: {exc}")
     return removed_keys, errors
-
-
-def _remove_skill_dir(skill_dir: Path) -> list[Path]:
-    """Delete a TRW skill's files, keeping any file that is not byte-identical to the bundled skill.
-
-    ``SKILL.md`` was already verified against its recorded hash. A sibling the
-    user added or edited has no recorded hash, so the bundled copy is the
-    baseline: only an exact match is TRW's to remove. Returns the kept files.
-    """
-    from ._utils import _DATA_DIR
-
-    bundled_root = _DATA_DIR / "skills" / skill_dir.name
-    kept: list[Path] = []
-    for path in sorted(p for p in skill_dir.rglob("*") if p.is_file() or p.is_symlink()):
-        bundled = bundled_root / path.relative_to(skill_dir)
-        ours = path.name == "SKILL.md" and path.parent == skill_dir
-        if ours or (not path.is_symlink() and bundled.is_file() and bundled.read_bytes() == path.read_bytes()):
-            path.unlink()
-        else:
-            kept.append(path)
-    prune_empty_dirs(skill_dir)
-    return kept
-
-
-def prune_empty_dirs(surface_root: Path) -> None:
-    """Remove now-empty directories under *surface_root*, then the dir itself if empty."""
-    if not surface_root.is_dir() or surface_root.is_symlink():
-        return
-    subdirs = sorted(
-        (p for p in surface_root.rglob("*") if p.is_dir() and not p.is_symlink()),
-        key=lambda p: len(p.parts),
-        reverse=True,
-    )
-    for d in subdirs:
-        try:
-            if not any(d.iterdir()):
-                d.rmdir()
-        except OSError:  # trw-fail-silent-allow: a dir that won't empty-check cleanly is left as-is
-            continue
-    try:
-        if not any(surface_root.iterdir()):
-            surface_root.rmdir()
-    except OSError:  # trw-fail-silent-allow: leaves the (non-empty or permission-denied) dir in place
-        pass
 
 
 def rewrite_manifest_after_removal(target: Path, removed_keys: set[str], remove_ide: str) -> None:

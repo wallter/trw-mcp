@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.prompts import get_message_lines as exported_get_message_lines
 from trw_mcp.prompts.messaging import (
     _load_messages,
     get_message,
-    get_message_lines,
     get_message_or_default,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestGetMessage:
@@ -72,23 +72,6 @@ class TestGetMessageOrDefault:
             name="world",
         )
         assert msg == "Hello world"
-
-
-class TestGetMessageLines:
-    """Tests for get_message_lines() — list accessor."""
-
-    def test_string_message_returns_single_item_list(self) -> None:
-        lines = get_message_lines("server_instructions")
-        assert isinstance(lines, list)
-        assert len(lines) == 1
-        assert "trw_session_start" in lines[0]
-
-    def test_missing_key_raises_key_error(self) -> None:
-        with pytest.raises(KeyError):
-            get_message_lines("nonexistent_key_xyz")
-
-    def test_exported_from_prompts_package(self) -> None:
-        assert exported_get_message_lines is get_message_lines
 
 
 class TestLoadMessages:

@@ -20,11 +20,14 @@ from typing import Any
 import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
+from tests._layout import subprocess_pythonpath
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp.comms import _hint
 from trw_mcp.state._process_identity import process_start_time
 
-_SRC = Path(__file__).resolve().parents[2] / "src"
+#: Kept as ``_SRC`` (imported by ``test_formation_watch``) but now holds the
+#: full sibling-inclusive PYTHONPATH -- see ``tests._layout.subprocess_pythonpath``.
+_SRC = subprocess_pythonpath()
 
 
 def _own_pin(scene: SendScene, pin_key: str = "pin-b", member: str = "impl-2", **overrides: Any) -> None:

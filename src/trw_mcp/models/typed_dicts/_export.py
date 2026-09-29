@@ -35,19 +35,6 @@ class ExportAnalyticsSection(TypedDict, total=False):
     ceremony_aggregates: dict[str, object]
 
 
-class ExportPatternsSection(TypedDict, total=False):
-    """Return shape of ``_patterns_section()``.
-
-    Contains high-frequency pattern / tag clusters extracted from learnings.
-    Keys are present only when the project has enough entries to compute them.
-    """
-
-    top_tags: list[dict[str, object]]
-    tag_cooccurrence: dict[str, list[str]]
-    impact_by_tag: dict[str, float]
-    total_entries: int
-
-
 class ExportMetadata(TypedDict, total=False):
     """Metadata sub-dict embedded in ``ExportSummary``."""
 

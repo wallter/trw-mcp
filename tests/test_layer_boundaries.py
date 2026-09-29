@@ -17,6 +17,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
+
 # Root of the trw-mcp source tree
 _SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 _STATE_DIR = _SRC_ROOT / "state"
@@ -148,30 +151,6 @@ def test_correlation_accepts_finder_arg() -> None:
     assert "from trw_mcp.state.memory_adapter" not in content, (
         "_correlation.py imports from state.memory_adapter (FR05 violation)"
     )
-
-
-# --- FR06-T07: decay accepts entry iterator (no file I/O imports in _decay.py) ---
-
-
-@pytest.mark.unit
-def test_decay_accepts_entry_iterator() -> None:
-    """_decay.py has zero iter_yaml_entry_files and FileStateReader imports.
-
-    Verifies FR06: compute_impact_distribution delegates I/O to _io_boundary.
-    """
-    # The distribution analysis (which performs the entry load) was split out
-    # of _decay.py into the sibling _distribution.py; both must keep file I/O
-    # at the boundary (no iter_yaml_entry_files / FileStateReader references).
-    for module_name in ("_decay.py", "_distribution.py"):
-        content = (_SCORING_DIR / module_name).read_text(encoding="utf-8")
-        assert "iter_yaml_entry_files" not in content, (
-            f"{module_name} references iter_yaml_entry_files (FR06 violation)"
-        )
-        assert "FileStateReader" not in content, f"{module_name} references FileStateReader (FR06 violation)"
-    # Verify _load_entries_from_dir is still accessible (re-exported from _io_boundary)
-    from trw_mcp.scoring._distribution import _load_entries_from_dir
-
-    assert callable(_load_entries_from_dir)
 
 
 # --- FR03/FR05/FR06-T08: scoring computation modules have no direct state I/O imports ---

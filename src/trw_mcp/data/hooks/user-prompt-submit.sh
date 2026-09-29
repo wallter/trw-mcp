@@ -68,7 +68,7 @@ fi
 # unchanged. Threading it is what makes the keyed epoch, the keyed latch, and
 # the owned-run scan reachable on a client whose profile publishes no session
 # variable -- which is every profile except claude-code, and therefore every
-# tree whose generated hook-env.sh was written by one of them. An older library
+# tree whose generated hook-env.d/<key>.sh was written by one of them. An older library
 # that predates FR128 ignores the extra argument, so the guard above still holds.
 _degraded_emitted=0
 if command -v trw_bump_session_prompt_index >/dev/null 2>&1; then
@@ -108,7 +108,7 @@ if [ "$_phase" != "none" ]; then
   # time the phase goes back to "none". Clearing it here keeps the cadence
   # cap counting THIS "none" streak, not a stale one from earlier in the
   # session.
-  rm -f "$_context_dir/none_phase_prompt_count" 2>/dev/null || true
+  _trw_safe_rm "$_context_dir/none_phase_prompt_count" || true
 else
   # PRD-CORE-301 cut 1: emit on the first "none" prompt, then at most once
   # every _NONE_PHASE_CADENCE prompts after that — never a hard silence,
@@ -204,347 +204,49 @@ if [ "$_auto_recall_enabled" = "false" ]; then
   exit 0
 fi
 
-# PRD-FIX-124 FR03: the auto-recall limb runs on exactly three conditions —
-# enabled, a non-empty prompt, and an entries directory. Phase is not consulted.
-_entries_dir="$_project_root/.trw/learnings/entries"
-if [ ! -d "$_entries_dir" ]; then
-  log_hook_execution "UserPromptSubmit" "$_phase" "skipped"
-  exit 0
-fi
-
+# PRD-CORE-333 FR03: the candidates come from a FILTERED store read, never from the
+# .trw/learnings entries mirror. `python -m trw_mcp.state._auto_recall_hook` asks the
+# checkout's store (the daemon), whose backend reads drop every identity the quarantine
+# ledger blocks (StorageBackend.filter_quarantined), then runs the PRD-FIX-124 scorer.
+# No interpreter with trw_mcp installed, or no reachable store, means no recall:
+# the hook fails closed rather than reading the unfiltered mirror.
+#
 # FR05: the scorer's diagnostic goes to stderr (stdout is injected into the
 # model's context and must carry recall text only). Capture it so it can also be
 # forwarded to the durable hook log, then replay it for interactive debugging.
+# A symlinked context dir gets no capture file: the redirect below would create
+# it wherever the link points (PRD-FIX-156-FR03).
 _diag_file="$_context_dir/.auto_recall_diag.$$"
-_recall_output=$(
-  python3 - "$_entries_dir" "$_prompt" "$_injected_file" "$_auto_recall_max_results" \
-    "$_auto_recall_max_tokens" "$_auto_recall_min_score" "$_auto_recall_scan_cap" \
-    2>"$_diag_file" <<'PY'
-from __future__ import annotations
-
-import math
-import re
-import sys
-import time
-from pathlib import Path
-
-START_NS = time.monotonic_ns()
-TIMEOUT_NS = 500_000_000
-MAX_KEYWORDS = 16
-MIN_TOKEN_LEN = 4
-# Inline mirrors of the typed TRWConfig defaults. A POSIX hook cannot import
-# Pydantic, so these are a third declaration site alongside
-# models/config/_fields_build.py and models/config/_sub_models.py; the three are
-# asserted equal by tests/test_auto_recall_scoring.py.
-DEFAULT_MAX_RESULTS = 3
-DEFAULT_MAX_TOKENS = 100
-DEFAULT_MIN_SCORE = 0.35
-DEFAULT_SCAN_CAP = 10000
-TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
-STOP_WORDS = {
-    "also",
-    "been",
-    "call",
-    "each",
-    "even",
-    "from",
-    "have",
-    "into",
-    "just",
-    "like",
-    "make",
-    "more",
-    "only",
-    "some",
-    "take",
-    "than",
-    "that",
-    "their",
-    "them",
-    "then",
-    "they",
-    "this",
-    "what",
-    "when",
-    "where",
-    "which",
-    "will",
-    "with",
-    "your",
-}
-
-
-def _unquote(value: str) -> str:
-    """Strip a matching pair of YAML quotes and undo that style's escape.
-
-    Applied to a scalar ONCE, after any folded continuation lines have been
-    joined: a folded quoted summary opens its quote on the first line and closes
-    it several lines later, so stripping per line would never match.
-    """
-    if len(value) >= 2 and value[0] == value[-1]:
-        if value[0] == "'":
-            return value[1:-1].replace("''", "'")
-        if value[0] == '"':
-            return value[1:-1].replace('\\"', '"')
-    return value
-
-
-def _parse_entry(path: Path) -> tuple[str, str, str, list[str]]:
-    """Read one learning entry ONCE and return (status, id, summary, tags).
-
-    Entries are flat YAML: the four fields this hook depends on are top-level
-    keys at column 0 (see docs/documentation/operational-knowledge/
-    auto-recall-calibration.md for the read-model contract). ``summary`` may be
-    a folded scalar whose continuation lines are indented; ``tags`` is a block
-    sequence of ``- item`` lines. Any parse failure yields empty values so the
-    entry simply scores zero (NFR02).
-    """
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return "", "", "", []
-    status = ""
-    entry_id = ""
-    summary_parts: list[str] = []
-    tags: list[str] = []
-    mode = ""
-    for line in text.splitlines():
-        if mode == "summary":
-            if line[:1] in {" ", "\t"}:
-                summary_parts.append(line.strip())
-                continue
-            mode = ""
-        elif mode == "tags":
-            stripped = line.lstrip()
-            if stripped[:1] == "-":
-                item = _unquote(stripped[1:].strip())
-                if item:
-                    tags.append(item)
-                continue
-            mode = ""
-        first = line[:1]
-        if not first or first in {" ", "\t", "-", "#"}:
-            continue
-        key, sep, value = line.partition(":")
-        if not sep:
-            continue
-        if key == "status":
-            status = _unquote(value.strip())
-        elif key == "id":
-            entry_id = _unquote(value.strip())
-        elif key == "summary":
-            scalar = value.strip()
-            summary_parts = [scalar] if scalar else []
-            mode = "summary"
-        elif key == "tags":
-            inline = value.strip()
-            tags = []
-            if not inline:
-                mode = "tags"
-    summary = _unquote(" ".join(p for p in summary_parts if p).strip())
-    return status, entry_id, summary, tags
-
-
-def _tokenize(text: str) -> set[str]:
-    return {
-        word
-        for word in TOKEN_RE.findall(text.lower())
-        if len(word) >= MIN_TOKEN_LEN and word not in STOP_WORDS
-    }
-
-
-def _as_int(raw: str, fallback: int, minimum: int) -> int:
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return fallback
-    return value if value >= minimum else fallback
-
-
-def _as_float(raw: str, fallback: float, low: float, high: float) -> float:
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return fallback
-    return value if low <= value <= high else fallback
-
-
-entries_dir = Path(sys.argv[1])
-prompt = sys.argv[2]
-injected_file = Path(sys.argv[3])
-max_results = _as_int(sys.argv[4], DEFAULT_MAX_RESULTS, 0)
-max_tokens = _as_int(sys.argv[5], DEFAULT_MAX_TOKENS, 0)
-min_score = _as_float(sys.argv[6], DEFAULT_MIN_SCORE, 0.0, 1.0)
-scan_cap = _as_int(sys.argv[7], DEFAULT_SCAN_CAP, 1)
-max_chars = max_tokens * 4
-deadline_ns = START_NS + TIMEOUT_NS
-
-keywords: list[str] = []
-for word in TOKEN_RE.findall(prompt.lower()):
-    if len(word) < MIN_TOKEN_LEN or word in STOP_WORDS or word in keywords:
-        continue
-    if len(keywords) >= MAX_KEYWORDS:
-        break
-    keywords.append(word)
-
-
-def _diagnostic(decision: str, scanned: int, top_score: float, top_id: str, injected: int) -> None:
-    """FR05: one machine-readable record per scorer run, on stderr only.
-
-    NFR03: counts, scores and learning IDs only — never prompt or detail text.
-    """
-    elapsed_ms = (time.monotonic_ns() - START_NS) // 1_000_000
-    sys.stderr.write(
-        f"event=AutoRecall keywords={len(keywords)} scanned={scanned}"
-        f" top_score={top_score:.3f} top_id={top_id or 'none'}"
-        f" threshold={min_score:.3f} injected={injected}"
-        f" decision={decision} elapsed_ms={elapsed_ms}\n"
-    )
-
-
-if not keywords or not entries_dir.is_dir():
-    _diagnostic("no_keywords", 0, 0.0, "", 0)
-    raise SystemExit(0)
-
-injected_ids: set[str] = set()
-if injected_file.is_file():
-    injected_ids = {
-        line.strip()
-        for line in injected_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.strip()
-    }
-
-# FR07: the cap is a typed tunable, not an age filter. At its default it covers
-# a whole store this size; the most-recently-modified ordering survives only as
-# the tie-break for a store that still exceeds the raised cap.
-all_entries = list(entries_dir.glob("*.yaml"))
-if len(all_entries) > scan_cap:
-
-    def _mtime(p: Path) -> float:
-        try:
-            return p.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    all_entries.sort(key=_mtime, reverse=True)
-    all_entries = all_entries[:scan_cap]
-
-# Pass 1: read each entry once, keep only the prompt keywords it contains, and
-# accumulate document frequencies over the population actually tokenized. FR08:
-# a deadline stops the scan here, and everything already collected still scores.
-candidates: list[tuple[str, str, str, frozenset[str]]] = []
-doc_freq: dict[str, int] = dict.fromkeys(keywords, 0)
-doc_count = 0
-scanned = 0
-deadline_hit = False
-for entry in sorted(all_entries):
-    if time.monotonic_ns() >= deadline_ns:
-        deadline_hit = True
-        break
-    scanned += 1
-
-    status, entry_id, summary, tags = _parse_entry(entry)
-    # FR12: the mirrored status is the candidate gate — a learning retired in
-    # SQLite is retired here as soon as the mirror records the transition.
-    if status.lower() != "active":
-        continue
-    entry_id = entry_id or entry.stem
-    if entry_id in injected_ids:
-        continue
-    if not summary:
-        continue
-
-    doc_count += 1
-    # FR01/FR02: the learning's own token set is its summary PLUS its tags,
-    # which carry its most topical, least diluted vocabulary.
-    tokens = _tokenize(summary + " " + " ".join(tags))
-    matched = frozenset(keyword for keyword in keywords if keyword in tokens)
-    if not matched:
-        continue
-    for keyword in matched:
-        doc_freq[keyword] += 1
-    display_id = entry_id if entry_id.startswith("L-") else f"L-{entry_id}"
-    candidates.append((entry_id, display_id, summary, matched))
-
-# Pass 2: FR01 — score is the IDF-weighted fraction of the PROMPT's keyword mass
-# found in the learning's token set, so it no longer decays as the prompt gets
-# longer and more specific. Bounded [0.0, 1.0]; exactly 1.0 when every keyword
-# is present.
-#
-# The weight is SMOOTHED — log((N + 1) / (df + 1)) + 1, the standard smooth-idf
-# form. The unsmoothed variant sends a term that occurs in every scored document
-# to weight zero, which is defensible at scale and catastrophic at small N: on a
-# new project's 1-entry store a PERFECT match scores 0.000, because every one of
-# its terms is in "every" document. The +1 floor keeps rare terms weighted more
-# than common ones while making the small-N case degrade to plain coverage
-# rather than to silence.
-idf = {
-    keyword: math.log((doc_count + 1) / (doc_freq[keyword] + 1)) + 1.0 for keyword in keywords
-}
-total_idf = sum(idf.values())
-
-
-def _score(matched: frozenset[str]) -> float:
-    if total_idf <= 0.0:
-        return len(matched) / len(keywords)
-    return sum(idf[keyword] for keyword in matched) / total_idf
-
-
-scored = [(_score(matched), entry_id, display_id, summary) for entry_id, display_id, summary, matched in candidates]
-top_score = 0.0
-top_id = ""
-for score, entry_id, _display_id, _summary in scored:
-    if score > top_score:
-        top_score = score
-        top_id = entry_id
-
-results = [item for item in scored if item[0] >= min_score]
-results.sort(key=lambda item: (-item[0], item[1]))
-selected = results[:max_results]
-
-lines: list[str] = []
-emitted_ids: list[str] = []
-total_chars = 0
-for _score_value, entry_id, display_id, summary in selected:
-    line = f"TRW RECALL: [{display_id}] {summary}"
-    # NFR06: budget the newline that follows each line too, so the block the
-    # hook prints — separators and trailing newline included — stays inside
-    # auto_recall_max_tokens * 4 characters rather than one byte over per line.
-    next_total = total_chars + len(line) + 1
-    if next_total > max_chars:
-        break
-    lines.append(line)
-    emitted_ids.append(entry_id)
-    total_chars = next_total
-
-if deadline_hit:
-    decision = "deadline"
-elif lines:
-    decision = "fired"
-elif top_score <= 0.0:
-    decision = "no_match"
-else:
-    decision = "below_threshold"
-_diagnostic(decision, scanned, top_score, top_id, len(lines))
-
-if not lines:
-    raise SystemExit(0)
-
-injected_file.parent.mkdir(parents=True, exist_ok=True)
-with injected_file.open("a", encoding="utf-8") as handle:
-    for entry_id in emitted_ids:
-        handle.write(f"{entry_id}\n")
-
-sys.stdout.write("\n".join(lines))
-PY
-) || true
+_trw_ancestor_symlinked "$_context_dir" && _diag_file=/dev/null
+# Interpreter order, as the intent guard resolves it: $TRW_PYTHON, the project venv, the
+# interpreter behind the `trw-mcp` launcher on PATH, then PATH python3.
+_recall_launcher_py=""
+_recall_launcher=$(command -v trw-mcp 2>/dev/null) &&
+  _recall_launcher_py=$(head -n 1 "$_recall_launcher" 2>/dev/null | sed -n 's/^#!\([^ ]*\).*/\1/p')
+_recall_output=""
+_recall_ran=""
+for _recall_py in "${TRW_PYTHON:-}" "$_project_root/.venv/bin/python" "$_project_root/.venv/bin/python3" \
+  "$_recall_launcher_py" "$(command -v python3 2>/dev/null)"; do
+  [ -n "$_recall_py" ] && [ -x "$_recall_py" ] || continue
+  _recall_rc=0
+  _recall_output=$(
+    "$_recall_py" -m trw_mcp.state._auto_recall_hook "$_project_root" "$_prompt" "$_injected_file" \
+      "$_auto_recall_max_results" "$_auto_recall_max_tokens" "$_auto_recall_min_score" "$_auto_recall_scan_cap" \
+      2>"$_diag_file"
+  ) || _recall_rc=$?
+  # 1 = the module could not start under this interpreter (trw_mcp not installed): try the next.
+  [ "$_recall_rc" = "1" ] || { _recall_ran=1; break; }
+  _recall_output=""
+done
 
 _diag=""
 if [ -f "$_diag_file" ]; then
   _diag=$(grep -m1 '^event=AutoRecall' "$_diag_file" 2>/dev/null) || _diag=""
   cat "$_diag_file" >&2 2>/dev/null || true
-  rm -f "$_diag_file" 2>/dev/null || true
+  _trw_safe_rm "$_diag_file" || true
 fi
+# FR05 still holds with no interpreter: exactly one record per prompt.
+[ -n "$_recall_ran" ] || _diag="event=AutoRecall keywords=0 scanned=0 top_score=0.000 top_id=none threshold=$_auto_recall_min_score injected=0 decision=no_interpreter elapsed_ms=0"
 
 if [ -n "$_recall_output" ]; then
   printf '%s\n' "$_recall_output"

@@ -151,8 +151,11 @@ def _mirror_ceremony_phase(new_phase: Phase) -> None:
             _sync_ceremony_phase(new_phase)
 
 
-def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
+def update_run_phase(run_path: Path, new_phase: Phase, *, mirror_ceremony: bool = True) -> bool:
     """Update phase in run.yaml with forward-only guard.
+
+    ``mirror_ceremony=False`` moves only this run: the project-level ceremony phase is the caller's own, and a
+    scratch run (a verifier's or canary's) must not move it.
 
     Returns True if phase was updated, False if skipped (already at or past target).
     Logs a ``phase_enter`` event to the run's events.jsonl on success.
@@ -206,7 +209,7 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
             to_phase=new_phase.value,
             reason="not_forward",
         )
-        if new_order == current_order:
+        if new_order == current_order and mirror_ceremony:
             # Already AT the target: the run.yaml write is correctly skipped, but the
             # ceremony mirror still has to converge. A delivery killed between the
             # run.yaml write and the mirror leaves them disagreeing, and before
@@ -228,7 +231,8 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     # yields True and records nothing. The binding lives at the package root, not
     # in tools/, because state/ may never import from tools/
     # (tests/test_layer_boundaries.py::test_state_does_not_import_tools).
-    _mirror_ceremony_phase(new_phase)
+    if mirror_ceremony:
+        _mirror_ceremony_phase(new_phase)
 
     # Log phase_enter event (best-effort)
     phase_event: dict[str, object] = {
@@ -262,7 +266,7 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     return True
 
 
-def try_update_phase(run_path: Path | None, phase: Phase) -> None:
+def try_update_phase(run_path: Path | None, phase: Phase, *, mirror_ceremony: bool = True) -> None:
     """Best-effort phase update — silently swallows all errors.
 
     Convenience wrapper used by tool modules to avoid duplicating the
@@ -272,6 +276,6 @@ def try_update_phase(run_path: Path | None, phase: Phase) -> None:
     if run_path is None:
         return
     try:
-        update_run_phase(run_path, phase)
+        update_run_phase(run_path, phase, mirror_ceremony=mirror_ceremony)
     except Exception:  # justified: boundary, best-effort wrapper never raises
         logger.debug("try_update_phase_failed", phase=phase.value, exc_info=True)

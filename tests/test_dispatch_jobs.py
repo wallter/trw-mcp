@@ -21,7 +21,6 @@ import pytest
 
 from trw_mcp.dispatch._jobs import (
     DispatchJob,
-    cancel_job,
     get_result,
     get_status,
     start_background,
@@ -181,63 +180,7 @@ def test_get_result_parses_present_file(tmp_path: Path) -> None:
     assert result.ok is True
 
 
-# --- cancel + list ---
-
-
-def test_cancel_sets_cancelled(tmp_path: Path) -> None:
-    # pid=None so cancel does not attempt a real kill.
-    _write_job(tmp_path, "job-cancel", pid=None)
-    job = cancel_job("job-cancel", trw_dir=tmp_path)
-    assert job.status == "cancelled"
-    record = (tmp_path / "runtime" / "dispatch-jobs" / "job-cancel.json").read_text()
-    assert '"cancelled"' in record
-
-
 _POSIX_SESSIONS = hasattr(os, "killpg") and hasattr(os, "setsid")
-
-
-@pytest.mark.skipif(not _POSIX_SESSIONS, reason="requires POSIX process-group primitives")
-def test_cancel_kills_foreign_tree_via_child_pid_sidecar(tmp_path: Path) -> None:
-    """F-11: cancel reaches the foreign agent recorded in the child.pid sidecar.
-
-    We spawn a real ``sleep 30`` as its OWN session leader (start_new_session) to
-    stand in for the foreign agent, write its pid to the job's child.pid sidecar,
-    then cancel and assert the sleeper is reaped and the sidecar is cleaned up.
-    """
-    import subprocess as _sp
-
-    jobs_dir = tmp_path / "runtime" / "dispatch-jobs"
-    _write_job(tmp_path, "job-foreign", pid=None)  # no intermediate to kill
-
-    foreign = _sp.Popen(["sleep", "30"], start_new_session=True)
-    try:
-        child_pid_path = jobs_dir / "job-foreign.child.pid"
-        child_pid_path.write_text(json.dumps(capture_identity(foreign.pid)), encoding="utf-8")
-
-        job = cancel_job("job-foreign", trw_dir=tmp_path)
-        assert job.status == "cancelled"
-
-        # Poll briefly for the foreign process to terminate from the SIGKILL.
-        # foreign.poll() reaps the child (we are its parent) so it does not linger
-        # as a zombie — a bare os.kill(pid, 0) would still succeed on a zombie.
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if foreign.poll() is not None:
-                break
-            time.sleep(0.05)
-        assert foreign.poll() is not None, "foreign agent (sleep 30) survived cancel"
-        # SIGKILL shows up as a negative returncode (-signal.SIGKILL).
-        assert foreign.returncode == -signal.SIGKILL
-
-        # The sidecar is removed by the terminal cleanup.
-        assert not child_pid_path.exists()
-    finally:
-        # Defensive: if the assert failed, still tear down the sleeper.
-        try:
-            os.killpg(os.getpgid(foreign.pid), 9)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-        foreign.wait(timeout=5)
 
 
 # --- F-04: stuck-running TTL ---

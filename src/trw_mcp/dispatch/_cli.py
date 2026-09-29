@@ -18,13 +18,15 @@ import argparse
 import json
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 from trw_mcp.dispatch._fallback import dispatch_with_fallback, host_dispatch_client
 from trw_mcp.dispatch._private_io import write_private_atomic
-from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
-from trw_mcp.dispatch._roles import ROLE_TABLE
+from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request, uncommitted_work_warning
 from trw_mcp.dispatch._runner import dispatch
+from trw_mcp.dispatch._targets import Target, TargetError, parse_targets, variant_lanes
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 from trw_mcp.dispatch._usage import record_dispatch_policy
 from trw_mcp.models.config import get_config
@@ -37,35 +39,31 @@ from trw_mcp.state.doc_variants import VariantLocationError, variant_dir, write_
 _MAX_PROMPT_FILE_BYTES = 1_000_000
 
 
-def _read_prompt(args: argparse.Namespace) -> str:
-    """Resolve the prompt from --prompt or --prompt-file (exactly one)."""
-    prompt = getattr(args, "prompt", None)
-    prompt_file = getattr(args, "prompt_file", None)
-    if prompt and prompt_file:
-        print("Provide only one of --prompt / --prompt-file.", file=sys.stderr)
-        sys.exit(2)
-    if prompt_file:
-        path = Path(str(prompt_file))
-        try:
-            size = path.stat().st_size
-        except OSError as exc:
-            print(f"Cannot read --prompt-file {prompt_file!r}: {exc}", file=sys.stderr)
-            sys.exit(2)
+def _listed(value: object) -> list[str]:
+    return [value] if isinstance(value, str) else [str(v) for v in (value or [])]  # type: ignore[attr-defined]
+
+
+def _read_file_prompt(prompt_file: str) -> str:
+    path = Path(prompt_file)
+    try:
+        size = path.stat().st_size
         if size > _MAX_PROMPT_FILE_BYTES:
-            print(
-                f"--prompt-file is too large ({size} bytes; max {_MAX_PROMPT_FILE_BYTES}).",
-                file=sys.stderr,
-            )
+            print(f"--prompt-file is too large ({size} bytes; max {_MAX_PROMPT_FILE_BYTES}).", file=sys.stderr)
             sys.exit(2)
-        try:
-            return path.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(f"Cannot read --prompt-file {prompt_file!r}: {exc}", file=sys.stderr)
-            sys.exit(2)
-    if prompt:
-        return str(prompt)
-    print("A prompt is required: pass --prompt or --prompt-file.", file=sys.stderr)
-    sys.exit(2)
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"Cannot read --prompt-file {prompt_file!r}: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+def _read_prompts(args: argparse.Namespace) -> list[str]:
+    """Every --prompt, then every --prompt-file's text: one entry per prompt variant."""
+    prompts = [p for p in _listed(getattr(args, "prompt", None)) if p]
+    prompts += [_read_file_prompt(f) for f in _listed(getattr(args, "prompt_file", None))]
+    if not prompts:
+        print("A prompt is required: pass --prompt or --prompt-file.", file=sys.stderr)
+        sys.exit(2)
+    return prompts
 
 
 def _variant_base(args: argparse.Namespace) -> Path | None:
@@ -87,13 +85,12 @@ def _variant_base(args: argparse.Namespace) -> Path | None:
 
 def _write_answer_variant(base: Path, role: str | None, result: DispatchResult, model: str | None) -> None:
     """Write *result* as the next round of *base*'s variant; a failed run is written too, marked failed."""
-    spec = ROLE_TABLE.get(role or "")
     body = result.text if result.ok else f"Dispatch failed: {result.silence_reason or 'not ok'}.\n\n{result.text}"
     try:
         path = write_variant(
             base,
             resolve_project_root(),
-            kind=spec.artifact_kind if spec else "notes",
+            kind="notes",  # a role is a preset only; it no longer names the variant kind (DISPATCH-SIMPLIFY)
             producer=result.client,
             body=body,
             ok=result.ok,
@@ -106,41 +103,35 @@ def _write_answer_variant(base: Path, role: str | None, result: DispatchResult, 
     print(f"variant: {path}", file=sys.stderr)
 
 
-def _resolve_cli_posture(args: argparse.Namespace) -> str:
-    """Derive the dispatch posture the CLI passes into :func:`resolve_dispatch_request`.
-
-    An explicit ``--posture`` wins. Otherwise a ``--role`` that is a review/audit
-    role (every entry in :data:`ROLE_TABLE` today: code-review, design-audit,
-    architectural-audit, adversarial-audit) fail-closed derives
-    ``posture="reviewer"`` -- a review role must never run unbounded just because
-    the caller forgot a flag. ``--posture default`` overrides that derivation
-    explicitly; since the override puts a reviewer-labeled child on an unbounded
-    surface, a warning is printed to stderr rather than overriding silently. This
-    is the one code path the MCP ``trw_dispatch`` tool's ``posture`` parameter
-    also reaches (:func:`trw_mcp.dispatch._resolve.resolve_dispatch_request`), so
-    CLI and MCP dispatch cannot diverge on what "reviewer" means.
-    """
-    explicit_raw = getattr(args, "posture", None)
-    explicit = str(explicit_raw) if explicit_raw is not None else None
-    role = getattr(args, "role", None)
-    role_wants_reviewer = role in ROLE_TABLE
-    if explicit is not None:
-        if explicit == "default" and role_wants_reviewer:
-            print(
-                f"warning: --posture default overrides the posture=reviewer that --role {role!r} "
-                "would otherwise derive; this child runs UNBOUNDED (no read-only TRW surface).",
-                file=sys.stderr,
-            )
-        return explicit
-    return "reviewer" if role_wants_reviewer else "default"
-
-
 def _fallback_clients(args: argparse.Namespace, dispatch_cfg: object) -> list[str]:
     """--fallback-clients (comma list; "" disables) or the dispatch_fallback_clients config default."""
     flag = getattr(args, "fallback_clients", None)
     if flag is None:
         return list(getattr(dispatch_cfg, "dispatch_fallback_clients", []))
     return [c.strip() for c in str(flag).split(",") if c.strip()]
+
+
+def _fan_out(
+    lanes: list[Target], prompts: list[str], build: Callable[..., DispatchRequest], output_file: str | None
+) -> NoReturn:
+    """Run every (client, prompt variant) lane in parallel, print all results as JSON, exit 0 iff all ok."""
+    from trw_mcp.tools._dispatch_fanout import _run_fanout
+
+    reqs: list[tuple[str, DispatchRequest]] = []
+    failed: list[dict[str, object]] = []
+    for lane in lanes:
+        try:
+            reqs.append((lane.label, build(lane.client or None, lane.model, prompts[max(lane.variant, 1) - 1])))
+        except DispatchResolutionError as err:
+            failed.append({"target": lane.label, "ok": False, "error": str(err), "reason": "resolution_error"})
+    results = [*(_run_fanout(reqs) if reqs else []), *failed]
+    payload = json.dumps({"status": f"{sum(1 for r in results if r.get('ok'))}/{len(results)} succeeded",
+                          "results": results}, indent=2, default=str)  # fmt: skip
+    if output_file:
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        write_private_atomic(Path(output_file), payload)
+    print(payload)
+    sys.exit(0 if results and all(r.get("ok") for r in results) else 1)
 
 
 def run_dispatch(args: argparse.Namespace) -> None:
@@ -154,24 +145,25 @@ def run_dispatch(args: argparse.Namespace) -> None:
     """
     dispatch_cfg = get_config().dispatch
 
-    # The prompt is read here (CLI surface) but applied to the request inside the
-    # shared resolver. _read_prompt exits 2 directly on its own input errors.
-    prompt = _read_prompt(args)
+    # The prompts are read here (CLI surface) but applied inside the shared resolver.
+    prompts = _read_prompts(args)
+    prompt = prompts[0]
     base = _variant_base(args)
     cwd = Path(args.cwd) if getattr(args, "cwd", None) else None
-    posture = _resolve_cli_posture(args)
+    posture = str(getattr(args, "posture", None) or "default")  # explicit only: a role never implies one
     output_file = getattr(args, "output_file", None)
     if output_file and Path(output_file).is_symlink():
         print(f"--output-file {output_file} is a symlink; refusing to write through it", file=sys.stderr)
         sys.exit(2)
 
-    def build(client: str | None, model: str | None) -> DispatchRequest:
+    def build(client: str | None, model: str | None, text: str | None = None) -> DispatchRequest:
         return resolve_dispatch_request(
             client=client,
-            prompt=prompt,
+            prompt=prompt if text is None else text,
             role=getattr(args, "role", None),
             model=model,
             posture=posture,
+            require_posture=bool(getattr(args, "require_posture", False)),
             effort=getattr(args, "effort", None),
             cwd=cwd,
             timeout_s=getattr(args, "timeout", None),
@@ -187,12 +179,23 @@ def run_dispatch(args: argparse.Namespace) -> None:
             dispatch_cfg=dispatch_cfg,
         )
 
+    client, model = getattr(args, "client", None), getattr(args, "model", None)
+    if len(prompts) > 1 or "," in (client or ""):
+        try:
+            targets = parse_targets(client, model)
+        except TargetError as err:
+            print(str(err), file=sys.stderr)
+            sys.exit(2)
+        _fan_out(variant_lanes(targets, model, len(prompts)), prompts, build, output_file)
     try:
         req = build(getattr(args, "client", None), getattr(args, "model", None))
     except DispatchResolutionError as err:
         print(str(err), file=sys.stderr)
         sys.exit(err.exit_code)
 
+    warning = uncommitted_work_warning(req.cwd, writes=not req.read_only)  # DISPATCH-DELTA-LOW: warn, never refuse
+    if warning:
+        print(f"dispatch warning: {warning}", file=sys.stderr)
     ran: list[tuple[DispatchRequest, dict[str, dict[str, object]]]] = []
 
     def run(request: DispatchRequest) -> DispatchResult:
@@ -210,6 +213,8 @@ def run_dispatch(args: argparse.Namespace) -> None:
     last_req, policy = ran[-1]  # the request whose result this is
     if result.fallback_note:
         print(f"dispatch fallback: {result.fallback_note}", file=sys.stderr)
+    if result.posture_note:  # never hide a downgrade behind a plain-text answer
+        print(f"dispatch posture: {result.posture_note}", file=sys.stderr)
     payload = json.dumps({**result.model_dump(mode="json"), "policy": policy}, indent=2)
 
     if output_file:

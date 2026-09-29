@@ -11,7 +11,6 @@ from trw_mcp.state.knowledge_topology import (
     _base_result,
     _jaccard,
     _merge_small_clusters,
-    build_cooccurrence_matrix,
     form_jaccard_clusters,
 )
 
@@ -197,32 +196,6 @@ class TestBaseResult:
         result = _base_result(0, config, trw_dir, threshold_met=False, dry_run=True)
         assert result["dry_run"] is True
         assert result["threshold_met"] is False
-
-
-class TestCooccurrenceEdgeCases:
-    """Edge cases not covered in the main test file."""
-
-    def test_duplicate_tags_within_entry_deduplicated(self) -> None:
-        entries = [
-            _entry("L-001", tags=["a", "a", "b"]),
-            _entry("L-002", tags=["a", "b"]),
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        assert ("a", "b") in matrix
-        assert matrix[("a", "b")] == 2
-
-    def test_many_tags_produces_all_pairs(self) -> None:
-        entries = [
-            _entry("L-001", tags=["a", "b", "c", "d"]),
-            _entry("L-002", tags=["a", "b", "c", "d"]),
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        assert len(matrix) == 6
-
-    def test_one_entry_never_meets_freq_threshold(self) -> None:
-        entries = [_entry("L-001", tags=["a", "b", "c"])]
-        matrix = build_cooccurrence_matrix(entries)
-        assert matrix == {}
 
 
 class TestFormJaccardClustersEdge:

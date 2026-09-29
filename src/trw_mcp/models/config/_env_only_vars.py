@@ -43,12 +43,24 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
         "Fallback source-run identity for chain-evaluation runs when TRW_RUN_ID is unset.",
     ),
     EnvOnlyVar(
+        "TRW_CLIENT_PROFILE",
+        "Names the launching client when MCP clientInfo is absent; a shared server drops it (per-client value).",
+    ),
+    EnvOnlyVar(
         "TRW_COMPACTION_GATE_MAX_BLOCKS",
         "Maximum PreCompact ceremony-gate blocks before the gate stops re-arming (default 2).",
     ),
     EnvOnlyVar(
         "TRW_CONFIG_STRICT",
         "Truthy value makes an invalid .trw/config.yaml raise instead of falling back to defaults.",
+    ),
+    EnvOnlyVar(
+        "TRW_FRAMEWORK_FORCE_DEPLOY",
+        "Set to 1 to let an older trw-mcp redeploy its framework bodies over a newer deployed/pinned generation.",
+    ),
+    EnvOnlyVar(
+        "TRW_DISPATCH_CLAUDE_SETTING_SOURCES",
+        "Claude Code --setting-sources for dispatched runs (default user,project); opt out with 'user'.",
     ),
     EnvOnlyVar(
         "TRW_ENTITLEMENT_KEY",
@@ -59,8 +71,16 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
         "Set to 1 to raise instead of falling back when a run path resolution hits the legacy mtime scan.",
     ),
     EnvOnlyVar(
+        "TRW_JEV_ENABLED",
+        "Process-scope switch for the trw_assess backend; an explicit value beats project and machine config.",
+    ),
+    EnvOnlyVar(
         "TRW_LOG_LEVEL",
         "Overrides the structlog level (falls back to LOG_LEVEL, then config.debug/-v/-q).",
+    ),
+    EnvOnlyVar(
+        "TRW_MCP_ENV",
+        "The shared-server env `trw-mcp-proxy`/`swap` use when --env is omitted (default stable).",
     ),
     EnvOnlyVar(
         "TRW_MODEL_FAMILY_HINT",
@@ -89,5 +109,9 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
     EnvOnlyVar(
         "TRW_SESSION_ID",
         "Stable per-connection identity for pin isolation, ceremony session resolution and telemetry.",
+    ),
+    EnvOnlyVar(
+        "TRW_USER_DIR",
+        "Base of the machine-local user memory dir (`<dir>/memory`); `swap --daemon` refuses it for env stable.",
     ),
 )

@@ -9,7 +9,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
 
-if not (ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only audit skill projection invariant", allow_module_level=True)
 
 #: File-based projections (repo mirrors + the canonical source).

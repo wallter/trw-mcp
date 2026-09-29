@@ -43,7 +43,7 @@ def _capture_sender(pipeline: Any) -> list[dict[str, object]]:
     """
     captured: list[dict[str, object]] = []
 
-    def fake_send(events: list[dict[str, object]], urls: list[str], api_key: str) -> bool:
+    def fake_send(events: list[dict[str, object]], urls: list[str], api_key: str, **_kw: object) -> bool:
         captured.extend(events)
         return True
 

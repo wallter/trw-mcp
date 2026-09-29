@@ -72,7 +72,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s = 600
         self.dispatch_default_read_only = True
-        self.dispatch_role_client: dict[str, str] = {}
         self.dispatch_child_trw_access = child_trw_access
 
 
@@ -151,7 +150,8 @@ def test_claude_gets_only_trws_server_and_keeps_its_other_isolation() -> None:
     # key is the nested-launch marker (tests/test_dispatch_nested_launch_guard.py).
     assert payload["mcpServers"]["trw"]["env"] == {"TRW_DISPATCH_CHILD": "1"}
     # Host isolation that has nothing to do with MCP is UNCHANGED.
-    assert argv[argv.index("--setting-sources") + 1] == "user"
+    assert argv[argv.index("--setting-sources") + 1] == "user,project"
+    assert argv[argv.index("--settings") + 1] == '{"disableAllHooks":true}'
     assert "--strict-mcp-config" in argv
     # The empty-map isolation fragment must not also be emitted.
     assert '{"mcpServers":{}}' not in argv

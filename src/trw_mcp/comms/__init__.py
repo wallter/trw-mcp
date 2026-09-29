@@ -28,7 +28,7 @@ from trw_mcp.comms._endpoints import (
     receiver_incarnation,
     touch,
 )
-from trw_mcp.comms._envelope import AdmissionError
+from trw_mcp.comms._envelope import RECEIVER_ACTIONS, AdmissionError
 from trw_mcp.comms._envelope import DeliveryClass as DeliveryClass
 from trw_mcp.comms._envelope import InboxAction as InboxAction
 from trw_mcp.comms._envelope import MessageKind as MessageKind
@@ -38,7 +38,6 @@ from trw_mcp.comms._identity import CallerSnapshot, resolve_authority_snapshot
 from trw_mcp.comms._identity import IdentityError as IdentityError
 from trw_mcp.comms._identity import IdentityRefusal as IdentityRefusal
 from trw_mcp.comms._identity import derive_group_id as derive_group_id
-from trw_mcp.comms._identity import resolve_caller as resolve_caller
 from trw_mcp.comms._inbox_page import inbox_action
 from trw_mcp.comms._messages import expire_due, tombstone_due
 from trw_mcp.comms._peers_page import PageError, decode_cursor, pack_page
@@ -51,7 +50,6 @@ from trw_mcp.comms._refusals import detail as refusal_detail
 from trw_mcp.comms._send_op import send_once
 from trw_mcp.comms._store import StoreError, connect, effective_time, immediate, touch_group_time, validate_operation
 from trw_mcp.comms._wait import check_cancelled_cooperatively, run_bounded_wait
-from trw_mcp.comms._worktree import record_own_worktree as record_own_worktree
 from trw_mcp.formation import FormationError
 
 if TYPE_CHECKING:
@@ -114,7 +112,12 @@ def _exception_refused(exc: IdentityError | EndpointError | StoreError) -> dict[
 
 
 def _peers(
-    action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None, pause_id: str | None = None
+    action: PeerAction,
+    ctx: Context | None = None,
+    *,
+    cursor: str | None = None,
+    pause_id: str | None = None,
+    next_read: str | None = None,
 ) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
     from trw_mcp.models.config import get_config
@@ -125,6 +128,12 @@ def _peers(
         return {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
     if not config.ctx_isolation_enabled:
         return _refused("context_isolation_disabled")
+    # PRD-CORE-322 FR03: next_read is report-only. Every peer action refuses it
+    # here, before pickup can persist candidate state, join membership or write
+    # run stamps (core322-s2 r2). Like the bootstrap/ack_pause exits, this
+    # argument refusal is not counted: nothing was admitted or touched.
+    if next_read is not None:
+        return _refused("invalid_inbox_arguments")
     if action in BOOTSTRAP_ACTIONS:
         # FR18: non-authoritative, so no membership is required and nothing is enrolled.
         return {**bootstrap(action, ctx, config, cursor=cursor), "delivery": "pull_only"}
@@ -248,6 +257,7 @@ def _inbox_attempt(
     ctx: Context | None,
     wait_seconds: int,
     owner: dict[str, _WaitOwner],
+    next_read: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """One complete ordinary inbox operation; the bool asks the caller to wait again.
 
@@ -279,13 +289,13 @@ def _inbox_attempt(
             # FR12 renews on an owning operation; FR11 forbids renewal by wait RETRIES,
             # which are the attempts after the first (the owner tuple is set by the first).
             ordinary = "tuple" not in owner
-            if action in ("fetch", "ack"):
+            if action in RECEIVER_ACTIONS:  # PRD-CORE-322 FR02/FR03: accept and report fence like ACK
                 incarnation: str | None = receiver_incarnation(
                     conn, binding, now, lease_ttl_seconds=ttl, renew=ordinary
                 )
-            else:
+            else:  # FR04: complete is fenced like trw_send, so a displaced sender cannot close
                 incarnation = None
-                touch(conn, binding, now, lease_ttl_seconds=ttl, refuse_displaced=False)
+                touch(conn, binding, now, lease_ttl_seconds=ttl, refuse_displaced=action == "complete")
             _validate_wait(wait_seconds, action, message_ids, cursor, config)
             if wait_seconds > 0:
                 # trw:intentional Owner is frozen by the FIRST attempt and compared BEFORE any message
@@ -309,6 +319,7 @@ def _inbox_attempt(
                 now=now,
                 limit=config.comms_fetch_max_items,
                 max_bytes=config.comms_response_max_bytes,
+                next_read=next_read,
             )
             if action == "status":
                 result["capacity"] = remaining_capacity(conn, binding.group_id)
@@ -325,8 +336,9 @@ def _inbox(
     cursor: str | None = None,
     ctx: Context | None = None,
     wait_seconds: int = 0,
+    next_read: str | None = None,
 ) -> dict[str, Any]:
-    """Read pending traffic, acknowledge receipt, or inspect body-free facts.
+    """Read pending traffic, acknowledge receipt, record a handoff step, or inspect body-free facts.
 
     A positive ``wait_seconds`` (FR11) repeats an EMPTY fresh fetch inside this
     process until a page arrives, a refusal occurs, or a monotonic retry
@@ -341,7 +353,7 @@ def _inbox(
     # path (after closure) as invalid_wait_seconds, never overflow the clock here.
     entry = time.monotonic()
     owner: dict[str, _WaitOwner] = {}
-    payload, retry = _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner)
+    payload, retry = _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner, next_read)
     if type(wait_seconds) is int and wait_seconds > 0:
         # Cooperative checkpoint after the first attempt of a positive wait, whatever
         # it returned; zero-wait calls keep the pre-amendment path untouched.
@@ -398,10 +410,15 @@ def _scoped(call: Callable[[], dict[str, Any]], ctx: Context | None, action: str
 
 
 def peers(
-    action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None, pause_id: str | None = None
+    action: PeerAction,
+    ctx: Context | None = None,
+    *,
+    cursor: str | None = None,
+    pause_id: str | None = None,
+    next_read: str | None = None,
 ) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
-    return _scoped(lambda: _peers(action, ctx, cursor=cursor, pause_id=pause_id), ctx, action)
+    return _scoped(lambda: _peers(action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read), ctx, action)
 
 
 def send(
@@ -426,9 +443,10 @@ def inbox(
     cursor: str | None = None,
     ctx: Context | None = None,
     wait_seconds: int = 0,
+    next_read: str | None = None,
 ) -> dict[str, Any]:
-    """Read pending traffic, acknowledge receipt, or inspect body-free facts."""
-    return _scoped(lambda: _inbox(action, message_ids, cursor, ctx, wait_seconds), ctx, action)
+    """Read pending traffic, acknowledge receipt, record a handoff step, or inspect body-free facts."""
+    return _scoped(lambda: _inbox(action, message_ids, cursor, ctx, wait_seconds, next_read), ctx, action)
 
 
 __all__ = [
@@ -442,7 +460,5 @@ __all__ = [
     "derive_group_id",
     "inbox",
     "peers",
-    "record_own_worktree",
-    "resolve_caller",
     "send",
 ]

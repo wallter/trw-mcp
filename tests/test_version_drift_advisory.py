@@ -375,7 +375,7 @@ def test_prd_core_215_fr07_real_repo_surfaces_pass_today() -> None:
         # current-authority surface — reintroducing a shared-server production
         # claim there is now caught by the validator.
         "trw-mcp/src/trw_mcp/data/agents/_shared/mcp-retry-protocol.md",
-        "CLAUDE.md",
+        "AGENTS.md",
     ):
         assert expected in paths
 

@@ -112,7 +112,7 @@ def deferral_names(payload: object) -> tuple[str, ...]:
     """Normalize a ``deferred`` payload (None | list | dict) to sorted task names.
 
     RISK-005: under writer pressure the measured runs returned ``deferred`` sets
-    naming auto_upgrade_check, embeddings_backfill, side_effects and stale_runs,
+    naming the (since retired) update check, embeddings_backfill, side_effects and stale_runs,
     which is why contended arms can be FASTER than the uncontended baseline --
     work was skipped, not accelerated. Comparing the SET across arms is what
     keeps a latency assertion from passing because the server did less.
@@ -375,21 +375,18 @@ def measure_pending_control_repeats(root: Path, records: int, *, repeats: int = 
     return tuple(measure_pending_arm(root / f"control-{index}", records) for index in range(repeats))
 
 
-def fix_130_budget_ms() -> int | None:
-    """Runtime capability probe for the PRD-FIX-130 drain budget.
+def fix_130_budget_ms() -> int:
+    """The PRD-FIX-130 drain budget, read through ``TRWConfig``'s PUBLIC field surface.
 
-    Resolves through ``TRWConfig``'s PUBLIC field surface. Reaching into a
-    private module for the knob would let the probe answer "present" for an
-    internal that is not wired to config at all -- the probe would then be
-    reporting on itself. Returns ``None`` when the field is absent; RAISES when
-    the field exists but its bound is unreadable, so an indeterminate probe
-    FAILS the case rather than reporting a comfortable expected-failure.
+    Reaching into a private module for the knob would let the probe answer "present" for an
+    internal that is not wired to config at all -- the probe would then be reporting on itself.
+    RAISES when the field is absent (PRD-FIX-130 shipped it) or its bound is unreadable.
     """
     from trw_mcp.models.config import TRWConfig
 
     info = TRWConfig.model_fields.get(_FIX_130_BUDGET_FIELD)
     if info is None:
-        return None
+        raise AssertionError(f"{_FIX_130_BUDGET_FIELD} is not a TRWConfig field; PRD-FIX-130 shipped it")
     default = info.default
     if isinstance(default, bool) or not isinstance(default, int) or default < 0:
         raise AssertionError(

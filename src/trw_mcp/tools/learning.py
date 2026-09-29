@@ -15,6 +15,7 @@ closures and module-level imports that test suites patch at
 from __future__ import annotations
 
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
@@ -65,35 +66,36 @@ def register_learning_tools(server: FastMCP) -> None:
         impact: float | None = None,
         type: str = "",
         confidence: str = "",
+        evidence_level: str = "",
         scope: str = "auto",
         learning_id: str = "",
         status: str = "",
         metadata: dict[str, object] | str = "",
     ) -> LearnResultDict | dict[str, str]:
-        """Use when capturing a discovery, or correcting one with learning_id.
-        Routine observations dilute recall. Record root causes before fixing;
+        """Use when capturing a discovery or correcting one (learning_id).
+        Routine notes dilute recall. Record root causes before fixing;
         label uncertainty; update, never duplicate.
 
         Create (no learning_id): summary + detail required. tags: list or
         comma/space string. impact 0-1, default 0.5. type:
-        incident|pattern|convention|hypothesis|workaround. confidence:
-        unverified|low|medium|high|verified. scope: auto|project|user.
+        incident|pattern|convention|hypothesis|workaround|decision. confidence:
+        unverified|low|medium|high|verified. evidence_level:
+        observed|verified|inferred|unknown (default unknown). scope: auto|project|user.
 
-        Update (learning_id): pass only what changes. status:
+        Update (learning_id): pass only changes. status:
         active|resolved|obsolete. tags replace; "" or [] clears.
 
-        metadata (unknown keys rejected). Create: source_type,
-        source_identity, client_profile, model_id, consolidated_from,
-        assertions, nudge_line, task_type, domain, phase_origin,
-        phase_affinity, protection_tier. Update: tags_add (appends),
-        supersedes (prior id; closes its window), reverify_anchors, expires,
-        team_origin, assertions, nudge_line, task_type, domain, phase_origin,
-        phase_affinity, protection_tier.
+        metadata (unknown keys rejected). Create-only: source_type,
+        source_identity, client_profile, model_id, consolidated_from.
+        Update-only: tags_add (appends), supersedes (prior id; closes its
+        window), reverify_anchors, expires, team_origin. Both: assertions,
+        nudge_line, task_type, domain, phase_origin, phase_affinity,
+        protection_tier.
 
         Output: create: status (recorded, skipped/merged, rejected), learning_id,
         path. Update: status, learning_id, changes.
 
-        See Also: trw_recall reads back.
+        See Also: trw_recall.
         """
         # Maintainer notes (kept out of the docstring; callers pay for that text):
         #   One tool, two modes, chosen by learning_id (PRD-CORE-291-FR02). The
@@ -124,6 +126,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 tags=tags,
                 type=type or None,
                 confidence=confidence or None,
+                evidence_level=evidence_level or None,
                 upd=upd,
             )
         if status:
@@ -137,7 +140,10 @@ def register_learning_tools(server: FastMCP) -> None:
         # Coerce advertised type aliases (e.g. 'gotcha') before enum validation.
         type = _coerce_learn_type(type or "pattern")
         confidence = confidence or "unverified"
-        enum_reject = _validate_learn_enums(type=type, confidence=confidence, protection_tier=meta.protection_tier)
+        evidence_level = evidence_level or "unknown"
+        enum_reject = _validate_learn_enums(
+            type=type, confidence=confidence, protection_tier=meta.protection_tier, evidence_level=evidence_level
+        )
         if enum_reject is not None:
             return enum_reject
         # None = "not provided" -> auto-detect; an explicit "" stays blank.
@@ -164,6 +170,7 @@ def register_learning_tools(server: FastMCP) -> None:
             type=type,
             nudge_line=meta.nudge_line,
             confidence=confidence,
+            evidence_level=evidence_level,
             task_type=meta.task_type,
             domain=meta.domain,
             phase_origin=meta.phase_origin,
@@ -191,11 +198,8 @@ def register_learning_tools(server: FastMCP) -> None:
         options: dict[str, object] | str = "",
         graph_id: str = "",
     ) -> RecallResultDict | GraphRelatedResult:
-        """Retrieve prior learnings, or with graph_id=<id> that learning's
-        graph neighbours.
-
-        Use when unfamiliar code, a suspected repeat bug, or delegating.
-        Output: ranked stubs {id, claim, anchor}.
+        """Use when entering unfamiliar code, after a failure (query it),
+        before delegating (ids in brief). Output: stubs {id, claim, anchor}.
 
         query: keywords, "*"=all. ids: full rows by id. tags: list
         or string. status: active|resolved|obsolete. max_results default
@@ -203,9 +207,9 @@ def register_learning_tools(server: FastMCP) -> None:
 
         options (unknown keys rejected): topic, min_impact, as_of,
         include_superseded, include_tiers, graph_depth, graph_edge_types,
-        graph_limit.
+        graph_limit, record_type.
 
-        See Also: trw_learn records one.
+        See Also: trw_learn.
         """
         # Maintainer notes (kept out of the docstring — callers pay for that text):
         #   Ranking = query relevance (summary/tags/detail) x utility (impact,
@@ -226,6 +230,9 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.tools._tool_options import RecallOptions, parse_options
 
         opts = parse_options(RecallOptions, options)
+        record_type = opts.record_type.value if opts.record_type is not None else None
+        if record_type is not None and (graph_id or ids):  # PRD-CORE-334: a filter of search results only
+            raise ToolError("options record_type filters a search; ids= and graph_id= do not take it")
 
         if graph_id:
             # PRD-CORE-300-FR11: graph mode returns exactly what the deleted
@@ -262,6 +269,7 @@ def register_learning_tools(server: FastMCP) -> None:
             include_tiers=opts.include_tiers,
             as_of=opts.as_of,
             include_superseded=opts.include_superseded,
+            record_type=record_type,
             # Dependency injection: pass module-level refs for testability
             _adapter_recall=adapter_recall,
         )

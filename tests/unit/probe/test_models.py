@@ -11,9 +11,6 @@ import pytest
 from pydantic import ValidationError
 
 from trw_mcp.models.probe import (
-    AssumptionSet,
-    DissentEntry,
-    ProbeAssumption,
     ProbeBudgetStatus,
     ProbeEvidence,
     ProbeResult,
@@ -77,46 +74,7 @@ def test_evidence_wall_ms_non_negative() -> None:
         ProbeEvidence(wall_ms=-1)
 
 
-def test_assumption_defaults_polarity_positive() -> None:
-    a = ProbeAssumption(hypothesis_id="H1", claim="x<5s")
-    assert a.polarity == "positive"
-    assert a.probe_result_ref is None
-
-
-def test_dissent_entry_links_evidence_ref() -> None:
-    entry = DissentEntry(
-        hypothesis_id="H1",
-        claim="x<5s",
-        probe_verdict="refutes",
-        probe_evidence_ref="probe-0042",
-    )
-    assert entry.probe_evidence_ref == "probe-0042"
-
-
-def test_assumption_set_accepts_unique_hypothesis_ids() -> None:
-    """FR-05 A2: a plan with unique hypothesis_ids validates."""
-    plan = AssumptionSet(
-        assumptions=[
-            ProbeAssumption(hypothesis_id="H1", claim="a"),
-            ProbeAssumption(hypothesis_id="H2", claim="b"),
-        ]
-    )
-    assert {a.hypothesis_id for a in plan.assumptions} == {"H1", "H2"}
-
-
-def test_assumption_set_rejects_duplicate_hypothesis_id() -> None:
-    """FR-05 A2: a duplicate hypothesis_id within a plan raises ValidationError."""
-    with pytest.raises(ValidationError) as exc:
-        AssumptionSet(
-            assumptions=[
-                ProbeAssumption(hypothesis_id="DUP", claim="a"),
-                ProbeAssumption(hypothesis_id="DUP", claim="b"),
-            ]
-        )
-    assert "duplicate hypothesis_id" in str(exc.value)
-
-
 def test_budget_status_roundtrip() -> None:
-    status = ProbeBudgetStatus(used=2, remaining=1, total=3, planning_mode="TRIANGULATED_WITH_PROBE")
+    status = ProbeBudgetStatus(used=2, remaining=1, total=3)
     restored = ProbeBudgetStatus.model_validate_json(status.model_dump_json())
     assert restored == status

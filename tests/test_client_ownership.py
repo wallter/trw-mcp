@@ -26,6 +26,8 @@ import pytest
 
 from trw_mcp.bootstrap import init_project, update_project
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.mark.integration
 def test_explicit_opencode_init_creates_no_claude_or_mcp_json(tmp_path: Path) -> None:
@@ -91,7 +93,8 @@ def test_bare_init_writes_claude_code_surfaces_and_records_it(tmp_path: Path) ->
     assert (tmp_path / ".mcp.json").is_file()
     assert list((tmp_path / ".claude" / "hooks").glob("*.sh"))
     assert list((tmp_path / ".claude" / "skills").iterdir())
-    assert (tmp_path / "CLAUDE.md").is_file()
+    assert "trw:start" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert not (tmp_path / "CLAUDE.md").exists()
 
     config = yaml.safe_load((tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8")) or {}
     assert "claude-code" in (config.get("target_platforms") or [])

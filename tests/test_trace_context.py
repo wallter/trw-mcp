@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from trw_mcp.telemetry.event_base import AGENT_TRACE_V1_FIELDS, AgentTraceV1Fields
-from trw_mcp.telemetry.trace_context import build_tool_trace_fields, stable_payload_hash, with_task_profile_hash
+from trw_mcp.telemetry.event_base import AgentTraceV1Fields
+from trw_mcp.telemetry.trace_context import build_tool_trace_fields, stable_payload_hash
 from trw_mcp.tools.orchestration import _phase_duration_summary
 
 
@@ -39,12 +39,6 @@ def test_nested_parent_sets_nested_relation() -> None:
     assert child["causal_relation"] == "nested"
 
 
-def test_with_task_profile_hash_preserves_existing_hash() -> None:
-    fields = build_tool_trace_fields(tool_name="tool", task_profile_hash="explicit")
-
-    assert with_task_profile_hash(fields, "run-hash")["task_profile_hash"] == "explicit"
-
-
 def test_stable_payload_hash_handles_unjsonable_values() -> None:
     class Unjsonable:
         pass
@@ -53,7 +47,7 @@ def test_stable_payload_hash_handles_unjsonable_values() -> None:
 
 
 def test_agent_trace_v1_schema_has_required_forensics_fields() -> None:
-    fields = set(AGENT_TRACE_V1_FIELDS)
+    fields = set(AgentTraceV1Fields.model_fields)
     assert {
         "event_id",
         "parent_event_id",

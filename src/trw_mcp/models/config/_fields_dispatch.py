@@ -132,13 +132,6 @@ class _DispatchFields:
             "user/project client config stay isolated. Refused for clients with no argv channel."
         ),
     )
-    # Optional per-role default client, e.g. ``{"adversarial-audit": "codex"}``.
-    # Consulted only when neither ``--client`` nor ``dispatch_default_client``
-    # resolves a target and a ``--role`` was supplied.
-    dispatch_role_client: dict[str, str] = Field(
-        default_factory=dict,
-        description="Per-role default client used only when --client and default_client do not apply.",
-    )
     # 7.0.0 W21: clients tried in order when a dispatch refuses on quota or never
     # launches. Empty by default: a fallback is a different agent's answer, so the
     # operator lists it. --fallback-clients overrides per call ('' disables).

@@ -1,4 +1,4 @@
-"""``trw-mcp run adopt`` (PRD-CORE-300-FR08, slice S6b).
+"""``trw-mcp run adopt`` (PRD-CORE-300-FR08, slice S6b) and ``run evidence-pack`` (PRD-CORE-323).
 
 The former standalone run-adoption tool was an MCP tool. Adoption is a rare operator action (resuming
 a run another session started, or reclaiming one whose owner went away), so it
@@ -18,6 +18,9 @@ pin store, when it is not resolvable.
 Output is one JSON document with ``--json``, otherwise ``key: value`` lines.
 The exit status is 1 when the adoption could not be attempted (``result`` is
 ``error``) and 0 otherwise.
+
+``run evidence-pack`` is registered and handled by ``trw_mcp.evidence_pack._cli``
+(its own exit contract: 0 written, 2 refused).
 """
 
 from __future__ import annotations
@@ -27,11 +30,13 @@ import json
 import sys
 from typing import Any
 
+from trw_mcp.evidence_pack._cli import add_evidence_pack_parser
+
 __all__ = ["add_run_subcommands", "run_run"]
 
 
 def add_run_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``run adopt``."""
+    """Register ``run adopt`` and ``run evidence-pack``."""
     run = subparsers.add_parser("run", help="Run lifecycle maintenance verbs (PRD-CORE-141)")
     verbs = run.add_subparsers(dest="run_command")
     adopt = verbs.add_parser("adopt", help="Transfer an existing run's pin to a named session; state-changing")
@@ -47,6 +52,7 @@ def add_run_subcommands(subparsers: argparse._SubParsersAction[argparse.Argument
         help="Override a terminal-status or live-owner refusal",
     )
     adopt.add_argument("--json", dest="as_json", action="store_true")
+    add_evidence_pack_parser(verbs)
 
 
 def _adopt(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
@@ -72,10 +78,14 @@ def _adopt(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
 
 
 def run_run(args: argparse.Namespace) -> None:
-    """Dispatch ``run adopt``."""
+    """Dispatch ``run adopt`` and ``run evidence-pack``."""
+    if str(args.run_command) == "evidence-pack":
+        from trw_mcp.evidence_pack._cli import run_evidence_pack
+
+        sys.exit(run_evidence_pack(args))
     handler = {"adopt": _adopt}.get(str(args.run_command))
     if handler is None:
-        print("usage: trw-mcp run {adopt}", file=sys.stderr)
+        print("usage: trw-mcp run {adopt,evidence-pack}", file=sys.stderr)
         sys.exit(2)
     document, failed = handler(args)
     if args.as_json:

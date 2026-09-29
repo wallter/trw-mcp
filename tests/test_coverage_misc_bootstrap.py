@@ -7,32 +7,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-import pytest
-
-try:
-    from trw_mcp.bootstrap._utils import _DATA_DIR as _BS_DATA_DIR
-except ImportError:
-    _BS_DATA_DIR = Path("/nonexistent")
-
-_HOOKS_DIR = _BS_DATA_DIR / "hooks"
-_SKILLS_DIR = _BS_DATA_DIR / "skills"
-_AGENTS_DIR = _BS_DATA_DIR / "agents"
-
-_HAS_HOOKS_DIR = _HOOKS_DIR.is_dir()
-_HOOK_FILES = list(_HOOKS_DIR.glob("*.sh")) if _HAS_HOOKS_DIR else []
-_HAS_HOOK_FILES = len(_HOOK_FILES) > 0
-
-_HAS_SKILLS_DIR = _SKILLS_DIR.is_dir()
-_SKILL_DIRS = [d for d in _SKILLS_DIR.iterdir() if d.is_dir()] if _HAS_SKILLS_DIR else []
-_HAS_SKILL_DIRS = len(_SKILL_DIRS) > 0
-_FIRST_SKILL_DIR = _SKILL_DIRS[0] if _HAS_SKILL_DIRS else None
-_SKILL_DIR_FILES = [f for f in _FIRST_SKILL_DIR.iterdir() if f.is_file()] if _FIRST_SKILL_DIR is not None else []
-_HAS_SKILL_FILES = len(_SKILL_DIR_FILES) > 0
-
-_HAS_AGENTS_DIR = _AGENTS_DIR.is_dir()
-_AGENT_FILES = list(_AGENTS_DIR.glob("*.md")) if _HAS_AGENTS_DIR else []
-_HAS_AGENT_FILES = len(_AGENT_FILES) > 0
-
 
 class TestBootstrapDryRunBranches:
     """Cover dry_run branches in update_project that require specific file states."""
@@ -55,8 +29,6 @@ class TestBootstrapDryRunBranches:
         (target / ".claude" / "agents").mkdir(parents=True)
         return target
 
-    @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
-    @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
     def test_dry_run_hook_identical_file_skips_update(self, tmp_path: Path) -> None:
         """A dry run does not report an identical hook as updated."""
         from trw_mcp import bootstrap as bs
@@ -73,8 +45,6 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         assert f".claude/hooks/{hook_src.name}" not in result["updated"], "an identical file is not a change"
 
-    @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
-    @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
     def test_dry_run_hook_different_content_preserved_as_modified(self, tmp_path: Path) -> None:
         """PRD-FIX-068-FR05: with no manifest baseline, a hook whose content
         diverges from the bundled source is indistinguishable from a user edit
@@ -98,9 +68,6 @@ class TestBootstrapDryRunBranches:
         assert dest_hook.read_text(encoding="utf-8") == "#!/bin/bash\necho 'user customization'\n"
         del original
 
-    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
-    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
-    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_skill_file_identical_no_update(self, tmp_path: Path) -> None:
         """Line 305: dry_run skill file identical — not added to updated list."""
         from trw_mcp import bootstrap as bs
@@ -121,9 +88,6 @@ class TestBootstrapDryRunBranches:
             f"Identical skill file should not be flagged: {would_update}"
         )
 
-    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
-    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
-    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_skill_file_different_preserved_as_modified(self, tmp_path: Path) -> None:
         """PRD-FIX-068-FR05: a skill file diverging from the bundled source with
         no manifest baseline is preserved as user-modified, not overwritten."""
@@ -145,9 +109,6 @@ class TestBootstrapDryRunBranches:
         assert any(skill_file.name in s for s in result.get("modified", []))
         assert dest_file.read_text(encoding="utf-8") == "# user customization that differs"
 
-    @pytest.mark.skipif(not _HAS_SKILLS_DIR, reason="No skills in bundled data")
-    @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
-    @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_new_skill_file_would_create(self, tmp_path: Path) -> None:
         """A missing skill file is reported as created by the dry run."""
         from trw_mcp import bootstrap as bs
@@ -156,8 +117,6 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         assert any(p.startswith(".claude/skills/") for p in result["created"])
 
-    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
-    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_agent_file_identical_not_flagged(self, tmp_path: Path) -> None:
         """dry_run agent identical to the RESOLVED form is not reported as updated.
 
@@ -181,8 +140,6 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         assert f".claude/agents/{agent_file.name}" not in result["updated"]
 
-    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
-    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_agent_different_content_flags_would_update(self, tmp_path: Path) -> None:
         """Line 330 alt path: a framework-recognized-but-stale agent flags would-update.
 
@@ -207,8 +164,6 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         assert f".claude/agents/{agent_file.name}" in result["updated"]
 
-    @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
-    @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_new_agent_file_would_create(self, tmp_path: Path) -> None:
         """A missing agent file is reported as created by the dry run."""
         from trw_mcp import bootstrap as bs
@@ -217,12 +172,12 @@ class TestBootstrapDryRunBranches:
         result = bs.update_project(target, dry_run=True)
         assert any(p.startswith(".claude/agents/") for p in result["created"])
 
-    def test_update_project_claude_md_write_failure(self, tmp_path: Path) -> None:
-        """An unwritable CLAUDE.md is reported, never silently swallowed.
+    def test_update_project_agents_md_write_failure(self, tmp_path: Path) -> None:
+        """An unwritable AGENTS.md is reported, never silently swallowed.
 
         PRD-FIX-123-FR06 moved this write onto the atomic
         ``FileStateWriter.write_text`` path (temp file + rename), which never
-        calls ``Path.write_text`` on a file named ``CLAUDE.md`` — patching only
+        calls ``Path.write_text`` on a file named ``AGENTS.md`` — patching only
         the latter would leave the write succeeding and assert nothing.
         """
         from trw_mcp import bootstrap as bs
@@ -233,14 +188,14 @@ class TestBootstrapDryRunBranches:
 
         def patched_write_text(self: Path, content: str, encoding: str = "utf-8", **kw: Any) -> None:
             nonlocal call_count
-            if self.name == "CLAUDE.md":
+            if self.name == "AGENTS.md":
                 call_count += 1
                 raise OSError("permission denied")
             return original_write_text(self, content, encoding=encoding, **kw)
 
         def patched_atomic_write(self: object, path: Path, content: str) -> None:
             nonlocal call_count
-            if path.name == "CLAUDE.md":
+            if path.name == "AGENTS.md":
                 call_count += 1
                 raise OSError("permission denied")
             original_write_text(path, content, encoding="utf-8")
@@ -251,5 +206,5 @@ class TestBootstrapDryRunBranches:
         ):
             result = bs.update_project(target, dry_run=False)
 
-        assert any("CLAUDE.md" in e for e in result["errors"])
+        assert any("AGENTS.md" in e for e in result["errors"])
         assert call_count >= 1

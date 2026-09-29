@@ -4,8 +4,6 @@ Surfaces:
   * ``trw_mcp.profile.loader.load_layer`` / ``discover_layers`` — persistent
     org/domain/task layers under ``.trw/profiles/`` (fail-CLOSED: a malformed
     persistent layer raises ``LayerLoadError`` per FR-12).
-  * ``trw_mcp.profile.session_resolve._session_layer`` — the run's
-    ``meta/session_profile.yaml`` (fail-OPEN escape hatch: malformed → skipped).
 
 Behavior contract:
   * Persistent loader is FAIL-CLOSED — non-mapping roots, NaN/Inf floats,
@@ -29,7 +27,6 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.profile.loader import LayerLoadError, discover_layers, load_layer
-from trw_mcp.profile.session_resolve import _session_layer
 
 
 @pytest.fixture
@@ -170,49 +167,3 @@ def test_load_layer_without_base_dir_does_not_enforce(profiles: Path) -> None:
     p.write_text("ceremony_tier: STANDARD\n", encoding="utf-8")
     layer = load_layer("org", p)
     assert layer is not None
-
-
-# --------------------------------------------------------------------------- #
-# Session loader fail-OPEN (escape hatch) — never crash, no garbage layer.
-# --------------------------------------------------------------------------- #
-
-
-def _session_dir(tmp_path: Path, body: str) -> Path:
-    run = tmp_path / "run"
-    (run / "meta").mkdir(parents=True)
-    (run / "meta" / "session_profile.yaml").write_text(body, encoding="utf-8")
-    return run
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "- a\n- b\n",  # non-mapping
-        "review_threshold: .nan\n",  # schema-invalid
-        "ceremony_tier: [A, B]\n",
-        "unknown_session_key: 1\n",  # extra=forbid
-    ],
-)
-def test_malformed_session_layer_fails_open(tmp_path: Path, body: str) -> None:
-    assert _session_layer(_session_dir(tmp_path, body)) is None
-
-
-def test_session_symlink_to_etc_passwd_yields_no_layer(tmp_path: Path) -> None:
-    # Pinned + documented behavior: a session_profile.yaml symlinked at a
-    # system file is read but parses to non-mapping garbage, so the fail-open
-    # session loader returns None — no garbage layer ever enters composition.
-    run = tmp_path / "run"
-    (run / "meta").mkdir(parents=True)
-    os.symlink("/etc/passwd", run / "meta" / "session_profile.yaml")
-    assert _session_layer(run) is None
-
-
-def test_absent_session_file_is_none(tmp_path: Path) -> None:
-    run = tmp_path / "run"
-    (run / "meta").mkdir(parents=True)
-    assert _session_layer(run) is None
-
-
-def test_empty_session_file_is_empty_layer(tmp_path: Path) -> None:
-    layer = _session_layer(_session_dir(tmp_path, ""))
-    assert layer is not None and layer.name == "session"

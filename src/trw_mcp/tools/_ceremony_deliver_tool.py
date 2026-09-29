@@ -32,6 +32,7 @@ from trw_mcp.tools._ceremony_deliver_steps import (
     unpack_gate_result,
 )
 from trw_mcp.tools._deferred_delivery import DEFERRED_STEPS, _launch_deferred
+from trw_mcp.tools._deliver_capability_integration import step_capability_integration
 from trw_mcp.tools._delivery_build_gates import write_session_deliver_marker
 from trw_mcp.tools._delivery_journal_wiring import (
     DeliverJournal,
@@ -265,6 +266,11 @@ def run_trw_deliver(
         with journal.step("S22") as run_handoff_step:  # project handoff + remaining-work section
             if run_handoff_step:
                 step_project_handoff(resolved_run, results)
+        # PRD-CORE-320-FR08: verify the run's scoped PRDs' declared call chains.
+        # Advisory only (OQ-001); fail-open inside the step. Not a journal step: it
+        # writes nothing durable (response keys only), so there is no effect to record,
+        # and S23 belongs to the gate decision-set receipts (sol core-320-s2 r1).
+        step_capability_integration(resolved_run, results)
 
     # PRD-CORE-208: critical synchronous effects are journaled; record the
     # milestone and the deferred-batch digest (FR06) before launching the batch.
@@ -475,16 +481,23 @@ def _log_deliver_event(
         pool_nudge_counts = {}
     from trw_mcp.tools import ceremony as _ceremony
 
-    _ceremony._events.log_event(
-        resolved_run / "meta" / "events.jsonl",
-        "trw_deliver_complete",
-        {
-            "critical_steps_completed": results.get("critical_steps_completed"),
-            "deferred": deferred_status,
-            "critical_elapsed_seconds": critical_elapsed,
-            "errors": len(errors),
-            "nudge_summary": nudge_summary,
-            "pool_nudge_counts": pool_nudge_counts,
-            "session_id": session_id,
-        },
-    )
+    event_data: dict[str, object] = {
+        "critical_steps_completed": results.get("critical_steps_completed"),
+        "deferred": deferred_status,
+        "critical_elapsed_seconds": critical_elapsed,
+        "errors": len(errors),
+        "nudge_summary": nudge_summary,
+        "pool_nudge_counts": pool_nudge_counts,
+        "session_id": session_id,
+    }
+    # PRD-CORE-338-FR08: planned vs actual, tracked runs only (an untracked run gains no key).
+    try:
+        from trw_mcp.tools._orchestration_time import deliver_time_record
+
+        time_record = deliver_time_record(resolved_run)
+    except Exception as exc:  # justified: fail-open, the time record is calibration data
+        record_into(cast("MutableMapping[str, object]", results), "deliver_time_record", exc, severity="info")
+        time_record = None
+    if time_record is not None:
+        event_data["time"] = time_record
+    _ceremony._events.log_event(resolved_run / "meta" / "events.jsonl", "trw_deliver_complete", event_data)

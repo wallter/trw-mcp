@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 from tests._knowledge_topology_support import _make_config, _make_entry
 from trw_mcp.state.knowledge_topology import (
-    build_cooccurrence_matrix,
     execute_knowledge_sync,
     form_jaccard_clusters,
     preserve_manual_markers,
@@ -37,12 +36,6 @@ class TestEdgeCases:
         ]
         clusters = form_jaccard_clusters(entries, threshold=0.9, min_size=5)
         assert clusters == []
-
-    def test_build_cooccurrence_matrix_large_tag_set(self) -> None:
-        tags = [f"tag{i}" for i in range(10)]
-        entries = [_make_entry(f"L-{i:03d}", tags=tags) for i in range(10)]
-        matrix = build_cooccurrence_matrix(entries)
-        assert len(matrix) == 45
 
     def test_execute_sync_empty_backend_results(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"

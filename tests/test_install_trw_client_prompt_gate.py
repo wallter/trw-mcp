@@ -367,3 +367,218 @@ class TestInstallerTemplateAntigravityContract:
             "_has_controlling_tty() — gating on sys.stdin.isatty() alone skips the "
             f"client-selection prompt under curl|bash. Found: {determination.strip()!r}"
         )
+
+
+class TestPromptApiKeyConsentGate:
+    """PRD-INFRA-200 FR06: consent before device auth.
+
+    ``_prompt_api_key`` used to call ``_device_auth_login`` unconditionally as
+    its first action — no confirmation preceded the device-code POST or the
+    ``webbrowser.open`` call, so a user who declined by pressing nothing at the
+    manual-key fallback had already had a network request made and a browser
+    tab opened on their behalf.
+    """
+
+    def _ui(self, installer: ModuleType) -> object:
+        return installer.UI(interactive=True, quiet=True)
+
+    def test_declining_consent_makes_zero_device_auth_calls(
+        self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        device_auth = MagicMock()
+        monkeypatch.setattr(installer, "_device_auth_login", device_auth)
+        monkeypatch.setattr(installer, "prompt_yes_no", lambda *a, **k: False)
+        monkeypatch.setattr(installer, "prompt_input", lambda *a, **k: "")
+
+        key = installer._prompt_api_key(self._ui(installer))
+
+        assert device_auth.call_count == 0, "declining consent must never reach _device_auth_login"
+        assert key == ""
+
+    def test_accepting_consent_proceeds_to_device_auth_exactly_as_before(
+        self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        device_auth = MagicMock(return_value={"api_key": "trw_" + "a" * 40})
+        monkeypatch.setattr(installer, "_device_auth_login", device_auth)
+        monkeypatch.setattr(installer, "prompt_yes_no", lambda *a, **k: True)
+        monkeypatch.setattr(installer, "validate_api_key", lambda _key: True)
+
+        key = installer._prompt_api_key(self._ui(installer))
+
+        assert device_auth.call_count == 1
+        assert key == "trw_" + "a" * 40
+
+    def test_non_interactive_run_makes_no_device_auth_call(
+        self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-interactive run (no TTY) takes the same default as declining."""
+        device_auth = MagicMock()
+        monkeypatch.setattr(installer, "_device_auth_login", device_auth)
+        # No TTY: prompt_yes_no's own no-TTY fallback returns the default ("n").
+        monkeypatch.setattr(installer, "_open_tty", lambda: None)
+        monkeypatch.setattr(installer, "prompt_input", lambda *a, **k: "")
+
+        key = installer._prompt_api_key(self._ui(installer))
+
+        assert device_auth.call_count == 0
+        assert key == ""
+
+
+def test_installer_python_preflight_matches_the_pyproject_floor(installer: ModuleType) -> None:
+    """PRD-INFRA-200 FR04, codex sol fix-delta round 1 on lane-infra-200-ac: the
+
+    installer's own preflight must refuse the interpreter version the package
+    manifests no longer support -- accepting 3.10 here only lets a doomed
+    install proceed to the pip-level rejection instead of a clear message.
+    """
+    assert installer.MIN_PYTHON_VERSION == (3, 11)
+
+
+def test_declining_platform_consent_still_yields_the_full_local_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: object
+) -> None:
+    """PRD-INFRA-200 FR06 amendment (B80-41, lead direction): VISION §8 requires
+
+    sign-in to be opt-in and never to cripple the local install. Declining
+    platform consent -- interactively or by the non-interactive default --
+    must still yield the FULL local install: framework content via
+    init-project, embeddings/model-cache readiness, and migration. Only
+    platform features (an api key, telemetry, a proprietary license) may be
+    absent.
+
+    A ``--script`` run with no api key, no ``--name`` and no prior config has
+    ``has_config`` false (``main()``'s own gate), so ``phase_configure`` --
+    the ONE phase any consent question lives in -- never runs at all. This
+    proves the local-install phases do not depend on it: they are scheduled
+    and executed (project_setup=True runs init-project for real, against a
+    scratch HOME) entirely before that gate is even evaluated.
+    """
+    from tests._install_trw_main_support import drive_main
+    from tests._install_trw_pip_target_contract_support import _load_installer_module
+
+    installer = _load_installer_module(_TEMPLATE)
+
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
+
+    target = tmp_path / "project"
+    (target / ".git").mkdir(parents=True)
+
+    # phase_migrate_store is NOT one of drive_main's stubbed phases -- it runs
+    # for real. Wrap (not replace) it so the test asserts its actual outcome
+    # (codex sol fix-delta round 1: assert an outcome, not just that a stub
+    # fired) rather than only the semantic-readiness invocation count.
+    migrate_outcomes: list[bool] = []
+    real_migrate_store = installer.phase_migrate_store
+
+    def _migrate_and_record(*args: object, **kwargs: object) -> bool:
+        outcome = real_migrate_store(*args, **kwargs)  # type: ignore[arg-type]
+        migrate_outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr(installer, "phase_migrate_store", _migrate_and_record)
+
+    run = drive_main(
+        installer,
+        monkeypatch,
+        target,
+        extra_argv=("--ide", "claude-code"),
+        project_setup=True,
+        semantic="ok",
+    )
+
+    # Framework content via init-project: this ran for REAL (project_setup=True
+    # bypasses the stub), so its actual on-disk output is the proof, not a mock call.
+    assert (target / ".trw" / "config.yaml").is_file(), "init-project must write local framework content"
+    assert (target / ".claude" / "agents").is_dir(), "bundled agents must install regardless of consent"
+
+    # Embeddings/model-cache readiness is unconditional, run before the
+    # consent-gated phase, and did not depend on it having run.
+    assert run.calls["semantic"], "embeddings/model-cache readiness must still run without consent"
+
+    # Migration ran for real (no stub) and reported success -- a fresh project
+    # has no checkout store to move, so its own early-return path (`not
+    # db.is_file(): return True`) is exactly the "nothing blocked" outcome
+    # this asserts, not a mocked call count.
+    assert migrate_outcomes == [True], "migration must run and succeed (or have nothing to move) without consent"
+
+    # The one platform-feature phase any consent question lives in never even
+    # fired: has_config was false, so nothing platform-side was required for
+    # the local install above to have already completed in full.
+    assert not run.calls["configure"], "phase_configure (platform features only) must not gate the local install"
+
+
+def test_declining_platform_consent_runs_the_real_semantic_readiness_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: object
+) -> None:
+    """INFRA-200-FR06-TEST-GAP: the test above stubs ``phase_semantic_readiness``, so it proves only that
+
+    ``main()`` schedules the phase. Here the phase itself runs for real on the non-interactive
+    (consent-declined) path; only its subprocess leaves are replaced -- the model lookup, the
+    cache probe, and the fetch. It must find the missing weights, fetch them without asking,
+    re-probe to OK, and leave ``embeddings_enabled: true``, all while ``phase_configure`` never runs.
+    """
+    from tests._install_trw_main_support import drive_main
+    from tests._install_trw_pip_target_contract_support import _load_installer_module
+
+    installer = _load_installer_module(_TEMPLATE)
+
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
+
+    target = tmp_path / "project"
+    (target / ".git").mkdir(parents=True)
+
+    probes = iter([installer.SEMANTIC_MISSING_WEIGHTS, installer.SEMANTIC_OK])
+    fetched: list[str] = []
+    monkeypatch.setattr(installer, "daemon_embedding_model", lambda *_a, **_k: "org/model")
+    monkeypatch.setattr(installer, "probe_semantic_stack", lambda *_a, **_k: next(probes))
+    monkeypatch.setattr(installer, "download_semantic_model", lambda _py, model, **_k: fetched.append(model) or True)
+    monkeypatch.setattr(installer, "prompt_yes_no", MagicMock(side_effect=AssertionError("--script never prompts")))
+
+    run = drive_main(
+        installer,
+        monkeypatch,
+        target,
+        extra_argv=("--ide", "claude-code"),
+        project_setup=True,
+        semantic=None,
+    )
+
+    assert fetched == ["org/model"], "the real phase must repair the missing weights without consent"
+    assert next(probes, None) is None, "the phase must re-probe after the fetch"
+    assert "embeddings_enabled: true" in (target / ".trw" / "config.yaml").read_text(encoding="utf-8")
+    assert not run.calls["configure"], "phase_configure (platform features only) must not gate the local install"
+
+
+def test_the_configure_phase_assertion_above_is_not_vacuous(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: object
+) -> None:
+    """Non-vacuity for the previous test: ``--name`` alone flips ``has_config``
+
+    true, so ``phase_configure`` DOES fire when there is something to
+    configure -- proving the omission above is a real signal, not an
+    always-empty call list regardless of input.
+    """
+    from tests._install_trw_main_support import drive_main
+    from tests._install_trw_pip_target_contract_support import _load_installer_module
+
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
+
+    target = tmp_path / "project"
+    (target / ".git").mkdir(parents=True)
+
+    run = drive_main(
+        _load_installer_module(_TEMPLATE),
+        monkeypatch,
+        target,
+        extra_argv=("--ide", "claude-code", "--name", "myproj"),
+        project_setup=True,
+        semantic="ok",
+    )
+
+    assert run.calls["configure"], "--name must make has_config true and fire phase_configure"

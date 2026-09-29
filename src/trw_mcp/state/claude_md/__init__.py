@@ -52,18 +52,9 @@ from trw_mcp.state.claude_md._static_sections import (
     render_imperative_opener,
     render_memory_harmonization,
     render_phase_descriptions,
-    render_rationalization_watchlist,
-    render_shared_learnings,
 )
 from trw_mcp.state.claude_md._sync import execute_claude_md_sync
-from trw_mcp.state.claude_md._templates import (
-    BEHAVIORAL_PROTOCOL_CAP,
-    CEREMONY_TOOLS,
-    CLAUDEMD_LEARNING_CAP,
-    CLAUDEMD_PATTERN_CAP,
-    PHASE_DESCRIPTIONS,
-    CeremonyTool,
-)
+from trw_mcp.state.claude_md._templates import CEREMONY_TOOLS, PHASE_DESCRIPTIONS, CeremonyTool
 from trw_mcp.state.claude_md._write_guard import (
     InstructionWriteVerdict,
     guarded_instruction_write,
@@ -72,10 +63,7 @@ from trw_mcp.state.claude_md._write_guard import (
 )
 
 __all__ = [
-    "BEHAVIORAL_PROTOCOL_CAP",
     "CEREMONY_TOOLS",
-    "CLAUDEMD_LEARNING_CAP",
-    "CLAUDEMD_PATTERN_CAP",
     "PHASE_DESCRIPTIONS",
     "TRW_AUTO_COMMENT",
     "TRW_MARKER_END",
@@ -110,8 +98,6 @@ __all__ = [
     "render_memory_harmonization",
     "render_merged_content",
     "render_phase_descriptions",
-    "render_rationalization_watchlist",
-    "render_shared_learnings",
     "render_template",
     "resolve_carrier_mode",
     "resolve_project_root",

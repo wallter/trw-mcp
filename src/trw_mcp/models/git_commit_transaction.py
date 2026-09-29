@@ -23,7 +23,6 @@ PREPARED_MANIFESTS_RELATIVE_DIR = ".trw/git-transactions/prepared-manifests"
 
 # Retention policy (bounded, typed — PRD-CORE-219-FR05).
 CANDIDATE_RETENTION_DAYS = 30
-TOMBSTONE_RETENTION_DAYS = 365
 
 
 class TransactionState(str, Enum):

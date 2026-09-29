@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -253,7 +254,7 @@ def test_wiring_gate_block_sets_failure() -> None:
 
 
 def test_wiring_gate_one_seam_does_not_cover_other_unwired_frs() -> None:
-    """F2 boundary: ONE valid seam suppresses ALL unwired public FRs (v1 mapping).
+    """F2 boundary: ONE valid seam covers ALL unwired public FRs (v1 mapping).
 
     Pins the deliberate v1 seam-to-FR mapping under-block: a PRD with a single
     valid seam entry and TWO genuinely-unwired public-surface FRs emits ZERO
@@ -279,8 +280,10 @@ def test_wiring_gate_one_seam_does_not_cover_other_unwired_frs() -> None:
         assert _classify_fr_surface(block, ip_tier="public") is True
 
     warnings, failures = check_wiring_gate(content, fm, mode="warn", today=_TODAY)
-    # v1: one seam suppresses BOTH unwired public FRs -> zero wiring warnings.
+    # v1: one seam covers BOTH unwired public FRs -> zero unwired warnings, but
+    # (PRD-QUAL-148-FR03) each is DISCLOSED as partial rather than suppressed.
     assert not [w for w in warnings if "wiring_gate_warning" in w]
+    assert len(_partial(warnings)) == 2
     assert failures == []
 
 
@@ -883,3 +886,170 @@ def test_parse_seam_entries_null_owner_warns_not_crashes() -> None:
     seams, warnings = parse_seam_entries(fm)
     assert seams == []
     assert any("seam_schema_warning" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# PRD-QUAL-148-FR03 — a seam-only wiring justification scores [partial]
+# ---------------------------------------------------------------------------
+#
+# The discriminating assertions drive ``check_wiring_gate`` (the transition
+# gate's entry point) and the served ``trw_prd_validate`` tool, both of which
+# predate this FR, so they fail behaviourally on the pre-change tree.
+
+_PARTIAL_PREFIX = "wiring_gate_partial:"
+
+
+def _fr03_prd(*, seam_expiry: str | None, fr_lines: tuple[str, ...] = ("",)) -> str:
+    """A public-tier PRD with one Must-Have public FR per ``fr_lines`` entry.
+
+    Each entry is that FR's wiring line (``""`` = no consumer/wiring_test).
+    ``seam_expiry=None`` declares no seam; otherwise one ``deferred`` seam
+    targeting PRD-Y-777 with that expiry.
+    """
+    seams = (
+        ""
+        if seam_expiry is None
+        else (
+            "seams:\n  - kind: deferred\n    target_prd: PRD-Y-777\n    owner: wiring-owner\n"
+            f"    expiry_date: {seam_expiry}\n"
+        )
+    )
+    frs = "".join(
+        f"### FR0{i} — public surface\n**Priority**: Must Have\nsurface: public\n{line}\nbody\n\n"
+        for i, line in enumerate(fr_lines, start=1)
+    )
+    return (
+        "---\nprd:\n  id: PRD-X-148\n  category: QUAL\nip_tier: public\nstubs: []\n"
+        f"{seams}---\n## 3. Functional Requirements\n\n{frs}"
+    )
+
+
+def _partial(warnings: list[str]) -> list[str]:
+    return [w for w in warnings if w.startswith(_PARTIAL_PREFIX)]
+
+
+def _unwired(warnings: list[str]) -> list[str]:
+    return [w for w in warnings if w.startswith("wiring_gate_warning:") and "no covering seams" in w]
+
+
+@pytest.mark.parametrize("mode", ["warn", "block"])
+def test_seam_only_fr_is_disclosed_as_partial_not_suppressed(mode: str) -> None:
+    """FR03 AC1: the seam is named as the reason coverage is partial; never a failure."""
+    content = _fr03_prd(seam_expiry="2099-12-31")
+    warnings, failures = check_wiring_gate(content, parse_frontmatter(content), mode=mode, today=_TODAY)
+    partial = _partial(warnings)
+    assert len(partial) == 1, warnings
+    assert "FR01" in partial[0]
+    assert "[partial]" in partial[0]
+    # The finding names the seam (kind, target, owner, expiry), not just "a seam".
+    for token in ("deferred", "PRD-Y-777", "wiring-owner", "2099-12-31"):
+        assert token in partial[0]
+    # A seam is a legitimate, owner-bounded deferral: disclosed, never blocked.
+    assert failures == []
+    assert _unwired(warnings) == []
+
+
+def test_every_seam_only_fr_gets_its_own_partial_finding() -> None:
+    """The v1 per-PRD seam scope is kept, but each covered FR is disclosed by id."""
+    content = _fr03_prd(seam_expiry="2099-12-31", fr_lines=("", ""))
+    warnings, failures = check_wiring_gate(content, parse_frontmatter(content), mode="block", today=_TODAY)
+    partial = _partial(warnings)
+    assert [("FR01" in w, "FR02" in w) for w in partial] == [(True, False), (False, True)]
+    assert failures == []
+
+
+@pytest.mark.parametrize("seam_expiry", [None, "2099-12-31"])
+@pytest.mark.parametrize(
+    "wiring_line",
+    ["consumer: trw_mcp/tools/ceremony.py::trw_deliver", "wiring_test: tests/test_x.py::test_fr01_wired"],
+)
+def test_really_wired_fr_is_a_full_pass_with_or_without_a_seam(seam_expiry: str | None, wiring_line: str) -> None:
+    """FR03 AC2: a real consumer/wiring_test is a full pass, seam present or not."""
+    from trw_mcp.state.validation._prd_scoring_wiring import evaluate_wiring_gate
+
+    content = _fr03_prd(seam_expiry=seam_expiry, fr_lines=(wiring_line,))
+    gate = evaluate_wiring_gate(content, parse_frontmatter(content), mode="block", today=_TODAY)
+    assert gate.verdict == "pass"
+    assert _partial(gate.warnings) == []
+    assert _unwired(gate.warnings) == []
+    assert gate.failures == []
+
+
+@pytest.mark.parametrize(
+    ("seam_expiry", "fr_lines", "expected"),
+    [
+        pytest.param("2099-12-31", ("",), "partial", id="seam-only"),
+        pytest.param("2099-12-31", ("consumer: a.py::f", ""), "partial", id="one-wired-one-seam-only"),
+        pytest.param(None, ("consumer: a.py::f",), "pass", id="wired"),
+        pytest.param(None, ("",), "unwired", id="unwired-no-seam"),
+        pytest.param(None, ("consumer: a.py::f", ""), "unwired", id="one-wired-one-unwired"),
+        # Expired seam: excluded exactly as before FR03 (PRD-CORE-190 P1-1).
+        pytest.param("2020-01-01", ("",), "unwired", id="expired-seam"),
+        pytest.param("2026-06-11", ("",), "partial", id="seam-expiring-today-still-valid"),
+    ],
+)
+def test_wiring_verdict_table(seam_expiry: str | None, fr_lines: tuple[str, ...], expected: str) -> None:
+    from trw_mcp.state.validation._prd_scoring_wiring import evaluate_wiring_gate
+
+    content = _fr03_prd(seam_expiry=seam_expiry, fr_lines=fr_lines)
+    gate = evaluate_wiring_gate(content, parse_frontmatter(content), mode="warn", today=_TODAY)
+    assert gate.verdict == expected
+    assert bool(_partial(gate.warnings)) is (expected == "partial")
+    assert bool(_unwired(gate.warnings)) is (expected == "unwired")
+
+
+def test_wiring_verdict_not_applicable_without_a_public_surface() -> None:
+    from trw_mcp.state.validation._prd_scoring_wiring import evaluate_wiring_gate
+
+    content = _read("prd_no_seams.md")
+    gate = evaluate_wiring_gate(content, parse_frontmatter(content), mode="warn", today=_TODAY)
+    assert gate.verdict == "not_applicable"
+    assert (gate.warnings, gate.failures) == ([], [])
+
+
+def test_expired_seam_block_mode_still_fails_unchanged() -> None:
+    """FR03 pass condition: a planted expired seam scores as unwired (pre-existing)."""
+    content = _fr03_prd(seam_expiry="2020-01-01")
+    warnings, failures = check_wiring_gate(content, parse_frontmatter(content), mode="block", today=_TODAY)
+    assert [f.rule for f in failures] == ["WIRING_GATE_FAIL"]
+    assert _partial(warnings) == []
+
+
+def _served_validate(tmp_path: Path, name: str, content: str, *, fast: bool = False, verbose: bool = False) -> Any:
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    fn = extract_tool_fn(make_test_server("requirements"), "trw_prd_validate")
+    prd = tmp_path / name
+    prd.write_text(content, encoding="utf-8")
+    return fn(prd_path=str(prd), fast=fast, verbose=verbose)
+
+
+def _all_wiring_messages(result: Any) -> list[str]:
+    """Wiring findings across both wire locations (compact mode dedups between them)."""
+    warnings = [w for w in result.get("wiring_gate_warnings", []) if isinstance(w, str)]
+    suggestions = [str(s.get("message", "")) for s in result.get("improvement_suggestions", []) if isinstance(s, dict)]
+    return warnings + suggestions
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_trw_prd_validate_reports_a_seam_only_prd_as_partial(tmp_path: Path, verbose: bool) -> None:
+    """FR03 through the served tool: wiring_verdict=partial and the seam is named."""
+    result = _served_validate(tmp_path, "PRD-TEST-901.md", _read("prd_valid_seam.md"), verbose=verbose)
+    assert result.get("wiring_verdict") == "partial"
+    partial = _partial(_all_wiring_messages(result))
+    assert partial, result
+    assert "FR01" in partial[0]
+    assert "PRD-TEST-999" in partial[0]
+
+
+def test_trw_prd_validate_reports_a_wired_prd_as_a_full_pass(tmp_path: Path) -> None:
+    content = _fr03_prd(seam_expiry=None, fr_lines=("consumer: trw_mcp/tools/ceremony.py::trw_deliver",))
+    result = _served_validate(tmp_path, "PRD-X-148.md", content)
+    assert result.get("wiring_verdict") == "pass"
+    assert _partial(_all_wiring_messages(result)) == []
+
+
+def test_trw_prd_validate_fast_mode_never_claims_a_wiring_verdict(tmp_path: Path) -> None:
+    """A skipped wiring gate reports 'not_evaluated', never a default pass."""
+    result = _served_validate(tmp_path, "PRD-TEST-901.md", _read("prd_valid_seam.md"), fast=True)
+    assert result.get("wiring_verdict") == "not_evaluated"

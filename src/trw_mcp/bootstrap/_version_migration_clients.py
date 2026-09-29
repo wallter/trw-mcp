@@ -53,14 +53,15 @@ proof of authorship rather than on "it is inside a trw- directory".
 from __future__ import annotations
 
 import hashlib
-import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
 
-from ._version_migration_predecessors import preserve_unowned
+from ._safe_remove import remove_if_hash
+from ._utils import printable
+from ._version_migration_predecessors import preserve_unowned, remove_proven
 
 logger = structlog.get_logger(__name__)
 
@@ -236,6 +237,7 @@ def _remove_stale_files_in_kept_dir(
     bundled_keys: set[str],
     manifest_hashes: dict[str, str] | None,
     result: dict[str, list[str]],
+    target_dir: Path,
 ) -> None:
     """Remove files TRW wrote into a KEPT skill dir that the bundle has since dropped.
 
@@ -272,10 +274,11 @@ def _remove_stale_files_in_kept_dir(
         except OSError:
             logger.debug(surface.log_event, path=str(path), exc_info=True)
             continue
-        try:
-            path.unlink()
-        except OSError:
-            logger.debug(surface.log_event, path=str(path), exc_info=True)
+        # remove_if_hash re-hashes the captured bytes and links them back on a mismatch, so an edit saved
+        # after the check above keeps its bytes (HB-2); a matched file stays in .trw/trash, never unlinked.
+        outcome = remove_if_hash(path, target_dir, recorded, key=key)
+        if outcome.status in ("kept", "retained"):
+            result.setdefault("warnings", []).append(f"{printable(key)} ({outcome.reason}): kept")
 
 
 def _surface_bundled_file_keys(surface: ClientArtifactSurface) -> set[str]:
@@ -323,7 +326,7 @@ def _remove_stale_client_surface(
         # single file dropped from a kept skill is invisible to every guard above.
         if name in bundled:
             if surface.is_dir_artifact and bundled_keys:
-                _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result)
+                _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result, target_dir)
             continue
         # PRD-FIX-139-FR03: a mirror follows its source. A skill dir absent
         # from the bundle but still present under the canonical
@@ -334,13 +337,7 @@ def _remove_stale_client_surface(
             continue
         if preserve_unowned(entry, manifest_hashes, target_dir, result):
             continue
-        try:
-            if surface.is_dir_artifact:
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
-        except OSError:
-            logger.debug(surface.log_event, path=str(entry), exc_info=True)
+        remove_proven(entry, manifest_hashes, target_dir, result)
 
 
 def codex_artifact_contents() -> dict[str, bytes]:

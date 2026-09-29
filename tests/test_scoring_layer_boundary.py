@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
+
 # ---------------------------------------------------------------------------
 # FR05: _correlation.py has zero state-layer imports
 # ---------------------------------------------------------------------------
@@ -90,12 +93,6 @@ class TestIoBoundaryModule:
 
         assert callable(_default_lookup_entry)
 
-    def test_load_entries_from_dir_importable(self) -> None:
-        """_load_entries_from_dir is importable from _io_boundary."""
-        from trw_mcp.scoring._io_boundary import _load_entries_from_dir
-
-        assert callable(_load_entries_from_dir)
-
 
 # ---------------------------------------------------------------------------
 # Backward-compat: re-exports from _correlation still work
@@ -121,28 +118,15 @@ class TestBackwardCompatReExports:
 
         assert _find_session_start_ts is _defining
 
-    def test_load_entries_from_distribution(self) -> None:
-        """_load_entries_from_dir re-exported from _distribution."""
-        from trw_mcp.scoring._distribution import _load_entries_from_dir
-        from trw_mcp.scoring._io_boundary import _load_entries_from_dir as _defining
-
-        assert _load_entries_from_dir is _defining
-
 
 # ---------------------------------------------------------------------------
-# Integration: compute_impact_distribution still works
+# Integration: the public scoring API still works
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestScoringPublicApi:
     """Public scoring API continues to work after the refactor."""
-
-    def test_compute_impact_distribution_importable(self) -> None:
-        """compute_impact_distribution is importable from scoring package."""
-        from trw_mcp.scoring import compute_impact_distribution
-
-        assert callable(compute_impact_distribution)
 
     def test_correlate_recalls_importable(self) -> None:
         """correlate_recalls is importable from scoring package."""

@@ -134,15 +134,14 @@ def test_profile_count_matches_registry() -> None:
     assert count > 0, "no built-in client profiles discovered"
     content = _ROOT_AGENTS_MD.read_text(encoding="utf-8")
 
-    accepted = {str(count), _SPELLED_COUNTS.get(count, str(count))}
-    stated = re.findall(r"(\S+)\s+built-in profiles", content)
-    assert stated, (
-        f"AGENTS.md states no built-in-profile count; expected one of {sorted(accepted)} before 'built-in profiles'."
-    )
+    accepted = {str(count), _SPELLED_COUNTS.get(count, str(count)).lower()}
+    # The dense root AGENTS.md (012a2606b) words it "the eight client profiles"; older prose said
+    # "N built-in profiles". Either phrasing is a count claim, so both are checked.
+    stated = re.findall(r"(\S+)\s+(?:built-in|client)\s+profiles", content)
+    assert stated, f"AGENTS.md states no profile count; expected one of {sorted(accepted)} before 'client profiles'."
     for word in stated:
-        assert word in accepted, (
-            f"AGENTS.md says '{word} built-in profiles' but the registry has {count}. "
-            f"Expected one of {sorted(accepted)}."
+        assert word.lower() in accepted, (
+            f"AGENTS.md says '{word} ... profiles' but the registry has {count}. Expected one of {sorted(accepted)}."
         )
 
 

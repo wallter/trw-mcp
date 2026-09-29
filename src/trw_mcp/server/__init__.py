@@ -30,12 +30,6 @@ def _load_mcp() -> object:
     return _mcp
 
 
-def _check_mcp_json_portability(cwd: Path | None = None) -> None:
-    from trw_mcp.server._cli import _check_mcp_json_portability as _portability_check
-
-    _portability_check(cwd)
-
-
 def main() -> None:
     from trw_mcp.server._cli import main as _main
 
@@ -53,4 +47,4 @@ mcp = _load_mcp()
 # Import _tools first to trigger eager tool registration (side effect).
 _register_tools = _load_register_tools()
 
-__all__ = ["_check_mcp_json_portability", "main", "mcp"]
+__all__ = ["main", "mcp"]

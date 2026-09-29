@@ -8,7 +8,7 @@ DATA_DIR="$REPO_ROOT/trw-mcp/src/trw_mcp/data"
 rm -rf "$DATA_DIR/skills" "$DATA_DIR/agents"
 
 # Copy only the 10 lifecycle skills (exclude trw-simplify which is repo-local)
-for skill in deliver framework-check memory-audit memory-optimize prd-groom prd-new prd-review sprint-finish sprint-init test-strategy; do
+for skill in deliver framework-check memory-audit memory-optimize prd-groom prd-new prd-review test-strategy; do
     cp -r "$REPO_ROOT/.claude/skills/$skill" "$DATA_DIR/skills/$skill"
 done
 

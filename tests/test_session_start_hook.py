@@ -170,7 +170,7 @@ def test_protocol_not_re_emitted_when_instruction_file_carries_it(tmp_path: Path
     for source in ("resume", "compact", "clear"):
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / f"dedup-{source}", hook_path)
         # A client instruction file carrying the protocol's anchor tool.
-        (project_root / "CLAUDE.md").write_text(
+        (project_root / "AGENTS.md").write_text(
             "# Project\n\n<!-- trw:start -->\n## TRW Behavioral Protocol\n"
             "- call trw_session_start() first\n<!-- trw:end -->\n",
             encoding="utf-8",
@@ -211,7 +211,7 @@ def test_mid_session_emissions_stay_within_byte_budget(tmp_path: Path, hook_path
     """Tripwire: the deduplicated emissions must not silently regrow."""
     for source, ceiling in _MID_SESSION_EMISSION_CEILING_BYTES.items():
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / f"budget-{source}", hook_path)
-        (project_root / "CLAUDE.md").write_text("# Project\n\ncall trw_session_start() first\n", encoding="utf-8")
+        (project_root / "AGENTS.md").write_text("# Project\n\ncall trw_session_start() first\n", encoding="utf-8")
 
         emitted = len(_run_hook(local_hook, project_root, source).encode("utf-8"))
 
@@ -258,7 +258,7 @@ def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_p
     """
     for source in ("resume", "compact", "clear"):
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / f"mention-{source}", hook_path)
-        (project_root / "CLAUDE.md").write_text(
+        (project_root / "AGENTS.md").write_text(
             "# Project\n\nWe migrated to TRW; run trw_session_start() at the top of a session.\n",
             encoding="utf-8",
         )
@@ -299,19 +299,14 @@ def test_injected_ids_are_written_from_session_recall(tmp_path: Path, ups_hook: 
         _MATCHING_SUMMARY,
         _copy_hook_to_temp,
         _write_learning,
+        fixture_store_python,
     )
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.tools import _ceremony_session_start_steps as steps
 
-    project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path / "fr06", ups_hook)
+    project_root, hook_path, rows_file = _copy_hook_to_temp(tmp_path / "fr06", ups_hook)
     trw_dir = project_root / ".trw"
-    _write_learning(
-        entries_dir,
-        "L-real-id",
-        status="active",
-        summary=_MATCHING_SUMMARY,
-        file_stem="2026-04-10-structlog-gotcha",
-    )
+    _write_learning(rows_file, "L-real-id", status="active", summary=_MATCHING_SUMMARY)
 
     recalled = (
         [{"id": "L-real-id", "summary": _MATCHING_SUMMARY}],
@@ -335,6 +330,7 @@ def test_injected_ids_are_written_from_session_recall(tmp_path: Path, ups_hook: 
             "TRW_PROJECT_ROOT": str(project_root),
             "TRW_TEST_PHASE": "implement",
             "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            "TRW_PYTHON": str(fixture_store_python(project_root)),
         }
     )
     completed = subprocess.run(

@@ -7,7 +7,7 @@
 #   . "$_hook_dir/lib-distill-hint.sh" 2>/dev/null || exit 0
 #
 # Provides:
-#   _get_python_path()           — resolves venv Python path
+#   _get_python_path <dir>       — resolves the interpreter hooks start (PRD-FIX-155)
 #   _read_trw_config_field()     — reads a field from .trw/config.yaml
 #   _get_cc03_enabled()          — checks if CC-03 hook is enabled (opt-in)
 #   _is_safe_extension()         — returns 0 if extension should be skipped
@@ -19,20 +19,95 @@
 # ---------------------------------------------------------------------------
 
 _get_python_path() {
-    # Reads .trw/channels/cc03-python.txt first (set at init-project time)
-    _python_path_file="${TRW_PROJECT_DIR:-$(pwd)}/.trw/channels/cc03-python.txt"
-    if [ -f "$_python_path_file" ]; then
-        _py=$(cat "$_python_path_file" 2>/dev/null)
-        if [ -n "$_py" ] && [ -x "$_py" ]; then
-            printf '%s' "$_py"
-            return 0
+    # Usage: _get_python_path <project_dir>
+    # PRD-FIX-155: the one interpreter resolution order, byte-identical in every
+    # bundled hook that starts Python (a test pins the copies). First hit wins:
+    #   1. <project_dir>/.trw/channels/cc03-python.txt, which init-project and
+    #      update-project fill with the interpreter that runs trw-mcp
+    #   2. the interpreter in the shebang of `command -v trw-mcp`
+    #   3. <project_dir>/.venv/bin/python
+    #   4. worktree fallback: in a linked git worktree, .trw is per-worktree and
+    #      untracked (steps 1 and 3 above never see it), so fall back to the
+    #      MAIN worktree's pointer, then its .venv, resolved via
+    #      `git rev-parse --git-common-dir` (one cheap call, only reached
+    #      here; a git error or non-worktree checkout just falls through)
+    #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
+        _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
+        [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
+        _trw_py=${_trw_py#\#!}
+        _trw_py=${_trw_py%% *}
+        case "${_trw_py##*/}" in python*) ;; *) _trw_py="" ;; esac
+        [ -x "$_trw_py" ] || _trw_py="$1/.venv/bin/python"
+    fi
+    if [ ! -x "$_trw_py" ]; then
+        _trw_common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _trw_common=""
+        if [ -n "$_trw_common" ]; then
+            _trw_main=$(dirname "$_trw_common")
+            _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
         fi
     fi
-    # Fall back to python3 in PATH
-    if command -v python3 >/dev/null 2>&1; then
+    if [ -x "$_trw_py" ]; then
+        printf '%s' "$_trw_py"
+    elif command -v python3 >/dev/null 2>&1; then
         printf 'python3'
-        return 0
+    else
+        return 1
     fi
+}
+
+_worktree_pythonpath() {
+    # Usage: _worktree_pythonpath <project_dir>
+    # A linked worktree shares the main checkout's .venv, whose editable install
+    # imports the MAIN checkout's source, so a hint hook started from a worktree
+    # ran main's trw_mcp instead of the code under test. Prints a PYTHONPATH that
+    # puts the worktree's own source trees first (each top-level <dir>/src, else a
+    # <dir> holding a pyproject.toml); empty when <project_dir> is not a linked
+    # worktree (its .git is a file) or carries none of them.
+    [ -f "$1/.git" ] || return 0
+    _wt_pp=""
+    for _wt_dir in "$1"/*/; do
+        _wt_dir=${_wt_dir%/}
+        if [ -d "$_wt_dir/src" ]; then
+            _wt_pp="${_wt_pp:+$_wt_pp:}$_wt_dir/src"
+        elif [ -f "$_wt_dir/pyproject.toml" ]; then
+            _wt_pp="${_wt_pp:+$_wt_pp:}$_wt_dir"
+        fi
+    done
+    printf '%s' "$_wt_pp"
+    return 0
+}
+
+_path_inside_repo() {
+    # Usage: _path_inside_repo <file_path> <project_dir>
+    # Returns 0 when the file's RESOLVED physical location is under <project_dir>'s, 1 when it is
+    # outside. Pure sh (no interpreter start; ~ms), so a hook can skip a target no sidecar can know
+    # (a scratch file under /tmp) before paying for Python. The file need not exist yet (a new file
+    # resolves through its deepest existing directory); symlinks are followed both on the file and
+    # on every directory, so a link cannot smuggle an outside file in or an inside one out. An
+    # unresolvable project dir returns 0: when in doubt, keep hinting.
+    _pir_root=$(cd "$2" 2>/dev/null && pwd -P) || return 0
+    _pir_p=$1
+    case "$_pir_p" in /*) ;; *) _pir_p="$_pir_root/$_pir_p" ;; esac  # a relative path is relative to the project
+    _pir_n=0
+    while [ -L "$_pir_p" ] && [ "$_pir_n" -lt 8 ]; do
+        _pir_t=$(readlink "$_pir_p" 2>/dev/null) || break
+        case "$_pir_t" in /*) _pir_p=$_pir_t ;; *) _pir_p="${_pir_p%/*}/$_pir_t" ;; esac
+        _pir_n=$((_pir_n + 1))
+    done
+    _pir_tail=""
+    _pir_d=$_pir_p
+    while [ ! -d "$_pir_d" ]; do
+        _pir_tail="/${_pir_d##*/}$_pir_tail"
+        _pir_d=${_pir_d%/*}
+        [ -n "$_pir_d" ] || _pir_d=/
+    done
+    _pir_real=$(cd "$_pir_d" 2>/dev/null && pwd -P) || return 0
+    case "$_pir_real$_pir_tail/" in
+        "$_pir_root"/*) return 0 ;;
+    esac
     return 1
 }
 
@@ -103,40 +178,28 @@ _read_trw_nested_config_field() {
 # CC-03 opt-in gate (FR09)
 # ---------------------------------------------------------------------------
 
-_get_cc03_enabled() {
-    # Returns 0 (true) if CC-03 hook is enabled, 1 (false) otherwise.
+_cc03_explicit_setting() {
+    # Prints "on" or "off" when .trw/config.yaml sets the CC-03 gate
+    # explicitly, and nothing when it is silent (auto). Shell-only, no
+    # interpreter start, so an explicit true/false ALWAYS wins and costs ~ms.
     #
     # Precedence (matches Python _hook_helpers.py + documented config path):
     #   1. Top-level cc03_hook_enabled: true|false  (highest priority override)
     #   2. channels.cc03_hook_enabled: true|false   (canonical documented path)
     #   3. channels.cc03.enabled: true|false         (alternative nested path)
-    #
-    # Operators enabling via the documented path (.trw/config.yaml
-    # channels.cc03_hook_enabled=true) are correctly handled here.
     _config="${TRW_PROJECT_DIR:-$(pwd)}/.trw/config.yaml"
+    [ -f "$_config" ] || return 0
 
     # Check 1: top-level cc03_hook_enabled (overrides all)
-    _top=$(_read_trw_config_field "cc03_hook_enabled" "")
-    if [ -n "$_top" ]; then
-        case "$_top" in
-            true|True|yes|1) return 0 ;;
-            *) return 1 ;;
-        esac
-    fi
+    _ces_val=$(_read_trw_config_field "cc03_hook_enabled" "")
 
     # Check 2: channels.cc03_hook_enabled (canonical documented path)
-    _nested=$(_read_trw_nested_config_field "channels" "cc03_hook_enabled" "")
-    if [ -n "$_nested" ]; then
-        case "$_nested" in
-            true|True|yes|1) return 0 ;;
-            *) return 1 ;;
-        esac
-    fi
+    [ -n "$_ces_val" ] || _ces_val=$(_read_trw_nested_config_field "channels" "cc03_hook_enabled" "")
 
     # Check 3: channels.cc03.enabled (alternative nested path)
     # Handled by checking for a "cc03:" sub-block under "channels:" — use awk
-    if [ -f "$_config" ]; then
-        _cc03_enabled=$(awk '
+    if [ -z "$_ces_val" ]; then
+        _ces_val=$(awk '
             /^channels:/ { in_channels=1; next }
             in_channels && /^[ \t]+cc03:/ { in_cc03=1; next }
             in_cc03 && /^[ \t]+enabled:/ {
@@ -147,13 +210,43 @@ _get_cc03_enabled() {
             }
             /^[^ \t]/ && !/^channels:/ { in_channels=0; in_cc03=0 }
         ' "$_config" 2>/dev/null) || true
-        if [ -n "$_cc03_enabled" ]; then
-            case "$_cc03_enabled" in
-                true|True|yes|1) return 0 ;;
-                *) return 1 ;;
-            esac
-        fi
     fi
+    [ -n "$_ces_val" ] || return 0
+    case "$_ces_val" in
+        true|True|yes|1) printf 'on' ;;
+        *) printf 'off' ;;
+    esac
+}
+
+# Exit status the bounded hint program uses for "auto mode, trw-distill not
+# importable": the hook is off, and the caller must stay silent.
+_TRW_CC03_AUTO_OFF_RC=3
+
+_get_cc03_enabled() {
+    # Returns 0 (true) if CC-03 hook is enabled, 1 (false) otherwise.
+    #
+    # Explicit config first (_cc03_explicit_setting), then
+    #   4. auto: trw-distill importable by the hooks' own interpreter (PRD-FIX
+    #      release-window fix, 2026-09-27) — no explicit config either way.
+    #
+    # pre-tool-distill-hint.sh no longer calls this: it reads the explicit
+    # setting itself and folds the auto probe into its one bounded Python call
+    # (saves an interpreter start per edit). Kept for any standalone caller.
+    case "$(_cc03_explicit_setting)" in
+        on) return 0 ;;
+        off) return 1 ;;
+    esac
+
+    # Check 4: no explicit config either way -- auto-on when trw-distill is
+    # importable by the same interpreter the hooks already resolve (PRD-FIX
+    # release-window fix). Never imports trw_distill itself, only probes
+    # importlib.util.find_spec, matching trw_mcp's own detection convention
+    # (trw_mcp.tools._sidecar_substrate). A missing/unresolvable interpreter
+    # or a probe failure of any kind stays disabled -- this is a default, not
+    # an override, so it must fail toward the pre-fix opt-in behaviour.
+    _trw_probe_py=$(_get_python_path "${TRW_PROJECT_DIR:-$(pwd)}" 2>/dev/null) || return 1
+    "$_trw_probe_py" -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("trw_distill") else 1)' \
+        2>/dev/null && return 0
 
     return 1
 }
@@ -184,7 +277,10 @@ _is_safe_extension() {
 # ---------------------------------------------------------------------------
 
 _format_t0_beacon() {
-    printf '[TRW] Distill intelligence available — run trw_code(mode="hint") for details.'
+    # The fallback when no interpreter answers in time. Emitted as the same
+    # PreToolUse JSON the hint uses: plain PreToolUse stdout never reaches
+    # Claude's context. A fixed literal, so no encoder is needed.
+    printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "[TRW] Distill intelligence available — run trw_code(mode=\"hint\") for details."}}'
 }
 
 # ---------------------------------------------------------------------------
@@ -290,10 +386,13 @@ _trw_safe_read() {
 _write_distill_snapshot_bg() {
     # Triggers a background CC-01 snapshot write via Python.
     # Fails silently — never blocks the hook caller.
-    _py=$(_get_python_path 2>/dev/null) || return 0
+    _py=$(_get_python_path "${TRW_PROJECT_DIR:-$(pwd)}" 2>/dev/null) || return 0
     _repo="${TRW_PROJECT_DIR:-$(pwd)}"
     (
-        PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
+        # See pre-tool-distill-hint.sh for why these are not set: dropping
+        # them saves a ~190ms from-source recompile of the same import chain
+        # (measured 2026-09-27) with no lost protection for an installed
+        # interpreter.
         TRW_CC01_REPO_ROOT="$_repo" \
         "$_py" -c '
 # Single-quoted, repo root via the environment. $_repo is not model-controlled,

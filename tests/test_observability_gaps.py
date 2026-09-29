@@ -115,30 +115,6 @@ class TestCorrelationID:
 class TestDistinctEventNames:
     """FR02: Each except block uses a unique, descriptive event name."""
 
-    def test_auto_upgrade_failure_uses_distinct_event_name(self) -> None:
-        """Auto-upgrade block logs a distinct event name, not generic."""
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
-
-        config = TRWConfig()
-        trw_dir = Path("/tmp/test-trw")
-
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                side_effect=Exception("upgrade error"),
-            ),
-            patch("trw_mcp.tools._ceremony_helpers.logger") as mock_logger,
-        ):
-            run_auto_maintenance(trw_dir, config)
-
-        # Verify the logger was called with a specific event name, not generic
-        warning_calls = mock_logger.warning.call_args_list
-        assert len(warning_calls) >= 1
-        event_name = warning_calls[0][0][0]
-        assert event_name != "maintenance_step_failed"
-        assert "auto_upgrade" in event_name
-
     def test_stale_runs_failure_uses_distinct_event_name(self) -> None:
         """Stale runs close block logs a distinct event name."""
         from trw_mcp.models.config import TRWConfig
@@ -148,10 +124,6 @@ class TestDistinctEventNames:
         trw_dir = Path("/tmp/test-trw")
 
         with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
             patch(
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 side_effect=Exception("stale runs error"),

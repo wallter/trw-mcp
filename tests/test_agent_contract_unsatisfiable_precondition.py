@@ -33,7 +33,9 @@ AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 # Monorepo-only invariant: the repo-root scripts/ layout is absent from the
 # standalone trw-mcp mirror. Skip cleanly there — same guard as the sibling
 # test_agent_contract_lint.py, which has had it since PRD-QUAL-128 FR10.
-if not SCRIPT.is_file():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in mirror)", allow_module_level=True)
 
 RULE = "cap-unsatisfiable-precondition"

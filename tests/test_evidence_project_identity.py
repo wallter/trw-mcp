@@ -10,9 +10,9 @@ import pytest
 
 from trw_mcp.models._evidence_core import ContentBinding, ReceiptState, RunOwnedScope
 from trw_mcp.state import _evidence_binding as binding
+from trw_mcp.tools._command_results import parse_build_command_results
 from trw_mcp.tools._evidence_writers import (
     load_latest_build_evidence,
-    parse_build_command_results,
     record_build_receipt,
 )
 

@@ -155,7 +155,7 @@ def pause(
             raise PauseError("already_paused", f"formation {formation_id!r} is already paused ({current.pause_id})")
         record = PauseRecord(pause_id=secrets.token_hex(8), reason=reason, since_utc=_now(), until_utc=until_utc)
         _write(path, record)
-    assert caller_run_path is not None  # noqa: S101 - checked by _orchestrator_manifest
+    assert caller_run_path is not None  # noqa: S101  # trw:intentional narrowed by _orchestrator_manifest's raise-or-return above
     _log_event(caller_run_path, "formation_paused", {"formation_id": formation_id, "pause_id": record.pause_id})
     logger.info("formation_paused", formation_id=formation_id, pause_id=record.pause_id)
     return record
@@ -170,7 +170,7 @@ def resume(*, trw_dir: Path, formation_id: str, caller_run_path: Path | None, lo
         if current is None:
             raise PauseError("not_paused", f"formation {formation_id!r} is not paused")
         path.unlink()
-    assert caller_run_path is not None  # noqa: S101 - checked by _orchestrator_manifest
+    assert caller_run_path is not None  # noqa: S101  # trw:intentional narrowed by _orchestrator_manifest's raise-or-return above
     _log_event(caller_run_path, "formation_resumed", {"formation_id": formation_id, "pause_id": current.pause_id})
     logger.info("formation_resumed", formation_id=formation_id, pause_id=current.pause_id)
     return current.pause_id

@@ -75,7 +75,7 @@ def test_a_server_whose_client_exited_is_reported_as_orphaned(tmp_path: Path, se
     (line,) = live_servers(tmp_path)
 
     assert "orphaned" in line
-    assert f"kill {server.pid}" in line
+    assert f"process {server.pid}" in line and "report this to the user" in line
 
 
 def test_dead_and_recycled_servers_are_not_listed(tmp_path: Path, server: subprocess.Popen[bytes]) -> None:

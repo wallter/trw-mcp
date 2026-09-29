@@ -26,18 +26,14 @@ import secrets
 import stat
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
 from pydantic import BaseModel
 
 from trw_mcp.models._evidence_core import EvidenceLimits, canonical_json
-from trw_mcp.models._evidence_records import ReceiptTombstone
 
 logger = structlog.get_logger(__name__)
-
-_RETENTION_DAYS = 90
 _TOMBSTONE_FILE = "_tombstones.jsonl"
 # 128 bits of collision resistance per FR09 (16 bytes -> 32 hex chars).
 _ID_ENTROPY_BYTES = 16
@@ -175,60 +171,3 @@ def list_receipt_ids(run_path: Path, receipt_type: str) -> list[str]:
     if not directory.exists():
         return []
     return sorted(p.stem for p in directory.glob("*.json"))
-
-
-def collect_receipts(
-    run_path: Path,
-    receipt_type: str,
-    *,
-    referenced_ids: frozenset[str],
-    now: datetime | None = None,
-    retention_days: int = _RETENTION_DAYS,
-) -> list[str]:
-    """GC expired, unreferenced receipts and leave tombstones (FR09).
-
-    Only removes payloads that are BOTH older than the retention window AND not
-    referenced. Referenced receipts survive regardless of age. Returns collected
-    IDs. Each collected ID gets a tombstone so it can never be reused.
-    """
-    directory = _receipts_root(run_path) / receipt_type
-    if not directory.exists():
-        return []
-    now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=retention_days)
-    collected: list[str] = []
-    for path in sorted(directory.glob("*.json")):
-        receipt_id = path.stem
-        if receipt_id in referenced_ids:
-            continue
-        try:
-            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-        except OSError:
-            continue
-        if mtime > cutoff:
-            continue
-        payload = _read_bytes_or_none(path)
-        digest = "unknown"
-        if payload is not None:
-            import hashlib
-
-            digest = hashlib.sha256(payload).hexdigest()
-        _append_tombstone(run_path, receipt_type, receipt_id, digest, now)
-        with _suppress_os_error():
-            os.unlink(path)
-        collected.append(receipt_id)
-    return collected
-
-
-def _append_tombstone(run_path: Path, receipt_type: str, receipt_id: str, digest: str, now: datetime) -> None:
-    tombstone = ReceiptTombstone(
-        receipt_type=receipt_type,
-        receipt_id=receipt_id,
-        canonical_digest=digest,
-        collected_at=now.isoformat(),
-    )
-    path = _tombstone_path(run_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = canonical_json(tombstone.model_dump(mode="json")).decode("utf-8") + "\n"
-    with open(path, "a", encoding="utf-8") as handle:
-        handle.write(line)

@@ -43,7 +43,8 @@ class TestPublisherCoverage:
         """Line 76: tags field is not a list → coerced to []."""
         from trw_mcp.telemetry import publisher as pub
 
-        entries_dir = tmp_path / "learnings" / "entries"
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
 
         yaml_file = entries_dir / "learning.yaml"
@@ -51,6 +52,8 @@ class TestPublisherCoverage:
             "status: active\nimpact: 0.9\nsummary: Test\ndetail: Detail\ntags: not-a-list\n",
             encoding="utf-8",
         )
+        # The payload project's own consent: the .trw that owns the entries directory.
+        (trw_dir / "config.yaml").write_text("learning_sharing_enabled: true\n", encoding="utf-8")
 
         with patch("trw_mcp.telemetry.publisher.get_config") as mock_cfg:
             cfg = MagicMock()
@@ -62,7 +65,7 @@ class TestPublisherCoverage:
             mock_cfg.return_value = cfg
 
             with patch("trw_mcp.telemetry.publisher.resolve_trw_dir") as mock_trw:
-                mock_trw.return_value = tmp_path
+                mock_trw.return_value = trw_dir
 
                 with patch("trw_mcp.telemetry.publisher.FileStateReader") as mock_reader_cls:
                     mock_reader = MagicMock()

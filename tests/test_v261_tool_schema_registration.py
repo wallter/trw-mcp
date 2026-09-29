@@ -84,11 +84,17 @@ def _run_registry_probe(tmp_path: Path, code: str) -> dict[str, set[str]]:
 
 def _run_registry_probe_raw(tmp_path: Path, code: str) -> str:
     source_root = Path(__file__).parents[1] / "src"
+    # trw_mcp imports trw_memory (e.g. trw_memory.exceptions.UnsafeWriteError):
+    # the child needs the sibling candidate trw_memory too, not whatever
+    # version happens to be pip-installed in this venv (which can lag a
+    # multi-worktree monorepo checkout). Same pattern as
+    # test_boot_timeline_events.py.
+    memory_source_root = Path(__file__).parents[2] / "trw-memory" / "src"
     # Idempotent so either probe works standalone or after the other.
     (tmp_path / ".trw").mkdir(exist_ok=True)
     (tmp_path / ".trw/config.yaml").write_text("tool_resolution_mode: all\n", encoding="utf-8")
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(source_root)
+    env["PYTHONPATH"] = os.pathsep.join([str(source_root), str(memory_source_root)])
     completed = subprocess.run(
         [sys.executable, "-c", code],
         cwd=tmp_path,

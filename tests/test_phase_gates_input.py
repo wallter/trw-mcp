@@ -6,7 +6,6 @@ from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import ValidationFailure
-from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.state.validation.phase_gates import (
     _check_deliver_input,
@@ -14,7 +13,6 @@ from trw_mcp.state.validation.phase_gates import (
     _check_plan_input,
     _check_review_input,
     _check_validate_input,
-    check_phase_input,
 )
 
 from ._phase_gates_support import _make_run_dir, _write_events
@@ -191,27 +189,3 @@ class TestCheckPlanInput:
         _check_plan_input(run_dir, config, "error", failures)
         rules = [f.rule for f in failures]
         assert "research_complete" not in rules
-
-
-class TestCheckPhaseInputUniversalGuard:
-    """Tests for the run.yaml universal guard in check_phase_input."""
-
-    def test_missing_run_yaml_returns_invalid(self, tmp_path: Path) -> None:
-        run_dir = tmp_path / "run_no_yaml"
-        run_dir.mkdir()
-        (run_dir / "meta").mkdir()
-        result = check_phase_input(Phase.PLAN, run_dir, TRWConfig())
-        assert result.valid is False
-        rules = [f.rule for f in result.failures]
-        assert "run_initialized" in rules
-        assert result.completeness_score == 0.0
-
-    def test_missing_run_yaml_early_return(self, tmp_path: Path) -> None:
-        """Early return means no per-phase checker runs."""
-        run_dir = tmp_path / "run_no_yaml2"
-        run_dir.mkdir()
-        (run_dir / "meta").mkdir()
-        result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig())
-        rules = [f.rule for f in result.failures]
-        assert "run_initialized" in rules
-        assert "plan_exists" not in rules

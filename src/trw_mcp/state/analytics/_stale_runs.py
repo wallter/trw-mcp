@@ -27,6 +27,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import RunStatus
 from trw_mcp.state._helpers import read_jsonl_resilient
@@ -516,8 +517,9 @@ def stale_advisory_first_time(run_dir: Path) -> bool:
         sentinel = run_dir / "meta" / ".stale_advisory_shown"
         if sentinel.exists():
             return False
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text("", encoding="utf-8")
+        write_checkout_file(run_dir, sentinel, "")
         return True
     except OSError:
+        return True
+    except UnsafeWriteError:  # trw-fail-silent-allow: safe_fs already logged safe_write_refused (WARNING, path+reason); the documented fail-open shows the hint again rather than write through a planted symlink
         return True

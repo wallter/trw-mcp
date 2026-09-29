@@ -12,7 +12,10 @@ def test_validation_facade_exports_only_public_names() -> None:
 
 
 def test_validation_facade_keeps_private_compatibility_attributes() -> None:
-    for name in ("_CHECKBOX_RE", "_best_effort_build_check", "_check_prd_enforcement"):
+    # _CHECKBOX_RE was deleted outright (not just unexported) as a dead symbol
+    # in 83754efb3 (PRD-CORE-313 FR01+FR06, 8.0 removals); it no longer exists
+    # anywhere in src, so it is dropped from this compatibility list.
+    for name in ("_best_effort_build_check", "_check_prd_enforcement"):
         assert hasattr(validation, name)
 
 

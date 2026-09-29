@@ -11,7 +11,7 @@ Design invariants (FR-1, FR-2):
 
 1. **Per-artifact records.** The registry records one
    :class:`SurfaceArtifact` per governing file (agent prompts, hook scripts,
-   skill definitions, sub-CLAUDE.md, prompt Python sources). Each record
+   skill definitions, sub-AGENTS.md, prompt Python sources). Each record
    carries ``{surface_id, content_hash, version, discovered_at, source_path}``
    exactly as FR-1 mandates. Content-addressed: two registries with the same
    file contents produce identical artifact hashes and identical
@@ -146,7 +146,7 @@ class SurfaceRegistry(BaseModel):
 
         PRD-HPO-MEAS-001 FR-10 AC-8: every newly-discovered artifact
         produces a ``SurfaceRegistered`` event so cross-session analytics
-        can answer "when did this CLAUDE.md first appear in the manifest?"
+        can answer "when did this AGENTS.md first appear in the manifest?"
         without re-walking disk.
 
         Emission is fail-open: any writer failure is logged and skipped;
@@ -206,8 +206,8 @@ class SurfaceRegistry(BaseModel):
         FR-1 artifact coverage:
             - Bundled ``trw_mcp.data/`` contents (agents, skills, hooks,
               prompts, surfaces, config) — resolved from ``data_root``.
-            - Repo-root governing documents: root ``CLAUDE.md``,
-              ``FRAMEWORK.md``, and sub-``CLAUDE.md`` files under the
+            - Repo-root governing documents: root ``AGENTS.md``,
+              ``FRAMEWORK.md``, and sub-``AGENTS.md`` files under the
               package source trees — resolved from ``repo_root``.
 
         Args:
@@ -215,7 +215,7 @@ class SurfaceRegistry(BaseModel):
                 directory). When None, resolves ``trw_mcp.data`` via
                 importlib.resources.
             repo_root: Override the monorepo root. When None, walks up from
-                the resolved data root looking for a ``CLAUDE.md`` +
+                the resolved data root looking for an ``AGENTS.md`` +
                 ``.trw/`` pair. May be None in PyPI-only installs — then
                 repo-root artifacts are simply skipped.
             now: Override the discovered_at timestamp (tests use this for
@@ -224,7 +224,7 @@ class SurfaceRegistry(BaseModel):
         resolved_data_root = data_root if data_root is not None else _resolve_data_root()
         # Test and tooling callers often pass a synthetic data_root to inspect
         # only bundled-data behavior. In that mode, do not implicitly pull in
-        # the live repository's root CLAUDE.md/FRAMEWORK.md. Production
+        # the live repository's root AGENTS.md/FRAMEWORK.md. Production
         # resolvers pass repo_root explicitly when they want repo surfaces.
         resolved_repo_root = (
             repo_root if repo_root is not None else (_resolve_repo_root() if data_root is None else None)

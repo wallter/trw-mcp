@@ -24,8 +24,10 @@ WHAT IS PINNED, AND WHY EACH ASSERTION IS NON-VACUOUS
    saving this module exists to preserve — would pass every other assertion.
 3. The floor is DERIVED from the post-cut kernel spec (PRD-CORE-300-FR14), never
    a second hand list, so ``trw_code`` joins it the moment it is registered.
-4. Flag-gated tools (``trw_assess``, ``trw_send``, ``trw_inbox``) carry the key
-   only when their flag is on; ``trw_dispatch`` never carries it.
+4. Flag-gated tools (``trw_assess``, ``trw_send``, ``trw_inbox``) always carry
+   the key, whatever their flag said at boot, so a flag turned on mid-session
+   surfaces them loaded (PRD-CORE-305-FR04); the surface mask alone decides
+   whether they are listed. ``trw_dispatch`` never carries it.
 5. The generated Claude Code ``.mcp.json`` sets no per-server ``alwaysLoad``: that
    lever exempts every registered tool, an exposed ``trw_dispatch`` included.
 """
@@ -85,7 +87,7 @@ def test_the_floor_is_the_always_on_kernel_derived_not_listed() -> None:
 
 
 def test_flag_gated_tools_are_derived_and_dispatch_is_never_among_them() -> None:
-    """FR14: assess/send/inbox follow their flags; trw_dispatch never carries the key."""
+    """FR14: assess/send/inbox are the flag-gated marked set; trw_dispatch never carries the key."""
     from trw_mcp.models.surface_v2 import POST_CUT_FLAGGED
     from trw_mcp.server._always_load import (
         ALWAYS_LOAD_TOOLS,
@@ -141,13 +143,13 @@ async def test_nothing_outside_the_floor_is_marked_by_default() -> None:
 
 async def test_apply_preserves_existing_meta_and_is_idempotent() -> None:
     """Re-applying must not clobber FastMCP's own ``_meta`` namespace or duplicate."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, apply_always_load_meta
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, always_load_names, apply_always_load_meta
     from trw_mcp.server._app import mcp
 
     meta_before = await _wire_meta()
     applied = await apply_always_load_meta(mcp)
-    expected = _kernel() & set(meta_before)
-    assert set(applied) == expected, f"applied {sorted(applied)} != registered kernel {sorted(expected)}"
+    expected = always_load_names() & set(meta_before)
+    assert set(applied) == expected, f"applied {sorted(applied)} != registered floor {sorted(expected)}"
 
     meta = await _wire_meta()
     for name in expected:
@@ -202,49 +204,81 @@ _FLAG_CASES = [
 ]
 
 
-@pytest.mark.parametrize("enabled", [True, False], ids=["on", "off"])
 @pytest.mark.parametrize(("tool_name", "flag"), _FLAG_CASES, ids=[t for t, _ in _FLAG_CASES])
-async def test_flag_gated_tool_loads_upfront_only_when_its_flag_is_on(tool_name: str, flag: str, enabled: bool) -> None:
-    """FR14: an opted-in project gets the tool without a ToolSearch; otherwise it stays deferred."""
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, apply_always_load_meta
+async def test_flag_gated_tool_is_marked_whatever_its_boot_flag(
+    tool_name: str, flag: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-305-FR04: the boot hook marks a flag-gated tool even with its flag OFF.
+
+    Marking only the tools whose flag was on at boot went stale: turning the flag
+    on mid-session surfaced the tool without the key, deferred until a restart.
+    The surface mask hides it while the flag is off, so the key costs nothing.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server import _tools
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY
     from trw_mcp.server._app import mcp
 
     saved = await _restoring(frozenset({tool_name, "trw_dispatch"}))
     try:
         (await mcp.get_tool(tool_name)).meta = {k: v for k, v in saved[tool_name].items() if k != ALWAYS_LOAD_META_KEY}
-        applied = await apply_always_load_meta(mcp, flags={flag: enabled, "dispatch_tools_exposed": True})
+        cfg = TRWConfig(**{flag: False, "dispatch_tools_exposed": True})
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
+        monkeypatch.delenv("TRW_JEV_ENABLED", raising=False)
+        await asyncio.to_thread(_tools._apply_always_load_meta)
         wire = await _wire_meta()
     finally:
         await _restore(saved)
 
-    marked = wire[tool_name].get(ALWAYS_LOAD_META_KEY) is True
-    assert (tool_name in applied, marked) == (enabled, enabled)
-    assert "trw_dispatch" not in applied, "trw_dispatch must never carry the key, even when exposed"
-    assert ALWAYS_LOAD_META_KEY not in wire["trw_dispatch"]
+    assert wire[tool_name].get(ALWAYS_LOAD_META_KEY) is True, f"{tool_name} unmarked with {flag} off at boot"
+    assert ALWAYS_LOAD_META_KEY not in wire["trw_dispatch"], "trw_dispatch must never carry the key, even when exposed"
 
 
-async def test_the_boot_hook_reads_every_gating_flag_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wiring: the boot path passes the project's flags through, not constants."""
-    from trw_mcp.models.config import TRWConfig
+async def test_a_flag_enabled_mid_session_lists_its_tool_always_loaded(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-305-FR04 end to end: boot with comms off, turn it on in the file,
+    and the next list shows ``trw_send`` WITH the key, no restart."""
+    from trw_mcp.middleware.surface_authority import SurfaceAuthorityMiddleware, reset_surface_authority_state
+    from trw_mcp.models.config import reload_config
     from trw_mcp.server import _tools
-    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, FLAG_GATED_ALWAYS_LOAD
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY
+    from trw_mcp.server._app import mcp
 
-    names = frozenset(FLAG_GATED_ALWAYS_LOAD)
-    saved = await _restoring(names)
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("TRW_COMMS_ENABLED", raising=False)
+    config = tmp_path / ".trw" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("comms_enabled: false\n", encoding="utf-8")
+    reload_config()
+    reset_surface_authority_state()
+    saved = await _restoring(frozenset({"trw_send"}))
+    middleware = SurfaceAuthorityMiddleware()
+
+    class _Ctx:
+        fastmcp_context = None
+
+    async def listed() -> dict[str, Any]:
+        async def call_next(_ctx: Any) -> Any:
+            return await mcp._list_tools()
+
+        return {t.name: t for t in await middleware.on_list_tools(_Ctx(), call_next)}  # type: ignore[arg-type]
+
     try:
-        for flags_on in (False, True):
-            from trw_mcp.server._app import mcp
-
-            for name in names:
-                (await mcp.get_tool(name)).meta = {k: v for k, v in saved[name].items() if k != ALWAYS_LOAD_META_KEY}
-            cfg = TRWConfig(assess_enabled=flags_on, comms_enabled=flags_on)
-            monkeypatch.setattr("trw_mcp.models.config.get_config", lambda cfg=cfg: cfg)
-            await asyncio.to_thread(_tools._apply_always_load_meta)
-            wire = await _wire_meta()
-            marked = {name for name in names if wire[name].get(ALWAYS_LOAD_META_KEY) is True}
-            assert marked == (set(names) if flags_on else set()), f"flags_on={flags_on}: marked {sorted(marked)}"
+        (await mcp.get_tool("trw_send")).meta = {
+            k: v for k, v in saved["trw_send"].items() if k != ALWAYS_LOAD_META_KEY
+        }
+        await asyncio.to_thread(_tools._apply_always_load_meta)
+        assert "trw_send" not in await listed()
+        config.write_text("comms_enabled: true\n", encoding="utf-8")
+        now = await listed()
+        assert "trw_send" in now
+        wire = now["trw_send"].to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
+        assert (wire.get("_meta") or {}).get(ALWAYS_LOAD_META_KEY) is True
     finally:
         await _restore(saved)
+        reset_surface_authority_state()
+        reload_config()
 
 
 def test_generated_claude_code_mcp_config_sets_no_per_server_always_load(tmp_path: Any) -> None:
@@ -257,7 +291,6 @@ def test_generated_claude_code_mcp_config_sets_no_per_server_always_load(tmp_pat
     source = Path(mcp_json.__file__).read_text(encoding="utf-8")
     assert "alwaysLoad" not in source  # the PRD's grep_absent assertion
 
-    assert "alwaysLoad" not in mcp_json._generate_mcp_json()
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
     mcp_json._merge_mcp_json(tmp_path, result)
     written = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))

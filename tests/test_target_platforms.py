@@ -18,8 +18,10 @@ from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.bootstrap._init_project import init_project
 from trw_mcp.bootstrap._update_project import update_project
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.claude_md._sync import _determine_write_targets
+from trw_mcp.state.claude_md._agents_md import _determine_write_target_decision
 from trw_mcp.tools.ceremony import _do_instruction_sync
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -158,20 +160,18 @@ class TestInitTargetPlatforms:
 class TestUpdateTargetPlatforms:
     """update_project() updates target_platforms when IDE targets change."""
 
-    def test_update_adds_opencode_when_detected(self, initialized_repo: Path) -> None:
-        """Init with claude-code only; create .opencode/; update adds opencode to target_platforms."""
-        # Verify initial state is claude-code only
+    def test_update_does_not_adopt_a_bare_opencode_marker(self, initialized_repo: Path) -> None:
+        """Init with claude-code only; an empty .opencode/ dir is no proof of a TRW install, so a bare update does not record opencode."""
         initial_platforms = _read_target_platforms(initialized_repo)
         assert initial_platforms == ["claude-code"]
 
-        # Now create .opencode/ directory so auto-detect picks it up
         (initialized_repo / ".opencode").mkdir(exist_ok=True)
 
         result = update_project(initialized_repo)
         assert not result["errors"]
 
-        platforms = _read_target_platforms(initialized_repo)
-        assert "opencode" in platforms
+        assert _read_target_platforms(initialized_repo) == ["claude-code"]
+        assert list((initialized_repo / ".opencode").iterdir()) == []
 
     def test_update_preserves_when_unchanged(self, initialized_repo: Path) -> None:
         """update_project with same IDE targets preserves config.yaml without modification."""
@@ -393,164 +393,97 @@ class TestDeliverTargetPlatforms:
 
 
 # ---------------------------------------------------------------------------
-# TestDetermineWriteTargets — direct unit tests for _determine_write_targets
+# TestDetermineWriteTargets — direct unit tests for _determine_write_target_decision
 # ---------------------------------------------------------------------------
 
 
 class TestDetermineWriteTargets:
-    """Direct tests for _determine_write_targets covering cursor-ide and auto-detect edge cases."""
+    """Direct tests for the write-target decision (cursor-ide and auto-detect edge cases).
 
-    def test_cursor_ide_client_does_not_write_claude_md(self, tmp_path: Path) -> None:
-        """client='cursor-ide' must NOT write CLAUDE.md (cursor rules handled by bootstrap)."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("cursor-ide", cfg, tmp_path, "root")
-        assert write_claude is False
-        # cursor-ide has agents_md=True in write_targets, so write_agents may be True
+    TRW 8.0: claude-code's carrier is the shared AGENTS.md, so every case that
+    used to write CLAUDE.md now admits the AGENTS.md write instead.
+    """
+
+    @staticmethod
+    def _decide(client: str, cfg: TRWConfig, root: Path, scope: str) -> tuple[bool, str | None]:
+        decision = _determine_write_target_decision(client, cfg, root, scope)
+        targets = decision.instruction_targets
+        return decision.write_agents, targets[0].instruction_path if targets else None
+
+    def test_cursor_ide_client_does_not_write_agents_md(self, tmp_path: Path) -> None:
+        """client='cursor-ide' writes no AGENTS.md (cursor rules handled by bootstrap)."""
+        write_agents, _ = self._decide("cursor-ide", TRWConfig(), tmp_path, "root")
+        assert write_agents is False
 
     def test_cursor_ide_client_subdir_scope_does_not_write_agents(self, tmp_path: Path) -> None:
-        """client='cursor-ide' with scope='subdir' does not write AGENTS.md (subdir scope)."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("cursor-ide", cfg, tmp_path, "subdir")
-        assert write_claude is False
-        assert write_agents is False  # subdir scope always disables agents_md
+        write_agents, _ = self._decide("cursor-ide", TRWConfig(), tmp_path, "subdir")
+        assert write_agents is False
 
-    def test_auto_cursor_only_detected_writes_claude_not_agents(self, tmp_path: Path) -> None:
-        """Detecting cursor-ide alone must NOT pull in the shared AGENTS.md.
-
-        cursor-ide *does* declare ``write_targets.agents_md=True``, and on the
-        explicit-client path that is honoured (see
-        ``test_cursor_ide_client_does_not_write_claude_md``). The auto path
-        deliberately refuses anyway, because cursor-ide detection is not a
-        project-scoped signal: ``detect_ide`` reports it from
-        ``shutil.which("cursor")``, so deriving the write from the profile alone
-        would create an AGENTS.md in every project on any box with Cursor
-        installed. The auto branch therefore requires a detected *instruction
-        target* as well, and cursor-ide has none. Fail-closed on an ambiguous
-        signal — see the comment on ``_determine_write_target_decision``.
-        """
+    def test_auto_cursor_only_detected_still_gets_claude_code_carrier(self, tmp_path: Path) -> None:
+        """A DETECTED cursor-ide alone is a PATH signal, so the default claude-code carrier stays."""
         (tmp_path / ".cursor").mkdir()
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("auto", cfg, tmp_path, "root")
-        assert write_claude is True
-        assert write_agents is False
+        write_agents, _ = self._decide("auto", TRWConfig(), tmp_path, "root")
+        assert write_agents is True
 
-    def test_auto_no_ide_detected_writes_claude(self, tmp_path: Path) -> None:
-        """Auto-detect with no IDE dirs falls back to CLAUDE.md and claims no shared surface."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("auto", cfg, tmp_path, "root")
-        assert write_claude is True
-        assert write_agents is False
+    def test_auto_no_ide_detected_writes_agents_md(self, tmp_path: Path) -> None:
+        """No IDE detected is the default scaffold: claude-code, whose carrier is AGENTS.md."""
+        write_agents, _ = self._decide("auto", TRWConfig(), tmp_path, "root")
+        assert write_agents is True
 
-    def test_auto_claude_and_cursor_detected_writes_claude(self, tmp_path: Path) -> None:
-        """Auto-detect with both .claude/ and .cursor/ writes CLAUDE.md (claude-code match).
-
-        Neither detected client contributes an instruction target, so the shared
-        AGENTS.md stays unwritten for the same fail-closed reason as the
-        cursor-only case above.
-        """
+    def test_auto_claude_and_cursor_detected_writes_agents_md(self, tmp_path: Path) -> None:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".cursor").mkdir()
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("auto", cfg, tmp_path, "root")
-        assert write_claude is True
-        assert write_agents is False
+        write_agents, _ = self._decide("auto", TRWConfig(), tmp_path, "root")
+        assert write_agents is True
 
     def test_auto_opencode_only_does_not_write_shared_agents_md(self, tmp_path: Path) -> None:
-        """A client with an instruction generator but no AGENTS.md claim gets no AGENTS.md.
-
-        PRD-CORE-240-FR04 withdrew opencode's shared AGENTS.md
-        (``writes_shared_agents_md=False``); it owns ``.opencode/INSTRUCTIONS.md``.
-        This is the discriminating case for the auto path: opencode IS in
-        ``INSTRUCTION_SYNC_CLIENT_IDS``, so the pre-47aa22ae2b
-        ``bool(instruction_targets)`` form returned True here and kept writing the
-        surface the profile had withdrawn. Fails if the decision ever stops being
-        derived from ``write_targets.agents_md``.
-        """
+        """PRD-CORE-240-FR04: opencode owns ``.opencode/INSTRUCTIONS.md``, not the shared AGENTS.md."""
         (tmp_path / ".opencode").mkdir()
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("auto", cfg, tmp_path, "root")
+        write_agents, instruction_path = self._decide("auto", TRWConfig(), tmp_path, "root")
         assert write_agents is False
         assert instruction_path == ".opencode/INSTRUCTIONS.md"
 
     def test_auto_cursor_cli_only_leaves_agents_md_to_bootstrap(self, tmp_path: Path) -> None:
-        """cursor-cli claims AGENTS.md, but the delivery-time sync still declines it.
-
-        Pinned because the reasoning is not self-evident and the assertion looks
-        like a bug otherwise. cursor-cli declares ``instruction_path="AGENTS.md"``
-        as its only carrier, yet the auto branch returns False: it also
-        requires a detected instruction target, and cursor-cli is excluded from
-        ``INSTRUCTION_SYNC_CLIENT_IDS``. That is deliberate — cursor-cli's AGENTS.md
-        is owned by the bootstrap path
-        (``bootstrap/_cursor_cli.py::generate_cursor_cli_agents_md``, PRD-CORE-137-FR04),
-        which sizes the block to the profile; letting the shared generic renderer
-        also claim the file would give one surface two writers.
-
-        Known consequence, recorded rather than asserted away: between installs the
-        sync does not refresh cursor-cli's AGENTS.md, so it tracks the framework
-        only as often as ``update-project`` runs.
-        """
+        """cursor-cli's AGENTS.md is owned by the bootstrap path (PRD-CORE-137-FR04)."""
         (tmp_path / ".cursor").mkdir()
         (tmp_path / ".cursor" / "cli.json").write_text("{}", encoding="utf-8")
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("auto", cfg, tmp_path, "root")
+        write_agents, _ = self._decide("auto", TRWConfig(), tmp_path, "root")
         assert write_agents is False
-        assert write_claude is False, "no detected cursor surface declares CLAUDE.md"
 
-    def test_claude_code_client_writes_claude_only(self, tmp_path: Path) -> None:
-        """client='claude-code' writes CLAUDE.md only."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("claude-code", cfg, tmp_path, "root")
-        assert write_claude is True
-        assert write_agents is False
+    def test_claude_code_client_writes_agents_md(self, tmp_path: Path) -> None:
+        write_agents, _ = self._decide("claude-code", TRWConfig(), tmp_path, "root")
+        assert write_agents is True
 
     def test_opencode_client_writes_its_own_file_only(self, tmp_path: Path) -> None:
-        """client='opencode' writes neither CLAUDE.md nor the shared AGENTS.md.
-
-        PRD-CORE-240-FR04: opencode no longer receives the shared AGENTS.md; it owns .opencode/INSTRUCTIONS.md, referenced from opencode.json.
-        """
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("opencode", cfg, tmp_path, "root")
-        assert write_claude is False
+        write_agents, instruction_path = self._decide("opencode", TRWConfig(), tmp_path, "root")
         assert write_agents is False
         assert instruction_path == ".opencode/INSTRUCTIONS.md"
 
     def test_codex_client_writes_its_own_file_only(self, tmp_path: Path) -> None:
-        """client='codex' writes AGENTS.md only."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("codex", cfg, tmp_path, "root")
-        assert write_claude is False
         # WITHDRAWN (PRD-CORE-240-FR04): codex's own `.codex/INSTRUCTIONS.md`
         # carries the whole protocol, so TRW writes nothing into AGENTS.md.
+        write_agents, instruction_path = self._decide("codex", TRWConfig(), tmp_path, "root")
         assert write_agents is False
         assert instruction_path == ".codex/INSTRUCTIONS.md"
 
-    def test_all_client_writes_both(self, tmp_path: Path) -> None:
-        """client='all' writes both CLAUDE.md and AGENTS.md when enabled."""
+    def test_all_client_writes_agents_md(self, tmp_path: Path) -> None:
         cfg = TRWConfig()
         object.__setattr__(cfg, "agents_md_enabled", True)
-        write_claude, write_agents, instruction_path = _determine_write_targets("all", cfg, tmp_path, "root")
-        assert write_claude is True
+        write_agents, _ = self._decide("all", cfg, tmp_path, "root")
         assert write_agents is True
 
     def test_unknown_client_falls_back_to_claude_code_write_targets(self, tmp_path: Path) -> None:
-        """Unknown client falls back to claude-code profile via resolve_client_profile."""
-        cfg = TRWConfig()
-        write_claude, write_agents, instruction_path = _determine_write_targets("windsurf", cfg, tmp_path, "root")
-        assert write_claude is True
-        assert write_agents is False
+        write_agents, _ = self._decide("windsurf", TRWConfig(), tmp_path, "root")
+        assert write_agents is True
 
-    def test_all_client_agents_md_disabled_writes_claude_only(self, tmp_path: Path) -> None:
-        """client='all' with agents_md_enabled=False only writes CLAUDE.md."""
+    def test_all_client_agents_md_disabled_writes_nothing_shared(self, tmp_path: Path) -> None:
         cfg = TRWConfig()
         object.__setattr__(cfg, "agents_md_enabled", False)
-        write_claude, write_agents, instruction_path = _determine_write_targets("all", cfg, tmp_path, "root")
-        assert write_claude is True
+        write_agents, _ = self._decide("all", cfg, tmp_path, "root")
         assert write_agents is False
 
     def test_all_client_subdir_scope_no_agents(self, tmp_path: Path) -> None:
-        """client='all' with scope='subdir' suppresses agents_md."""
         cfg = TRWConfig()
         object.__setattr__(cfg, "agents_md_enabled", True)
-        write_claude, write_agents, instruction_path = _determine_write_targets("all", cfg, tmp_path, "subdir")
-        assert write_claude is True
+        write_agents, _ = self._decide("all", cfg, tmp_path, "subdir")
         assert write_agents is False

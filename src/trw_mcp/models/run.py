@@ -38,28 +38,6 @@ class Phase(str, Enum):
 PHASE_ORDER: dict[str, int] = {phase.value: i for i, phase in enumerate(Phase)}
 
 
-class ReversionTrigger(str, Enum):
-    """Reversion trigger classification (PRD-CORE-013-FR02).
-
-    Categorizes why a phase reversion was initiated.
-    """
-
-    REFACTOR_NEEDED = "refactor_needed"
-    ARCHITECTURE_MISMATCH = "architecture_mismatch"
-    NEW_DEPENDENCY = "new_dependency"
-    TEST_STRATEGY_CHANGE = "test_strategy_change"
-    SCOPE_CHANGE = "scope_change"
-    OTHER = "other"
-
-    @staticmethod
-    def classify(trigger_str: str) -> ReversionTrigger:
-        """Return the matching ReversionTrigger, or OTHER if unrecognized."""
-        try:
-            return ReversionTrigger(trigger_str)
-        except ValueError:
-            return ReversionTrigger.OTHER
-
-
 class Confidence(str, Enum):
     """Confidence level for shards and runs."""
 
@@ -237,19 +215,6 @@ class WaveEntry(BaseModel):
     depends_on: list[int] = Field(default_factory=list)
 
 
-class WaveManifest(BaseModel):
-    """Wave manifest — tracks wave-level execution progress.
-
-    Waves are sequential groups of parallel shards. Each wave
-    completes before the next begins (inter-wave data dependencies).
-    PRD-CORE-006: version and adaptation_history for dynamic wave adaptation.
-    """
-
-    waves: list[WaveEntry] = Field(default_factory=list)
-    version: int = Field(ge=1, default=1)
-    adaptation_history: list[dict[str, object]] = Field(default_factory=list)
-
-
 class RunState(BaseModel):
     """Run state — top-level orchestration state (persisted as run.yaml).
 
@@ -281,6 +246,13 @@ class RunState(BaseModel):
     phase_requirements: PhaseRequirements | None = None
     task_profile: TaskProfile | None = None
     owner_session_id: str | None = None
+    # PRD-CORE-338-FR02: stamped by formation join (``_stamp_run_record``); declared here so a
+    # typed load keeps it and ``timekeeping.is_tracked`` can read membership without a manifest.
+    formation_id: str | None = None
+    member_id: str | None = None
+    # PRD-CORE-338-FR03: the declared UTC target, also logged once as a ``time_target`` event;
+    # kept here so trw_checkpoint decides tracking from run.yaml alone (NFR03).
+    target_utc: str | None = None
     # PRD-CORE-106: Artifact paths scanned for knowledge requirements
     artifacts: list[str] = Field(default_factory=list)
     # PRD-CORE-141-FR10: Protected runs survive the stale-run sweep regardless of age
@@ -302,86 +274,6 @@ class RunState(BaseModel):
         if isinstance(value, str):
             return _STATUS_ALIASES.get(value.strip(), value)
         return value
-
-
-class EventType(str, Enum):
-    """Canonical event type identifiers for the TRW event system.
-
-    All event types used in tool instrumentation must be members of this
-    enum. This provides
-    type safety and eliminates silent failures from typos.
-    """
-
-    # --- Run lifecycle ---
-    RUN_INIT = "run_init"
-    RUN_RESUMED = "run_resumed"
-    SESSION_START = "session_start"
-
-    # --- Phase lifecycle ---
-    PHASE_ENTER = "phase_enter"
-    PHASE_CHECK = "phase_check"
-    PHASE_REVERT = "phase_revert"
-    PHASE_GATE_PASSED = "phase_gate_passed"
-    PHASE_GATE_FAILED = "phase_gate_failed"
-
-    # --- Wave/shard lifecycle ---
-    SHARD_STARTED = "shard_started"
-    SHARD_COMPLETE = "shard_complete"  # backward-compat alias
-    SHARD_COMPLETED = "shard_completed"
-    WAVE_COMPLETE = "wave_complete"  # backward-compat alias
-    WAVE_COMPLETED = "wave_completed"
-    WAVE_VALIDATED = "wave_validated"
-    WAVE_VALIDATION_PASSED = "wave_validation_passed"
-
-    # --- PRD lifecycle ---
-    PRD_CREATED = "prd_created"
-    PRD_APPROVED = "prd_approved"
-    PRD_STATUS_CHANGE = "prd_status_change"
-    PRD_GROOM_COMPLETE = "prd_groom_complete"
-    AUTO_PRD_PROGRESS = "auto_prd_progress"
-
-    # --- Testing/build ---
-    TESTS_PASSED = "tests_passed"
-    TESTS_FAILED = "tests_failed"
-    TEST_RUN = "test_run"
-    BUILD_PASSED = "build_passed"
-    BUILD_FAILED = "build_failed"
-
-    # --- Learning/reflection ---
-    REFLECTION_COMPLETE = "reflection_complete"  # backward-compat alias
-    REFLECTION_COMPLETED = "reflection_completed"
-    CHECKPOINT = "checkpoint"
-    DELIVER_COMPLETE = "trw_deliver_complete"
-
-    # --- Telemetry: one row per tool call, written by the tool-call wrapper (PRD-FIX-150) ---
-    TOOL_CALL = "tool_call"
-
-    BUILD_CHECK_COMPLETE = "build_check_complete"
-
-    # --- Compliance ---
-    COMPLIANCE_CHECK = "compliance_check"
-    COMPLIANCE_PASSED = "compliance_passed"
-
-    # --- Code simplifier (PRD-QUAL-010) ---
-    SIMPLIFICATION_COMPLETE = "simplification_complete"
-    SIMPLIFICATION_ROLLBACK = "simplification_rollback"
-
-    # --- File operations ---
-    FILE_MODIFIED = "file_modified"
-
-    # --- Task lifecycle ---
-    TASK_COMPLETE = "task_complete"
-
-    # --- Spec reconciliation ---
-    SPEC_RECONCILIATION = "spec_reconciliation"
-
-    @staticmethod
-    def resolve(event_str: str) -> EventType | None:
-        """Return the matching EventType member, or None if unrecognized."""
-        try:
-            return EventType(event_str)
-        except ValueError:
-            return None
 
 
 #: Event names a reader of a run log counts as a tool call. Only ``tool_call`` is written; run logs

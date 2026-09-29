@@ -44,6 +44,13 @@ REFUSALS = frozenset(
         "scope_too_broad",
         "scope_matches_no_peer",
         "group_storage_budget",
+        # PRD-CORE-322 FR02-FR04 handoff writes; a v5 mailbox only, so no v4 reader sees them.
+        "not_a_handoff",
+        "handoff_not_authorized",
+        "handoff_not_accepted",
+        "handoff_not_reported",
+        "handoff_already_reported",
+        "invalid_next_read",
     }
 )
 

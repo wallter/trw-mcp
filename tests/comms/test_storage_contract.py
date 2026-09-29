@@ -204,7 +204,8 @@ def test_two_process_first_open_yields_one_complete_schema(tmp_path: Path) -> No
         results.join_thread()
     print(f"first_open_outcomes={observed}")
     assert all(child.exitcode == 0 for child in children)
-    expected = sorted(re.findall(r"CREATE TABLE\s+(\w+)", _schema.V3_SCHEMA, re.IGNORECASE))
+    ddl = ";".join(_schema.ddl_statements(_schema.SCHEMA_VERSION))
+    expected = sorted(re.findall(r"CREATE TABLE\s+(\w+)", ddl, re.IGNORECASE))
     assert observed == [("ok", expected, str(_store.SCHEMA_VERSION))] * 2
     with _store.sqlite3.connect(_store.database_path(manifest)) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -485,7 +486,9 @@ def test_a_mailbox_switched_to_wal_after_the_upgrade_blocks_rollback(formation_e
         _store.StoreRefusal.PRAGMA_UNAPPLIED,
         _store.StoreRefusal.ROLLBACK_WOULD_DROP_TRAFFIC,
     )
-    assert _rows(path, "SELECT value FROM schema_meta") == [("4",)], "nothing restored over the WAL-era write"
+    assert _rows(path, "SELECT value FROM schema_meta") == [(str(_schema.SCHEMA_VERSION),)], (
+        "nothing restored over the WAL-era write"
+    )
 
 
 def test_a_restore_that_crashed_before_the_record_rename_is_finished_idempotently(

@@ -24,6 +24,7 @@ build artifact; template↔dist parity is its own gate
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -439,6 +440,8 @@ class TestARefusedUpdateStopsTheInstaller:
     def test_no_project_byte_changes_and_the_remedy_is_shown(
         self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import trw_memory
+
         import trw_mcp
         from trw_mcp.bootstrap import init_project
 
@@ -448,7 +451,10 @@ class TestARefusedUpdateStopsTheInstaller:
         (project / ".trw" / "managed-artifacts.yaml").write_text("content_hashes: [\n", encoding="utf-8")
         before = {p: p.read_bytes() for p in project.rglob("*") if p.is_file()}
 
-        monkeypatch.setenv("PYTHONPATH", str(Path(trw_mcp.__file__).parents[1]))
+        # The child runs the candidate's trw_mcp AND trw_memory: trw_mcp imports trw_memory.safe_fs, which an
+        # older installed trw_memory lacks, so a trw_mcp-only path would test a mixed tree (charter Q6).
+        candidate = (Path(trw_mcp.__file__).parents[1], Path(trw_memory.__file__).parents[1])
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(str(root) for root in candidate))
         monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: [sys.executable, "-m", "trw_mcp.server"])
         ui = MagicMock()
         ui.interactive = True

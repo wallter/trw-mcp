@@ -22,6 +22,9 @@ from tests._telemetry_pipeline_support import (  # noqa: F401
 from tests._test_telemetry_publisher_support import _make_config, _make_learning, _write_learning
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id
 
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
+
 
 class TestPipelineInstallationIdHash:
     def test_resolved_installation_id_is_hashed_on_egress(
@@ -105,7 +108,7 @@ class TestPublisherSourceProjectHash:
 
         captured: dict[str, object] = {}
 
-        def _capture(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _capture(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured.update(payload)
             return True
 

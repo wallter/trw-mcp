@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests._dispatch_host import unconfined_off_darwin
+from tests._dispatch_host import write_stub as _write_stub
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._confine import confinement_prefix
@@ -26,14 +26,10 @@ from trw_mcp.dispatch._sandbox_probe import probe_write_containment
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
 
-def _write_stub(tmp_path: Path, name: str, body: str) -> Path:
-    stub = tmp_path / name
-    stub.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    return stub
-
-
 def _patch_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
+    # Deliberately does NOT call unconfined_off_darwin (unlike _dispatch_host.use_argv):
+    # most tests here exercise real host-confinement behavior on macOS and only a few
+    # call sites opt out explicitly via a direct unconfined_off_darwin(monkeypatch) call.
     def _fixed(_req: DispatchRequest, *, confined: bool = False) -> list[str]:
         return argv
 
@@ -420,8 +416,7 @@ class TestVersionStatusNamesEveryMismatch:
 
         status = collect_version_status(tmp_path)
 
-        if status["compatible"]:
-            pytest.skip("no mismatch to explain in this tree")
+        assert not status["compatible"], "an empty tree has no install, so it must report a mismatch to explain"
         explained = " ".join((*status["errors"], *status["warnings"]))
         for mismatch in status["mismatches"]:
             assert mismatch in explained, f"{mismatch} flipped compatible=false with nothing naming it"

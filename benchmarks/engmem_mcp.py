@@ -37,6 +37,7 @@ import os
 import shutil
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,9 +50,13 @@ from benchmarks.engmem import synth  # noqa: E402
 from benchmarks.engmem.arms import GrepArm, RecencyArm, TrwHybridArm  # noqa: E402
 from benchmarks.engmem.replay import ReplayState, replay_and_score  # noqa: E402
 from benchmarks.engmem.score import aggregate, latency, metrics_for, paired_mcnemar  # noqa: E402
+from trw_memory.client import MemoryClient as _RealMemoryClient  # noqa: E402
+from trw_memory.daemon import DaemonPaths  # noqa: E402
+from trw_memory.daemon.client import DaemonClient  # noqa: E402
 
-from tests._memory_daemon import running_daemon  # noqa: E402
-from tests._memory_fixtures import MemoryDaemon, attach_checkout  # noqa: E402
+from tests._memory_daemon import running_daemon as _real_running_daemon  # noqa: E402
+from tests._memory_fixtures import MemoryDaemon  # noqa: E402
+from tests._memory_fixtures import attach_checkout as _real_attach_checkout  # noqa: E402
 
 PAIRED_METRICS = ("hit@5", "complete@5", "hit@10")
 LIBRARY_ARM = "trw-hybrid"
@@ -145,15 +150,58 @@ def _prepare_root(root: Path) -> tuple[Path, Path]:
     return project, user_dir
 
 
+async def _await_daemon_store_ready(client: DaemonClient, namespace: str) -> None:
+    """Block until the daemon has actually opened (and migrated, if needed) its store.
+
+    Publishing the discovery file only proves the daemon's socket is bound
+    (``daemon/_serve.py``); the store itself is opened lazily, on its first real
+    call. A ``memory_status`` round trip forces that open and does not return
+    until it (and any migration) completes -- a positive readiness signal, not a
+    sleep. This MUST run to completion before any direct ``MemoryClient`` opens
+    the same fresh store, or both processes race for the one exclusive
+    ``migrate`` hold and the loser hits ``StoreBusyError`` (r8
+    ENGMEM-HARNESS-LOCK-RACE).
+    """
+    await client.status(namespace)
+
+
+async def _open_single_writer(
+    project: Path,
+    user_dir: Path,
+    paths: DaemonPaths,
+    *,
+    attach_checkout: Callable[[Path, MemoryDaemon], tuple[str, DaemonClient]] = _real_attach_checkout,
+    await_ready: Callable[[DaemonClient, str], Awaitable[None]] = _await_daemon_store_ready,
+    memory_client_factory: Callable[..., Any] = _RealMemoryClient,
+) -> tuple[str, Path, Any]:
+    """Attach the checkout, wait for the daemon's OWN store open to finish, THEN open the direct client.
+
+    ENGMEM-HARNESS-LOCK-RACE: the direct client opens only after the daemon has
+    opened and migrated the store, never before or concurrently with it. Both
+    still end up with the store open afterwards -- this sequences the two opens,
+    it does not make the harness single-writer -- but a fresh store's migration
+    is EXCLUSIVE (``trw_memory/_store_lock.py``), so whichever side gets there
+    second, while the caller's ``with running_daemon(...)`` is already up, must
+    wait for the first (``_await_daemon_store_ready``) rather than race it. The
+    three callables are a seam for
+    ``trw-mcp/tests/test_engmem_harness_lock_race.py``, which proves the
+    ordering with fakes (no real daemon, no model); every default here is the
+    real production callable, so the production path is unchanged.
+    """
+    namespace, client = attach_checkout(project / ".trw", MemoryDaemon(paths=paths, user_dir=user_dir))
+    await await_ready(client, namespace)
+    return namespace, paths.store, memory_client_factory(namespace, mode="local", db_path=paths.store)
+
+
 async def run(size: int, args: argparse.Namespace) -> dict[str, Any]:
     events, queries, successor_of = synth.generate(seed=args.seed, distractors=size)
     project, user_dir = _prepare_root(Path(args.store).expanduser().resolve() / f"n{size}")  # noqa: ASYNC240 - one-shot CLI
     os.environ["TRW_PROJECT_ROOT"] = str(project)
     os.environ["TRW_USER_DIR"] = str(user_dir)
     os.chdir(project)
-    with running_daemon(user_dir, keyword_only=False) as paths:
-        namespace, _ = attach_checkout(project / ".trw", MemoryDaemon(paths=paths, user_dir=user_dir))
-        return await _run_against(size, args, events, queries, successor_of, namespace, paths.store)
+    with _real_running_daemon(user_dir, keyword_only=False) as paths:
+        namespace, _store, library = await _open_single_writer(project, user_dir, paths)
+        return await _run_against(size, args, events, queries, successor_of, namespace, library)
 
 
 async def _run_against(
@@ -163,11 +211,10 @@ async def _run_against(
     queries: Any,
     successor_of: Any,
     namespace: str,
-    store: Path,
+    library: Any,
 ) -> dict[str, Any]:
 
     from fastmcp import Client
-    from trw_memory.client import MemoryClient
 
     import trw_mcp.server._boot_deferred as boot_deferred
 
@@ -175,7 +222,6 @@ async def _run_against(
     from trw_mcp.server._app import create_app
     from trw_mcp.server._tools import _tool_registrars
 
-    library = MemoryClient(namespace, mode="local", db_path=store)
     server = create_app()
     for register in _tool_registrars():
         register(server)

@@ -98,9 +98,6 @@ class AgentTraceV1Fields(BaseModel):
     pricing_version: str | None = None
 
 
-AGENT_TRACE_V1_FIELDS: tuple[str, ...] = tuple(AgentTraceV1Fields.model_fields)
-
-
 class CeremonyEvent(HPOTelemetryEvent):
     """Ceremony phase-gate + compliance events."""
 
@@ -218,7 +215,7 @@ class SurfaceRegistered(HPOTelemetryEvent):
 
     Emitted once per newly-discovered governing artifact at
     ``SurfaceRegistry.build()`` call time. Lets cross-session analytics
-    answer "when did this CLAUDE.md / FRAMEWORK.md / agent prompt first
+    answer "when did this AGENTS.md / FRAMEWORK.md / agent prompt first
     appear in the surface manifest?" without re-walking disk.
 
     Required ``payload`` keys:
@@ -226,7 +223,7 @@ class SurfaceRegistered(HPOTelemetryEvent):
         - ``content_hash``: str — sha256 hex of artifact contents
         - ``source_path``: str — repo-relative POSIX path
         - ``category``: str — agents / skills / hooks / prompts / config /
-          surfaces / claude_md_root / framework_md / sub_claude_md
+          surfaces / agents_md_root / framework_md / sub_agents_md
     """
 
     event_type: str = "surface_registered"
@@ -260,39 +257,6 @@ class H1ObserveModeWarning(ObserverEvent):
     emitter: str = "h1_shim"
 
 
-def emit_h1_observe_mode_warning(
-    *,
-    session_id: str,
-    run_id: str | None,
-    emitter_name: str,
-    fallback_reason: str,
-    buffered_event_count_since_start: int,
-    surface_snapshot_id: str = "",
-    activation_gate_blocked_reason: str = "h1_substrate_not_live",
-    parent_event_id: str | None = None,
-) -> H1ObserveModeWarning:
-    """Factory that builds an :class:`H1ObserveModeWarning` with the FR-9 payload shape.
-
-    Use this factory rather than constructing the event directly so the
-    required payload keys stay consistent across all shim call sites.
-    The returned event is NOT auto-published — callers route it through
-    their telemetry pipeline (Phase 2 retrofit wires this into
-    ``_emit_to_h1``).
-    """
-    return H1ObserveModeWarning(
-        session_id=session_id,
-        run_id=run_id,
-        surface_snapshot_id=surface_snapshot_id,
-        parent_event_id=parent_event_id,
-        payload={
-            "emitter_name": emitter_name,
-            "fallback_reason": fallback_reason,
-            "buffered_event_count_since_start": buffered_event_count_since_start,
-            "activation_gate_blocked_reason": activation_gate_blocked_reason,
-        },
-    )
-
-
 class ProbeEvent(HPOTelemetryEvent):
     """Empirical-probe yield event (PRD-CORE-144 FR-09).
 
@@ -304,7 +268,7 @@ class ProbeEvent(HPOTelemetryEvent):
     Required ``payload`` keys (see ``PROBE_EVENT_PAYLOAD_KEYS`` in
     ``probe/telemetry.py``):
         - ``verdict``, ``hypothesis_id``, ``wall_ms``, ``timed_out``,
-          ``cache_hit``, ``planning_mode``, ``confidence``, ``decisive``
+          ``cache_hit``, ``confidence``, ``decisive``
 
     Defined here (rather than in ``probe/telemetry.py``) so the global
     ``EVENT_TYPE_REGISTRY`` is complete regardless of import order — the
@@ -357,6 +321,29 @@ EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
 }
 
 
+#: Legacy ``events.jsonl`` ``event`` name -> unified ``event_type``. Read by
+#: ``FileEventLogger`` to emit the unified-schema sibling of a legacy row;
+#: an unknown legacy name falls through to ``observer`` there.
+LEGACY_EVENT_TYPE_MAP: dict[str, str] = {
+    "session_start": "session_start",
+    "session_end": "session_end",
+    "deliver": "session_end",
+    "checkpoint": "observer",
+    "run_init": "observer",
+    "phase_enter": "phase_exposure",
+    "phase_exit": "phase_exposure",
+    "contract": "contract",
+    "contract_pass": "contract",
+    "contract_fail": "contract",
+    "ceremony": "ceremony",
+    "ceremony_compliance": "ceremony_compliance",
+    "tool_call": "tool_call",
+    "thrashing": "thrashing",
+    "mcp_security": "mcp_security",
+    "meta_tune": "meta_tune",
+}
+
+
 #: Canonical payload-backed subtype details proven by FR-14 as shipped in
 #: Sprint 96. The H1 schema intentionally keeps subtype-specific details in
 #: ``payload`` rather than adding extra top-level Pydantic fields per event
@@ -398,7 +385,6 @@ EVENT_PAYLOAD_KEY_REGISTRY: dict[str, tuple[str, ...]] = {
         "wall_ms",
         "timed_out",
         "cache_hit",
-        "planning_mode",
         "confidence",
         "decisive",
     ),
@@ -449,6 +435,7 @@ def validate_parent_within_run(
 __all__ = [
     "EVENT_PAYLOAD_KEY_REGISTRY",
     "EVENT_TYPE_REGISTRY",
+    "LEGACY_EVENT_TYPE_MAP",
     "CeremonyEvent",
     "ContractEvent",
     "DefaultResolutionError",
@@ -466,6 +453,5 @@ __all__ = [
     "SurfaceRegistered",
     "ThrashingEvent",
     "ToolCallEvent",
-    "emit_h1_observe_mode_warning",
     "validate_parent_within_run",
 ]

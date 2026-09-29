@@ -22,6 +22,7 @@ from typing import cast
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.bootstrap._cursor import HookHandlerEntry
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
@@ -54,7 +55,6 @@ _IDE_CURATED_SKILLS: list[str] = [
     "trw-self-review",
     "trw-dry-check",
     "trw-security-check",
-    "trw-sprint-init",
     "trw-project-health",
     "trw-memory-audit",
     "trw-reflect",
@@ -79,10 +79,6 @@ _TRW_COMMANDS: list[tuple[str, str]] = [
     (
         "trw-audit",
         "Run adversarial spec-vs-code audit on a PRD.",
-    ),
-    (
-        "trw-sprint-init",
-        "Initialize a new sprint: list draft PRDs, create sprint doc, bootstrap run.",
     ),
     (
         "trw-framework-check",
@@ -272,7 +268,7 @@ def generate_cursor_ide_commands(
             logger.info("cursor_ide_command_user_modified", path=rel)
             result["preserved"].append(rel)
             continue
-        target.write_bytes(incoming)
+        write_checkout_file(target_dir, target, incoming)
         (result["updated"] if existed else result["created"]).append(rel)
 
     logger.info(
@@ -325,7 +321,7 @@ def generate_cursor_ide_skills(
 
     result = generate_cursor_skills_mirror(
         target_dir,
-        [name for name in _IDE_CURATED_SKILLS if skill_enabled(name)],
+        [name for name in _IDE_CURATED_SKILLS if skill_enabled(name, target_dir)],
         source_skills_dir,
         force=force,
         manifest_hashes=manifest_hashes,
@@ -335,6 +331,7 @@ def generate_cursor_ide_skills(
         source_skills_dir or (_CURSOR_DATA_DIR / "skills"),
         cast("dict[str, list[str]]", result),
         ".cursor/skills",
+        project_root=target_dir,
     )
     return result
 
@@ -387,6 +384,7 @@ def generate_cursor_ide_hooks(
         hooks_file,
         trw_hooks_body,
         identity_prefix=".cursor/hooks/trw-",
+        root=target_dir,
     )
     result["created"].extend(merge_result.get("created") or [])
     result["updated"].extend(merge_result.get("updated") or [])

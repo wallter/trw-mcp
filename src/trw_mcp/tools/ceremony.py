@@ -17,8 +17,10 @@ for step functions should target that module directly:
 from __future__ import annotations
 
 import time
+from collections.abc import MutableMapping
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import structlog
 from fastmcp import Context, FastMCP
@@ -91,6 +93,8 @@ _ADVISORY_WARNING_KEYS: tuple[str, ...] = (
     "untracked_warning",
     "complexity_drift_warning",
     "instruction_parity_warning",
+    "integration_isolated_warning",  # PRD-CORE-320 FR04
+    "requirement_drift_warning",  # PRD-CORE-321 slice 2
     "warning",
 )
 
@@ -144,9 +148,6 @@ from trw_mcp.tools._ceremony_runtime_helpers import (
 )
 from trw_mcp.tools._ceremony_runtime_helpers import (
     _learning_reflection_message as _learning_reflection_message,
-)
-from trw_mcp.tools._ceremony_runtime_helpers import (
-    _mark_run_complete as _mark_run_complete,
 )
 from trw_mcp.tools._ceremony_runtime_helpers import (
     _no_active_run_hint as _no_active_run_hint,
@@ -257,9 +258,6 @@ from trw_mcp.tools._ceremony_step_table import (
     run_steps as run_steps,
 )
 from trw_mcp.tools._session_start_trim import (
-    find_intentional_marker as find_intentional_marker,
-)
-from trw_mcp.tools._session_start_trim import (
     trim_session_start_payload as trim_session_start_payload,
 )
 
@@ -275,9 +273,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         query: str = "",
         verbose: bool = False,
     ) -> SessionStartResultDict:
-        """Load prior learnings and any active run so you start with full context.
-
-        Use when starting a session, resuming after compaction, or switching
+        """Use when starting a session, resuming after compaction, or switching
         tasks. query focuses the recall; verbose=True returns the full payload
         instead of the compact default.
 
@@ -299,6 +295,29 @@ def register_ceremony_tools(server: FastMCP) -> None:
         # block the others (it lands in ``errors``).
         config = get_config()
         results: SessionStartResultDict = {"timestamp": datetime.now(timezone.utc).isoformat()}
+        # PRD-CORE-329-FR03: surfaced ahead of the learnings-stub list set by
+        # the recall step below — inserted here, before ``run_steps`` runs, so
+        # dict insertion order (which json.dumps preserves) puts it first.
+        # Resolved via the module-level ``resolve_trw_dir`` name so the ~79
+        # existing test monkeypatches on ``ceremony.resolve_trw_dir`` apply here too.
+        from trw_mcp.state._decision_queue import blocked_decision_block
+
+        # PRD-CORE-329-FR03 must stay fail-open like every other sub-step
+        # (DR-001): this runs before the try/finally below, so a raise here
+        # (e.g. resolve_trw_dir failing) would otherwise propagate out of the
+        # mandated first call instead of degrading gracefully.
+        try:
+            _decision_block, _decision_pending_count = blocked_decision_block(resolve_trw_dir())
+        except Exception as exc:
+            # Recorded as a typed degradation (not just a debug log) so a
+            # failed check is distinguishable in the response from "checked,
+            # nothing pending" -- review finding on this fix (int-red-laneA).
+            record_into(cast("MutableMapping[str, object]", results), "blocked_decision", exc)
+            _decision_block, _decision_pending_count = None, 0
+        if _decision_block is not None:
+            results["blocked_decision"] = _decision_block
+            if _decision_pending_count > 1:
+                results["blocked_decisions_pending"] = _decision_pending_count
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
 
@@ -388,9 +407,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
         delivery_id: str = "",
         capability_token: str = "",
     ) -> DeliverResultDict:
-        """Persist learnings and progress so future sessions inherit this session's work.
-
-        Use when accepting completed work, not merely ending a session. Preserve
+        """Use when accepting completed work, not merely ending a session. Preserve
         material unfinished work with a checkpoint or durable native handoff
         and a next-read pointer instead. Already captured learnings persist;
         do not duplicate them or manufacture a learning for trivial work.

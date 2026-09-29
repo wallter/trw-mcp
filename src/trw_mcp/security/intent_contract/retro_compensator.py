@@ -27,7 +27,7 @@ from trw_mcp.security.intent_contract._control_plane import (
     BlobReader,
     configured_contract_path,
 )
-from trw_mcp.security.intent_contract._git_run import BlobUnreadable, GitCommandError, run_git
+from trw_mcp.security.intent_contract._git_run import BlobUnreadable, GitCommandError, blob_batch, run_git
 from trw_mcp.security.intent_contract._models import WeakenEditFinding
 from trw_mcp.security.intent_contract._revisions import commit_pairs
 from trw_mcp.security.intent_contract.ledger import ledger_path
@@ -100,7 +100,16 @@ def ledger_has_override(repo_root: Path, claim_id: str) -> bool:
 def scan_recent_history(
     repo_root: Path, window_commits: int = 500, session_id: str | None = None
 ) -> list[WeakenEditFinding]:
-    """Recompute FR02's predicate over the last *window_commits* commits."""
+    """Recompute FR02's predicate over the last *window_commits* commits.
+
+    The walk's blob reads share one ``git cat-file --batch`` process (identical
+    answers, ~30 ms per avoided spawn); the process is closed when the walk ends.
+    """
+    with blob_batch(repo_root):
+        return _scan_recent_history(repo_root, window_commits, session_id)
+
+
+def _scan_recent_history(repo_root: Path, window_commits: int, session_id: str | None) -> list[WeakenEditFinding]:
     commits = recent_commits_with_paths(repo_root, window_commits)
     if not commits:
         return []

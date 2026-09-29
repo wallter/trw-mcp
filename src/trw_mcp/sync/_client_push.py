@@ -112,6 +112,7 @@ async def _push_to_target(
             client_id=client_id,
             learning_sharing_enabled=learning_sharing_enabled,
             platform_telemetry_enabled=platform_telemetry_enabled,
+            source_trw_dir=primary_pusher.source_trw_dir,  # the same payload store governs every target
         )
         pusher_map[target.label] = pusher
 

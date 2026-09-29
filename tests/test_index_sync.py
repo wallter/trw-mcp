@@ -817,8 +817,6 @@ def test_projection_shared_renderers_are_order_independent(tmp_path: Path) -> No
     assert module.render_roadmap_catalogue(entries, registry) == roadmap
     assert module.render_index_catalogue(entries, registry) == index
     assert entries == original
-    assert module.render_expected_projection(prds, kind="index") == index
-    assert module.render_expected_projection(prds, kind="roadmap") == roadmap
 
 
 def test_projection_drift_propagates_ledger_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

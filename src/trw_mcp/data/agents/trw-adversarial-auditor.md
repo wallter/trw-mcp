@@ -7,7 +7,6 @@ description: >
   verdicts, Potemkin gates, unreachable safety logic, or unsupported exclusions.
 model: frontier
 maxTurns: 200
-memory: project
 tools:
   - Read
   - Glob

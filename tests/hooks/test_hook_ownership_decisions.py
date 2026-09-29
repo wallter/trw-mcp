@@ -85,7 +85,7 @@ def test_pre_compact_snapshots_the_owned_run(hook_dir: Path, tmp_path: Path) -> 
         own_phase="implement",
         foreign_phase="deliver",
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "pre-compact.sh", root, payload={"source": "manual", "session_id": "unused"})
 
@@ -101,9 +101,8 @@ def test_pre_compact_snapshots_the_owned_run(hook_dir: Path, tmp_path: Path) -> 
 def test_pre_compact_writes_an_empty_snapshot_when_unowned(hook_dir: Path, tmp_path: Path) -> None:
     """UNOWNED direction: still armed, just honest.
 
-    post-compact.sh keys recovery on a non-empty run_path and prints "No active
-    run found in pre-compaction snapshot" otherwise, so an empty snapshot degrades
-    correctly -- whereas skipping the write would disarm recovery AND leave the
+    session-start.sh (compact branch) prints its RECOVERED lines only for a
+    non-empty run_path, so an empty snapshot degrades correctly -- whereas skipping the write would disarm recovery AND leave the
     injected-learning dedup file uncleared.
     """
     root, _own, _foreign = build_project(
@@ -112,7 +111,7 @@ def test_pre_compact_writes_an_empty_snapshot_when_unowned(hook_dir: Path, tmp_p
         foreign_event_lines=(FILE_MODIFIED,) * 18,
         foreign_phase="deliver",
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
     injected = root / ".trw" / "context" / "injected_learning_ids.txt"
     injected.write_text("L-one\nL-two\n", encoding="utf-8")
 
@@ -146,7 +145,7 @@ def test_pre_compact_writes_an_empty_snapshot_with_no_identity(hook_dir: Path, t
         foreign_event_lines=(FILE_MODIFIED,) * 18,
         foreign_phase="deliver",
     )
-    write_hook_env(root, client_id="copilot")
+    write_hook_env(root, client_id="copilot", hook_dir=hook_dir)
 
     run_hook(hook_dir / "pre-compact.sh", root, payload={"source": "manual"}, identified=False)
 
@@ -167,7 +166,7 @@ def test_session_end_advises_for_owned_pending_work_despite_foreign_delivery(hoo
         own_event_lines=(FILE_MODIFIED,) * 3,
         foreign_event_lines=(FILE_MODIFIED,) * 18 + (DELIVER_COMPLETE,),
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "session-end.sh", root)
 
@@ -186,7 +185,7 @@ def test_session_end_is_silent_but_still_tidies_when_unowned(hook_dir: Path, tmp
         own_pin=False,
         foreign_event_lines=(FILE_MODIFIED,) * 18,
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
     stale = root / ".trw" / "context" / "idle_block_impl-1"
     stale.write_text("1", encoding="utf-8")
 
@@ -210,7 +209,7 @@ def test_session_end_tidies_even_when_the_owned_run_already_delivered(hook_dir: 
         own_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
         foreign_event_lines=(FILE_MODIFIED,) * 18,
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
     stale = root / ".trw" / "context" / "tc_block_impl-1_T1"
     stale.write_text("1", encoding="utf-8")
 
@@ -228,7 +227,7 @@ def test_session_end_still_warns_a_client_with_no_identity(hook_dir: Path, tmp_p
         own_pin=False,
         foreign_event_lines=(FILE_MODIFIED,) * 18,
     )
-    write_hook_env(root, client_id="copilot")
+    write_hook_env(root, client_id="copilot", hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "session-end.sh", root, identified=False)
 
@@ -251,7 +250,7 @@ def test_subagent_start_injects_the_owned_run_and_its_phase(hook_dir: Path, tmp_
         own_phase="implement",
         foreign_phase="validate",
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "subagent-start.sh", root, payload={"agent_type": "impl", "session_id": "unused"})
 
@@ -276,7 +275,7 @@ def test_subagent_start_omits_run_state_but_keeps_the_protocol_when_unowned(hook
         foreign_event_lines=(FILE_MODIFIED,),
         foreign_phase="validate",
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "subagent-start.sh", root, payload={"agent_type": "impl", "session_id": "unused"})
 
@@ -298,7 +297,7 @@ def test_subagent_start_keeps_legacy_context_with_no_identity(hook_dir: Path, tm
         foreign_event_lines=(FILE_MODIFIED,),
         foreign_phase="validate",
     )
-    write_hook_env(root, client_id="copilot")
+    write_hook_env(root, client_id="copilot", hook_dir=hook_dir)
 
     res = run_hook(hook_dir / "subagent-start.sh", root, payload={"agent_type": "impl"}, identified=False)
 

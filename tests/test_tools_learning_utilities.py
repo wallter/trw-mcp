@@ -18,7 +18,6 @@ from tests._memory_fixtures import FAKE_NAMESPACE
 from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics import (
-    extract_learnings_from_llm,
     extract_learnings_mechanical,
     find_success_patterns,
     is_success_event,
@@ -69,60 +68,6 @@ class TestAnalyticsExtraction:
         # Second call with same error should skip (dedup)
         result2 = extract_learnings_mechanical(errors, [], trw_dir)
         assert len(result2) == 0
-
-    def test_extract_learnings_from_llm_saves_entries(self, tmp_project: Path) -> None:
-        """extract_learnings_from_llm persists entries to disk."""
-        trw_dir = tmp_project / ".trw"
-        items: list[dict[str, Any]] = [
-            {"summary": "LLM insight", "detail": "details", "tags": ["llm"], "impact": "0.7"},
-        ]
-        result = extract_learnings_from_llm(items, trw_dir)
-        assert len(result) == 1
-        assert result[0]["summary"] == "LLM insight"
-        # Verify file was written
-        entries_dir = trw_dir / "learnings" / "entries"
-        assert len(list(entries_dir.glob("*.yaml"))) >= 1
-
-    def test_extract_learnings_from_llm_filters_telemetry_noise(
-        self,
-        tmp_project: Path,
-    ) -> None:
-        """PRD-FIX-021: LLM-generated telemetry noise must be suppressed."""
-        trw_dir = tmp_project / ".trw"
-        items: list[dict[str, Any]] = [
-            {"summary": "Repeated operation: file_modified (85x)", "detail": "noise", "impact": "0.5"},
-            {"summary": "Success: reflection_complete (6x)", "detail": "noise", "impact": "0.5"},
-            {"summary": "repeated operation: checkpoint (3x)", "detail": "noise", "impact": "0.5"},
-            {"summary": "Actual actionable insight", "detail": "real", "tags": ["llm"], "impact": "0.7"},
-        ]
-        result = extract_learnings_from_llm(items, trw_dir)
-        assert len(result) == 1
-        assert result[0]["summary"] == "Actual actionable insight"
-
-    def test_extract_learnings_from_llm_normalizes_audit_finding_metadata(
-        self,
-        tmp_project: Path,
-    ) -> None:
-        """Audit-tagged LLM learnings persist the FR06-required fields."""
-        trw_dir = tmp_project / ".trw"
-        items: list[dict[str, Any]] = [
-            {
-                "summary": "Sprint 90: FR06 audit finding",
-                "detail": "Runtime path missing.",
-                "tags": ["audit-finding", "PRD-QUAL-056", "test_gap"],
-                "impact": "0.8",
-            },
-        ]
-
-        extract_learnings_from_llm(items, trw_dir)
-
-        entries = sorted((trw_dir / "learnings" / "entries").glob("*.yaml"))
-        assert entries
-        data = FileStateReader().read_yaml(entries[-1])
-        assert data["type"] == "incident"
-        assert data["confidence"] == "verified"
-        assert data["domain"] == ["testing", "quality"]
-        assert data["phase_affinity"] == ["implement", "validate"]
 
 
 class TestClaudeMdCollection:

@@ -14,6 +14,8 @@ from trw_mcp.bootstrap._grok import generate_grok_config, merge_grok_config
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.server._subcommands import _run_uninstall
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,8 +101,11 @@ def test_init_project_ide_grok_writes_mcp_agents_and_ceremony(tmp_path: Path) ->
 
     agents_md = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     assert "<!-- trw:start -->" in agents_md
-    assert "trw_session_start" in agents_md
-    assert "trw_deliver" in agents_md
+    # PRD-CORE-341: grok reads no imports, so AGENTS.md names the file; the protocol lives in it.
+    assert ".trw/INSTRUCTIONS.md" in agents_md
+    instructions = (tmp_path / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+    assert "trw_session_start" in instructions
+    assert "trw_deliver" in instructions
 
     grok_agents = tmp_path / ".grok" / "agents"
     assert grok_agents.is_dir()

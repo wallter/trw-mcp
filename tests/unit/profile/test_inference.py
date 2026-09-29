@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._defaults import DEFAULT_DOMAIN_PATH_MAP
 from trw_mcp.profile import infer_domain, infer_task_type
 from trw_mcp.profile.session_resolve import resolve_session_profile
+
+pytestmark = pytest.mark.unit
 
 
 def test_infer_domain_explicit_flag_wins() -> None:

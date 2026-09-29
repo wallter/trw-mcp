@@ -48,6 +48,7 @@ def test_role_table_replaces_two_dicts() -> None:
         "design-audit": "review",
         "architectural-audit": "review",
         "adversarial-audit": "security",
+        "plan": "plan",
     }
     assert all(spec.task_class in TASK_POLICY for spec in ROLE_TABLE.values())
 
@@ -70,13 +71,3 @@ def test_cli_role_choices_derive_from_the_table() -> None:
     add_dispatch_subcommand(subparsers)
     role_action = next(a for a in subparsers.choices["dispatch"]._actions if a.dest == "role")
     assert list(role_action.choices or ()) == sorted(ROLE_TABLE)
-
-
-def test_every_role_writes_a_known_variant_kind() -> None:
-    """PRD-CORE-299-FR04: a role's output lands as a kind the variant grammar accepts."""
-    from trw_mcp.state.doc_variants import VARIANT_KINDS
-
-    kinds = {role: spec.artifact_kind for role, spec in ROLE_TABLE.items()}
-    assert set(kinds.values()) <= set(VARIANT_KINDS)
-    assert kinds["code-review"] == "review"
-    assert kinds["adversarial-audit"] == "audit"

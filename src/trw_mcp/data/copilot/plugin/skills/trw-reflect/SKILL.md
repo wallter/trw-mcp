@@ -206,7 +206,7 @@ shipped (with validation evidence), PRDs created, and a pointer to the ledger's
   learning extraction happens at delivery (`_do_reflect`). This skill owns
   *process and capability* improvements; leave routine error-learning capture
   to the delivery ceremony.
-- **No instruction-file bloat**: never edit CLAUDE.md/AGENTS.md inline from a
+- **No instruction-file bloat**: never edit AGENTS.md inline from a
   reflection without explicit approval; durable guidance routes to learnings
   or skills (on-demand context), not always-loaded files.
 - **No fabricated metrics**: report counts only for things you actually

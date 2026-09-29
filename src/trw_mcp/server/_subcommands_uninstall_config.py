@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any
-
-import structlog
 
 from trw_mcp.bootstrap._generated_entries import (
-    flat_hook_entries,
-    grouped_hook_entries,
-    hook_file_rest,
     mcp_server_entries,
     toml_table_texts,
 )
@@ -23,8 +18,6 @@ from trw_mcp.bootstrap._opencode_instructions import (
 )
 from trw_mcp.bootstrap._user_file_edit import (
     atomic_write_text,
-    drop_matching_flat_hook_entries,
-    drop_matching_hook_commands,
     is_generated_entry,
     matching_sort_keys,
     safe_read_text,
@@ -32,6 +25,36 @@ from trw_mcp.bootstrap._user_file_edit import (
     strip_toml_table,
 )
 from trw_mcp.channels._manifest_models import MARKER_REGISTRY
+from trw_mcp.server._uninstall_hook_strips import (
+    QUIET as QUIET,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _canonical_or_untouched as _canonical_or_untouched,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _drop_template_env as _drop_template_env,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _entry_changed,
+    _strip_codex_hook_groups,
+    _strip_copilot_hook_groups,
+    _strip_legacy_claude_md,
+    _strip_trw_antigravity_hooks,
+    _strip_trw_claude_settings,
+    _strip_trw_cursor_hooks,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _hook_commands as _hook_commands,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _runtime_logger as _runtime_logger,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _strip_grouped_hooks as _strip_grouped_hooks,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _warn_kept_trw_commands as _warn_kept_trw_commands,
+)
 from trw_mcp.state.claude_md._parser import LEGACY_TRW_MARKER_END, LEGACY_TRW_MARKER_START
 
 # Marker pairs TRW writes that the channel MARKER_REGISTRY does not carry. Each
@@ -119,20 +142,15 @@ _OPENCODE_MCP_KEY = "mcp"
 _OPENCODE_INSTRUCTION_ENTRY = _OPENCODE_INSTRUCTIONS_REL.as_posix()
 
 
-def _runtime_logger() -> Any:
-    """Return a fresh logger so structlog test capture sees late-bound events."""
-    return structlog.get_logger(__name__)
+# Names the file being stripped, for warnings raised inside the shape strategies (which take no path).
+_STRIP_LABEL: ContextVar[str] = ContextVar("_STRIP_LABEL", default="")
 
+# Files whose TRW entry was kept only because the file is not in TRW's own JSON formatting.
+CUSTOM_FORMAT: set[Path] = set()
+_STRIP_PATH: ContextVar[Path | None] = ContextVar("_STRIP_PATH", default=None)
 
-def _strip_managed_blocks(text: str) -> str:
-    """Back-compat text-only wrapper over :func:`strip_managed_block`.
-
-    Drops the warnings list (callers that need orphan-marker reporting should
-    call :func:`strip_managed_block` directly); kept for the existing
-    ``TestStripManagedBlocks`` unit coverage that asserts on text shape alone.
-    """
-    stripped, _changed, _warnings = strip_managed_block(text, _MANAGED_BLOCK_MARKERS)
-    return stripped
+# Why each file was last refused (a symlink, or a read failure the path guard cannot see), for the report.
+REFUSAL_REASONS: dict[Path, str] = {}
 
 
 def _remove_managed_block_file(path: Path, root: Path, dry_run: bool) -> str | None:
@@ -149,7 +167,9 @@ def _remove_managed_block_file(path: Path, root: Path, dry_run: bool) -> str | N
     blank-line collapse only) to :func:`trw_mcp.bootstrap._user_file_edit.strip_managed_block`.
     """
     original, refusal = safe_read_text(path, root)
+    REFUSAL_REASONS.pop(path, None)
     if refusal:
+        REFUSAL_REASONS[path] = refusal
         # PRD-INFRA-192 FR09 P0: a symlinked shared file (or a symlinked
         # parent component) would read/write through to bytes outside the
         # project the same way a symlinked delete surface would. Never touch
@@ -188,7 +208,9 @@ def _resolve_strip_strategy(shape: str, suffix: str) -> StripStrategy | None:
     return _STRIP_STRATEGIES.get(resolved)
 
 
-def _strip_trw_from_merged_config(path: Path, root: Path, dry_run: bool, *, shape: str = "") -> str | None:
+def _strip_trw_from_merged_config(
+    path: Path, root: Path, dry_run: bool, *, shape: str = "", verify_unchanged: bool = False
+) -> str | None:
     """Strip ONLY TRW-owned entries from a merged client config file.
 
     sec-006: merged client config files (the root ``.mcp.json``,
@@ -205,10 +227,15 @@ def _strip_trw_from_merged_config(path: Path, root: Path, dry_run: bool, *, shap
     ``"removed"`` when nothing user-owned remained (file deleted), ``None`` when
     the file has no TRW content (left untouched), or ``"skipped"`` when the file
     cannot be parsed (left untouched + warned). On ``dry_run`` the same
-    classification is returned without mutating the file.
+    classification is returned without mutating the file. With *verify_unchanged*
+    (the machine-global file) the bytes are re-read right before the write and a
+    difference returns ``"changed"``: another writer got there first, so the file
+    is left as that writer left it.
     """
     raw, refusal = safe_read_text(path, root)
+    REFUSAL_REASONS.pop(path, None)
     if refusal:
+        REFUSAL_REASONS[path] = refusal
         # PRD-INFRA-192 FR09 P0: same rule as _remove_managed_block_file — a
         # symlinked merged-config file, or one behind a symlinked parent
         # component, would read/write through to bytes outside the project.
@@ -220,6 +247,13 @@ def _strip_trw_from_merged_config(path: Path, root: Path, dry_run: bool, *, shap
     if strategy is None:
         return None
     try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    label_token = _STRIP_LABEL.set(rel.as_posix())
+    path_token = _STRIP_PATH.set(path)
+    CUSTOM_FORMAT.discard(path)
+    try:
         changed, rendered, delete = strategy(raw, root)
     except (ValueError, TypeError) as exc:
         _runtime_logger().warning(
@@ -229,8 +263,21 @@ def _strip_trw_from_merged_config(path: Path, root: Path, dry_run: bool, *, shap
             action="left_untouched",
         )
         return "skipped"
+    finally:
+        _STRIP_LABEL.reset(label_token)
+        _STRIP_PATH.reset(path_token)
     if not changed:
         return None
+    if not dry_run and verify_unchanged:
+        current, refusal = safe_read_text(path, root)
+        if refusal:  # the compare read itself failed: report that, not a concurrent edit
+            REFUSAL_REASONS[path] = refusal
+            return "refused"
+        if current != raw:
+            _runtime_logger().warning(
+                "uninstall_merged_config_changed_during_run", path=str(path), action="left_untouched"
+            )
+            return "changed"
     if delete:
         if not dry_run:
             path.unlink()
@@ -238,11 +285,6 @@ def _strip_trw_from_merged_config(path: Path, root: Path, dry_run: bool, *, shap
     if not dry_run:
         atomic_write_text(path, rendered)
     return "stripped"
-
-
-def _entry_changed(file_label: str, what: object) -> None:
-    """Say why TRW's entry was left in place: it no longer equals what TRW generates."""
-    _runtime_logger().warning("uninstall_entry_changed", path=file_label, entry=what, action="left_untouched")
 
 
 def _strip_server_map(raw: str, container_key: str, file_label: str, generated: list[object]) -> tuple[bool, str, bool]:
@@ -258,6 +300,7 @@ def _strip_server_map(raw: str, container_key: str, file_label: str, generated: 
     own canonical serialization of the parsed original (PRD-INFRA-192
     FR09/FR10) -- a custom-formatted file is left byte-identical with a warning.
     """
+    file_label = _STRIP_LABEL.get() or file_label
     data = json.loads(raw)
     if not isinstance(data, dict):
         return False, raw, False
@@ -278,6 +321,8 @@ def _strip_server_map(raw: str, container_key: str, file_label: str, generated: 
     sort_keys = matching_sort_keys(data, raw)
     if sort_keys is None:
         _runtime_logger().warning("uninstall_merged_config_custom_formatting", path=file_label, action="left_untouched")
+        if (strip_path := _STRIP_PATH.get()) is not None:
+            CUSTOM_FORMAT.add(strip_path)
         return False, raw, False
     return True, json.dumps(new_data, indent=2, sort_keys=sort_keys) + "\n", False
 
@@ -361,183 +406,13 @@ def _strip_trw_toml(raw: str, root: Path) -> tuple[bool, str, bool]:
     return (True, rendered, False) if removed else (False, raw, False)
 
 
-def _hook_commands(node: object) -> Iterator[str]:
-    """Every ``command`` string anywhere in a hooks document."""
-    if isinstance(node, dict):
-        if isinstance(node.get("command"), str):
-            yield node["command"]
-        for value in node.values():
-            yield from _hook_commands(value)
-    elif isinstance(node, list):
-        for item in node:
-            yield from _hook_commands(item)
-
-
-def _warn_kept_trw_commands(kept: object, generated: dict[str, list[object]], file_label: str) -> None:
-    """Warn about a TRW hook command left in place because its entry was edited."""
-    ours = set(_hook_commands(generated))
-    left = sorted({command for command in _hook_commands(kept) if command in ours})
-    if left:
-        _entry_changed(file_label, left)
-
-
-def _strip_grouped_hooks(raw: str, shape: str, file_label: str, *, deletable: bool = True) -> tuple[bool, str, bool]:
-    """Strip only the hook dicts TRW generates from a grouped ``{"hooks": {event: [group]}}`` file.
-
-    A hook goes only when it equals, in full, a hook TRW generates for that
-    event, inside a group whose own fields (``matcher``, ``description``) are
-    TRW's too; a user's hook appended into a TRW group stays, and so does a TRW
-    hook the user gave a ``timeout``. Shared by ``.codex/hooks.json``, the
-    Copilot hooks file and ``.claude/settings.json``, via the same
-    :func:`trw_mcp.bootstrap._user_file_edit.drop_matching_hook_commands` the
-    per-script tombstone path uses. Rewrites only a file already in TRW's
-    canonical formatting.
-    """
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        return False, raw, False
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return False, raw, False
-    trw_hooks, trw_groups = grouped_hook_entries(shape)
-
-    def _is_trw_hook(event: str, hook: dict[str, object]) -> bool:
-        return is_generated_entry(hook, trw_hooks.get(event, []))
-
-    def _is_trw_group(event: str, group: object) -> bool:
-        fields = {k: v for k, v in group.items() if k != "hooks"} if isinstance(group, dict) else group
-        return is_generated_entry(fields, trw_groups.get(event, []))
-
-    new_hooks, changed = drop_matching_hook_commands(hooks, _is_trw_hook, file_label, {}, is_trw_group=_is_trw_group)
-    _warn_kept_trw_commands(new_hooks, trw_hooks, file_label)
-    if not changed:
-        return False, raw, False
-    new_data = dict(data)
-    new_data["hooks"] = new_hooks
-    return _canonical_or_untouched(
-        data, raw, new_data, empty_key="hooks", file_label=file_label, shape=shape if deletable else ""
-    )
-
-
-def _strip_codex_hook_groups(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    return _strip_grouped_hooks(raw, "codex-hook-group-list", ".codex/hooks.json")
-
-
-def _strip_copilot_hook_groups(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    return _strip_grouped_hooks(raw, "copilot-hook-group-list", ".github/hooks/hooks.json")
-
-
-def _canonical_or_untouched(
-    data: dict[str, Any],
-    raw: str,
-    new_data: dict[str, Any],
-    *,
-    empty_key: str,
-    file_label: str,
-    shape: str = "",
-) -> tuple[bool, str, bool]:
-    """Render *new_data* only when *raw* is TRW's canonical form of *data*.
-
-    Shared tail for every JSON hook-map strip below. The canonical check runs
-    FIRST and unconditionally — including on the path that would otherwise
-    delete the file — so a hand-formatted file whose only content happens to
-    be TRW's own is left byte-identical-with-a-warning rather than deleted
-    without ever having proven its bytes matched what TRW wrote (PRD-INFRA-192
-    FR09/FR10 P0 round 2: the delete branch used to run BEFORE this check,
-    unconditionally deleting an all-TRW file regardless of formatting). Once
-    canonical, the file is deleted only when every hook in it was TRW's AND
-    everything else in it (``version`` included) equals the file TRW's writer
-    generates for *shape*; otherwise it is kept with an empty hooks map. With no
-    *shape* (``.claude/settings.json``, the user's own client config) it is never
-    deleted, only emptied.
-    """
-    sort_keys = matching_sort_keys(data, raw)
-    if sort_keys is None:
-        _runtime_logger().warning("uninstall_merged_config_custom_formatting", path=file_label, action="left_untouched")
-        return False, raw, False
-    rest = {k: v for k, v in data.items() if k != empty_key}
-    if shape and not new_data.get(empty_key) and is_generated_entry(rest, [hook_file_rest(shape)]):
-        return True, "", True
-    return True, json.dumps(new_data, indent=2, sort_keys=sort_keys) + "\n", False
-
-
-def _strip_trw_claude_settings(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    """Withdraw TRW hook registrations from ``.claude/settings.json``.
-
-    Shape: ``{"hooks": {<event>: [{"matcher": ..., "hooks": [{"command": ...}]}]}}``
-    alongside user-owned ``env``/``permissions``/etc. -- the same group shape as
-    codex/copilot, checked against the bundled ``settings.json`` template.
-
-    Only hook registrations are withdrawn. ``env`` is deliberately left alone:
-    ``_merge_settings_json`` seeds env keys with ``setdefault``, so a key TRW
-    added and a key the user set themselves are indistinguishable on disk, and
-    removing a setting we cannot prove we own is the worse failure. The file is
-    never deleted — it is the user's client config, emptied at most.
-    """
-    return _strip_grouped_hooks(raw, "claude-settings", ".claude/settings.json", deletable=False)
-
-
-def _strip_trw_cursor_hooks(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    """Strip TRW hook entries from ``.cursor/hooks.json``.
-
-    Shape ``{"version": 1, "hooks": {event: [{"command": ...}]}}``. An entry
-    goes only when it equals, in full, one cursor-ide or cursor-cli generates
-    for that event; one the user retimed stays. Event keys that were already
-    empty are kept.
-    """
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        return False, raw, False
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return False, raw, False
-    ours = flat_hook_entries("cursor-hook-list")
-    new_hooks, changed = drop_matching_flat_hook_entries(hooks, lambda ev, e: is_generated_entry(e, ours.get(ev, [])))
-    _warn_kept_trw_commands(new_hooks, ours, ".cursor/hooks.json")
-    if not changed:
-        return False, raw, False
-    new_data = dict(data)
-    new_data["hooks"] = new_hooks
-    return _canonical_or_untouched(
-        data, raw, new_data, empty_key="hooks", file_label=".cursor/hooks.json", shape="cursor-hook-list"
-    )
-
-
-def _strip_trw_antigravity_hooks(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    """Strip TRW hook entries from the FLAT ``.antigravitycli/hooks.json``.
-
-    Shape ``{event: [{"matcher": ..., "command": ...}]}`` — no ``hooks``
-    wrapper (channels/antigravity/_before_edit_hook.py::_merge_hooks_json).
-    That merger does ``dict(existing)`` and preserves every other event key, so
-    the file is a merged config, not a TRW-only artifact. The entry goes only
-    when it equals, in full, the one AG-03 generates.
-    """
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        return False, raw, False
-    ours = flat_hook_entries("antigravity-hook-map")
-    new_data, changed = drop_matching_flat_hook_entries(data, lambda ev, e: is_generated_entry(e, ours.get(ev, [])))
-    _warn_kept_trw_commands(new_data, ours, ".antigravitycli/hooks.json")
-    if not changed:
-        return False, raw, False
-    # PRD-INFRA-192 FR09/FR10 P0 round 2: the canonical check runs BEFORE the
-    # delete decision -- an all-TRW file is deleted only when its bytes are
-    # already proven to be TRW's own canonical form, never unconditionally.
-    sort_keys = matching_sort_keys(data, raw)
-    if sort_keys is None:
-        _runtime_logger().warning(
-            "uninstall_merged_config_custom_formatting", path=".antigravitycli/hooks.json", action="left_untouched"
-        )
-        return False, raw, False
-    if not new_data:
-        return True, "", True
-    return True, json.dumps(new_data, indent=2, sort_keys=sort_keys) + "\n", False
-
-
 # Shape -> strip strategy dispatch. Each strategy takes the raw file text and
 # returns ``(changed, rendered, delete)``. Registered after the strategy
 # functions so the names resolve.
+
+
 _STRIP_STRATEGIES: dict[str, StripStrategy] = {
+    "legacy-claude-md": _strip_legacy_claude_md,
     "mcp-server-map": _strip_trw_json,
     "codex-toml": _strip_trw_toml,
     "codex-hook-group-list": _strip_codex_hook_groups,

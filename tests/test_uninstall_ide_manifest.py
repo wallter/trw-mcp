@@ -20,6 +20,8 @@ import yaml
 from trw_mcp.bootstrap import init_project, update_project
 from trw_mcp.server._subcommands import _run_uninstall
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 def _ns(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     base: dict[str, object] = {
@@ -83,8 +85,8 @@ class TestManifestDrivenRemovalPreservesUnowned:
         assert [p for p in trw_files if p.exists()] == []
 
     def test_a_users_file_inside_a_trw_skill_survives(self, tmp_path: Path) -> None:
-        """Only ``SKILL.md`` is hashed per skill, so the directory is not rmtree'd:
-        a file the user added next to it is not TRW's bundled content and stays."""
+        """Only ``SKILL.md`` is hashed per skill, so the directory is not rmtree'd: a file the user added next to
+        it is not TRW's bundled content and stays, while the unmodified SKILL.md goes (no live orphan skill)."""
         project = _claude_only_project(tmp_path)
         skill = next(d for d in sorted((project / ".claude" / "skills").iterdir()) if d.is_dir())
         (skill / "my-notes.md").write_text("mine\n", encoding="utf-8")
@@ -92,7 +94,7 @@ class TestManifestDrivenRemovalPreservesUnowned:
         _run_uninstall(_ns(project, ide="claude-code"))
 
         assert (skill / "my-notes.md").read_text(encoding="utf-8") == "mine\n"
-        assert not (skill / "SKILL.md").exists()
+        assert sorted(p.name for p in skill.iterdir()) == ["my-notes.md"]
 
     def test_user_edited_skill_survives_and_is_reported(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -259,27 +261,31 @@ class TestManifestDrivenWriteFailureRetry:
         agent = project / ".claude" / "agents" / "trw-implementer.md"
         assert agent.is_file()
 
-        original_unlink = Path.unlink
+        import os
+
+        original_rename = os.rename
         state = {"raised": False}
 
-        def flaky_unlink(self: Path, *args: object, **kwargs: object) -> None:
-            if self.name == "trw-implementer.md" and not state["raised"]:
+        # remove_if_hash never unlinks: its only move is the capture rename into .trw/trash. Failing that
+        # rename once must keep the file in place and its manifest record, and a retry must finish the job.
+        def flaky_rename(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            if "trw-implementer.md" in str(src) and not state["raised"]:
                 state["raised"] = True
                 raise PermissionError("denied")
-            original_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+            original_rename(src, dst, *args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(Path, "unlink", flaky_unlink)
+        monkeypatch.setattr(os, "rename", flaky_rename)
 
         with pytest.raises(SystemExit) as exc_info:
             _run_uninstall(_ns(project, ide="claude-code"))
         assert exc_info.value.code == 1
-        assert agent.is_file(), "a failed unlink must leave the file in place"
+        assert agent.is_file(), "a failed capture must leave the file in place"
         manifest = _read_manifest(project)
         assert "trw-implementer.md" in manifest["content_hashes"], (
             "the manifest must still list the key whose deletion failed"
         )
 
-        monkeypatch.setattr(Path, "unlink", original_unlink)
+        monkeypatch.setattr(os, "rename", original_rename)
         _run_uninstall(_ns(project, ide="claude-code"))  # retry succeeds
 
         assert not agent.is_file()

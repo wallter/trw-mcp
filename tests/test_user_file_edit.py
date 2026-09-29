@@ -125,42 +125,6 @@ class TestCanonicalRewrite:
         assert leftovers == []
 
 
-# ---------------------------------------------------------------------------
-# Hook-registration JSON editing primitives
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestDropMatchingHookEntries:
-    def test_drops_verified_entry_keeps_user_entry(self) -> None:
-        from trw_mcp.bootstrap._user_file_edit import drop_matching_hook_entries
-
-        hooks = {
-            "SessionStart": [
-                {"hooks": [{"command": "trw-cmd"}]},
-                {"hooks": [{"command": "user-cmd"}]},
-            ]
-        }
-        new_hooks, changed = drop_matching_hook_entries(
-            hooks, lambda _e, entry: entry["hooks"][0]["command"] == "trw-cmd", "file", {}
-        )
-        assert changed is True
-        commands = [h["hooks"][0]["command"] for h in new_hooks["SessionStart"]]
-        assert commands == ["user-cmd"]
-
-    def test_already_empty_event_key_is_not_dropped(self) -> None:
-        """An event key that was empty BEFORE this pass is never dropped as a side effect."""
-        from trw_mcp.bootstrap._user_file_edit import drop_matching_hook_entries
-
-        hooks = {"SessionStart": [{"hooks": [{"command": "trw-cmd"}]}], "Stop": []}
-        new_hooks, changed = drop_matching_hook_entries(
-            hooks, lambda _e, entry: entry["hooks"][0]["command"] == "trw-cmd", "file", {}
-        )
-        assert changed is True
-        assert "Stop" in new_hooks
-        assert new_hooks["Stop"] == []
-
-
 @pytest.mark.unit
 class TestDropMatchingHookCommands:
     def test_removes_only_verified_command_keeps_group(self) -> None:
@@ -709,11 +673,11 @@ class TestCodexTomlByteIdentical:
 
 @pytest.mark.integration
 class TestNewlinePreservation:
-    def test_crlf_claude_md_only_block_lines_change_rest_byte_identical(self, tmp_path: Path) -> None:
+    def test_crlf_agents_md_only_block_lines_change_rest_byte_identical(self, tmp_path: Path) -> None:
         """A CRLF file: after uninstall, only the block's lines are gone; every other byte (incl. \\r\\n) is intact."""
         from trw_mcp.server._subcommands_lifecycle import _run_uninstall
 
-        claude_md = tmp_path / "CLAUDE.md"
+        agents_md = tmp_path / "AGENTS.md"
         content = (
             "# Project\r\n"
             "\r\n"
@@ -724,12 +688,12 @@ class TestNewlinePreservation:
             "\r\n"
             "More user text.\r\n"
         )
-        claude_md.write_bytes(content.encode("utf-8"))
+        agents_md.write_bytes(content.encode("utf-8"))
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        final = claude_md.read_bytes().decode("utf-8")
+        final = agents_md.read_bytes().decode("utf-8")
         assert "managed content" not in final
         assert "\r\n" in final, "CRLF line endings must survive"
         assert "# Project\r\n\r\nUser instructions here.\r\n" in final

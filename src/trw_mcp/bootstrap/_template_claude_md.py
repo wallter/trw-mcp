@@ -1,20 +1,17 @@
-"""CLAUDE.md auto-generated TRW section management.
+"""Client-record helpers and the claude-code AGENTS.md carrier for bootstrap.
 
-Extracted from :mod:`trw_mcp.bootstrap._template_updater` (PRD-DIST-243
-Phase 1 batch 4, cycle 32) to keep that module under the 350-effective-
-LOC operator threshold. Holds the marker constants + the two helpers
-that detect, replace, or append the project's auto-generated TRW
-section in a CLAUDE.md file.
+TRW 8.0 no longer writes ``CLAUDE.md``: Claude Code reads ``AGENTS.md``
+natively, so claude-code shares the one ``AGENTS.md`` carrier the other
+clients use. This module writes that block at install/update, retires a
+TRW-only legacy ``CLAUDE.md``, and holds the recorded-client helpers the
+bootstrap writers share.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import structlog
-
-from ._file_ops import find_marker_line_span
 
 logger = structlog.get_logger(__name__)
 
@@ -22,40 +19,81 @@ __all__ = [
     "_TRW_END_MARKER",
     "_TRW_HEADER_MARKER",
     "_TRW_START_MARKER",
-    "_minimal_claude_md_trw_block",
-    "_update_claude_md_trw_section",
+    "claude_code_is_claimed",
+    "retire_claude_md",
+    "write_claude_code_agents_md",
 ]
 
 
-# CLAUDE.md markers for the auto-generated section.
+# Instruction-file markers for the auto-generated section.
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
 
-def claude_md_is_claimed(project_root: Path, ide_targets: list[str] | None = None) -> bool:
-    """Return whether any install target here actually reads CLAUDE.md.
-
-    One definition for all three bootstrap writers. They previously each wrote
-    the TRW block unconditionally, so the block came back on the next
-    ``update-project`` even where no client reads the file — the same
-    fixed-in-one-place-copied-in-three shape that let the carrier be reverted.
+def claude_code_is_claimed(project_root: Path, ide_targets: list[str] | None = None) -> bool:
+    """Return whether claude-code is one of this project's install targets.
 
     *ide_targets* is authoritative when the caller already resolved it;
-    otherwise it is resolved here rather than detected, because post-install
-    detection cannot distinguish TRW's own ``.claude/`` from the user's.
+    otherwise the record answers, and detection only as a fallback, because
+    post-install detection cannot distinguish TRW's own ``.claude/`` from the
+    user's.
     """
-    from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_claude_md
+    from trw_mcp.state.claude_md._orphan_strip import _claude_code_claimed
 
     if ide_targets is not None:
-        # An explicitly passed list is the caller's install selection — as
-        # authoritative as the record, and never raw detection.
-        return _any_client_writes_claude_md(ide_targets, from_record=True)
-
+        return _claude_code_claimed(ide_targets, from_record=True)
     recorded = _recorded_targets(project_root)
     if recorded:
-        return _any_client_writes_claude_md(recorded, from_record=True)
-    return _any_client_writes_claude_md(_recorded_or_detected_targets(project_root))
+        return _claude_code_claimed(recorded, from_record=True)
+    return _claude_code_claimed(_recorded_or_detected_targets(project_root))
+
+
+def write_claude_code_agents_md(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Write claude-code's TRW block into the shared ``AGENTS.md``.
+
+    Same guarded marker-merge writer the other AGENTS.md clients use; user
+    content outside the markers is preserved. Never forced: ``force`` there
+    replaces a hand-written file wholesale, which ``init --force`` must not do.
+    """
+    from ._opencode import generate_agents_md
+
+    written = generate_agents_md(target_dir, client_id="claude-code")
+    for key in ("created", "updated", "errors"):
+        for entry in written.get(key, []):
+            if entry not in result.setdefault(key, []):
+                result[key].append(entry)
+
+
+def retire_claude_md(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Remove a TRW-only root ``CLAUDE.md``; report (never touch) one with user content.
+
+    Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md`` exists, so a
+    kept file masks the TRW block in ``AGENTS.md``. The warning says how to fix
+    that without TRW editing user content.
+    """
+    from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md
+
+    path = target_dir / "CLAUDE.md"
+    was_link = path.is_symlink()
+    try:
+        outcome = retire_legacy_claude_md(target_dir)
+    except OSError as exc:
+        # Recorded as an install error; the rest of the update still runs.
+        result.setdefault("errors", []).append(f"Failed to remove legacy {path}: {exc}")
+        outcome = "error"
+    if outcome == "removed":
+        result.setdefault("removed", []).append(str(path))
+        if not was_link:
+            # The bytes were captured into .trw/trash: the uncommitted-changes guard must not restore the file,
+            # and update-project reports the move.
+            result.setdefault("trashed", []).append("CLAUDE.md")
+    elif outcome == "kept":
+        result.setdefault("warnings", []).append(
+            f"{path} has user content and was left untouched. TRW 8.0 writes its protocol to AGENTS.md; "
+            "Claude Code skips AGENTS.md while a CLAUDE.md exists, so add an `@AGENTS.md` line to it "
+            "(and delete any old TRW block between the trw:start/trw:end markers)."
+        )
 
 
 def _recorded_targets(project_root: Path) -> list[str]:
@@ -79,12 +117,9 @@ def _recorded_targets(project_root: Path) -> list[str]:
     return []
 
 
-# Project-scoped paths whose presence would indicate a client is in use here.
-# TOTAL over ``SUPPORTED_IDES`` — every installable client declares a candidate
-# marker, including the ones that turn out to be unusable. That is the point:
-# which candidates survive is DERIVED (:func:`_trw_scaffolds_marker`), not
-# hand-listed, so the exclusion cannot silently fall out of date the way a
-# module-local subset does (wiring-defect pattern P11).
+# Project-scoped paths whose presence indicates a client is in use here. TOTAL over
+# ``SUPPORTED_IDES`` (wiring-defect pattern P11). Install-time evidence only: the update path adopts a
+# client through ``_client_adoption`` (file-by-file render/hash proof), never from a marker.
 _CLIENT_EVIDENCE_MARKERS: dict[str, tuple[str, ...]] = {
     "claude-code": (".claude",),
     "cursor-ide": (".cursor",),
@@ -97,91 +132,10 @@ _CLIENT_EVIDENCE_MARKERS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _paths_overlap(one: str, other: str) -> bool:
-    """True when the two repo-relative paths are the same file or nest."""
-    return one == other or one.startswith(f"{other}/") or other.startswith(f"{one}/")
-
-
-def _trw_scaffolds_marker(client_id: str, marker: str) -> bool:
-    """True when TRW itself creates *marker* without the user choosing *client_id*.
-
-    Two ways that happens, and the uninstall registry — TRW's own record of what
-    it installs — answers both:
-
-    * the marker is (or contains) a **core** surface, written into every project
-      whatever the client. ``.claude/`` is the case that matters: hooks, skills
-      and agents are universal artifacts, so ``.claude/`` is our output in a
-      codex-only project too.
-    * the marker is (or contains) a surface TRW installs for a **different**
-      client. ``.cursor/`` is that case: a cursor-cli install writes
-      ``.cursor/cli.json`` and ``.cursor/hooks/`` under it, so the directory says
-      "some cursor surface was installed", never "this developer uses the IDE".
-
-    Deriving it is what makes it durable. The predecessor hand-listed a single
-    exclusion (claude-code) with the right reasoning in its docstring and no
-    mechanism behind it, so ``.cursor/`` — created by TRW on any machine with the
-    ``cursor`` binary on PATH — voted cursor-ide into an append-only record it
-    can never leave. A new client that starts writing under ``.codex/`` now
-    retires codex's marker automatically instead of repeating that.
-    """
-    from trw_mcp.client_profiles.catalog import client_scaffold_relpaths, core_scaffold_relpaths
-
-    from ._utils import SUPPORTED_IDES
-
-    scaffolded: set[str] = set(core_scaffold_relpaths())
-    for other in SUPPORTED_IDES:
-        if other != client_id:
-            scaffolded |= client_scaffold_relpaths(other)
-    return any(_paths_overlap(marker, path) for path in scaffolded)
-
-
-def _file_evidenced_clients(project_root: Path) -> list[str]:
-    """Clients with project-scoped evidence TRW did not fabricate.
-
-    ``detect_ide`` deliberately also fires on machine-global signals — ``which
-    cursor``, ``which cursor-agent``, ``CURSOR_*`` env — and TRW then scaffolds
-    whatever it detected. Those signals are right for a first install (they
-    answer "what could this developer use?") and wrong for maintaining a
-    project's recorded client list (which answers "what does THIS project
-    use?"), because our own output becomes the next run's input.
-
-    So a marker only counts when TRW could not have written it while installing
-    something else. claude-code and cursor-ide currently have no such marker and
-    are therefore never adopted from disk; adopting either later is an explicit
-    ``update-project --ide <client>``.
-
-    **Read the summary line as narrower than it sounds.** "TRW did not fabricate"
-    is true of *installing something else*, which is what the predicate tests. It
-    is NOT true of installing the client the marker evidences: measured against the
-    catalog, 7 of the 8 markers in the table are paths TRW writes for that same
-    client — ``.github/agents`` for copilot, ``.codex`` for codex, and so on. The
-    predicate has no arm for that case.
-
-    That gap is **latent, not live**: reaching it needs TRW to write client X's
-    marker in a project where X is not recorded, and ``_run_post_update_phases``
-    now derives its write targets from ``recorded or ide_targets`` rather than from
-    detection, which closes it. Reproduced at HEAD — ``init-project --ide codex``
-    plus three bare updates leaves the record ``['codex']``.
-
-    It is not closed here because closing it honestly would reject every marker in
-    the table and make this function permanently empty, which is a decision about
-    whether the mechanism should exist at all. The measurement is pinned in
-    ``tests/test_client_evidence_self_scaffolding.py`` so it cannot drift quietly.
-    """
-    found: list[str] = []
-    for client_id, markers in _CLIENT_EVIDENCE_MARKERS.items():
-        usable = [m for m in markers if not _trw_scaffolds_marker(client_id, m)]
-        if any((project_root / marker).exists() for marker in usable):
-            found.append(client_id)
-    return found
-
-
 def clients_with_markers_on_disk(project_root: Path) -> list[str]:
     """Clients whose on-disk marker is present, WITHOUT the scaffolding exclusion.
 
-    The sibling :func:`_file_evidenced_clients` drops markers TRW writes itself,
-    because on the update path our own output would otherwise be read back as
-    the user's choice. At INSTALL time that exclusion is wrong: nothing has been
+    At INSTALL time nothing has been
     scaffolded yet, so a ``.claude/`` or ``.cursor/`` already on disk really is
     the user's. What still must not count at install is the machine-global half
     of detection — ``shutil.which("cursor")`` and the ``CURSOR_*`` env vars —
@@ -192,19 +146,6 @@ def clients_with_markers_on_disk(project_root: Path) -> list[str]:
         for client_id, markers in _CLIENT_EVIDENCE_MARKERS.items()
         if any((project_root / marker).exists() for marker in markers)
     ]
-
-
-def _recorded_plus_newly_adopted(project_root: Path) -> list[str]:
-    """The recorded clients, plus any newly adopted one with real evidence.
-
-    This is what a bare ``update-project`` should write back: it still picks up
-    a client the user genuinely added (an ``opencode.json`` appears), without
-    letting our own scaffolding vote itself into the record.
-    """
-    recorded = _recorded_targets(project_root)
-    if not recorded:
-        return []
-    return recorded + [c for c in _file_evidenced_clients(project_root) if c not in recorded]
 
 
 def _recorded_or_detected_targets(project_root: Path) -> list[str]:
@@ -232,116 +173,3 @@ def _recorded_or_detected_targets(project_root: Path) -> list[str]:
     from ._utils import resolve_ide_targets
 
     return resolve_ide_targets(project_root)
-
-
-def _update_claude_md_trw_section(
-    claude_md_path: Path,
-    result: dict[str, list[str]],
-    project_root: Path | None = None,
-) -> None:
-    """Replace the auto-generated TRW section in CLAUDE.md.
-
-    Preserves all user-written content above and below the markers, and first
-    retires any ``.trw`` sidecar and its ``@`` imports (PRD-QUAL-143-FR01).
-
-    *project_root* defaults to the file's own directory, which is correct for the
-    repo-root CLAUDE.md this function is always called with.
-    """
-    from trw_mcp.state.claude_md._sidecar_retire import retire_instruction_sidecars
-
-    retire_instruction_sidecars(project_root or claude_md_path.parent)
-
-    # PRD-CORE-203 FR04: never clobber a single-source pointer file. The shared
-    # guard (same helper used by ``_parser.merge_trw_section``) heals any stale
-    # appended block and signals skip so the bootstrap update path leaves a
-    # ``@AGENTS.md``-style pointer untouched.
-    if claude_md_path.exists():
-        from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
-
-        if pointer_skip_guard(claude_md_path) is not None:
-            result.setdefault("preserved", []).append(str(claude_md_path))
-            return
-
-    try:
-        content = claude_md_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        # TOCTOU-safe: the file may vanish between the guard and the read.
-        result.setdefault("errors", []).append(f"Failed to read {claude_md_path}: {exc}")
-        return
-    new_block = _minimal_claude_md_trw_block()
-
-    # Line-anchored whole-line matching only — an inline prose mention of a
-    # marker (e.g. inside backticks) must never be mistaken for the section
-    # boundary (repo rule "Marker / Sentinel Matching"; the substring form once
-    # destroyed 705 ROADMAP lines).
-    start_span = find_marker_line_span(content, _TRW_START_MARKER, anchor="start")
-    end_span = find_marker_line_span(content, _TRW_END_MARKER, anchor="end")
-
-    if start_span is not None and end_span is not None:
-        # Replace the existing auto-generated section
-        end_idx = end_span[1]
-        # Also capture the header marker line if present on its own line above
-        # the start marker (rfind semantics → last occurrence before start).
-        header_span = find_marker_line_span(content[: start_span[0]], _TRW_HEADER_MARKER, anchor="start", last=True)
-        replace_start = header_span[0] if header_span is not None else start_span[0]
-        # `end_idx` is the end of the marker TEXT only (find_marker_line_span's
-        # "end" anchor deliberately excludes the line terminator), so the tail
-        # still carries the ORIGINAL end-marker line's own newline. `new_block`
-        # already supplies its own trailing newline after its copy of the end
-        # marker, so splicing the two unstripped doubled that newline on every
-        # call — one stray blank line added per run, never self-corrected here
-        # (the profile sync that DOES self-correct it is hash-cached and skips
-        # once the render inputs stop changing, so the growth compounded
-        # invisibly on every subsequent `update-project` run). Strip exactly
-        # the one line terminator `new_block` already accounts for; anything
-        # the user wrote after that line is preserved untouched.
-        after = re.sub(r"^[ \t]*\r?\n", "", content[end_idx:], count=1)
-        updated = content[:replace_start] + new_block + after
-        _guarded(claude_md_path, updated, project_root, result)
-    elif start_span is None:
-        # No TRW section -- append it
-        if not content.endswith("\n"):
-            content += "\n"
-        content += "\n" + new_block
-        _guarded(claude_md_path, content, project_root, result)
-    else:
-        result["errors"].append("CLAUDE.md has malformed TRW markers — found start but not end")
-
-
-def _guarded(claude_md_path: Path, candidate: str, project_root: Path | None, result: dict[str, list[str]]) -> None:
-    """Route a bootstrap CLAUDE.md write through the PRD-FIX-123 guard.
-
-    Replaces two bare, non-atomic ``Path.write_text`` calls. Backup, provenance,
-    and the shrink floors now apply to the bootstrap path exactly as they do to
-    the runtime sync.
-    """
-    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
-
-    guarded_bootstrap_write(
-        claude_md_path,
-        candidate,
-        project_root=project_root or claude_md_path.parent,
-        markers=(_TRW_START_MARKER, _TRW_END_MARKER),
-        result=result,
-        rel_path=str(claude_md_path),
-    )
-
-
-def _minimal_claude_md_trw_block() -> str:
-    """Return just the auto-generated TRW section for CLAUDE.md updates."""
-    import sys
-
-    # Look up _minimal_claude_md via the package module so that
-    # patch("trw_mcp.bootstrap._minimal_claude_md", ...) in tests
-    # correctly intercepts the call.
-    bootstrap_pkg = sys.modules["trw_mcp.bootstrap"]
-    full: str = bootstrap_pkg._minimal_claude_md()
-    start_idx = full.find(_TRW_HEADER_MARKER)
-    end_idx = full.find(_TRW_END_MARKER)
-    if start_idx != -1 and end_idx != -1:
-        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
-    # Fallback: return entire trw:start..trw:end
-    start_idx = full.find(_TRW_START_MARKER)
-    if start_idx != -1 and end_idx != -1:
-        return str(full[start_idx : end_idx + len(_TRW_END_MARKER)]) + "\n"
-    return ""

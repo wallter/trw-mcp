@@ -9,7 +9,6 @@ description: >
 effort: medium
 model: frontier
 maxTurns: 200
-memory: project
 tools:
   - Read
   - Edit

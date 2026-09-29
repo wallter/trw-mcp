@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +10,9 @@ from typing import Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
+from trw_memory._tree_removal import remove_tree
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.meta_tune.eval_gaming_detector import detect_eval_gaming
 from trw_mcp.meta_tune.promote_helpers import (
     append_audit_entry_or_raise,
@@ -23,6 +24,7 @@ from trw_mcp.meta_tune.promote_helpers import (
     persist_snapshot,
     resolve_repo,
     resolve_repo_path,
+    write_promotion_backup,
 )
 from trw_mcp.meta_tune.promote_helpers import (
     sandbox_escape_signals as collect_sandbox_escape_signals,
@@ -106,7 +108,9 @@ def promote_candidate(
             audit_log_path=str(Path(cfg.meta_tune.audit_log_path)),
         )
 
-    resolved_target = target_path.resolve()
+    # Resolve the directory, not the leaf: a symlink AT the target must reach the write and be refused
+    # there, not be silently swapped for whatever it points at (PRD-CORE-337 FR08).
+    resolved_target = target_path.parent.resolve() / target_path.name
     repo_root = resolve_repo(resolved_target)
     resolved_state_dir = (state_dir or _default_state_dir()).resolve()
     resolved_audit_log = resolve_repo_path(cfg.meta_tune.audit_log_path, repo_root=repo_root)
@@ -196,7 +200,7 @@ def promote_candidate(
                 classification=classification,
             )
         finally:
-            shutil.rmtree(staging_dir, ignore_errors=True)
+            remove_tree(staging_dir, purpose="meta-tune promotion staging")
 
 
 def _run_after_staging(
@@ -221,7 +225,7 @@ def _run_after_staging(
 ) -> PromotionResult:
     """Sandbox -> detector -> gate -> write. Staging cleanup is the caller's."""
     staged_candidate_path = staging_dir / resolved_target.name
-    staged_candidate_path.write_text(candidate_content, encoding="utf-8")
+    write_checkout_file(resolved_state_dir, staged_candidate_path, candidate_content)
     rendered_command = materialize_sandbox_command(
         sandbox_command,
         candidate_path=staged_candidate_path,
@@ -366,15 +370,10 @@ def _run_after_staging(
     )
 
     if decision.decision == "approve":
-        backup_dir = resolved_state_dir / "backups"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_dir / f"{resolved_edit_id}.bak"
-        if resolved_target.exists():
-            shutil.copy2(resolved_target, backup_path)
-        else:
-            backup_path.write_text("", encoding="utf-8")
-        resolved_target.parent.mkdir(parents=True, exist_ok=True)
-        resolved_target.write_text(candidate_content, encoding="utf-8")
+        backup_path = write_promotion_backup(resolved_state_dir, resolved_edit_id, resolved_target)
+        # Anchored on the repository the target resolved into: a symlink swapped in after resolution is
+        # refused (UnsafeWriteError) rather than written through (PRD-CORE-337 FR08).
+        write_checkout_file(repo_root.resolve(), resolved_target, candidate_content)
         persist_snapshot(
             edit_id=resolved_edit_id,
             state_dir=resolved_state_dir,

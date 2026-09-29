@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+from trw_mcp._checkout_access import delete_regular_file_under
 from trw_mcp.code_index.bounds import MAX_INDEXED_FILE_BYTES, CodeIndexBounds, Deadline
 from trw_mcp.code_index.discovery import (
     DEFAULT_EXCLUDE_DIRS,
@@ -52,6 +53,22 @@ def _path_is_in_scope(path: str, scopes: tuple[str, ...] | None) -> bool:
     if scopes is None:
         return True
     return any(path == scope or path.startswith(f"{scope}/") for scope in scopes)
+
+
+#: The single-file store the SQLite chunk store replaced (B71-25); `store.py`'s own docstring
+#: confirms nothing reads it back. Relative to the manifest's own repo_root.
+_LEGACY_CHUNKS_JSON_RELATIVE = ".trw/code-index/chunks.json"
+
+
+def _delete_legacy_chunks_json(root: Path) -> None:
+    """Remove a pre-SQLite-store ``chunks.json`` sibling after a successful build (FR03, B71-25).
+
+    File-only, no-follow, no re-resolution: :func:`trw_mcp._checkout_access.delete_regular_file_under`
+    unlinks through the SAME already-open parent directory descriptor its own verification open used,
+    never a second, plain path-string ``os.remove`` -- a missing file, a symlink at this exact path,
+    or any other non-regular entry is left untouched (a no-op).
+    """
+    delete_regular_file_under(root, _LEGACY_CHUNKS_JSON_RELATIVE)
 
 
 def _normalize_scopes(paths: Iterable[str] | None) -> tuple[str, ...] | None:
@@ -168,6 +185,7 @@ def update_code_index(
         )
     chunk_stats = build_chunk_store(root, manifest, deadline=deadline)
     save_manifest(manifest_path, manifest)  # build_chunk_store already refused a symlinked index directory
+    _delete_legacy_chunks_json(root)  # FR03: a successful build cleans up its own pre-SQLite sibling
     return CodeIndexUpdateResult(manifest=manifest, manifest_path=manifest_path, stats=stats, chunk_stats=chunk_stats)
 
 

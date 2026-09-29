@@ -4,28 +4,31 @@
 ``surface_packs.PACK_TOOLS`` so the removal set the slices work through (37
 names) is derived, not copied: a tool added to the registry before the cut
 lands shows up here as a 38th name to place. A slice moves names from the
-registry to the denylist's ``REMOVED_TOOLS``, so the checks count both and no
-slice edits a number here.
+registry to ``surface_v2.CUT_RETIRED_TOOLS``, so the checks count both and no
+slice edits a number here. Tools retired before the baseline (``RETIRED_BEFORE_CUT``)
+are on the denylist but were never among the 51, so they are not counted.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from tests.test_removed_tool_denylist import REMOVED_TOOLS
 from trw_mcp.models.surface_packs import PACK_TOOLS
 from trw_mcp.models.surface_v2 import (
+    CUT_RETIRED_TOOLS,
     POST_CUT_FLAGGED,
     POST_CUT_KERNEL,
     POST_CUT_NEW_TOOLS,
     POST_CUT_REVIEWER_TOOLS,
     POST_CUT_SURFACE,
+    RETIRED_BEFORE_CUT,
+    RETIRED_TOOLS,
 )
 
 pytestmark = pytest.mark.unit
 
 _REGISTERED_TODAY = frozenset(name for names in PACK_TOOLS.values() for name in names)
-_REMOVED = frozenset(REMOVED_TOOLS)
+_REMOVED = CUT_RETIRED_TOOLS
 
 
 def test_the_target_is_fifteen_distinct_tools_thirteen_by_default() -> None:
@@ -49,3 +52,9 @@ def test_the_removal_set_is_the_thirty_seven_names_the_map_places() -> None:
 
 def test_the_final_reviewer_bound_is_inside_the_surface() -> None:
     assert POST_CUT_REVIEWER_TOOLS <= POST_CUT_SURFACE
+
+
+def test_the_denylist_is_the_cut_plus_the_earlier_retirements() -> None:
+    assert RETIRED_TOOLS == CUT_RETIRED_TOOLS | RETIRED_BEFORE_CUT
+    assert not CUT_RETIRED_TOOLS & RETIRED_BEFORE_CUT
+    assert not RETIRED_BEFORE_CUT & (_REGISTERED_TODAY | POST_CUT_SURFACE), "an earlier retirement is registered again"

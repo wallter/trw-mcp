@@ -21,6 +21,9 @@ from trw_mcp.state.prd_utils import (
     parse_frontmatter,
 )
 
+pytestmark = pytest.mark.unit
+
+
 # =============================================================================
 # parse_frontmatter — edge cases
 # =============================================================================

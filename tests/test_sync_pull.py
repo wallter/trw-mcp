@@ -13,10 +13,15 @@ import inspect
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from trw_memory.models.memory import MemoryEntry
 
+from tests._contact_support import payload_trw_dir
 from tests._memory_fixtures import FAKE_NAMESPACE, DaemonCheckout
 from tests._memory_store_fake import FakeMemoryStore
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 def _seed(
@@ -107,6 +112,7 @@ async def test_pull_empty_returns_none() -> None:
         api_key="test-key",
         timeout=1.0,
         client_id="sync-test",
+        trw_dir=payload_trw_dir(),
     )
     result = await puller.pull_intel_state()
     assert result is None
@@ -121,6 +127,7 @@ async def test_puller_never_raises() -> None:
         api_key="test-key",
         timeout=0.5,
         client_id="sync-test",
+        trw_dir=payload_trw_dir(),
     )
     assert await puller.pull_intel_state(etag="stale-etag") is None
     assert await puller.pull_intel_state(since_seq=999) is None
@@ -132,9 +139,7 @@ def test_puller_constructor_strips_trailing_slash() -> None:
     from trw_mcp.sync.pull import SyncPuller
 
     puller = SyncPuller(
-        backend_url="http://example.com/api/",
-        api_key="test-key",
-        client_id="sync-test",
+        backend_url="http://example.com/api/", api_key="test-key", client_id="sync-test", trw_dir=payload_trw_dir()
     )
     assert puller._backend_url == "http://example.com/api"
 
@@ -143,7 +148,9 @@ def test_puller_default_timeout() -> None:
     """Default timeout is 5.0 seconds."""
     from trw_mcp.sync.pull import SyncPuller
 
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-test")
+    puller = SyncPuller(
+        backend_url="http://example.com", api_key="key", client_id="sync-test", trw_dir=payload_trw_dir()
+    )
     assert puller._timeout == 5.0
 
 
@@ -152,7 +159,7 @@ def test_puller_warns_on_insecure_non_local_http_url() -> None:
     from trw_mcp.sync.pull import SyncPuller
 
     with patch("trw_mcp.sync.pull.logger.warning") as mock_warning:
-        SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-test")
+        SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-test", trw_dir=payload_trw_dir())
 
     mock_warning.assert_called_once_with("sync_pull_insecure_url", url="http://example.com")
 
@@ -162,9 +169,7 @@ async def test_pull_sends_client_id_and_logs_structured_events() -> None:
     from trw_mcp.sync.pull import SyncPuller
 
     puller = SyncPuller(
-        backend_url="http://example.com",
-        api_key="key",
-        client_id="sync-client-1",
+        backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=payload_trw_dir()
     )
 
     response = MagicMock()
@@ -213,7 +218,9 @@ async def test_pull_malformed_200_payload_returns_none() -> None:
     """Malformed 200 pull payloads fail open instead of looking successful."""
     from trw_mcp.sync.pull import SyncPuller
 
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+    puller = SyncPuller(
+        backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=payload_trw_dir()
+    )
 
     malformed_payloads = [
         {},
@@ -237,7 +244,9 @@ async def test_pull_boundary_failure_logs_structured_warning() -> None:
     """Boundary failures log structured warning + traceback and still fail open."""
     from trw_mcp.sync.pull import SyncPuller
 
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+    puller = SyncPuller(
+        backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=payload_trw_dir()
+    )
 
     mock_client_cls = _build_async_httpx_mock(MagicMock())
     mock_client = mock_client_cls.return_value.__aenter__.return_value
@@ -262,7 +271,9 @@ async def test_pull_not_modified_returns_distinct_result() -> None:
     """304 responses are distinguishable from transport failures."""
     from trw_mcp.sync.pull import SyncPuller
 
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
+    puller = SyncPuller(
+        backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=payload_trw_dir()
+    )
 
     response = MagicMock()
     response.status_code = 304
@@ -635,3 +646,84 @@ def test_merge_team_learnings_books_a_security_refusal_as_blocked_not_failed(
     clean_row = asyncio.run(daemon_checkout.client.get("team-sync-remote-clean", daemon_checkout.namespace))
     assert clean_row["status"] == "ok"
     assert result.as_log_fields()["blocked"] == 1
+
+
+# -- B71-90 (PRD-CORE-308): the apply is conditional on the revision the pull read ---------------------
+
+
+def _edit_after_find(monkeypatch, owner: object, edit, *, times: int = 1) -> None:
+    """Make ``find_synced`` land *edit* right after it reads, as a local write between find and apply would."""
+    find, calls = type(owner).find_synced, [0]
+
+    def _find_then_edit(self, namespace: str, remote_id: str, ids: list[str]):  # type: ignore[no-untyped-def]
+        found = find(self, namespace, remote_id, ids)
+        calls[0] += 1
+        if calls[0] <= times:
+            edit(self)
+        return found
+
+    monkeypatch.setattr(type(owner), "find_synced", _find_then_edit)
+
+
+def test_a_local_edit_between_find_and_apply_is_merged_not_overwritten(
+    daemon_checkout: DaemonCheckout, monkeypatch
+) -> None:
+    from trw_memory.lifecycle.correction import LearningPatch
+
+    from trw_mcp.state._store_selection import selected_store
+    from trw_mcp.sync.pull import SyncPuller
+
+    puller = SyncPuller(
+        backend_url="http://example.com", api_key="key", client_id="me", trw_dir=daemon_checkout.trw_dir
+    )
+    learning = {"source_learning_id": "remote-race", "summary": "tip", "detail": "v1", "vector_clock": {"peer": 1}}
+    assert puller.merge_team_learnings([learning]).inserted == 1
+    store, _ns = selected_store(daemon_checkout.trw_dir)
+    _edit_after_find(
+        monkeypatch, store, lambda s: s.correct("team-sync-remote-race", LearningPatch(detail="local edit"))
+    )
+
+    result = puller.merge_team_learnings([dict(learning, detail="their edit", vector_clock={"peer": 2})])
+
+    row = store.get("team-sync-remote-race")
+    assert (result.merged, result.failed) == (1, 0)
+    assert row is not None and "local edit" in row.detail and "their edit" in row.detail
+    assert [e.id for e in store.page_dirty(daemon_checkout.namespace, 10)] == ["team-sync-remote-race"]
+
+
+def test_a_row_created_between_find_and_apply_is_not_clobbered(
+    fake_memory_store: FakeMemoryStore, tmp_path, monkeypatch
+) -> None:
+    from trw_mcp.sync.pull import SyncPuller
+
+    _edit_after_find(monkeypatch, fake_memory_store, lambda s: _seed(s, "team-sync-new", detail="mine", synced=False))
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="me", trw_dir=tmp_path)
+
+    result = puller.merge_team_learnings(
+        [{"source_learning_id": "new", "summary": "tip", "detail": "theirs", "vector_clock": {"peer": 1}}]
+    )
+
+    row = fake_memory_store.get("team-sync-new")
+    assert (result.merged, result.failed) == (1, 0)
+    assert row is not None and "mine" in row.detail and "theirs" in row.detail
+
+
+def test_a_row_that_keeps_moving_is_reported_failed_as_a_conflict(
+    fake_memory_store: FakeMemoryStore, tmp_path, monkeypatch
+) -> None:
+    """Bounded: after the retries the item is booked ``failed`` (the cursor holds; the next pull re-offers it)."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    _seed(fake_memory_store, "team-sync-busy", detail="v0", vector_clock={"peer": 1})
+    edits = iter(range(1, 10))
+    _edit_after_find(
+        monkeypatch, fake_memory_store, lambda s: _seed(s, "team-sync-busy", detail=f"v{next(edits)}"), times=9
+    )
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="me", trw_dir=tmp_path)
+
+    result = puller.merge_team_learnings(
+        [{"source_learning_id": "busy", "summary": "tip", "detail": "theirs", "vector_clock": {"peer": 2}}]
+    )
+
+    assert (result.failed, result.applied) == (1, 0)
+    assert fake_memory_store.get("team-sync-busy").detail == "v3"  # type: ignore[union-attr]

@@ -8,18 +8,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from trw_mcp.models.config import PhaseTimeCaps, TRWConfig, _reset_config, get_config
+from trw_mcp.models.config import TRWConfig, _reset_config, get_config
 from trw_mcp.models.learning import (
     LearningEntry,
     Pattern,
-    Reflection,
 )
 from trw_mcp.models.requirements import (
     PRDConfidence,
     PRDFrontmatter,
     PRDStatus,
     Priority,
-    TraceabilityResult,
     ValidationFailure,
     ValidationResult,
 )
@@ -31,9 +29,6 @@ from trw_mcp.models.run import (
     RunState,
     RunStatus,
     ShardCard,
-    WaveEntry,
-    WaveManifest,
-    WaveStatus,
 )
 
 
@@ -52,7 +47,6 @@ class TestTRWConfig:
         assert config.learning_max_entries == 500
         assert config.learning_promotion_impact == 0.7
         assert config.learning_repeated_op_threshold == 3
-        assert config.claude_md_max_lines == 500
         assert config.sub_claude_md_max_lines == 50
 
     def test_aaref_quality_gates(self) -> None:
@@ -144,30 +138,6 @@ class TestGetConfig:
         _reset_config()
 
 
-class TestPhaseTimeCaps:
-    """Tests for PhaseTimeCaps."""
-
-    def test_defaults(self) -> None:
-        caps = PhaseTimeCaps()
-        assert caps.research == 0.25
-        assert caps.plan == 0.15
-        assert caps.implement == 0.35
-        assert caps.validate_phase == 0.10
-        assert caps.review == 0.10
-        assert caps.deliver == 0.05
-
-    def test_get_cap_valid(self) -> None:
-        caps = PhaseTimeCaps()
-        assert caps.get_cap("research") == 0.25
-        assert caps.get_cap("implement") == 0.35
-        assert caps.get_cap("deliver") == 0.05
-
-    def test_get_cap_invalid(self) -> None:
-        caps = PhaseTimeCaps()
-        with pytest.raises(ValueError, match="Unknown phase"):
-            caps.get_cap("invalid")
-
-
 class TestConfidenceFromScore:
     """Tests for Confidence.from_score() boundary values."""
 
@@ -238,24 +208,6 @@ class TestShardCard:
             ShardCard(id="shard-bad", title="Bad", wave=0)
 
 
-class TestWaveManifest:
-    """Tests for WaveManifest model."""
-
-    def test_empty(self) -> None:
-        manifest = WaveManifest()
-        assert manifest.waves == []
-
-    def test_with_waves(self) -> None:
-        manifest = WaveManifest(
-            waves=[
-                WaveEntry(wave=1, shards=["shard-001", "shard-002"], status=WaveStatus.COMPLETE),
-                WaveEntry(wave=2, shards=["shard-003"], status=WaveStatus.PENDING, depends_on=[1]),
-            ]
-        )
-        assert len(manifest.waves) == 2
-        assert manifest.waves[1].depends_on == [1]
-
-
 class TestEvent:
     """Tests for Event model."""
 
@@ -290,23 +242,6 @@ class TestLearningEntry:
     def test_tags_default(self) -> None:
         entry = LearningEntry(id="L-00", summary="S", detail="D")
         assert entry.tags == []
-
-
-class TestReflection:
-    """Tests for Reflection model."""
-
-    def test_create(self) -> None:
-        reflection = Reflection(
-            id="R-001",
-            run_id="run-001",
-            scope="session",
-            timestamp=datetime(2026, 2, 6, 12, 0, 0, tzinfo=timezone.utc),
-            events_analyzed=42,
-            what_worked=["phase transitions"],
-            what_failed=["shard timeout"],
-        )
-        assert reflection.events_analyzed == 42
-        assert len(reflection.what_worked) == 1
 
 
 class TestPattern:
@@ -361,13 +296,3 @@ class TestValidationResult:
         )
         assert result.valid is False
         assert len(result.failures) == 1
-
-
-class TestTraceabilityResult:
-    """Tests for TraceabilityResult model."""
-
-    def test_defaults(self) -> None:
-        result = TraceabilityResult()
-        assert result.total_requirements == 0
-        assert result.coverage == 0.0
-        assert result.untraced_requirements == []

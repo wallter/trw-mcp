@@ -82,10 +82,3 @@ def build_tool_trace_fields(
         "task_profile_hash": task_profile_hash,
         "causal_relation": _resolve_causal_relation(parent_event_id, causal_relation),
     }
-
-
-def with_task_profile_hash(fields: ToolTraceFields, task_profile_hash: str) -> ToolTraceFields:
-    """Return trace fields with run task-profile hash filled when absent."""
-    if not task_profile_hash or fields["task_profile_hash"]:
-        return fields
-    return {**fields, "task_profile_hash": task_profile_hash}

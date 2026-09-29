@@ -7,6 +7,9 @@ checkout's own ``memory.db`` or in another process.
 * A MIGRATED checkout (``project_namespace`` pinned by ``memory migrate``) gets
   the daemon store of PRD-CORE-298 FR01 (``_daemon_store``). It fails closed
   when the daemon or the grant is missing: it never falls back to the file.
+* A LINKED git worktree with no pin of its own borrows its main checkout's pin
+  and grant, once git proves the link and the pin equals the worktree's
+  canonical namespace (``trw_memory.namespaces.worktree``); anything else fails closed.
 * An UNPINNED checkout fails closed too: trw-mcp no longer opens a checkout's
   own ``memory.db``. The error names ``trw-mcp memory migrate --to user`` when
   that file holds learnings (``holds_rows``), else ``update-project`` (FR06).
@@ -22,7 +25,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, NoReturn, Protocol, cast
 
 from typing_extensions import TypedDict
 
@@ -30,7 +33,15 @@ if TYPE_CHECKING:
     from trw_memory.lifecycle.correction import LearningPatch
     from trw_memory.lifecycle.dedup import DedupResult
     from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings
-    from trw_memory.models.memory import Anchor, Assertion, Confidence, MemoryEntry, MemoryType, ProtectionTier
+    from trw_memory.models.memory import (
+        Anchor,
+        Assertion,
+        Confidence,
+        EvidenceLevel,
+        MemoryEntry,
+        MemoryType,
+        ProtectionTier,
+    )
     from trw_memory.sync import AdmissionOutcome
 
     from trw_mcp.state._recall_admission import RecallAdmission
@@ -59,6 +70,7 @@ class StoreRequest(TypedDict, total=False):
     type: MemoryType
     nudge_line: str
     confidence: Confidence
+    evidence_level: EvidenceLevel
     task_type: str
     domain: list[str]
     phase_origin: str
@@ -83,6 +95,8 @@ class NamespaceHealth(TypedDict):
     has_relations: bool
     embedded: int | None
     max_recall_count: int
+    #: Exact row count per ``MemoryType`` value (PRD-CORE-334 FR04).
+    types: dict[str, int]
 
 
 class VectorCoverage(TypedDict):
@@ -132,6 +146,18 @@ class RecallSpec:
     min_impact: float = 0.0
     top_k: int = 25
     include_user: bool = True
+    #: PRD-CORE-332 FR05: the repo-relative file whose anchored rows the page lists instead
+    #: of search hits; anchors are repo-relative, so such a recall reads the project only.
+    anchor_file: str | None = None
+    #: PRD-CORE-334 FR02: only rows of this ``MemoryType`` value, filtered before each page's limit.
+    record_type: str | None = None
+    #: HINT-RECALL-BUDGET: take exactly one page from ``take_hits`` — never grow ``top_k`` to fetch a
+    #: deeper one — so a deadline-bounded caller (the pre-edit hint) pays for at most one round trip
+    #: per query. ``False`` (every other caller) is byte-identical to the pre-existing growth loop.
+    single_page: bool = False
+    #: False skips the daemon's cross-encoder re-rank (and its bridge hop) for a caller with a
+    #: latency budget; each page keeps the fusion order.
+    rerank: bool = True
 
 
 class MemoryStore(Protocol):
@@ -149,7 +175,7 @@ class MemoryStore(Protocol):
         """Apply *patch* to *learning_id* in the namespace that owns it (PRD-CORE-294 FR03).
 
         Answers in the ``memory_update`` vocabulary: ``updated``, ``no_changes``,
-        ``invalid`` or ``not_found``.
+        ``invalid``, ``not_found``, or ``conflict`` when ``patch.if_revision`` is stale.
         """
         ...
 
@@ -178,9 +204,15 @@ class MemoryStore(Protocol):
         ...
 
     def list_entries(
-        self, namespace: str, *, status: str | None = None, tags: list[str] | None = None, limit: int
+        self,
+        namespace: str,
+        *,
+        status: str | None = None,
+        tags: list[str] | None = None,
+        limit: int,
+        types: list[str] | None = None,
     ) -> list[MemoryEntry]:
-        """Up to *limit* rows of *namespace*, newest first; *status* and every tag in *tags* filter the query."""
+        """Up to *limit* rows of *namespace*, newest first; *status*, every tag in *tags* and *types* filter the query."""
         ...
 
     def page_dirty(self, namespace: str, limit: int) -> list[MemoryEntry]:
@@ -199,12 +231,16 @@ class MemoryStore(Protocol):
         """The row of *namespace* a pulled learning maps to: its ``remote_id`` or one of *ids*."""
         ...
 
-    def apply_synced(self, namespace: str, entry: MemoryEntry, *, synced: bool = True) -> tuple[str, str]:
+    def apply_synced(
+        self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True
+    ) -> tuple[str, str]:
         """Write a merged pulled row through the write gate, left synced unless *synced* is false.
 
         A row that merges local content the server lacks passes ``synced=False`` so the
-        next push carries it. Returns ``(status, reason)``: ``stored``, ``quarantined``, or ``blocked``
-        with the refusal reason.
+        next push carries it. *if_revision* is the ``revision_of`` the row ``find_synced``
+        returned (``None``: none); a row that moved since answers ``conflict`` and nothing is
+        written (PRD-CORE-308). Returns ``(status, reason)``: ``stored``, ``quarantined``,
+        ``blocked`` or ``conflict`` with the reason.
         """
         ...
 
@@ -327,25 +363,63 @@ def selected_store(trw_dir: Path) -> tuple[MemoryStore, str]:
 
     The pin is read from *trw_dir*'s own config cascade, never the process
     singleton: a process serving two roots must not route one by the other's pin.
-    An unpinned checkout fails closed; outside :func:`measuring_only` its error
+    It is read without ``TRWConfig`` (``_namespace_pin_read``, PRD-CORE-333 S3c), and
+    a pin that cannot be read unambiguously fails closed.
+    A linked git worktree with no pin of its own presents its main checkout's pin
+    and grant (``trw_memory.namespaces.worktree``). Any other unpinned checkout fails closed;
+    outside :func:`measuring_only` its error
     reads the checkout's memory.db (read-only) to tell a migration from an update.
     """
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.models.config._loader import resolve_config_overrides
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._namespace_pin_read import PinUnreadableError, pinned_namespace
 
-    pinned = TRWConfig(**resolve_config_overrides(trw_dir / "config.yaml")).project_namespace  # type: ignore[arg-type]
-    if not pinned:
-        if not _explaining_unpinned.get():
-            raise StoreUnavailableError(f"{trw_dir.parent} has no project_namespace; run `trw-mcp doctor`")
-        from trw_mcp.state._store_migration import holds_rows
-
-        if holds_rows(trw_dir / "memory" / "memory.db"):
-            raise StoreUnavailableError(
-                f"{trw_dir.parent} keeps its learnings in its own memory.db, which trw-mcp no longer reads; "
-                "run `trw-mcp memory migrate --to user` (preview first, then --apply)"
-            )
-        # Nothing to move (PRD-CORE-280 FR06): update-project pins the namespace and mints the grant.
-        raise StoreUnavailableError(f"{trw_dir.parent} has no project_namespace; run `trw-mcp update-project`")
+    try:
+        pinned = pinned_namespace(trw_dir)
+    except (PinUnreadableError, StateError) as exc:
+        raise StoreUnavailableError(
+            f"{trw_dir.parent}'s project_namespace is unreadable: {exc}. Run `trw-mcp doctor`"
+        ) from exc
+    # A linked worktree's .trw is its own and unpinned: it borrows its main checkout's pin AND grant.
+    grant_trw_dir, pinned = (trw_dir, pinned) if pinned else _main_checkout_pin(trw_dir)
     from trw_mcp.state._daemon_store import daemon_store_for
 
-    return daemon_store_for(trw_dir, pinned), pinned
+    return daemon_store_for(grant_trw_dir, pinned), pinned
+
+
+def _main_checkout_pin(trw_dir: Path) -> tuple[Path, str]:
+    """The main checkout's ``.trw`` and pin for a linked worktree; otherwise today's refusal (``trw_memory.namespaces.worktree``)."""
+    from trw_memory.namespaces.worktree import GitUnavailableError, WorktreeRefusedError, main_checkout_binding
+
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._namespace_pin_read import PinUnreadableError, pinned_namespace
+
+    note = ""
+    try:
+        binding = main_checkout_binding(trw_dir.parent, pinned_namespace)
+    except WorktreeRefusedError as exc:
+        raise StoreUnavailableError(str(exc)) from exc
+    except (PinUnreadableError, StateError) as exc:
+        raise StoreUnavailableError(
+            f"{trw_dir.parent} is a linked worktree whose main checkout's project_namespace is unreadable: {exc}. "
+            "Run `trw-mcp doctor` in the main checkout"
+        ) from exc
+    except GitUnavailableError as exc:
+        binding, note = None, f" ({exc}; a linked worktree borrows its main checkout's pin once git runs)"
+    if binding is None:
+        _refuse_unpinned(trw_dir, note)
+    return binding
+
+
+def _refuse_unpinned(trw_dir: Path, note: str = "") -> NoReturn:
+    """Today's refusal of an unpinned checkout, naming the one way forward (PRD-CORE-280 FR06)."""
+    if not _explaining_unpinned.get():
+        raise StoreUnavailableError(f"{trw_dir.parent} has no project_namespace{note}; run `trw-mcp doctor`")
+    from trw_mcp.state._store_migration import holds_rows
+
+    if holds_rows(trw_dir / "memory" / "memory.db"):
+        raise StoreUnavailableError(
+            f"{trw_dir.parent} keeps its learnings in its own memory.db, which trw-mcp no longer reads{note}; "
+            "run `trw-mcp memory migrate --to user` (preview first, then --apply)"
+        )
+    # Nothing to move (PRD-CORE-280 FR06): update-project pins the namespace and mints the grant.
+    raise StoreUnavailableError(f"{trw_dir.parent} has no project_namespace{note}; run `trw-mcp update-project`")

@@ -27,6 +27,16 @@ from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 from trw_mcp.server._tools import raw_registered_tool_names
 from trw_mcp.tools.assess import register_assess_tools
 
+
+def _redact_state(state):
+    """Test-local: trw_mcp.tools.assess._redact_state was a one-line wrapper (removed in 8.0)."""
+    from trw_memory.decisions import redact_state
+
+    from trw_mcp.telemetry.anonymizer import redact_secrets
+
+    return redact_state(state, redact_secrets)
+
+
 _NOUL_QUESTION = {
     "is_duplicate": {
         "type": "noul",
@@ -467,7 +477,6 @@ _JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNr
 
 
 def test_jwt_nested_in_state_never_egresses() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state({"a": {"b": [_JWT]}})
     assert _JWT not in repr(out)
@@ -475,7 +484,6 @@ def test_jwt_nested_in_state_never_egresses() -> None:
 
 
 def test_secret_named_key_value_never_egresses() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state({"password": "hunter2hunter2", "nested": {"api_key": "plainvalue123"}, "note": "ok"})
     assert "hunter2hunter2" not in repr(out)
@@ -484,7 +492,6 @@ def test_secret_named_key_value_never_egresses() -> None:
 
 
 def test_bearer_values_and_pem_never_egress() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     token = "abcdefghijklmnopqrstuvwxyz0123"
     pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
@@ -494,7 +501,6 @@ def test_bearer_values_and_pem_never_egress() -> None:
 
 
 def test_ordinary_keys_that_contain_secret_words_are_kept() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state({"author": "ada", "tokens_used": 12, "db_password": "x1", "github_token": "y2"})
     assert out["author"] == "ada" and out["tokens_used"] == 12
@@ -502,7 +508,6 @@ def test_ordinary_keys_that_contain_secret_words_are_kept() -> None:
 
 
 def test_camel_case_oauth_keys_never_egress() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     state = {
         "accessToken": "opaqueAbc123opaqueAbc123",
@@ -518,7 +523,6 @@ def test_camel_case_oauth_keys_never_egress() -> None:
 
 
 def test_bearer_and_token_prose_is_not_redacted() -> None:
-    from trw_mcp.tools.assess import _redact_state
 
     prose = "Token expiration handling failed; Bearer authentication required"
     assert _redact_state(prose) == prose
@@ -604,7 +608,6 @@ def test_validation_error_text_is_redacted(decision_server: FastMCP, monkeypatch
 
 def test_state_keys_that_redact_alike_are_kept_apart() -> None:
     """N2: the same collapse applied to ordinary state, not just criteria."""
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state({"alice@example.com": "approve", "bob@example.com": "reject"})
     assert len(out) == 2 and sorted(out.values()) == ["approve", "reject"]
@@ -612,7 +615,6 @@ def test_state_keys_that_redact_alike_are_kept_apart() -> None:
 
 def test_tuple_under_an_ordinary_key_is_still_redacted() -> None:
     """F3: a tuple is a container too; it egresses as a list, redacted."""
-    from trw_mcp.tools.assess import _redact_state
 
     token = "abcdefghijklmnopqrstuvwxyz0123"
     out = _redact_state({"notes": ("plain note", f"Bearer {token}", 7)})
@@ -622,7 +624,6 @@ def test_tuple_under_an_ordinary_key_is_still_redacted() -> None:
 
 def test_secret_bearing_dict_keys_are_redacted() -> None:
     """F4: a key can carry the credential as easily as a value."""
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state({"sk-or-v1-abcdef0123456789abcdef": "some value", "plain": 1})
     assert "sk-or-v1-abcdef0123456789abcdef" not in repr(out) and out["plain"] == 1
@@ -630,7 +631,6 @@ def test_secret_bearing_dict_keys_are_redacted() -> None:
 
 def test_container_under_a_secret_key_is_redacted_whole() -> None:
     """release-verify R2: a list/tuple/nested dict under a secret key escaped the whole-value rule."""
-    from trw_mcp.tools.assess import _redact_state
 
     out = _redact_state(
         {

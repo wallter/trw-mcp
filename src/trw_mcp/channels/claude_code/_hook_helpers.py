@@ -19,12 +19,16 @@ Authoritative field name (P1-02 fix):
 from __future__ import annotations
 
 import json
+import re
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
+
+from trw_mcp._checkout_write import write_checkout_file
 
 log = structlog.get_logger(__name__)
 
@@ -32,6 +36,8 @@ __all__ = [
     "CC03_HINTS_DIR",
     "DEFAULT_SKIP_EXTENSIONS",
     "_CEREMONY_MODE_FIELD",
+    "HintAsOf",
+    "as_of_line",
     "format_t0_beacon",
     "format_t1_hint",
     "format_t2_hint",
@@ -56,11 +62,38 @@ DEFAULT_SKIP_EXTENSIONS: frozenset[str] = frozenset({".md", ".txt", ".rst", ".lo
 _HINT_FILE_TTL_SECONDS: int = 86400  # 24 hours
 
 
+def _distill_importable() -> bool:
+    """Whether trw-distill is importable by THIS interpreter, without importing it.
+
+    Delegates to :func:`trw_mcp.tools._sidecar_substrate.distill_installed` --
+    the ONE ``find_spec`` probe every other distill-presence check in this
+    package already uses (the ``distill``/``hint_delivery`` doctor rows, the
+    sidecar tier gate) -- rather than a second ``find_spec`` call. Reusing the
+    exact attribute path also means this default is covered by the test
+    suite's existing ``_default_distill_absent`` autouse fixture, which pins
+    that function for hermetic, environment-independent tests; a second probe
+    would silently bypass that pin and make this default flip on any dev venv
+    that happens to have trw-distill installed, EVEN in a test asserting the
+    opposite (module import, not the object, so a monkeypatch of the target
+    attribute is honoured).
+    """
+    import trw_mcp.tools._sidecar_substrate as _substrate
+
+    return _substrate.distill_installed()
+
+
 def read_cc03_config(repo_root: Path) -> dict[str, Any]:
     """Read CC-03 configuration from ``.trw/config.yaml``.
 
     Returns a dict with:
-      - ``cc03_hook_enabled``: bool (default False — opt-in)
+      - ``cc03_hook_enabled``: bool. An explicit ``true``/``false`` (top-level,
+        ``channels.cc03_hook_enabled``, or ``channels.cc03.enabled``) always
+        wins. With no explicit value anywhere, the effective default is
+        ``"auto"``: on when trw-distill is importable by this interpreter
+        (:func:`_distill_importable`), off otherwise -- so a licensed install
+        gets pre-edit hints without an undocumented flag, and an unlicensed one
+        is unchanged (PRD-FIX release-window fix, 2026-09-27; disable with
+        ``cc03_hook_enabled: false`` in ``.trw/config.yaml``).
       - ``skip_extensions``: set of extensions to skip
       - ``cc03_t0_silent``: bool (default False)
       - ``debounce_seconds``: int (default 180)
@@ -69,7 +102,7 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
     """
     config_path = repo_root / ".trw" / "config.yaml"
     defaults: dict[str, Any] = {
-        "cc03_hook_enabled": False,
+        "cc03_hook_enabled": _distill_importable(),
         "skip_extensions": set(DEFAULT_SKIP_EXTENSIONS),
         "cc03_t0_silent": False,
         "debounce_seconds": 180,
@@ -93,25 +126,32 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
         if not isinstance(raw, dict):
             return defaults
 
-        # Top-level cc03 key or channels.cc03 nesting
+        # Top-level cc03 key or channels.cc03 nesting. `explicit` stays None
+        # (never a bool) until an actual key is found, so an absent key never
+        # masquerades as an explicit `false` and overrides the auto default above.
+        explicit: bool | None = None
         channels_cfg = raw.get("channels", {})
         if isinstance(channels_cfg, dict):
             cc03_cfg = channels_cfg.get("cc03", {})
             if isinstance(cc03_cfg, dict):
-                defaults["cc03_hook_enabled"] = bool(
-                    channels_cfg.get("cc03_hook_enabled", cc03_cfg.get("enabled", False))
-                )
+                if "cc03_hook_enabled" in channels_cfg:
+                    explicit = bool(channels_cfg["cc03_hook_enabled"])
+                elif "enabled" in cc03_cfg:
+                    explicit = bool(cc03_cfg["enabled"])
                 custom_exts = cc03_cfg.get("skip_extensions")
                 if isinstance(custom_exts, list):
                     defaults["skip_extensions"] = set(custom_exts)
                 defaults["cc03_t0_silent"] = bool(cc03_cfg.get("t0_silent", False))
                 defaults["debounce_seconds"] = int(cc03_cfg.get("debounce_seconds", 180))
-            else:
-                defaults["cc03_hook_enabled"] = bool(channels_cfg.get("cc03_hook_enabled", False))
+            elif "cc03_hook_enabled" in channels_cfg:
+                explicit = bool(channels_cfg["cc03_hook_enabled"])
 
-        # Also check top-level cc03_hook_enabled (FR09)
+        # Top-level cc03_hook_enabled (FR09) is the highest-priority override.
         if "cc03_hook_enabled" in raw:
-            defaults["cc03_hook_enabled"] = bool(raw["cc03_hook_enabled"])
+            explicit = bool(raw["cc03_hook_enabled"])
+
+        if explicit is not None:
+            defaults["cc03_hook_enabled"] = explicit
 
     except Exception as exc:
         log.debug("cc03_config_read_failed", config_path=str(config_path), error=str(exc))
@@ -146,6 +186,141 @@ def format_t1_hint(learnings: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+class HintLesson(Protocol):
+    """The three lesson fields T2 renders (``EditLessonPayload`` satisfies it)."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def sha(self) -> str: ...
+    @property
+    def summary(self) -> str: ...
+
+
+#: T2 without lessons keeps its original budget (FR32: ~320 chars ≈ 80 tokens).
+_T2_BASE_MAX_CHARS: int = 320
+#: PRD-DIST-2482 NFR01: the lesson block alone is <= 120 tokens (ceil(chars/4)),
+#: the budget trw-distill's ``fit_budget`` already applies to the sidecar.
+_T2_LESSON_MAX_CHARS: int = 480
+#: A T2 hint used to drop the T1 recall memory entirely once distill lessons
+#: took the ``lessons`` slot above -- an edit with 5 matching learnings and a
+#: T2 result showed the agent none of them (measured on a real-hook e2e).
+#: The recall block gets no budget of its own: it takes whatever room the
+#: distill content leaves inside ``_T2_MAX_CHARS`` (the hint fires on every
+#: edit, so the total is a design constraint), at most 2 summaries of
+#: ``_T2_RECALL_LESSON_MAX_CHARS`` each, same bullet style as ``format_t1_hint``.
+_T2_RECALL_MAX_LESSONS: int = 2
+#: Per-lesson cap before the remaining room is even considered (codex review
+#: e72d76ac2 r1): recall summaries are stored content, not distill's own
+#: citations, so nothing bounded their length before this.
+_T2_RECALL_LESSON_MAX_CHARS: int = 120
+#: Whole T2 output: 320 + 480 = 800 chars = 200 tokens (PRD-DIST-2482 NFR01).
+#: Raised from 320 only by the lesson block; recall memory fits in what is left.
+_T2_MAX_CHARS: int = _T2_BASE_MAX_CHARS + _T2_LESSON_MAX_CHARS
+
+#: Lesson statuses meaning the check did not finish. An empty list under these
+#: proves nothing, so T2 says so rather than implying "no lessons".
+# trw:intentional an unfinished lesson check must never render as "no lessons"
+_LESSONS_UNCHECKED: dict[str, str] = {
+    "daemon_unavailable": "  LESSONS: not checked (memory daemon unavailable)",
+    "page_cap_reached": "  LESSONS: scan incomplete (page cap), more may exist",
+}
+
+
+#: C0, DEL, C1 and the Unicode line/paragraph separators. Lesson text is stored
+#: memory content injected into the agent's context verbatim, so a newline or an
+#: escape sequence inside it could forge further hint lines or instructions.
+_CONTROL_CHARS = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_WHITESPACE_RUN = re.compile(r"\s+")
+#: Lesson ids and commit shas are identifiers; anything else is not rendered.
+_LESSON_TOKEN = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _one_line(text: str) -> str:
+    """*text* with every control character replaced by a space and whitespace collapsed."""
+    return _WHITESPACE_RUN.sub(" ", _CONTROL_CHARS.sub(" ", text)).strip()
+
+
+def _render_lesson(lesson: HintLesson) -> str | None:
+    """One sanitized ``LESSON`` line, or None when the id or sha is not an identifier."""
+    lesson_id, sha = _one_line(lesson.id), _one_line(lesson.sha)
+    if not (_LESSON_TOKEN.fullmatch(lesson_id) and _LESSON_TOKEN.fullmatch(sha)):
+        return None
+    return f"  LESSON {sha} {lesson_id}: {_one_line(lesson.summary)}"
+
+
+def _lesson_lines(lessons: Sequence[HintLesson], lessons_status: str | None) -> list[str]:
+    """``LESSON <sha> <id>: <summary>`` lines in the lesson budget; lesson 2 goes before lesson 1 is cut."""
+    budget = _T2_LESSON_MAX_CHARS - 1  # the newline that joins the block to the base
+    # Sanitize BEFORE the budget, so the budget measures what is actually printed.
+    rendered = [line for line in map(_render_lesson, lessons[:2]) if line is not None]
+    note = [_LESSONS_UNCHECKED[lessons_status]] if lessons_status in _LESSONS_UNCHECKED else []
+    if len(rendered) > 1 and len("\n".join(rendered + note)) > budget:
+        rendered = rendered[:1]
+    if rendered:
+        room = budget - len("\n".join(note)) - (1 if note else 0)
+        if len(rendered[0]) > room:
+            rendered = [rendered[0][: room - 3] + "..."]
+    return rendered + note
+
+
+def _recall_lesson_lines(recall_learnings: Sequence[dict[str, Any]], room: int) -> list[str]:
+    """Up to ``_T2_RECALL_MAX_LESSONS`` T1-style bullet lines from memory recall.
+
+    Reuses ``format_t1_hint``'s own bullet formatting (``- summary``) so a T2
+    hint that reports distill risk still surfaces recall memory the same way a
+    T1-only hint would, instead of silently dropping it (PRD-DIST-2482
+    follow-up). Returns ``[]`` when there is nothing to show — no header for
+    an empty block.
+
+    Recall summaries are stored memory content, not distill's own citations, so
+    two things a distill lesson gets for free do not hold for them (codex
+    review e72d76ac2 r1):
+
+    - Sanitized with ``_one_line`` before rendering, same as ``_render_lesson``:
+      unsanitized, a summary containing a newline could forge additional
+      ``[TRW ...]``/``LESSON``/``MEMORY:`` lines the agent would read as part
+      of the hint's own structure rather than as quoted recall content.
+    - Bounded to ``_T2_RECALL_LESSON_MAX_CHARS`` per lesson AND to *room*, the
+      characters the rest of the hint leaves inside ``_T2_MAX_CHARS`` (header
+      included): lessons are dropped from the end, not just truncated, so the
+      whole hint never exceeds its budget however many long summaries arrive.
+    """
+    budget = room - 1  # the newline that joins the block to the rest
+    rendered: list[str] = []
+    for learning in recall_learnings[:_T2_RECALL_MAX_LESSONS]:
+        summary = _one_line(str(learning.get("summary", "")))
+        if not summary:
+            continue
+        if len(summary) > _T2_RECALL_LESSON_MAX_CHARS:
+            summary = summary[: _T2_RECALL_LESSON_MAX_CHARS - 3] + "..."
+        rendered.append(f"  - {summary}")
+    while rendered and len("\n".join(["  MEMORY:", *rendered])) > budget:
+        rendered.pop()
+    if not rendered:
+        return []
+    return ["  MEMORY:", *rendered]
+
+
+class HintAsOf(Protocol):
+    """Where a stale T2 hint came from (``SidecarAsOf`` in the hint core)."""
+
+    @property
+    def sidecar_sha(self) -> str: ...
+
+    @property
+    def commits_behind(self) -> int: ...
+
+
+def as_of_line(as_of: HintAsOf) -> str:
+    """The AS-OF label of a stale T2 hint; it names the flag that produced it."""
+    unit = "commit" if as_of.commits_behind == 1 else "commits"
+    return (
+        f"  AS-OF: {as_of.sidecar_sha[:9]}, {as_of.commits_behind} {unit} behind HEAD; "
+        "historical, not current (hint_sidecar_ancestor_enabled)"
+    )
+
+
 def format_t2_hint(
     *,
     file_path: str,
@@ -153,8 +328,12 @@ def format_t2_hint(
     hotspot_warnings: list[str],
     co_change_neighbors: list[str],
     inferred_tests: list[str],
+    lessons: Sequence[HintLesson] = (),
+    lessons_status: str | None = None,
+    as_of: HintAsOf | None = None,
+    recall_learnings: Sequence[dict[str, Any]] = (),
 ) -> str:
-    """Format T2 hint output (≤ 80 tokens / ~320 chars).
+    """Format T2 hint output (<= 200 tokens / 800 chars; <= 80 tokens without lessons).
 
     Args:
         file_path: The file being edited.
@@ -162,11 +341,22 @@ def format_t2_hint(
         hotspot_warnings: List of hotspot warning strings.
         co_change_neighbors: Related files that co-change.
         inferred_tests: Inferred test file paths.
+        lessons: Up to 2 distilled lessons citing the file (PRD-DIST-2482).
+        lessons_status: The sidecar's lesson-read status. An unfinished check
+            is stated as such; ``none_cited`` and ``None`` print nothing.
+        as_of: Set for a ``hint_available_stale`` hint: an AS-OF line follows
+            the header, which itself stays byte-identical (the hook matches it).
+        recall_learnings: T1 memory-recall learnings (``{"summary": ...}`` dicts,
+            same shape ``format_t1_hint`` takes). A T2 result used to show
+            distill's own ``lessons`` and silently drop these even when recall
+            found matches; up to ``_T2_RECALL_MAX_LESSONS`` are appended in the room left.
 
     Returns:
-        Formatted hint string ≤ 80 tokens.
+        Formatted hint string.
     """
     lines: list[str] = ["[TRW Distill Hint — T2]"]
+    if as_of is not None:
+        lines.append(as_of_line(as_of))
 
     if risk_score is not None:
         lines.append(f"  RISK: {risk_score:.2f}")
@@ -182,11 +372,14 @@ def format_t2_hint(
 
     content = "\n".join(lines)
 
-    # Hard cap enforcement (FR32: ~320 chars ≈ 80 tokens)
-    if len(content) > 320:
-        content = content[:317] + "..."
+    # Hard cap on the lesson-free part (FR32: ~320 chars ≈ 80 tokens).
+    if len(content) > _T2_BASE_MAX_CHARS:
+        content = content[: _T2_BASE_MAX_CHARS - 3] + "..."
 
-    return content
+    # Lessons go last, after the base cap, so that cap never cuts one mid-line;
+    # recall memory follows the distill lessons, in its own separate budget.
+    head = "\n".join([content, *_lesson_lines(lessons, lessons_status)])
+    return "\n".join([head, *_recall_lesson_lines(recall_learnings, _T2_MAX_CHARS - len(head))])
 
 
 def write_hint_file(
@@ -198,17 +391,28 @@ def write_hint_file(
     hint_emitted: bool,
     tokens_emitted: int,
     distill_status: str,
+    duration_ms: float | None = None,
+    sidecar_commits_behind: int | None = None,
+    target_changed_since_sidecar: bool | None = None,
 ) -> None:
     """Write a per-hint context file keyed on *tool_use_id* (P1-04 fix).
 
     Args:
-        hints_dir: Directory to write hint files into (created if absent).
+        hints_dir: Directory to write hint files into (created if absent). It is the
+            root of the write: a hint file that is a symlink is refused, not followed.
         tool_use_id: The PreToolUse tool_use_id from Claude Code stdin.
         file_path: Absolute path of the file being hinted.
         tier: Tier string ("T0", "T1", "T2").
         hint_emitted: Whether a hint was actually emitted.
         tokens_emitted: Estimated token count of the hint.
         distill_status: Distill status string from BeforeEditHintResult.
+        duration_ms: In-process wall time of the hint computation, measured by
+            the caller (8.2 S3). ``None`` when the computation never ran or
+            never finished (e.g. the caller wrote a provisional/timeout record).
+        sidecar_commits_behind: ``BeforeEditHintResult.distill_as_of.commits_behind``,
+            or ``None`` when the answer was not an ancestor ("as of") hint.
+        target_changed_since_sidecar: ``BeforeEditHintResult.distill_as_of.target_changed``,
+            or ``None`` for the same reason.
     """
     hints_dir.mkdir(parents=True, exist_ok=True)
     hint_file = hints_dir / f"{tool_use_id}.json"
@@ -220,6 +424,11 @@ def write_hint_file(
         "tokens_emitted": tokens_emitted,
         "distill_status": distill_status,
         "tool_use_id": tool_use_id,
+        # 8.2 S3: measured in-process, never guessed. `None` (-> JSON null) is
+        # "not applicable"/"not measured", distinct from a fabricated 0.
+        "duration_ms": duration_ms,
+        "sidecar_commits_behind": sidecar_commits_behind,
+        "target_changed_since_sidecar": target_changed_since_sidecar,
         # PRD-DIST-2460 FR-1 (Phase 3 instrumentation): outcome vocabulary for a FUTURE
         # consumer-outcome feedback loop. Defaulted/unknown at PreToolUse write time; a later
         # PostToolUse correlator (DEFERRED FR-2..6, a separate proprietary trw-distill PRD gated on
@@ -231,7 +440,7 @@ def write_hint_file(
         "test_outcome": "unknown",
         "hint_acknowledged": None,
     }
-    hint_file.write_text(json.dumps(record), encoding="utf-8")
+    write_checkout_file(hints_dir, hint_file, json.dumps(record))
 
 
 def prune_hint_files(hints_dir: Path, ttl_seconds: int = _HINT_FILE_TTL_SECONDS) -> int:

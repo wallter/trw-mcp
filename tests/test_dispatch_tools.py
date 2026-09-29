@@ -26,7 +26,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s: int = 600
         self.dispatch_default_read_only: bool = True
-        self.dispatch_role_client: dict[str, str] = {}
         for key, value in overrides.items():
             setattr(self, key, value)
 
@@ -374,7 +373,9 @@ def test_dispatch_unknown_client_returns_error(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_config", lambda: _RootCfg(_Cfg()))
     out = _tool("trw_dispatch")(prompt="p", client="not-a-real-cli")
     assert "error" in out
-    assert "disabled" in str(out["error"])
+    # Unknown names are refused before resolution, naming the valid choices.
+    assert "unknown dispatch target" in str(out["error"])
+    assert "grok:grok-4.7" in str(out["error"])
     assert out["exit_code"] == 2
 
 

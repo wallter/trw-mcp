@@ -2,7 +2,7 @@
 
 Opt-in, anonymized telemetry (CORE-031) + unified HPOTelemetryEvent schema
 and hash-pinned surface registry (HPO-MEAS-001). The two schemas coexist
-during Phase 1; see ``CLAUDE.md`` in this directory for editing rules.
+during Phase 1; see ``AGENTS.md`` in this directory for editing rules.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from trw_mcp.telemetry.boot_audit import (
 )
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.event_base import (
-    AGENT_TRACE_V1_FIELDS,
     EVENT_PAYLOAD_KEY_REGISTRY,
     EVENT_TYPE_REGISTRY,
     AgentTraceV1Fields,
@@ -44,7 +43,6 @@ from trw_mcp.telemetry.event_base import (
     SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
-    emit_h1_observe_mode_warning,
     validate_parent_within_run,
 )
 from trw_mcp.telemetry.models import (
@@ -80,7 +78,6 @@ from trw_mcp.telemetry.unified_events import (
 )
 
 __all__ = [
-    "AGENT_TRACE_V1_FIELDS",
     "EVENT_PAYLOAD_KEY_REGISTRY",
     "EVENT_TYPE_REGISTRY",
     "MANIFEST_FILENAME",
@@ -120,7 +117,6 @@ __all__ = [
     "check_defaults",
     "clear_pricing_cache",
     "clear_snapshot_cache",
-    "emit_h1_observe_mode_warning",
     "emit_unified",
     "get_default_writer",
     "load_manifest",

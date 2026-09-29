@@ -150,7 +150,6 @@ def test_frontmatter_values_are_quoted_not_interpolated() -> None:
         "model: balanced\n"
         "effort: high\n"
         "maxTurns: 10\n"
-        "memory: project\n"
         "tools:\n  - Read\n"
         "disallowedTools:\n  - Bash\n"
         "---\n\nbody\n"

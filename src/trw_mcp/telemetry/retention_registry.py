@@ -111,6 +111,7 @@ def load_registry(root: Path) -> tuple[list[RetentionEntry], bool]:
         return [RetentionEntry.model_validate(item, strict=False) for item in raw["entries"]], True
     except Exception:  # justified: unreadable/malformed registry must retain everything
         logger.warning("retention_registry_unreadable", exc_info=True)
+        # trw-fail-silent-allow: unreadable-registry failure already logged above.
         return [], False
 
 

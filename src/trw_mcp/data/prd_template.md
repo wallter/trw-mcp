@@ -48,6 +48,13 @@ confidence:
   estimate_confidence: 0.7         # 0.0-1.0
   test_coverage_target: null       # Optional 0.0-1.0; derive from project config or an accepted requirement
 
+# Slice estimates (PRD-CORE-338): only for PRDs with 2 or more slices; ranges in hours.
+# Actuals are derived from trw_checkpoint(slice_done=...) and recorded at delivery.
+# time:
+#   slices:
+#     - {id: S1, estimate_hours_min: 1, estimate_hours_max: 2}
+#     - {id: S2, estimate_hours_min: 0.5, estimate_hours_max: 1.5}
+
 # Traceability (AARE-F C1, Finding F19: GPS of compliance-by-design)
 # Every PRD ID referenced below or in the body must resolve to a real PRD.
 # Use [planned]/[future] only for a real artifact expected later and
@@ -269,6 +276,19 @@ For each requirement, show the concrete behavior change and the executable proof
 | Requirement | Old Behavior | New Behavior | Trigger | Code Path | Proof Test |
 |-------------|--------------|--------------|---------|-----------|------------|
 | FR01 | {Old behavior} | {New behavior} | {init/update/runtime action} | `path/to/file.py` | `tests/test_feature.py::test_fr01` |
+
+### Architectural-shift checklist (classes A-G)
+Required when this PRD touches a daemon boundary, checkout input, an executor or a control; `trw_prd_validate` flags it when missing. If the detection misfires, delete this section and set `architectural_shift: false` in the frontmatter. For each class, say whether the change opens it and what closes it (one module per class, plus its test).
+
+| Class | Risk | Applies? | Mitigation and proof |
+|-------|------|----------|----------------------|
+| A | Untrusted input: files, stores, config or arguments a checkout or a caller supplies | {yes/no} | {bound, validate or refuse it; test} |
+| B | Unbounded caller work: a request that makes a shared daemon or lane do unbounded work | {yes/no} | {deadline or budget; test} |
+| C | Read-then-write and executor splits: lost updates, races, work moved across threads or processes | {yes/no} | {lock or conditional write; interleaving test} |
+| D | Fix regressions: behaviour a fix breaks next to the site it fixes | {yes/no} | {the neighbouring paths the tests cover} |
+| E | Environment: platform, interpreter, install layout, environment variables and client differences | {yes/no} | {matrix or probe} |
+| F | Controls that must gate every path: a switch, limit or check that some path skips | {yes/no} | {one enforcement point; census test} |
+| G | Reused cached or untrusted state: a cache, snapshot or earlier result trusted after it changed | {yes/no} | {revalidation; test} |
 
 ### Key Files
 | File | Changes |

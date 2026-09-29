@@ -5,7 +5,7 @@ Belongs to the ``_ide_targets.py`` facade. Re-exported there for back-compat.
 Two finalization helpers run after per-IDE artifact updates complete:
 - ``_update_config_target_platforms`` — augment ``.trw/config.yaml``
   ``target_platforms`` list (PRD-FIX-076 — append-only, never narrow).
-- ``_run_claude_md_sync`` — invoke the LLM-backed CLAUDE.md sync to
+- ``_run_claude_md_sync`` — invoke the instruction-file sync to
   resolve placeholders and promote learnings.
 
 Plus the ``_LEGACY_PROFILE_RENAMES`` rename map.
@@ -16,11 +16,12 @@ module under the 350 effective-LOC ceiling.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+from typing import Any
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.models.typed_dicts import ClaudeMdSyncResultDict
 
 logger = structlog.get_logger(__name__)
@@ -33,6 +34,17 @@ _LEGACY_PROFILE_RENAMES: dict[str, str] = {
     # still resolve to a sensible profile after upgrade.
     "cursor": "cursor-ide",
 }
+
+
+def _recorded_platforms(data: dict[str, Any], *, default: list[str]) -> list[str]:
+    """The ``target_platforms`` list in loaded config *data*; a null value reads as empty.
+
+    An absent key takes *default*; ``target_platforms:`` with nothing under it
+    (a hand-emptied list) parses to ``None`` and means "no clients recorded".
+    """
+    if "target_platforms" not in data:
+        return list(default)
+    return list(data["target_platforms"] or [])
 
 
 def _update_config_target_platforms(
@@ -75,7 +87,7 @@ def _update_config_target_platforms(
     try:
         content = config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(content) or {}
-        existing: list[str] = list(data.get("target_platforms", ["claude-code"]))
+        existing = _recorded_platforms(data, default=["claude-code"])
 
         # Build the merged list:
         #   1. Migrate legacy identifiers in existing entries
@@ -100,7 +112,7 @@ def _update_config_target_platforms(
                 added.append(new_id)
 
         if merged == existing:
-            result["preserved"].append(str(config_path))
+            result.setdefault("preserved", []).append(str(config_path))
             logger.debug(
                 "config_target_platforms_unchanged",
                 target_platforms=merged,
@@ -109,11 +121,8 @@ def _update_config_target_platforms(
             return
 
         data["target_platforms"] = merged
-        config_path.write_text(
-            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
-        result["updated"].append(str(config_path))
+        write_checkout_file(target_dir, config_path, yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
+        result.setdefault("updated", []).append(str(config_path))
         logger.info(
             "config_target_platforms_augmented",
             outcome="success",
@@ -122,7 +131,7 @@ def _update_config_target_platforms(
             added=added,
             requested=ide_targets,
         )
-    except (OSError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
+    except (OSError, UnsafeWriteError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
         result.setdefault("warnings", []).append(f"target_platforms config update skipped: {type(exc).__name__}: {exc}")
         logger.warning(
             "config_target_platforms_update_failed",
@@ -156,22 +165,19 @@ def _remove_config_target_platform(
     try:
         content = config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(content) or {}
-        existing: list[str] = list(data.get("target_platforms", []))
+        existing = _recorded_platforms(data, default=[])
         if client_id not in existing:
             return
         data["target_platforms"] = [entry for entry in existing if entry != client_id]
-        config_path.write_text(
-            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
-            encoding="utf-8",
-        )
-        result["updated"].append(str(config_path))
+        write_checkout_file(target_dir, config_path, yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
+        result.setdefault("updated", []).append(str(config_path))
         logger.info(
             "config_target_platform_removed",
             outcome="success",
             client=client_id,
             remaining=data["target_platforms"],
         )
-    except (OSError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
+    except (OSError, UnsafeWriteError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
         result.setdefault("warnings", []).append(
             f"target_platforms removal of {client_id!r} skipped: {type(exc).__name__}: {exc}"
         )
@@ -205,10 +211,10 @@ def _record_sync_refusals(
     """Surface PRD-FIX-123 policy refusals; return True when any was recorded.
 
     ``execute_claude_md_sync`` reports a guarded write it declined to perform in
-    ``refusals`` and still returns normally. Reading only ``learnings_promoted``
-    turned that into "CLAUDE.md synced" — the operator was told their instruction
+    ``refusals`` and still returns normally. Reading only the return value
+    turned that into "synced" — the operator was told their instruction
     file had been updated when the writer had deliberately left it alone, which
-    is the one outcome they need to know about (their CLAUDE.md/AGENTS.md is now
+    is the one outcome they need to know about (their AGENTS.md is now
     stale and only they can fix it).
     """
     refusals = sync_result.get("refusals") or []
@@ -237,115 +243,67 @@ def _record_sync_refusals(
 def _run_claude_md_sync(
     target_dir: Path,
     result: dict[str, list[str]],
-    timeout: int = 30,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Run CLAUDE.md sync after update to resolve placeholders and promote learnings.
+    """Run the instruction-file sync after update to resolve placeholders and promote learnings.
 
-    Temporarily changes cwd to the target project so that resolve_project_root()
-    finds the correct .trw/ directory and learnings database.
+    *target_dir* is bound as "the project" (``state._project_root_binding``), so
+    resolve_project_root() and get_config() answer for it inside the sync. That
+    binding is context-local: this process's cwd and cached config, which other
+    threads share, are never touched (B71-118).
     Fail-open: rendering errors are logged as warnings but never break the update.
-
-    Stdout/stderr are suppressed during sync to prevent structlog noise and
-    SDK error messages from leaking into the installer's progress pipe.
-
-    A *timeout* (seconds, default 30) prevents the sync from blocking the
-    installer indefinitely when LLM initialisation or network calls stall.
     """
-    import concurrent.futures
-    import io
-    import sys
-
-    original_cwd = Path.cwd()
+    # B71-118 (sol round 2): the sync runs to completion in the CALLER's thread.
+    # It used to run on a pool thread under a 30 s timeout followed by
+    # shutdown(wait=False), which does not stop a running thread: a slow sync kept
+    # writing instruction files after update-project's transaction had taken its
+    # final diff or restored its snapshot. The timeout guarded LLM/network stalls,
+    # but the sync never reaches an LLM (see the NOTE below) -- it is file I/O,
+    # like every other writer in the transaction, none of which run under a timeout.
+    # It also swapped sys.stdout/sys.stderr for the whole sync, which are process
+    # globals: every other thread's output was swallowed meanwhile. Nothing in the
+    # sync prints; its logging goes through the handlers, to stderr, never to the
+    # installer's stdout progress pipe.
     try:
-        os.chdir(target_dir)
-
-        from trw_mcp.models.config import _reset_config, get_config
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state._project_root_binding import installing_into
         from trw_mcp.state.claude_md import execute_claude_md_sync
         from trw_mcp.state.llm_helpers import LLMClient
         from trw_mcp.state.persistence import FileStateReader
 
-        # Reset config so it picks up the target project's .trw/config.yaml
-        _reset_config()
-        config = get_config()
-        reader = FileStateReader()
-
-        # NOTE: there is deliberately no ANTHROPIC_API_KEY guard here.
-        # This sync is pure file I/O and never reaches an LLM: dispatch_for_profile
-        # does `del reader, llm`, and _build_sync_result hardcodes `llm_used: False`.
-        # A previous guard returned early whenever the key was unset, which is the
-        # normal case for a Claude Code *subscription* user. On that path
-        # update-project ran only the carrier-unaware writer
-        # (_update_project.py -> _template_updater -> _update_claude_md_trw_section)
-        # and silently bypassed the profile sync on every run, reporting
-        # success with the warning buried in result["warnings"]. Gating a
-        # deterministic write on an unrelated credential is what made the
-        # deterministic half unreachable. Pinned by TestSyncRunsWithoutApiKey.
-        # LLMClient() constructs fine without a key; if it ever raises, the
-        # except-Exception handler below records it as a warning (fail-open).
-
-        def _do_sync() -> ClaudeMdSyncResultDict:
-            # Suppress stdout/stderr so structlog noise and SDK auth errors
-            # don't leak into the installer's subprocess pipe.
-            saved_stdout, saved_stderr = sys.stdout, sys.stderr
-            sys.stdout = io.StringIO()
-            sys.stderr = io.StringIO()
-            try:
-                llm = LLMClient()
-                return execute_claude_md_sync(
-                    scope="root",
-                    target_dir=None,
-                    config=config,
-                    reader=reader,
-                    llm=llm,
-                    instruction_manifest_hashes=manifest_hashes,
-                )
-            finally:
-                sys.stdout, sys.stderr = saved_stdout, saved_stderr
-
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        try:
-            future = pool.submit(_do_sync)
-            sync_result = future.result(timeout=timeout)
-        finally:
-            # shutdown(wait=False) so a hung worker thread (e.g. LLMClient
-            # blocking on network) doesn't block the installer indefinitely.
-            pool.shutdown(wait=False, cancel_futures=True)
-
-        learnings_promoted = sync_result.get("learnings_promoted", 0)
-        logger.info(
-            "claude_md_sync_completed",
-            learnings_promoted=learnings_promoted,
-            target_dir=str(target_dir),
-        )
+        with installing_into(target_dir):
+            # NOTE: there is deliberately no ANTHROPIC_API_KEY guard here.
+            # This sync is pure file I/O and never reaches an LLM: dispatch_for_profile
+            # does `del reader, llm`, and _build_sync_result hardcodes `llm_used: False`.
+            # A previous guard returned early whenever the key was unset, which is the
+            # normal case for a Claude Code *subscription* user. On that path
+            # update-project ran only the carrier-unaware writer
+            # in _template_updater
+            # and silently bypassed the profile sync on every run, reporting
+            # success with the warning buried in result["warnings"]. Gating a
+            # deterministic write on an unrelated credential is what made the
+            # deterministic half unreachable. Pinned by TestSyncRunsWithoutApiKey.
+            # LLMClient() constructs fine without a key; if it ever raises, the
+            # except-Exception handler below records it as a warning (fail-open).
+            sync_result: ClaudeMdSyncResultDict = execute_claude_md_sync(
+                scope="root",
+                target_dir=None,
+                config=get_config(),  # a fresh binding's own cache: the target's config
+                reader=FileStateReader(),
+                llm=LLMClient(),
+                instruction_manifest_hashes=manifest_hashes,
+            )
+        logger.info("claude_md_sync_completed", target_dir=str(target_dir))
         if _record_sync_refusals(sync_result, result, target_dir):
-            # A refused write did not happen. Claiming "CLAUDE.md synced" on top
+            # A refused write did not happen. Claiming "synced" on top
             # of the warning would leave the truthful line and the false one in
             # the same report, and update-project's summary shows `updated`.
             return
-        result["updated"].append(f"CLAUDE.md synced (learnings promoted: {learnings_promoted})")
-    except concurrent.futures.TimeoutError:
-        logger.warning(
-            "claude_md_sync_timeout",
-            timeout_seconds=timeout,
-            target_dir=str(target_dir),
-        )
-        result.setdefault("warnings", []).append(
-            f"CLAUDE.md sync timed out ({timeout}s) — will complete on next trw_session_start()"
-        )
-    except Exception as exc:  # justified: fail-open, CLAUDE.md sync is best-effort
+        result["updated"].append("Instruction files synced")
+    except Exception as exc:  # justified: fail-open, instruction sync is best-effort
         logger.warning(
             "claude_md_sync_failed",
             error=str(exc),
             target_dir=str(target_dir),
         )
-        result.setdefault("warnings", []).append(f"CLAUDE.md sync skipped: {exc}")
-    finally:
-        os.chdir(original_cwd)
-        # Reset config back to original project
-        try:
-            from trw_mcp.models.config import _reset_config
-
-            _reset_config()
-        except Exception:  # justified: cleanup, config reset is best-effort during finally
-            logger.debug("config_reset_failed", exc_info=True)
+        result.setdefault("warnings", []).append(f"Instruction sync skipped: {exc}")

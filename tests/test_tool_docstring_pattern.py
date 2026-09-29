@@ -30,7 +30,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # the package at <repo-root>/trw-mcp/src/..., the monorepo layout) absent from
 # the standalone trw-mcp PyPI/GitHub mirror where the package is the repo root.
 # Skip cleanly there; the monorepo CI still enforces it.
-if not (_REPO_ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
@@ -54,7 +56,7 @@ REQUIRED_OUTPUT_CONTRACT: frozenset[str] = frozenset(
         "trw_status",
         "trw_prd_validate",
         "trw_review",
-        # trw_knowledge_sync / trw_ceremony_* removed by PRD-FIX-076.
+        # knowledge_sync / trw_ceremony_* removed by PRD-FIX-076.
         # The former heartbeat / pre-compact-checkpoint tools folded into
         # trw_checkpoint's modes by PRD-CORE-300 S6a (trw_checkpoint above
         # already carries the required output contract); run-adoption and

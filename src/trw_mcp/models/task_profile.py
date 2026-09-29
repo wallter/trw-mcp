@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict
 
 from trw_mcp.models.config import CapabilityTier, ClientProfile, ModelTier, normalize_capability_tier
+from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.models.run import ComplexityClass, ComplexitySignals
 from trw_mcp.models.task_profile_types import (
     _TASK_TYPE_NUDGE_DEFAULTS,
@@ -218,3 +220,24 @@ def resolve_task_profile(
             }
         )
     return TaskProfile(**resolved.model_dump(mode="python"), profile_hash=_profile_hash(resolved))
+
+
+def run_task_profile_pool_weights(state_data: Mapping[str, object]) -> tuple[int, int, int, int] | None:
+    """PRD-CORE-335 FR04: the persisted run's task_profile pool-weight tuple, or None.
+
+    The ONE parser both ``select_pool`` and ``trw_status`` use, so routing and
+    display read the same tier-2 input. A malformed tuple (wrong shape, or one
+    the existing NudgePoolWeights validator rejects) is not a tier-2 source.
+    """
+    task_profile = state_data.get("task_profile")
+    if not isinstance(task_profile, Mapping):
+        return None
+    raw = task_profile.get("nudge_pool_weights")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        workflow, learnings, ceremony, context = (int(value) for value in raw)
+        NudgePoolWeights(workflow=workflow, learnings=learnings, ceremony=ceremony, context=context)
+    except (TypeError, ValueError):  # trw-fail-silent-allow: an invalid tuple is no tier-2 source
+        return None
+    return workflow, learnings, ceremony, context

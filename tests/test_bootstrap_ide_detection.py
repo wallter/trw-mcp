@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap import detect_ide, detect_installed_clis, resolve_ide_targets
+from trw_mcp.bootstrap import detect_ide, resolve_ide_targets
 
 
 class TestIDEDetection:
@@ -107,25 +107,3 @@ class TestIDEDetection:
         (tmp_path / ".codex").mkdir()
         result = resolve_ide_targets(tmp_path)
         assert result == ["codex"]
-
-    def test_fr08_detect_installed_clis_returns_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """detect_installed_clis returns only CLIs found on PATH."""
-        import shutil as _shutil
-
-        def fake_which(cmd: str) -> str | None:
-            return {
-                "claude": "/usr/bin/claude",
-                "codex": "/usr/bin/codex",
-            }.get(cmd)
-
-        monkeypatch.setattr(_shutil, "which", fake_which)
-        # Also patch the shutil reference inside the bootstrap module
-        monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", fake_which)
-        result = detect_installed_clis()
-        assert result == ["claude-code", "codex"]
-
-    def test_fr08_detect_installed_clis_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """detect_installed_clis returns empty list when no CLIs found."""
-        monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", lambda _cmd: None)
-        result = detect_installed_clis()
-        assert result == []

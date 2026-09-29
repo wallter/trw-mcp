@@ -24,8 +24,8 @@ from trw_mcp.dispatch._types import DispatchRequest
 
 pytestmark = pytest.mark.unit
 
-_FLAG_CLIENTS = sorted(c for c, spec in CLIENT_SPECS.items() if spec.effort_flag)
-_NO_FLAG_CLIENTS = sorted(c for c, spec in CLIENT_SPECS.items() if not spec.effort_flag)
+_FLAG_CLIENTS = sorted(c for c, spec in CLIENT_SPECS.items() if spec.effort_flag or spec.effort_config_key)
+_NO_FLAG_CLIENTS = sorted(c for c, spec in CLIENT_SPECS.items() if not (spec.effort_flag or spec.effort_config_key))
 
 
 def _request(client: str, **kw: Any) -> DispatchRequest:
@@ -33,8 +33,15 @@ def _request(client: str, **kw: Any) -> DispatchRequest:
 
 
 def _effort_tokens(client: str, argv: list[str]) -> list[str]:
-    flag = CLIENT_SPECS[client].effort_flag  # type: ignore[index]
-    return [argv[i + 1] for i, token in enumerate(argv[:-1]) if token == flag]
+    spec = CLIENT_SPECS[client]  # type: ignore[index]
+    if spec.effort_config_key:  # a ``-c KEY="VALUE"`` override, not a flag
+        prefix = f"{spec.effort_config_key}="
+        return [
+            argv[i + 1][len(prefix) :].strip('"')
+            for i, token in enumerate(argv[:-1])
+            if token == "-c" and argv[i + 1].startswith(prefix)
+        ]
+    return [argv[i + 1] for i, token in enumerate(argv[:-1]) if token == spec.effort_flag]
 
 
 # --------------------------------------------------------------------------- #
@@ -107,8 +114,7 @@ def test_a_client_with_no_documented_flag_gets_no_effort(client: str) -> None:
 def test_no_effort_leaves_every_clients_argv_unchanged(client: str) -> None:
     """The recorded argv baselines stay valid for a request that carries no effort."""
     argv = build_command(_request(client))
-    flag = CLIENT_SPECS[client].effort_flag  # type: ignore[index]
-    assert flag is None or flag not in argv
+    assert _effort_tokens(client, argv) == [] if client in _FLAG_CLIENTS else True
 
 
 @pytest.mark.parametrize("model", ["haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001"])
@@ -135,7 +141,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s = 600
         self.dispatch_default_read_only = True
-        self.dispatch_role_client: dict[str, str] = {}
 
 
 def _resolved(role: str | None, client: str = "claude") -> DispatchRequest:
@@ -169,11 +174,44 @@ def test_a_bare_prompt_passes_no_effort() -> None:
     assert _effort_tokens("claude", build_command(req)) == []
 
 
-def test_a_role_on_a_client_without_a_flag_still_resolves() -> None:
-    """codex has no effort flag: the role's intent is recorded, and nothing is emitted."""
+def test_a_role_on_codex_now_reaches_it_as_a_config_override() -> None:
+    """codex takes effort as ``-c model_reasoning_effort="..."``; the role's medium is applied."""
     req = _resolved("adversarial-audit", client="codex")
     assert req.effort == "medium"
     assert "--effort" not in build_command(req)
+    assert _effort_tokens("codex", build_command(req)) == ["medium"]
+
+
+def test_codex_effort_is_a_quoted_toml_override_pair() -> None:
+    argv = build_command(_request("codex", effort="high"))
+    assert ["-c", 'model_reasoning_effort="high"'] == argv[argv.index("-c") : argv.index("-c") + 2]
+
+
+@pytest.mark.parametrize(("asked", "sent"), [("max", "max"), ("xhigh", "xhigh"), ("low", "low")])
+def test_codex_clamps_to_its_accepted_levels(asked: str, sent: str) -> None:
+    assert _effort_tokens("codex", build_command(_request("codex", effort=asked))) == [sent]
+
+
+def test_codex_policy_record_applies_high() -> None:
+    from trw_mcp.dispatch._policy import policy_record
+
+    record = policy_record(_request("codex", effort="high"))
+    assert record["effort"]["applied"] == "high"
+    assert record["model"]["applied"] is None  # no --model given: no model is claimed
+
+
+def test_a_user_c_override_is_still_refused_for_codex() -> None:
+    with pytest.raises(ValueError, match="-c"):
+        _request("codex", extra_args=["-c", 'model_reasoning_effort="low"'])
+
+
+def test_effort_flag_and_config_key_are_exclusive_and_need_levels() -> None:
+    base = CLIENT_SPECS["codex"].model_dump()  # type: ignore[union-attr]
+    spec_type = type(CLIENT_SPECS["codex"])
+    with pytest.raises(ValueError, match="must be set together"):
+        spec_type(**{**base, "effort_flag": "--effort"})
+    with pytest.raises(ValueError, match="must be set together"):
+        spec_type(**{**base, "effort_levels": ()})
 
 
 # --------------------------------------------------------------------------- #

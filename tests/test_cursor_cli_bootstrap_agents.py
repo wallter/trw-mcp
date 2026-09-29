@@ -7,16 +7,39 @@ block every other AGENTS.md/CLAUDE.md writer uses, through the shared
 ``merge_trw_section`` seam. A file that still carries the retired legacy block
 (from before this fix) is migrated in place -- see the
 ``TestLegacyDialectMigration`` class below.
+
+PRD-CORE-341: the block in AGENTS.md is the two-line link
+(``agents_link_section``); the protocol body lives in ``.trw/INSTRUCTIONS.md``,
+prefixed with the ``# TRW Ceremony Protocol`` heading.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+from trw_mcp.state.claude_md._instructions_link import (
+    INSTRUCTIONS_RELPATH,
+    LINK_BODY,
+    render_instructions_body,
+    render_instructions_file,
+)
 
 _START = "<!-- trw:start -->"
 _END = "<!-- trw:end -->"
 _LEGACY_START = "<!-- TRW:BEGIN -->"
 _LEGACY_END = "<!-- TRW:END -->"
+_IMPORT = f"@{INSTRUCTIONS_RELPATH}"
+
+
+def _block(content: str) -> str:
+    """The text between the shared markers of *content*."""
+    return content[content.index(_START) + len(_START) : content.index(_END)]
+
+
+def _expected_instructions(project_root: Path) -> str:
+    """The one file every writer produces: the generated header plus the shared body."""
+    return render_instructions_file(render_instructions_body(project_root))
 
 
 class TestAgentsMdFresh:
@@ -25,39 +48,44 @@ class TestAgentsMdFresh:
     def test_creates_file(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-        result = generate_cursor_cli_agents_md(tmp_path, "Test ceremony content")
+        result = generate_cursor_cli_agents_md(tmp_path)
         assert "AGENTS.md" in result["created"]
         assert (tmp_path / "AGENTS.md").is_file()
 
     def test_sentinels_present(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-        generate_cursor_cli_agents_md(tmp_path, "Test ceremony content")
+        generate_cursor_cli_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text()
         assert _START in content
         assert _END in content
 
     def test_trw_section_inside_block(self, tmp_path: Path) -> None:
+        """The marker block holds the link; the rendered section lives in .trw/INSTRUCTIONS.md."""
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-        generate_cursor_cli_agents_md(tmp_path, "Ceremony content here")
+        generate_cursor_cli_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text()
-        begin_idx = content.index(_START)
-        end_idx = content.index(_END)
-        block = content[begin_idx:end_idx]
-        assert "Ceremony content here" in block
+        block = _block(content)
+        assert block.strip() == LINK_BODY.strip()
+        assert render_instructions_body(tmp_path).strip() not in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text() == _expected_instructions(tmp_path)
 
     def test_cursor_cli_header(self, tmp_path: Path) -> None:
         """The header is client-neutral: this writer merges into the SAME
         shared ``<!-- trw:start -->`` block every AGENTS.md/CLAUDE.md writer
         uses, so it must not name one specific client (PRD-CORE-243-FR06/FR08;
-        trw-mcp 6.0.0 framework-docs consolidation, S3)."""
+        trw-mcp 6.0.0 framework-docs consolidation, S3). The heading moved into
+        the instructions file with the body (PRD-CORE-341-FR03)."""
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-        generate_cursor_cli_agents_md(tmp_path, "Content")
-        content = (tmp_path / "AGENTS.md").read_text()
-        assert "# TRW Ceremony Protocol" in content
-        assert "cursor-cli" not in content
+        generate_cursor_cli_agents_md(tmp_path)
+        agents = (tmp_path / "AGENTS.md").read_text()
+        instructions = (tmp_path / INSTRUCTIONS_RELPATH).read_text()
+        assert "# TRW Ceremony Protocol" not in instructions  # no private heading: the body is the shared one
+        assert instructions == _expected_instructions(tmp_path)
+        assert "cursor-cli" not in agents
+        assert "cursor-cli" not in instructions
 
 
 class TestAgentsMdSentinelMerge:
@@ -71,19 +99,20 @@ class TestAgentsMdSentinelMerge:
         post_content = "\n## Custom Stuff\nDon't break things.\n"
         agents_file.write_text(pre_content + f"{_START}\nOld TRW content\n{_END}" + post_content)
 
-        generate_cursor_cli_agents_md(tmp_path, "New TRW content")
+        generate_cursor_cli_agents_md(tmp_path)
         content = agents_file.read_text()
         assert "Be concise." in content
         assert "Don't break things." in content
-        assert "New TRW content" in content
+        assert _block(content).strip() == LINK_BODY.strip()
         assert "Old TRW content" not in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text() == _expected_instructions(tmp_path)
 
     def test_updated_in_result(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         agents_file = tmp_path / "AGENTS.md"
         agents_file.write_text(f"{_START}\nOld content\n{_END}\n")
-        result = generate_cursor_cli_agents_md(tmp_path, "New content")
+        result = generate_cursor_cli_agents_md(tmp_path)
         assert "AGENTS.md" in result["updated"]
 
 
@@ -106,7 +135,7 @@ class TestAgentsMdNoSentinels:
         original = "# My existing rules\nBe careful.\n"
         agents_file.write_text(original)
 
-        generate_cursor_cli_agents_md(tmp_path, "TRW content")
+        generate_cursor_cli_agents_md(tmp_path)
         content = agents_file.read_text()
         begin_idx = content.index(_START)
         original_idx = content.index("Be careful.")
@@ -115,7 +144,7 @@ class TestAgentsMdNoSentinels:
 
 
 class TestAgentsMdCursorCliContentGating:
-    """cursor-cli AGENTS.md must omit claude-code-only surfaces."""
+    """cursor-cli's instruction surface (AGENTS.md link + .trw/INSTRUCTIONS.md) must omit claude-code-only surfaces."""
 
     def test_cursor_cli_agents_md_omits_retired_peer_team_content(self, tmp_path: Path) -> None:
         """cursor-cli dispatcher output must not contain retired peer-team language."""
@@ -125,14 +154,17 @@ class TestAgentsMdCursorCliContentGating:
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
         _update_cursor_cli_artifacts(tmp_path, result)
 
-        agents_md = (tmp_path / "AGENTS.md").read_text()
+        agents_md = (tmp_path / "AGENTS.md").read_text() + (tmp_path / INSTRUCTIONS_RELPATH).read_text()
         assert ("Team" + "Create") not in agents_md
         assert ("Agent " + "Teams") not in agents_md
         assert ("Send" + "Message") not in agents_md
-        assert "FRAMEWORK.md" not in agents_md
+        # CSR-22: the carrier may name the INSTALLED framework (the values block lives there), never a
+        # repo-root or claude-only FRAMEWORK.md path.
+        mentions = re.findall(r"[\w./-]*FRAMEWORK\.md", agents_md)
+        assert all(m == ".trw/frameworks/FRAMEWORK.md" for m in mentions), mentions
 
     def test_cursor_cli_agents_md_contains_expected_surface(self, tmp_path: Path) -> None:
-        """cursor-cli AGENTS.md DOES contain TRW MCP tool guidance + ceremony workflow."""
+        """cursor-cli's INSTRUCTIONS.md DOES contain TRW MCP tool guidance + ceremony workflow; AGENTS.md links it."""
         from trw_mcp.bootstrap._ide_targets import _update_cursor_cli_artifacts
 
         (tmp_path / ".cursor").mkdir()
@@ -140,8 +172,10 @@ class TestAgentsMdCursorCliContentGating:
         _update_cursor_cli_artifacts(tmp_path, result)
 
         agents_md = (tmp_path / "AGENTS.md").read_text()
-        assert "trw_session_start" in agents_md
-        assert "trw_deliver" in agents_md
+        instructions = (tmp_path / INSTRUCTIONS_RELPATH).read_text()
+        assert "trw_session_start" in instructions
+        assert "trw_deliver" in instructions
+        assert _IMPORT in _block(agents_md)
         assert _START in agents_md
         assert _END in agents_md
         # The retired dialect must never be emitted by a fresh write.
@@ -164,13 +198,13 @@ class TestLegacyDialectMigration:
         agents_file = tmp_path / "AGENTS.md"
         agents_file.write_text(f"{_LEGACY_START}\nOld install body\n{_LEGACY_END}\n", encoding="utf-8")
 
-        generate_cursor_cli_agents_md(tmp_path, "New TRW content")
+        generate_cursor_cli_agents_md(tmp_path)
         content = agents_file.read_text(encoding="utf-8")
 
         assert _LEGACY_START not in content
         assert _LEGACY_END not in content
         assert content.count(_START) == 1
-        assert "New TRW content" in content
+        assert content.count(_IMPORT) == 1
         assert "Old install body" not in content
 
     def test_legacy_plus_shared_collapse_to_one_block_and_preserve_user_content(self, tmp_path: Path) -> None:
@@ -190,14 +224,14 @@ class TestLegacyDialectMigration:
             encoding="utf-8",
         )
 
-        generate_cursor_cli_agents_md(tmp_path, "New TRW content")
+        generate_cursor_cli_agents_md(tmp_path)
         content = agents_file.read_text(encoding="utf-8")
 
         assert _LEGACY_START not in content
         assert _LEGACY_END not in content
         assert content.count(_START) == 1
         assert "User pointer prose." in content
-        assert "New TRW content" in content
+        assert content.count(_IMPORT) == 1
         assert "dead legacy install body" not in content
         assert "live shared body" not in content
 
@@ -210,9 +244,9 @@ class TestLegacyDialectMigration:
             encoding="utf-8",
         )
 
-        generate_cursor_cli_agents_md(tmp_path, "Body")
+        generate_cursor_cli_agents_md(tmp_path)
         first = agents_file.read_text(encoding="utf-8")
-        generate_cursor_cli_agents_md(tmp_path, "Body")
+        generate_cursor_cli_agents_md(tmp_path)
         second = agents_file.read_text(encoding="utf-8")
 
         assert first == second

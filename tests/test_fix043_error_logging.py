@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from trw_mcp.telemetry.client import TelemetryClient
 from trw_mcp.telemetry.models import TelemetryEvent
@@ -97,44 +97,6 @@ class TestFlushFailurePreservesQueue:
         written = client.flush()
         assert written == 2  # events 1 and 3 succeeded
         assert client.queue_size() == 1  # event 2 failed, kept for retry
-
-
-# ===========================================================================
-# FR07 — _mark_run_complete logs warning on write failure
-# ===========================================================================
-
-
-class TestMarkRunCompleteFailureLogsWarning:
-    """PRD-FIX-043 FR07: _mark_run_complete logs at warning level when
-    the write to run.yaml fails."""
-
-    def test_mark_run_complete_failure_logs_warning(self, tmp_path: Path) -> None:
-        """When write_yaml raises, a warning log with 'mark_run_complete_failed'
-        is emitted and the function does not raise."""
-        from trw_mcp.tools._ceremony_runtime_helpers import _mark_run_complete
-
-        # Create the run directory with a valid run.yaml
-        meta_dir = tmp_path / "run-001" / "meta"
-        meta_dir.mkdir(parents=True)
-        run_yaml = meta_dir / "run.yaml"
-        run_yaml.write_text("status: active\n", encoding="utf-8")
-
-        # Patch the writer to raise on write_yaml
-        with (
-            patch(
-                "trw_mcp.tools._ceremony_runtime_helpers.FileStateWriter.write_yaml",
-                side_effect=OSError("permission denied"),
-            ),
-            patch("trw_mcp.tools._ceremony_runtime_helpers.logger.warning") as mock_warning,
-        ):
-            # Should NOT raise
-            _mark_run_complete(tmp_path / "run-001")
-
-        mock_warning.assert_called_once_with(
-            "mark_run_complete_failed",
-            exc_info=True,
-            run_dir=str(tmp_path / "run-001"),
-        )
 
 
 # ===========================================================================

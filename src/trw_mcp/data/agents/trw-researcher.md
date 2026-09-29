@@ -4,7 +4,6 @@ effort: medium
 description: "Read-only investigation of code, external evidence, and competing approaches. Use when an implementation decision depends on facts, tradeoffs, root-cause analysis, or current primary sources. Returns scoped findings with citations, uncertainty, and recommended next steps."
 model: balanced
 maxTurns: 75
-memory: project
 tools:
   - Read
   - Glob
@@ -50,7 +49,8 @@ what you find there against the local code so each finding rests on both.
 5. **Return the findings** as your final message in the schema below. You are
    read-only: never write them to a file, and do not assume a coordination
    surface exists to receive them. Use the caller's artifact path only when one
-   was supplied and a write-capable tool was granted with it.
+   was supplied and a write-capable tool was granted with it. Brief progress
+   notes between tool calls are fine; only the findings block waits.
 6. Call `{tool:trw_learn}` for significant discoveries.
 
 ## Findings Output Schema

@@ -18,11 +18,13 @@ Two invariants:
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 from pathlib import Path
 
 import structlog
+
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+from trw_mcp.bootstrap._hook_interpreter import record_hook_interpreter
 
 logger = structlog.get_logger(__name__)
 
@@ -42,8 +44,17 @@ _DISPATCH_BODY = f"""{MARKER_START}
 # anchor staleness after each commit. Fail-open by construction — the dispatched
 # script exits 0 on every path and this line is guarded, so a broken or absent
 # TRW install can never make `git commit` fail.
-if [ -x "$(git rev-parse --show-toplevel 2>/dev/null)/{INSTALLED_HOOK_REL.as_posix()}" ]; then
-    "$(git rev-parse --show-toplevel)/{INSTALLED_HOOK_REL.as_posix()}" || true
+# A linked worktree has no untracked .trw/hooks of its own, so fall back to the
+# main worktree's copy (the parent of the git COMMON dir); say so when neither
+# exists instead of skipping silently.
+_trw_pc="$(git rev-parse --show-toplevel 2>/dev/null)/{INSTALLED_HOOK_REL.as_posix()}"
+if [ ! -x "$_trw_pc" ]; then
+    _trw_pc="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")/{INSTALLED_HOOK_REL.as_posix()}"
+fi
+if [ -x "$_trw_pc" ]; then
+    "$_trw_pc" || true
+else
+    echo "trw post-commit: hook_script_absent ({INSTALLED_HOOK_REL.as_posix()}); run trw-mcp update-project" >&2 || true
 fi
 {MARKER_END}"""
 
@@ -99,6 +110,15 @@ def install_git_post_commit_hook(
     """
     result: dict[str, list[str]] = {"created": [], "updated": [], "skipped": [], "errors": []}
 
+    # The interpreter the hooks run Python with. Recorded before the git check:
+    # the edit-hint hooks read the same file in a checkout that is not a repo.
+    try:
+        recorded = record_hook_interpreter(target_dir, dry_run=dry_run)
+        if recorded is not None:
+            result["updated"].append(str(recorded))
+    except (OSError, ValueError) as exc:
+        result["errors"].append(f"hook interpreter not recorded: {exc}")
+
     git_dir = target_dir / ".git"
     if not git_dir.exists():
         result["skipped"].append(f"{git_dir} not found (not a git repository)")
@@ -115,10 +135,10 @@ def install_git_post_commit_hook(
             result["created"].append(str(script_dest))
         else:
             script_dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(BUNDLED_HOOK, script_dest)
+            write_checkout_file(target_dir, script_dest, BUNDLED_HOOK.read_bytes())
             _make_executable(script_dest)
             result["created"].append(str(script_dest))
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to install {script_dest}: {exc}")
         return result
 
@@ -138,11 +158,11 @@ def install_git_post_commit_hook(
             result["updated" if existing else "created"].append(str(hook_path))
             return result
         hooks_dir.mkdir(parents=True, exist_ok=True)
-        hook_path.write_text(rendered, encoding="utf-8")
+        write_checkout_file(hooks_dir, hook_path, rendered)
         _make_executable(hook_path)
         result["updated" if existing else "created"].append(str(hook_path))
         logger.info("git_post_commit_hook_installed", path=str(hook_path), chained=bool(existing))
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {hook_path}: {exc}")
 
     return result

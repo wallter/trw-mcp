@@ -26,18 +26,6 @@ from typing import Protocol, cast
 
 import structlog
 
-from trw_mcp.scoring._io_entries import (
-    _load_entries_from_dir as _load_entries_from_dir,
-)
-from trw_mcp.scoring._io_recall_jsonl import (
-    _read_recall_tracking_jsonl as _read_recall_tracking_jsonl,
-)
-from trw_mcp.scoring._io_recall_jsonl import (
-    _tail_lines as _tail_lines,
-)
-from trw_mcp.scoring._io_recall_jsonl import (
-    _warn_recall_tracking_skip as _warn_recall_tracking_skip,
-)
 from trw_mcp.scoring._yaml_id_index import _build_yaml_path_index as _build_yaml_path_index
 from trw_mcp.scoring._yaml_id_index import _read_learning_id as _read_learning_id
 
@@ -51,12 +39,6 @@ _yaml_path_index_ts: float = 0.0
 _yaml_path_index_dir: Path | None = None
 _yaml_path_index_lock = threading.Lock()
 _YAML_INDEX_TTL: float = 30.0  # Rebuild at most every 30s
-
-
-class _YamlReader(Protocol):
-    """Minimal protocol for YAML readers used during index construction."""
-
-    def read_yaml(self, path: Path) -> dict[str, object]: ...
 
 
 class _ScoringConfig(Protocol):
@@ -312,6 +294,4 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
 __all__ = [
     "_default_lookup_entry",
     "_find_session_start_ts",
-    "_load_entries_from_dir",
-    "_read_recall_tracking_jsonl",
 ]

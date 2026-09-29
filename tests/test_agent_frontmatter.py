@@ -126,6 +126,19 @@ def test_name_matches_filename(agent_path: Path) -> None:
     assert name == agent_path.stem, f"{agent_path.name}: name={name!r} does not match filename stem {agent_path.stem!r}"
 
 
+_BUNDLED_AND_MIRROR_PARAMS = [
+    pytest.param(p, id=f"{p.parent.parent.name}/{p.name}")
+    for p in sorted({*BUNDLED_AGENTS_DIR.glob("*.md"), *AGENTS_DIR.glob("*.md")})
+]
+
+
+@pytest.mark.parametrize("agent_path", _BUNDLED_AND_MIRROR_PARAMS)
+def test_no_agent_declares_harness_memory(agent_path: Path) -> None:
+    """8.0: trw_learn/trw_recall is the one durable agent memory, so no agent opts into Claude Code's
+    ``memory:`` scope, which wrote a second, tracked store under ``.claude/agent-memory/``."""
+    assert "memory" not in _parse_frontmatter(agent_path), f"{agent_path.name}: remove the ``memory:`` key"
+
+
 @pytest.mark.parametrize("agent_path", _AGENT_PARAMS)
 def test_no_prescriptive_line_starts(agent_path: Path) -> None:
     """FR09, FR11: zero ``^(MUST|CRITICAL|RIGID):`` in the body."""

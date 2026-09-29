@@ -10,6 +10,7 @@ PRD-DIST-2400 FR04/FR05.
 from __future__ import annotations
 
 import errno
+import os
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -17,11 +18,14 @@ from types import TracebackType
 
 import structlog
 
+from trw_mcp._checkout_write import append_checkout_file
 from trw_mcp._locking import _lock_ex_nb, _lock_un
 
 log = structlog.get_logger(__name__)
 
 __all__ = ["ChannelLock", "ChannelLockSkip"]
+
+_OPEN_FLAGS = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
 
 _POLL_INTERVAL_S: float = 0.010  # 10ms between attempts
 
@@ -50,8 +54,12 @@ class ChannelLock:
             return {"status": "skipped_lock"}
 
     On entry:
-    - Creates parent directories if absent.
-    - Opens (or creates) *lock_path* and acquires an exclusive flock via
+    - Creates *lock_path* (and its missing parent directories) beneath *root*
+      without following a symlink (PRD-CORE-337 FR07): a planted link at the
+      lock file or at any directory below *root* raises ``UnsafeWriteError``.
+      *root* defaults to the lock file's own directory, which is then created
+      by name and only the lock file itself is checked.
+    - Opens *lock_path* with ``O_NOFOLLOW`` and acquires an exclusive flock via
       ``_lock_ex_nb``.  Retries every 10ms until ``timeout_ms`` elapses.
     - If the lock cannot be acquired in time, raises ``ChannelLockSkip``.
 
@@ -63,18 +71,21 @@ class ChannelLock:
     the caller in that environment.
     """
 
-    def __init__(self, lock_path: Path, timeout_ms: int = 4000) -> None:
+    def __init__(self, lock_path: Path, timeout_ms: int = 4000, *, root: Path | None = None) -> None:
         self.lock_path = lock_path
         self.timeout_ms = timeout_ms
+        self.root = root
         self._fd: int | None = None
 
     def __enter__(self) -> ChannelLock:
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        # Open (or create) the lock file
-        fd = open(self.lock_path, "a+")
-        self._fd = fd.fileno()
-        # Keep the file object alive to prevent GC-close
-        self._file_obj = fd
+        root = self.root
+        if root is None:
+            root = self.lock_path.parent
+            root.mkdir(parents=True, exist_ok=True)
+        # Create the lock file without following a symlink (an empty append), then open it for the
+        # flock; the O_NOFOLLOW open refuses a leaf swapped for a link in between.
+        append_checkout_file(root, self.lock_path, b"")
+        self._fd = os.open(self.lock_path, _OPEN_FLAGS)
 
         deadline = time.monotonic() + self.timeout_ms / 1000.0
         # Single close-on-failure guard around the whole acquire loop. __exit__
@@ -126,6 +137,6 @@ class ChannelLock:
 
     def _close_fd(self) -> None:
         if self._fd is not None:
-            with suppress(Exception):
-                self._file_obj.close()
+            with suppress(OSError):
+                os.close(self._fd)
             self._fd = None

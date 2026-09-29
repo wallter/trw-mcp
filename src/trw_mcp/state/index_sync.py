@@ -59,7 +59,6 @@ _STATUS_ORDER: dict[str, int] = {
     "deprecated": 5,
 }
 _DONE_STATUSES = frozenset({"done", "implemented"})
-_REVIEW_STATUSES = frozenset({"review", "approved"})
 
 
 # Tolerant line-level extractors for class-M (unparseable-frontmatter) PRDs.
@@ -410,15 +409,6 @@ def _apply_registry_authority(entries: list[PRDEntry], prds_dir: Path) -> Regist
             entry.status = owner.lifecycle_status
             entry.category = owner.category
     return registry
-
-
-def render_expected_projection(prds_dir: Path, *, kind: str) -> str:
-    """Render the marker section a truthful sync would produce (drift oracle)."""
-    entries = scan_prd_frontmatters(prds_dir)
-    registry = _apply_registry_authority(entries, prds_dir)
-    if kind == "index":
-        return render_index_catalogue(entries, registry)
-    return render_roadmap_catalogue(entries, registry)
 
 
 def check_projection_drift(

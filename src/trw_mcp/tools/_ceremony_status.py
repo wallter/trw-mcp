@@ -20,7 +20,6 @@ from trw_mcp.tools._ceremony_status_helpers import (
     _deterministic_fallback_text as _deterministic_fallback_text,
     _matches_inferred_domains as _matches_inferred_domains,
     _normalize_inferred_domains as _normalize_inferred_domains,
-    _normalized_modified_files as _normalized_modified_files,
     _select_deterministic_fallback_learning as _select_deterministic_fallback_learning,
     _synthetic_nudge_learning_id as _synthetic_nudge_learning_id,
 )

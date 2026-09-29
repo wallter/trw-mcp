@@ -18,6 +18,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.server import _subcommands_doctor as doctor
 from trw_mcp.server._subcommands_doctor import CheckResult, _doctor_core, _run_doctor
 
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes")
+
 
 def _config(target: Path) -> TRWConfig:
     return TRWConfig(target_platforms=["claude-code"], backend_url="")

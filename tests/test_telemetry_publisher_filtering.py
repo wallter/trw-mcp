@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._test_telemetry_publisher_support import _make_config, _make_learning, _write_learning
 from trw_mcp.telemetry.publisher import publish_learnings
+
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 class TestPublishFiltering:
@@ -56,7 +61,7 @@ class TestPublishFiltering:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -81,7 +86,7 @@ class TestPublishFiltering:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -105,7 +110,7 @@ class TestPublishFiltering:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -132,7 +137,7 @@ class TestPublishFiltering:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -157,7 +162,7 @@ class TestPublishFiltering:
         _write_learning(trw_dir / "learnings" / "entries", "secret-tag.yaml", learning)
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -182,7 +187,7 @@ class TestPublishFiltering:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 

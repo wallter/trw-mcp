@@ -50,13 +50,14 @@ falls back to T0 beacon in that edge case, which is acceptable UX.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
+from tests.channels.claude_code._distill_hint_support import CHECKOUT_PYTHONPATH, run_distill_hint_hook
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -68,17 +69,16 @@ def _run_hook(
     tmp_project: Path,
     *,
     timeout: int = 8,
+    checkout_pythonpath: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["sh", str(deploy_distill_hint(tmp_project))],
-        input=stdin_payload,
-        capture_output=True,
-        text=True,
+    # L-CUAX: run_distill_hint_hook pins cwd/HOME to tmp_project so the hook's own
+    # git-rev-parse and compute_before_edit_hint's Path.cwd() fallbacks can never
+    # resolve the enclosing checkout running this test suite.
+    return run_distill_hint_hook(
+        stdin_payload,
+        tmp_project,
         timeout=timeout,
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "TRW_PROJECT_DIR": str(tmp_project),
-        },
+        checkout_pythonpath=checkout_pythonpath,
     )
 
 
@@ -230,16 +230,44 @@ class TestHintFileKeyedByToolUseId:
         assert record["file_path"] == "src/module.py"
         # The vocabulary, not one member of it. A status outside this set means the
         # writer invented one, which is the failure a bare exists() check misses.
-        assert record["distill_status"] in {
-            "hint_available",
-            "sidecar_missing",
-            "target_not_in_sidecar",
-            "timeout_fallback",
-            "exception_fallback",
-            "tier_required",
-            "no_repo_root",
-            "no_git_sha",
-        }, f"unknown distill_status {record['distill_status']!r}"
+        # Derived from the hint's own status type, never re-spelled (a hand-copied
+        # set here drifted behind it), plus the two statuses only the hook writes.
+        from typing import get_args
+
+        from trw_mcp.tools._before_edit_hint_core import BeforeEditHintStatus
+
+        known = {value for literal in get_args(BeforeEditHintStatus) for value in get_args(literal)}
+        assert {"hint_available", "hint_available_stale", "sidecar_too_far_behind"} <= known  # non-vacuity
+        assert record["distill_status"] in known | {"timeout_fallback", "exception_fallback"}, (
+            f"unknown distill_status {record['distill_status']!r}"
+        )
+
+    def test_shell_hook_record_always_carries_the_8_2_s3_fields(self, tmp_path: Path) -> None:
+        """8.2 S3: every record the hook writes -- provisional, completed, or
+        exception -- carries ``duration_ms``, ``sidecar_commits_behind`` and
+        ``target_changed_since_sidecar``, present (possibly null) rather than
+        silently missing on some paths and not others.
+
+        Exercises the real production call site: the shipped
+        ``pre-tool-distill-hint.sh`` shell hook, not just ``write_hint_file``
+        directly.
+        """
+        _enable_cc03(tmp_path)
+        tool_use_id = "toolu-s3-fields"
+        result = _run_hook(
+            _make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id),
+            tmp_path,
+        )
+        assert result.returncode == 0
+        hints_dir = tmp_path / ".trw" / "context" / "cc03-hints"
+        record = json.loads((hints_dir / f"{tool_use_id}.json").read_text(encoding="utf-8"))
+        for key in ("duration_ms", "sidecar_commits_behind", "target_changed_since_sidecar"):
+            assert key in record, f"{key} must always be present, even as null"
+        assert record["duration_ms"] is None or isinstance(record["duration_ms"], (int, float))
+        assert record["sidecar_commits_behind"] is None or isinstance(record["sidecar_commits_behind"], int)
+        assert record["target_changed_since_sidecar"] is None or isinstance(
+            record["target_changed_since_sidecar"], bool
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -293,9 +321,15 @@ class TestExceptionIsNotTelemeteredAsATimeout:
 
         project = self._project(tmp_path, system_python)
         tool_use_id = "toolu-exc-fallback"
-        result = _run_hook(_make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id), project)
+        result = _run_hook(
+            _make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id), project, checkout_pythonpath=False
+        )
         assert result.returncode == 0  # FR26: never blocking
         assert self._status(project, tool_use_id) == "exception_fallback"
+        # PRD-FIX-155: the record keeps what raised, not only that something did.
+        record = json.loads((project / ".trw/context/cc03-hints" / f"{tool_use_id}.json").read_text(encoding="utf-8"))
+        # A base interpreter may carry a namespace or older trw_mcp, so the missing module may be a submodule.
+        assert record["error"].startswith("ModuleNotFoundError: No module named 'trw_mcp")
 
     def test_genuine_timeout_still_records_timeout(self, tmp_path: Path) -> None:
         """Non-vacuity control: a real 2.5s overrun must still read ``timeout_fallback``.
@@ -322,6 +356,181 @@ class TestExceptionIsNotTelemeteredAsATimeout:
         result = _run_hook(_make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id), project)
         assert result.returncode == 0
         assert self._status(project, tool_use_id) == "timeout_fallback"
+
+
+class TestRecordMatchesWhatWasDelivered:
+    """Regression: a deadline tick landing AFTER the record is written must never
+    desync the on-disk record from what the model actually received.
+
+    ``write_hint_file()`` used to run while the hook's own 2.4s SIGALRM was still
+    armed. A completed write followed by ANY further delay before the interpreter's
+    natural exit (GC, buffered-IO teardown, host scheduling jitter) could still take
+    the alarm past its deadline, calling ``os._exit(124)`` after the record already
+    said T2 -- the outer shell then discards the already-printed T2 text (non-zero
+    exit code) and substitutes the T0 beacon instead. Observed on a canary: a record
+    read ``tier=T2 hint_available duration_ms=2399`` while the model got the T0
+    beacon. The fix disarms the timer once the last hint is printed and flushed and
+    before ``write_hint_file()`` runs, so nothing downstream of a completed write can
+    still be killed by it.
+
+    A ``sitecustomize.py`` on ``PYTHONPATH`` is the only way to get a delay to land
+    in that exact after-write window from outside the shell/Python boundary: it
+    patches ``compute_before_edit_hint`` to return a fixed T2 result (no real
+    sidecar needed) and wraps ``write_hint_file`` to sleep *after* the real write
+    completes, simulating the residual-time tick this fix removes.
+    """
+
+    @staticmethod
+    def _project_with_slow_post_write(tmp_path: Path, *, delay_s: float) -> tuple[Path, dict[str, str]]:
+        sitecustomize_dir = tmp_path / "sitecustomize_dir"
+        sitecustomize_dir.mkdir()
+        (sitecustomize_dir / "sitecustomize.py").write_text(
+            "import time\n"
+            "import trw_mcp.tools._before_edit_hint_core as _core\n"
+            "import trw_mcp.channels.claude_code._hook_helpers as _helpers\n"
+            "\n"
+            "class _FakeHint:\n"
+            "    risk_score = 0.9\n"
+            "    hotspot_warnings = []\n"
+            "    co_change_neighbors = []\n"
+            "    inferred_tests = []\n"
+            "    lessons = []\n"
+            "    lessons_status = None\n"
+            "\n"
+            "class _FakeResult:\n"
+            "    distill_status = 'hint_available'\n"
+            "    distill_hint = _FakeHint()\n"
+            "    distill_as_of = None\n"
+            "    learnings = []\n"
+            "\n"
+            "def _fake_compute(*, file_path):\n"
+            "    return _FakeResult()\n"
+            "\n"
+            "_core.compute_before_edit_hint = _fake_compute\n"
+            "\n"
+            "_orig_write = _helpers.write_hint_file\n"
+            f"_DELAY_S = {delay_s}\n"
+            "def _slow_write(**kwargs):\n"
+            "    result = _orig_write(**kwargs)\n"
+            "    time.sleep(_DELAY_S)\n"
+            "    return result\n"
+            "_helpers.write_hint_file = _slow_write\n",
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        return project, {"PYTHONPATH": f"{sitecustomize_dir}{os.pathsep}{CHECKOUT_PYTHONPATH}"}
+
+    def test_a_post_write_delay_past_the_deadline_still_agrees_with_the_record(self, tmp_path: Path) -> None:
+        """Non-vacuity control included: a delay past the deadline, landing entirely
+        AFTER write_hint_file() has already recorded T2, must still leave the
+        delivered hint and the recorded tier in agreement (both T2) -- proving the
+        disarm actually removes the kill window rather than merely narrowing it.
+
+        ``TRW_CC03_ALARM_S``/``TRW_CC03_BOUND_S`` (test-only env overrides of the
+        2.4s/2.5s production defaults) shrink the deadline so the 0.3s delay this
+        needs to cross it does not also have to out-race the OUTER shell watchdog
+        in real wall-clock time -- a real-timing test at the production 2.4s/2.5s
+        values would need a multi-second sleep AND would be flaky against either
+        bound depending on host load.
+        """
+        project, extra_env = self._project_with_slow_post_write(tmp_path, delay_s=0.3)
+        extra_env["TRW_CC03_ALARM_S"] = "0.05"
+        extra_env["TRW_CC03_BOUND_S"] = "5"
+        _enable_cc03(project)
+        tool_use_id = "toolu-post-write-race"
+        result = run_distill_hint_hook(
+            _make_pretooluse(tool_use_id=tool_use_id),
+            project,
+            extra_env=extra_env,
+            timeout=15,
+        )
+
+        assert result.returncode == 0, result.stderr
+        record = json.loads(
+            (project / ".trw" / "context" / "cc03-hints" / f"{tool_use_id}.json").read_text(encoding="utf-8")
+        )
+        delivered_is_t2 = "[TRW Distill Hint " in result.stdout and "T2" in result.stdout
+        recorded_is_t2 = record["tier"] == "T2"
+        assert delivered_is_t2, f"expected a T2 hint delivered to the model, got: {result.stdout!r}"
+        assert recorded_is_t2 == delivered_is_t2, (
+            f"record (tier={record['tier']!r}) disagrees with what was delivered "
+            f"(t2_delivered={delivered_is_t2}) -- stdout={result.stdout!r}"
+        )
+
+    def test_non_vacuity_the_shrunk_alarm_still_fires_before_the_print_loop(self, tmp_path: Path) -> None:
+        """Control for the test above: with the SAME tiny ``TRW_CC03_ALARM_S``, a
+        delay placed BEFORE the print loop (inside compute, so nothing is disarmed
+        yet) must still be cut off -- proving the shrunk alarm genuinely fires and
+        the previous test's pass is the disarm working, not the alarm never ticking.
+        """
+        sitecustomize_dir = tmp_path / "sitecustomize_dir"
+        sitecustomize_dir.mkdir()
+        (sitecustomize_dir / "sitecustomize.py").write_text(
+            "import time\n"
+            "import trw_mcp.tools._before_edit_hint_core as _core\n"
+            "\n"
+            "def _slow_compute(*, file_path):\n"
+            "    time.sleep(0.3)\n"
+            "    raise AssertionError('unreachable: the alarm should kill the process first')\n"
+            "\n"
+            "_core.compute_before_edit_hint = _slow_compute\n",
+            encoding="utf-8",
+        )
+        project = tmp_path / "project"
+        _enable_cc03(project)
+        extra_env = {
+            "PYTHONPATH": f"{sitecustomize_dir}{os.pathsep}{CHECKOUT_PYTHONPATH}",
+            "TRW_CC03_ALARM_S": "0.05",
+            "TRW_CC03_BOUND_S": "5",
+        }
+        tool_use_id = "toolu-alarm-still-fires"
+        result = run_distill_hint_hook(
+            _make_pretooluse(tool_use_id=tool_use_id),
+            project,
+            extra_env=extra_env,
+            timeout=15,
+        )
+
+        assert result.returncode == 0
+        record = json.loads(
+            (project / ".trw" / "context" / "cc03-hints" / f"{tool_use_id}.json").read_text(encoding="utf-8")
+        )
+        assert record["tier"] == "T0"
+        assert record["distill_status"] == "timeout_fallback"
+        assert "[TRW Distill Hint " not in result.stdout
+
+    def test_the_outer_shell_watchdog_rewrites_a_completed_record_too(self, tmp_path: Path) -> None:
+        """The inner 2.4s SIGALRM is not the only kill path: `_trw_bounded_python`'s
+        OWN outer watchdog (SIGTERM at ``TRW_CC03_BOUND_S``) fires independently of
+        the interpreter's own alarm and has no way to know ``write_hint_file()``
+        already completed and recorded a real tier before it fires. Disarming the
+        inner alarm alone leaves this second path free to reproduce the same
+        record-says-T2-but-the-model-got-T0 mismatch. The fallback branch now
+        re-stamps the record to T0/timeout_fallback whenever it substitutes the T0
+        beacon, regardless of which bound triggered it.
+        """
+        project, extra_env = self._project_with_slow_post_write(tmp_path, delay_s=0.5)
+        # The inner alarm must NOT be what fires here (otherwise this is just the
+        # earlier test again): give it a deadline the 0.5s delay never reaches, and
+        # squeeze only the OUTER watchdog's bound.
+        extra_env["TRW_CC03_ALARM_S"] = "100"
+        extra_env["TRW_CC03_BOUND_S"] = "0.2"
+        _enable_cc03(project)
+        tool_use_id = "toolu-outer-watchdog"
+        result = run_distill_hint_hook(
+            _make_pretooluse(tool_use_id=tool_use_id),
+            project,
+            extra_env=extra_env,
+            timeout=15,
+        )
+
+        assert result.returncode == 0
+        assert "[TRW Distill Hint " not in result.stdout, "the outer watchdog kill must still deliver the T0 beacon"
+        record = json.loads(
+            (project / ".trw" / "context" / "cc03-hints" / f"{tool_use_id}.json").read_text(encoding="utf-8")
+        )
+        assert record["tier"] == "T0", "the record must be re-stamped T0 to match what the outer watchdog delivered"
+        assert record["distill_status"] == "timeout_fallback"
 
 
 class TestNoCrossContamination:

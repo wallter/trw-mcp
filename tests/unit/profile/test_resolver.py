@@ -7,6 +7,8 @@ hash split (FR-13).
 
 from __future__ import annotations
 
+import pytest
+
 from trw_mcp.profile import (
     LAYER_ORDER,
     UNSET_SENTINEL,
@@ -14,19 +16,20 @@ from trw_mcp.profile import (
     compose,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _layer(name: str, **overrides: object) -> ProfileLayer:
     return ProfileLayer(name=name, overrides=overrides)
 
 
-def test_resolver_layer_order_6layer() -> None:
-    """FR-2: the canonical chain is the documented 6-layer order."""
+def test_resolver_layer_order() -> None:
+    """FR-2: the canonical chain is the documented layer order."""
     assert LAYER_ORDER == (
         "defaults",
         "org",
         "domain",
         "task-type",
-        "session",
         "client",
     )
 
@@ -57,20 +60,20 @@ def test_layers_applied_in_canonical_layer_order() -> None:
     """F6 (round-2 transport e2e): layers_applied is reported in canonical
     LAYER_ORDER position, not surface-key-iteration order.
 
-    ``session`` here sets the FIRST-iterated surface key (ceremony_tier) while
+    ``task-type`` here sets the FIRST-iterated surface key (ceremony_tier) while
     ``org`` sets a LATER key (checkpoint_cadence). Before the fix, contributed
-    insertion order yielded ['defaults', 'session', 'org'] (the e2e-observed
-    bug); ``org`` (rank 1) must sort before ``session`` (rank 4).
+    insertion order yielded ['defaults', 'task-type', 'org'] (the e2e-observed
+    bug); ``org`` (rank 1) must sort before ``task-type`` (rank 3).
     """
     resolved = compose(
         [
             _layer("defaults", ceremony_tier="MINIMAL"),
             _layer("org", checkpoint_cadence="aggressive"),
-            _layer("session", ceremony_tier="COMPREHENSIVE"),
+            _layer("task-type", ceremony_tier="COMPREHENSIVE"),
         ]
     )
-    assert resolved.layers_applied == ["defaults", "org", "session"]
-    # And the merge itself is unchanged (session is the deepest contributor).
+    assert resolved.layers_applied == ["defaults", "org", "task-type"]
+    # And the merge itself is unchanged (task-type is the deepest contributor).
     assert resolved.profile.ceremony_tier == "COMPREHENSIVE"
     assert resolved.profile.checkpoint_cadence == "aggressive"
 
@@ -118,7 +121,6 @@ def test_session_start_returns_resolved_profile_shape() -> None:
     assert resolved.profile.review_threshold == "STANDARD"
     assert isinstance(resolved.layers_applied, list)
     assert resolved.surface_snapshot_id.startswith("surf_")
-    assert resolved.session_override_hash.startswith("sess_")
     assert "review_threshold" in resolved.attribution
 
 
@@ -148,32 +150,6 @@ def test_snapshot_id_stable_across_processes() -> None:
     first = compose(layers)
     second = compose([_layer("org", build_check_scope="full"), _layer("defaults", review_threshold="STANDARD")])
     assert first.surface_snapshot_id == second.surface_snapshot_id
-
-
-def test_snapshot_excludes_session_overrides() -> None:
-    """FR-13: session-layer changes do not move surface_snapshot_id."""
-    base = [_layer("defaults", review_threshold="STANDARD")]
-    without_session = compose(base)
-    with_session = compose([*base, _layer("session", cost_budget_usd=5.0)])
-    assert without_session.surface_snapshot_id == with_session.surface_snapshot_id
-
-
-def test_session_override_hash_is_separate_sibling() -> None:
-    """FR-13: the session delta lives in session_override_hash, not snapshot."""
-    no_session = compose([_layer("defaults", review_threshold="STANDARD")])
-    with_session = compose([_layer("defaults", review_threshold="STANDARD"), _layer("session", cost_budget_usd=5.0)])
-    # Persistent snapshot unchanged; session hash differs.
-    assert no_session.surface_snapshot_id == with_session.surface_snapshot_id
-    assert no_session.session_override_hash != with_session.session_override_hash
-
-
-def test_snapshot_stable_when_only_session_layer_changes() -> None:
-    """FR-13: two sessions sharing a persistent surface aggregate together."""
-    persistent = [_layer("defaults", review_threshold="STANDARD"), _layer("client")]
-    s1 = compose([*persistent, _layer("session", cost_budget_usd=1.0)])
-    s2 = compose([*persistent, _layer("session", cost_budget_usd=99.0)])
-    assert s1.surface_snapshot_id == s2.surface_snapshot_id
-    assert s1.session_override_hash != s2.session_override_hash
 
 
 def test_client_layer_contributes_to_snapshot() -> None:

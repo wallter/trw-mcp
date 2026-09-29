@@ -245,22 +245,26 @@ def refresh_dynamic_prd_validation(
 
     # --- Group 4: wiring / seam gate --------------------------------------
     wiring_failures: list[ValidationFailure] = []
+    # A cached or prior result must not carry a verdict for a gate this call skips.
+    result.wiring_verdict = "not_evaluated"
     if _budget_exhausted():
         checks_skipped.append("wiring_gate")
     else:
         try:
-            from trw_mcp.state.validation._prd_scoring_wiring import check_wiring_gate
+            from trw_mcp.state.validation._prd_scoring_wiring import evaluate_wiring_gate
 
             wiring_mode = _resolve_wiring_mode(scaled_config, frontmatter)
-            wiring_warnings, wiring_failures = check_wiring_gate(
+            wiring = evaluate_wiring_gate(
                 content,
                 frontmatter,
                 mode=wiring_mode,
                 project_root=root_path,
             )
+            wiring_failures = wiring.failures
+            result.wiring_verdict = wiring.verdict
             suggestions.extend(
                 ImprovementSuggestion(dimension="wiring", priority="medium", message=message)
-                for message in wiring_warnings
+                for message in wiring.warnings
             )
         except Exception:  # justified: fail-open, advisory gate must not block scoring
             logger.warning("wiring_gate_check_failed", exc_info=True)

@@ -31,8 +31,12 @@ from trw_mcp.state._paths import (
     resolve_pin_key,
     resolve_trw_dir,
 )
+from trw_mcp.tools._command_results import (
+    integration_claims,
+    parse_build_command_results,
+    synthesize_build_command_results,
+)
 from trw_mcp.tools._evidence_persistence import WriteOutcome
-from trw_mcp.tools._evidence_writers import parse_build_command_results
 from trw_mcp.tools.build._build_check_helpers import (
     _finalize_build_result as _finalize_build_result,
 )
@@ -89,9 +93,7 @@ def register_build_tools(server: FastMCP) -> None:
         scope: str = "full",
         options: dict[str, object] | str = "",
     ) -> dict[str, object]:
-        """Record build/test results for ceremony tracking and delivery gates.
-
-        Use when you just ran validation and need it logged for the delivery gate.
+        """Use when you just ran validation and need it logged for the delivery gate.
 
         This tool does not execute anything — run validation yourself first.
         tests_passed is required (no default guess). scope e.g. "full"/"quick".
@@ -169,6 +171,14 @@ def register_build_tools(server: FastMCP) -> None:
         # rather than being lost to the flat argument's default of 0.
         effective_test_count = derive_test_count(typed_command_results, reported=test_count)
 
+        # BUILD-STATUS-SCRATCH-LEAK: build-status.yaml, the ceremony progress state and the session log are
+        # PROJECT-level: the deliver gate and trw_status read them as this project's own work. A result for a run
+        # that is not the caller's active (pinned) run (a verifier's or canary's scratch run) belongs to that run's
+        # receipt alone. With no run named the caller is asking about its own work, as before.
+        active_run = find_active_run(context=_build_call_context(ctx))
+        resolved_run: Path | None = Path(run_path).resolve() if run_path else active_run
+        writes_project_state = not run_path or (active_run is not None and active_run.resolve() == resolved_run)
+
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
         status = BuildStatus(
@@ -185,16 +195,28 @@ def register_build_tools(server: FastMCP) -> None:
             duration_secs=observed_duration_secs,
         )
 
-        cache_path = cache_build_status(trw_dir, status)
+        cache_path: Path | None = None
+        if writes_project_state:
+            cache_path = cache_build_status(trw_dir, status)
 
-        # PRD-FIX-077-FR01: persist build outcome for delivery-gate fallback.
-        persist_build_progress_state(
-            trw_dir,
-            status,
-            scope=scope,
-            session_id=resolve_pin_key(ctx=ctx, explicit=None),
-        )
-        _record_session_observation(trw_dir, status)
+            # PRD-FIX-077-FR01: persist build outcome for delivery-gate fallback.
+            persist_build_progress_state(
+                trw_dir,
+                status,
+                scope=scope,
+                session_id=resolve_pin_key(ctx=ctx, explicit=None),
+            )
+            _record_session_observation(trw_dir, status)
+        else:
+            # The caller's OWN record (keyed by its pin key, read only by its own unpinned deliver gate) stays
+            # true whatever run was named; every shared field above does not.
+            persist_build_progress_state(
+                trw_dir,
+                status,
+                scope=scope,
+                session_id=resolve_pin_key(ctx=ctx, explicit=None),
+                session_only=True,
+            )
         _record_step("persist", _persist_started)
 
         # Step: run_resolve + phase update
@@ -202,27 +224,27 @@ def register_build_tools(server: FastMCP) -> None:
         from trw_mcp.models.run import Phase
         from trw_mcp.state.phase import try_update_phase
 
-        resolved_run: Path | None = None
-        if run_path:
-            resolved_run = Path(run_path).resolve()
-        else:
-            # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run.
-            resolved_run = find_active_run(context=_build_call_context(ctx))
-
-        try_update_phase(resolved_run, Phase.VALIDATE)
+        try_update_phase(resolved_run, Phase.VALIDATE, mirror_ceremony=writes_project_state)
 
         # PRD-CORE-205-FR04: dual-write a per-run content-bound BuildReceipt in
         # observe mode. Receipts are keyed per-run beneath meta/receipts/ so a
         # concurrent session cannot overwrite this run's proof (the 88c669bf4
         # global build-status incident). Strictly fail-open — a scope/binding
         # problem skips the receipt and leaves the legacy projection intact.
+        # An omitted static outcome is "not run" on the receipt, never the tool's clean default.
+        receipt_static_clean = effective_static_checks_clean and (
+            typed_command_results is not None or static_checks_clean is not None
+        )
         receipt_write = _dual_write_build_receipt(
             resolved_run,
             status,
             scope,
-            effective_static_checks_clean,
+            receipt_static_clean,
             coverage_pct,
-            typed_command_results,
+            typed_command_results
+            or synthesize_build_command_results(
+                scope=scope, tests_passed=reported_tests_passed, static_checks_clean=static_checks_clean
+            ),
             min_coverage,
         )
         _record_step("run_resolve", _run_resolve_started)
@@ -254,11 +276,15 @@ def register_build_tools(server: FastMCP) -> None:
             "failure_count": status.failure_count,
             "failures": status.failures,
             "scope": status.scope,
-            "cache_path": str(cache_path),
             "build_receipt_id": receipt_write.receipt_id if receipt_write is not None else "",
             "typed_receipt_state": "written" if receipt_write is not None and receipt_write.ok else "missing",
             "typed_receipt_reason": receipt_write.reason_code if receipt_write is not None else "receipt_not_written",
         }
+        if cache_path is not None:
+            result["cache_path"] = str(cache_path)
+        claims = integration_claims(typed_command_results)
+        if claims:  # PRD-CORE-320 FR03: each capability's wired/isolated claim, revert proof included
+            result["integration_claims"] = claims
 
         # PRD-IMPROVE-MCP-02 FR1: triage each reported failure as
         # likely-yours vs pre-existing on this working tree, so the agent
@@ -269,7 +295,7 @@ def register_build_tools(server: FastMCP) -> None:
             result["failure_attribution"] = attribution
             result["summary"] = attribution["summary"]
 
-        # Coverage threshold enforcement (sprint-finish anti-regression)
+        # Coverage threshold enforcement (anti-regression)
         _finalize_build_result(result, min_coverage)
 
         # Ledger UF-042: trw_build_check never called the ceremony injector, so
@@ -284,6 +310,8 @@ def register_build_tools(server: FastMCP) -> None:
         # error, a lock contention, or a serialization failure inside it must
         # never turn a completed build check into a tool failure.
         try:
+            if not writes_project_state:  # the nudge state is the caller's own; a scratch run has none of it
+                raise _SkipCeremonyStatus
             from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
             _build_ok = status.tests_passed and effective_static_checks_clean
@@ -299,6 +327,8 @@ def register_build_tools(server: FastMCP) -> None:
                 build_passed=_build_ok,
                 failure_hints=_failure_hints,
             )
+        except _SkipCeremonyStatus:
+            logger.debug("build_check_ceremony_status_skipped", reason="not_the_active_run")
         except Exception:  # justified: fail-open, status decoration must not fail build_check
             logger.debug("build_check_ceremony_status_skipped", exc_info=True)
 
@@ -326,6 +356,11 @@ def register_build_tools(server: FastMCP) -> None:
 
 
 # --- Private helpers ---
+
+
+class _SkipCeremonyStatus(Exception):
+    """Control flow only: the ceremony-status decoration belongs to the caller's own active run."""
+
 
 #: PRD-FIX-144 FR04 session observation log. This module is its ONLY writer and
 #: no production code reads it (NFR06): it is joinable context for offline

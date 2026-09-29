@@ -3,7 +3,8 @@
 PRD-CORE-135: Ensures instruction files only describe tools that are actually
 exposed. Provides:
 
-- TOOL_DESCRIPTIONS: canonical short description for every trw_* tool
+- render_tool_list: one line per exposed tool, its text the tool's one summary
+  (``models.tool_summaries.TOOL_SUMMARIES``, PRD-INFRA-195-FR01)
 - resolve_exposed_tools: resolve the effective tool set from config
 - validate_instruction_manifest: find tool mentions not in the exposed set
 - check_instruction_tool_parity: delivery gate R-08 (soft warning)
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Final, NamedTuple
+from typing import Final
 
 import structlog
 
@@ -25,6 +26,7 @@ import structlog
 # public surface computed here is byte-identical to ``eligible_tool_names()``
 # (both = every PACK_TOOLS member).
 from trw_mcp.models.surface_packs import ALWAYS_ON_TOOLS, PACK_TOOLS, REVIEWER_TOOLS
+from trw_mcp.models.tool_summaries import TOOL_SUMMARIES
 
 _logger = structlog.get_logger(__name__)
 
@@ -33,62 +35,16 @@ _logger = structlog.get_logger(__name__)
 _ELIGIBLE_TOOLS: frozenset[str] = frozenset(tool for tools in PACK_TOOLS.values() for tool in tools)
 
 # ---------------------------------------------------------------------------
-# FR01: Canonical tool description mapping (single source of truth)
+# FR01: one summary per registered tool (PRD-INFRA-195-FR01)
 # ---------------------------------------------------------------------------
 
-
-class ToolEntry(NamedTuple):
-    """A tool name paired with its human-readable description."""
-
-    name: str
-    description: str
-
-
-TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
-    # Core
-    "trw_session_start": "Load prior learnings and recover any active run",
-    "trw_checkpoint": "Save milestone progress so you can resume after interruptions"
-    " (heartbeat=True keeps a long run's pin alive; pre_compact=True saves a"
-    " pre-compaction safety checkpoint)",
-    "trw_learn": "Record durable technical discoveries (no status reports), or correct one by learning_id",
-    "trw_deliver": "Persist everything when done (learnings, checkpoint, instruction sync)",
-    # Memory
-    "trw_recall": "Retrieve relevant learnings for a specific topic (or a bounded typed knowledge-graph neighborhood via graph_id)",
-    # Quality
-    "trw_build_check": "Record project-native test/build/static-check results after you run them",
-    "trw_review": "Run code review analysis on changed files",
-    "trw_prd_validate": "Validate PRD structure and completeness",
-    # Observability
-    "trw_status": "Show current run status and session overview",
-    # Four sibling tools moved to `trw-mcp telemetry` CLI verbs
-    # (PRD-CORE-300 slice S3a) and are no longer registered tools.
-    # Admin
-    "trw_init": "Initialize TRW in a project directory",
-    # trw_knowledge_sync removed by PRD-FIX-076 (dead MCP surface).
-    # PRD-CORE-300 S6a: the former heartbeat and pre-compact-checkpoint tools
-    # are now trw_checkpoint(heartbeat=True) / trw_checkpoint(pre_compact=True).
-    # PRD-CORE-300 S6b: instruction-file sync and run-adoption are now
-    # `trw-mcp instructions sync` / `trw-mcp run adopt` (CLI verbs).
-    # Cross-client dispatch (Phase 3) — second-opinion audit by another agent CLI
-    "trw_dispatch": 'Dispatch a prompt to another coding-agent CLI for a second opinion (background job; poll with action="status"); also exports or validates AgentWorkEvidence',
-    # Crash-safe delivery operations (PRD-CORE-208)
-    # Code intelligence + risk (read-only / advisory)
-    "trw_code": "Search local code, find a symbol's definition, or get risk hints for files before you edit them",
-    # Evidence + coordination
-    "trw_send": "Send a bounded message to a formation peer or reconcile an exact retry (pull-only)",
-    "trw_inbox": "Fetch pending messages, ACK receipt, inspect body-free message facts, or run a peer action (enroll, list, heartbeat, announce, withdraw, discover, ack_pause) (pull-only)",
-    "trw_assess": "Batch typed noul/choice/score questions about a state (or many items) to an opt-in calibrated judge (advisory only)",
-}
-
-# Validate at import time: every eligible (public) manifest tool has a
-# description, and no description names a non-eligible tool.
-_ALL_TOOLS = set(_ELIGIBLE_TOOLS)
-_DESCRIBED_TOOLS = set(TOOL_DESCRIPTIONS)
-if _ALL_TOOLS != _DESCRIBED_TOOLS:
-    _missing = _ALL_TOOLS - _DESCRIBED_TOOLS
-    _extra = _DESCRIBED_TOOLS - _ALL_TOOLS
-    raise RuntimeError(f"TOOL_DESCRIPTIONS / eligible-manifest mismatch: missing={_missing}, extra={_extra}")
-
+# Validate at import time: every eligible (public) manifest tool has a summary,
+# and no summary names a non-eligible tool. The same string heads the tool's
+# served description (``server/_tool_summaries.py``) and /docs/tools.
+if set(TOOL_SUMMARIES) != _ELIGIBLE_TOOLS:
+    _missing = _ELIGIBLE_TOOLS - set(TOOL_SUMMARIES)
+    _extra = set(TOOL_SUMMARIES) - _ELIGIBLE_TOOLS
+    raise RuntimeError(f"TOOL_SUMMARIES / eligible-manifest mismatch: missing={_missing}, extra={_extra}")
 
 # --- FR01: Resolve effective exposed tools from config ----------------------
 
@@ -147,17 +103,12 @@ def render_tool_list(
     Returns:
         Rendered markdown string with one tool per line.
     """
-    entries = [
-        ToolEntry(name=name, description=desc)
-        for name, desc in TOOL_DESCRIPTIONS.items()
-        if exposed_tools is None or name in exposed_tools
-    ]
     lines: list[str] = []
-    for entry in entries:
-        if include_backticks:
-            lines.append(f"{prefix}`{entry.name}()` \u2014 {entry.description}")
-        else:
-            lines.append(f"{prefix}{entry.name}() \u2014 {entry.description}")
+    for name, summary in TOOL_SUMMARIES.items():
+        if exposed_tools is not None and name not in exposed_tools:
+            continue
+        label = f"`{name}()`" if include_backticks else f"{name}()"
+        lines.append(f"{prefix}{label} \u2014 {summary}")
     return "\n".join(lines) + "\n" if lines else ""
 
 
@@ -171,7 +122,7 @@ def render_tool_list(
 _TOOL_MENTION_RE: Final[re.Pattern[str]] = re.compile(r"\btrw_\w+\b")
 
 # Known non-tool trw_* identifiers that should never be flagged.
-_KNOWN_NON_TOOLS: Final[frozenset[str]] = frozenset(TOOL_DESCRIPTIONS.keys())
+_KNOWN_NON_TOOLS: Final[frozenset[str]] = _ELIGIBLE_TOOLS
 
 
 def validate_instruction_manifest(

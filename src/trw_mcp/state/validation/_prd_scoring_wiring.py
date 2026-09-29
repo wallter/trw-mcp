@@ -12,15 +12,19 @@ Three concerns, kept cohesive in one sibling so neither ``prd_quality.py`` nor
 - FR02 — ``_extract_fr_wiring_fields()`` + ``_classify_fr_surface()``: read
   ``consumer:`` / ``wiring_test:`` / ``surface:`` lines out of an FR block and
   decide whether the FR is a public surface.
-- FR03 — ``check_wiring_gate()``: per-PRD gate producing advisory warnings
-  (warn mode) or failures (block mode).
+- FR03 — ``evaluate_wiring_gate()`` / ``check_wiring_gate()``: per-PRD gate
+  producing advisory warnings (warn mode) or failures (block mode), plus the
+  PRD-level ``WiringVerdict`` (PRD-QUAL-148-FR03: a seam-only justification is
+  disclosed as ``partial``, never laundered into a full pass).
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from trw_mcp.models.requirements import SeamEntry, ValidationFailure
 from trw_mcp.state.validation._prd_scoring_fr import _extract_fr_sections
@@ -291,6 +295,143 @@ def _unreachable_wiring_tests(fr_block: str, project_root: Path) -> list[str]:
 # FR03 — wiring gate
 # ---------------------------------------------------------------------------
 
+#: The PRD-level wiring answer (PRD-QUAL-148-FR03), worst FR wins:
+#: ``unwired`` — some public-surface FR has no consumer/wiring_test and no
+#: covering seam; ``partial`` — every public FR is wired or seam-covered, and at
+#: least one rests ONLY on a seam; ``pass`` — every public FR declares a
+#: consumer or wiring_test; ``not_applicable`` — no public-surface FR;
+#: ``not_evaluated`` — the gate did not run (fast mode, budget, a check error),
+#: so no claim is made either way.
+WiringVerdict = Literal["pass", "partial", "unwired", "not_applicable", "not_evaluated"]
+
+#: Prefix of the per-FR disclosure a seam-only FR gets instead of silence.
+WIRING_PARTIAL_PREFIX = "wiring_gate_partial:"
+
+
+@dataclass(frozen=True)
+class WiringGateResult:
+    """``check_wiring_gate``'s findings plus the PRD-level ``WiringVerdict``."""
+
+    warnings: list[str]
+    failures: list[ValidationFailure]
+    verdict: WiringVerdict
+
+
+def _describe_seams(seams: list[SeamEntry]) -> str:
+    return "; ".join(f"{s.kind} -> {s.target_prd} (owner {s.owner}, expires {s.expiry_date})" for s in seams)
+
+
+def _reachability_warnings(fr_id: str, block: str, project_root: Path) -> list[str]:
+    """Advisory wiring_test reachability findings for one FR (PRD residual B2)."""
+    warnings: list[str] = []
+    for missing in _unreachable_wiring_tests(block, project_root):
+        if "::" in missing:
+            # Function-name advisory ("collection-grade" rung): file exists,
+            # function name absent.
+            path_part, fn_part = missing.split("::", 1)
+            warnings.append(
+                f"wiring_gate_warning: {fr_id} declares wiring_test "
+                f"`{path_part}` but function `{fn_part}` was not found "
+                f"in that file (AARE-F §C7 B2 collection-grade — "
+                f"function-name check)."
+            )
+        else:
+            warnings.append(
+                f"wiring_gate_warning: {fr_id} declares wiring_test "
+                f"`{missing}` but that path does not exist under the project "
+                f"root (AARE-F §C7 delivered=wired — reachability)."
+            )
+    return warnings
+
+
+def evaluate_wiring_gate(
+    content: str,
+    frontmatter: dict[str, object],
+    mode: str = "warn",
+    today: date | None = None,
+    project_root: Path | None = None,
+) -> WiringGateResult:
+    """Run the wiring gate over a PRD's FRs and derive its ``WiringVerdict``.
+
+    For each FR classified as a public surface (``_classify_fr_surface``), the
+    gate looks for (a) a ``consumer:`` field, (b) a ``wiring_test:`` field, or
+    (c) at least one valid, unexpired ``seams:`` entry in frontmatter:
+
+    - (a)/(b): wired — a full pass for that FR, seam present or not.
+    - (c) only: PRD-QUAL-148-FR03 — a ``wiring_gate_partial:`` finding names
+      the FR and the seam(s) as the reason coverage is partial, and the verdict
+      is ``partial``. It is disclosure, never a failure in either mode: a seam
+      is an owner- and expiry-bounded deferral the author declared on purpose.
+    - none: warn mode emits a ``wiring_gate_warning``; block mode a
+      ``ValidationFailure`` with code ``WIRING_GATE_FAIL``. Verdict ``unwired``.
+
+    Wiring-test reachability (PRD residual B2 — "existence first"): when
+    ``project_root`` is supplied, each declared ``wiring_test:`` path is
+    existence-checked (the ``::nodeid`` selector stripped first). A missing file
+    is an ALWAYS-advisory ``wiring_gate_warning`` regardless of ``mode``; it is
+    not the same defect class as a public surface that declares nothing.
+    ``consumer:`` stays presence-based for v1. ``project_root=None`` skips it.
+
+    Seam-to-FR mapping v1: ANY valid seam entry covers ALL of that PRD's unwired
+    public-surface FRs. Per-FR keyed seam mapping is deferred to v2 (PRD-CORE-190
+    §3 FR03); FR03 of PRD-QUAL-148 keeps that scope and only stops the coverage
+    from being silent — each covered FR is disclosed by id.
+
+    An expired seam (``expiry_date < today``) is excluded from coverage and
+    emits a ``seam_schema_warning`` (PRD-CORE-190 audit P1-1); ``today`` is
+    injectable for deterministic tests and defaults to ``date.today()``.
+
+    Backward compatibility (FR05): when no FR is classified as a public surface,
+    the result is ``([], [], "not_applicable")`` plus any seam schema warnings.
+    """
+    ip_tier = str(frontmatter.get("ip_tier", "") or "")
+    valid_seams, seam_warnings = parse_seam_entries(frontmatter, today=today)
+
+    warnings: list[str] = list(seam_warnings)
+    failures: list[ValidationFailure] = []
+    public = seam_only = unwired = 0
+
+    for name, block in _extract_fr_sections(content):
+        if not _classify_fr_surface(block, ip_tier):
+            continue
+        public += 1
+        fr_id = _extract_fr_id(name) or name.strip()
+        if project_root is not None:
+            warnings.extend(_reachability_warnings(fr_id, block, project_root))
+        if _fr_is_wired(block):
+            continue
+        if valid_seams:
+            seam_only += 1
+            warnings.append(
+                f"{WIRING_PARTIAL_PREFIX} [partial] {fr_id} is a public surface with no "
+                f"consumer:/wiring_test: field; its only wiring justification is the "
+                f"seams: entry {_describe_seams(valid_seams)}. Coverage is partial: the "
+                f"seam records a deferral, it does not prove the FR is wired "
+                f"(AARE-F §C7 delivered=wired)."
+            )
+            continue
+        unwired += 1
+        msg = (
+            f"wiring_gate_warning: {fr_id} is a public surface with no "
+            f"consumer:/wiring_test: field and no covering seams: entry "
+            f"(AARE-F §C7 delivered=wired)."
+        )
+        if mode == "block":
+            failures.append(ValidationFailure(field=fr_id, rule="WIRING_GATE_FAIL", message=msg, severity="error"))
+        else:
+            warnings.append(msg)
+
+    verdict: WiringVerdict
+    if unwired:
+        verdict = "unwired"
+    elif seam_only:
+        verdict = "partial"
+    elif public:
+        verdict = "pass"
+    else:
+        verdict = "not_applicable"
+    return WiringGateResult(warnings=warnings, failures=failures, verdict=verdict)
+
 
 def check_wiring_gate(
     content: str,
@@ -299,111 +440,13 @@ def check_wiring_gate(
     today: date | None = None,
     project_root: Path | None = None,
 ) -> tuple[list[str], list[ValidationFailure]]:
-    """Run the wiring gate over a PRD's FRs.
+    """``(warnings, failures)`` of :func:`evaluate_wiring_gate` (the gate-only view).
 
-    Returns ``(warnings, failures)``.
-
-    For each FR classified as a public surface (``_classify_fr_surface``), the
-    gate requires one of: (a) a ``consumer:`` field, (b) a ``wiring_test:``
-    field, or (c) at least one valid (non-malformed) ``seams:`` entry in
-    frontmatter. If none is present:
-      - warn mode (default): emit a ``wiring_gate_warning`` string.
-      - block mode: emit a ``ValidationFailure`` with code ``WIRING_GATE_FAIL``.
-
-    Wiring-test reachability (PRD residual B2 — "existence first"): when
-    ``project_root`` is supplied, each declared ``wiring_test:`` path is
-    resolved against the root and existence-checked (the ``::nodeid`` selector
-    is stripped first). A declared-but-missing test file emits an advisory
-    ``wiring_gate_warning`` naming the path — it is NEVER treated as silently
-    wired. This reachability finding is ALWAYS advisory (fail-open) regardless
-    of ``mode``: a missing file is a reachability concern, not the same defect
-    class as a public surface that declares nothing at all. ``consumer:`` stays
-    presence-based for v1. When ``project_root`` is None the reachability check
-    is skipped (the original presence-only contract).
-
-    Seam-to-FR mapping v1: ANY valid seam entry suppresses wiring warnings for
-    ALL of that PRD's unwired public-surface FRs. Per-FR keyed seam mapping is
-    deferred to v2 (PRD-CORE-190 §3 FR03 — orchestrator decision); not a stub,
-    a documented simplification of the suppression scope.
-
-    An expired seam (``expiry_date < today``) is excluded from coverage and
-    emits a ``seam_schema_warning`` (PRD-CORE-190 audit P1-1); ``today`` is
-    injectable for deterministic tests and defaults to ``date.today()``.
-
-    Backward compatibility (FR05): when no FR is classified as a public surface,
-    the gate is a no-op and returns ``([], [])`` — identical output to the
-    pre-implementation baseline.
+    Kept for the status-transition gate, which needs the findings but not the
+    PRD-level verdict.
     """
-    ip_tier = str(frontmatter.get("ip_tier", "") or "")
-    valid_seams, seam_warnings = parse_seam_entries(frontmatter, today=today)
-    has_seam_coverage = bool(valid_seams)
-
-    warnings: list[str] = list(seam_warnings)
-    failures: list[ValidationFailure] = []
-
-    for name, block in _extract_fr_sections(content):
-        if not _classify_fr_surface(block, ip_tier):
-            continue
-        # Wiring-test reachability (PRD residual B2): always advisory, runs even
-        # for an otherwise-wired FR. A declared wiring_test: path that does not
-        # resolve under project_root is surfaced rather than counted as wired.
-        # The "collection-grade" rung (B2 next step): if the file exists but
-        # the declared ::nodeid function name is absent, the token is
-        # ``<path>::<fn_name>`` — surfaced as a function-not-found advisory.
-        if project_root is not None:
-            for missing in _unreachable_wiring_tests(block, project_root):
-                fr_id = _extract_fr_id(name) or name.strip()
-                if "::" in missing:
-                    # Function-name advisory: file exists, function name absent.
-                    path_part, fn_part = missing.split("::", 1)
-                    warnings.append(
-                        f"wiring_gate_warning: {fr_id} declares wiring_test "
-                        f"`{path_part}` but function `{fn_part}` was not found "
-                        f"in that file (AARE-F §C7 B2 collection-grade — "
-                        f"function-name check)."
-                    )
-                else:
-                    warnings.append(
-                        f"wiring_gate_warning: {fr_id} declares wiring_test "
-                        f"`{missing}` but that path does not exist under the project "
-                        f"root (AARE-F §C7 delivered=wired — reachability)."
-                    )
-        if _fr_is_wired(block):
-            continue
-        if has_seam_coverage:
-            # Seam-to-FR mapping v1 (GOVERNANCE TRADEOFF, deliberate — see F2 of
-            # the deliver-gate governance review lane): ANY single valid seam
-            # entry suppresses the wiring warning for EVERY unwired public-surface
-            # FR in this PRD, not just the FR(s) the seam actually covers. This
-            # under-blocks: a PRD that declares one legitimately-deferred seam can
-            # carry additional genuinely-unwired public FRs with zero warning.
-            # The tradeoff is accepted for v1 — keying seams to specific FRs needs
-            # a per-FR seam->FR mapping the SeamEntry schema does not yet carry.
-            # v2 upgrade path: add a ``covers_frs: [FR02, ...]`` field to
-            # SeamEntry and gate suppression per-FR (continue only when this FR's
-            # id is in some valid seam's covers_frs). Pinned by the
-            # test_wiring_gate_one_seam_does_not_cover_other_unwired_frs boundary
-            # test, which asserts this v1 under-block is intentional, not a bug.
-            continue
-        fr_id = _extract_fr_id(name) or name.strip()
-        msg = (
-            f"wiring_gate_warning: {fr_id} is a public surface with no "
-            f"consumer:/wiring_test: field and no covering seams: entry "
-            f"(AARE-F §C7 delivered=wired)."
-        )
-        if mode == "block":
-            failures.append(
-                ValidationFailure(
-                    field=fr_id,
-                    rule="WIRING_GATE_FAIL",
-                    message=msg,
-                    severity="error",
-                )
-            )
-        else:
-            warnings.append(msg)
-
-    return warnings, failures
+    result = evaluate_wiring_gate(content, frontmatter, mode=mode, today=today, project_root=project_root)
+    return result.warnings, result.failures
 
 
 def extract_wiring_warnings(v2_result: object) -> list[str]:

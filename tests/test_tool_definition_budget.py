@@ -186,6 +186,15 @@ pytestmark = pytest.mark.unit
 # delivery=<id> mode, the MCP-side owner status locator FR03 requires for transport-
 # loss recovery. 47 of the 63 chars are that parameter's schema, which no edit
 # moves; the prose half was trimmed to 16. Set to 13,370.
+# 2026-09-26 (PRD-CORE-329 Slice A, NFR04): trw_checkpoint gains one optional
+# ``blocked_decision: dict[str, object] | None = None`` parameter plus a
+# one-clause docstring addition ("blocked_decision: record an ESCALATE no one
+# can answer now; the loop halts on it."). Measured core preset 13,258 across
+# 11 tools (was 13,058 before this change on the same tree) -- a +200 char
+# growth, comfortably inside the existing 13,370 ceiling (112 chars of
+# headroom remain). No ceiling change: the measured growth fit inside slack
+# already banked by prior ratchets, so raising it here would not be a
+# measured, reviewed reason.
 FULL_SURFACE_CEILING_CHARS: Final[int] = 29_700
 CORE_PRESET_CEILING_CHARS: Final[int] = 13_370
 

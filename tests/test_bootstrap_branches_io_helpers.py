@@ -23,6 +23,8 @@ from trw_mcp.bootstrap import (
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.mark.unit
 class TestRemoveStaleArtifacts:
@@ -234,7 +236,7 @@ class TestCopyFile:
 
         result: dict[str, list[str]] = {"created": [], "errors": []}
 
-        with patch("shutil.copy2", side_effect=OSError("permission denied")):
+        with patch("trw_mcp.bootstrap._file_ops.write_checkout_file", side_effect=OSError("permission denied")):
             _copy_file(src, dest, force=True, result=result)
 
         assert any("Failed to copy" in e for e in result["errors"])
@@ -274,8 +276,8 @@ class TestWriteIfMissing:
         dest = tmp_path / "config.yaml"
         result: dict[str, list[str]] = {"created": [], "errors": []}
 
-        with patch.object(Path, "write_text", side_effect=OSError("read-only")):
-            _write_if_missing(dest, "content", force=True, result=result)
+        with patch("trw_mcp.bootstrap._file_ops.write_checkout_file", side_effect=OSError("read-only")):
+            _write_if_missing(dest, "content", force=True, result=result, root=tmp_path)
 
         assert any("Failed to write" in e for e in result["errors"])
 

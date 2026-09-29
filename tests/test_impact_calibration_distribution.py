@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from trw_mcp.scoring import enforce_tier_distribution
 
 
@@ -169,3 +171,10 @@ class TestEnforceTierDistribution:
             lid, score = item
             assert isinstance(lid, str)
             assert isinstance(score, float)
+
+
+def test_a_bad_trw_memory_env_setting_does_not_fail_the_trw_mcp_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The adapter hands trw-memory its caps and config explicitly, so no MEMORY_* setting is parsed."""
+    monkeypatch.setenv("MEMORY_IMPACT_TIER_CRITICAL_CAP", "not-a-number")
+    entries = [(f"L-{i:03d}", 0.95) for i in range(10)]
+    assert enforce_tier_distribution(entries)

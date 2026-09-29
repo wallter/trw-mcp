@@ -24,7 +24,13 @@ def test_reviewed_cwd_cannot_shadow_mcp_package(tmp_path: Path) -> None:
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(tmp_path)}
     # The original launcher actually executes the adversarial package.
     vulnerable = subprocess.run(
-        [command, "-m", "trw_mcp.server"], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30, check=True
+        [command, "-m", "trw_mcp.server"],
+        cwd=tmp_path,
+        env=env,  # spawn-pin: exempt -- the adversarial PYTHONPATH IS the subject
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
     )
     assert "SHADOW_PACKAGE_EXECUTED" in vulnerable.stdout
     isolated = subprocess.run(

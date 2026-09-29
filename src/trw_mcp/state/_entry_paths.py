@@ -34,7 +34,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["resolve_entry_file", "resolve_entry_path"]
+__all__ = [
+    "resolve_entry_file",
+]
 
 
 def _entry_at(reader: object, path: Path) -> dict[str, object] | None:
@@ -54,18 +56,6 @@ def _entry_at(reader: object, path: Path) -> dict[str, object] | None:
         logger.debug("entry_path_candidate_unreadable", path=str(path), outcome="not_a_match", exc_info=True)
         return None
     return data if isinstance(data, dict) else None
-
-
-def resolve_entry_path(
-    entries_dir: Path,
-    entry_id: str,
-    reader: object,
-    *,
-    trw_dir: Path | None = None,
-) -> Path | None:
-    """The sidecar path for *entry_id* — :func:`resolve_entry_file` without its body."""
-    resolved = resolve_entry_file(entries_dir, entry_id, reader, trw_dir=trw_dir)
-    return None if resolved is None else resolved[0]
 
 
 def resolve_entry_file(

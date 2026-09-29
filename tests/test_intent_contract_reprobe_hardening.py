@@ -12,8 +12,9 @@ the finding it pins so a regression says which wall came down:
 * N5 — a corrupt marker yielded an override with NO ledger record.
 * N6 — `chmod 000 .claude/hooks/lib-trw.sh` disarmed both hooks, invisibly.
 * N7 — the override evidence was gitignored, so C9 could never see it.
-* N8 — `HOOKS_ENABLED=false` in the gitignored `.trw/runtime/hook-env.sh` disarmed
-  both hooks; so did `PATH=/nonexistent` in the same file, via `$(cat) || exit 0`.
+* N8 — `HOOKS_ENABLED=false` in the gitignored `.trw/runtime/hook-env.d/<key>.sh`
+  disarmed both hooks; so did `PATH=/nonexistent` in the same file, via
+  `$(cat) || exit 0`.
 * N10 — a `git` stub in any writable PATH directory made every history query fail,
   and a failure to ANSWER fell back to "never enrolled".
 
@@ -215,7 +216,7 @@ def _stale_hook_project(tmp_path: Path, name: str) -> Path:
 @pytest.mark.parametrize("switch", ["HOOKS_ENABLED", "TRW_HOOKS_ENABLED"])
 @pytest.mark.parametrize("hook", [_PRE_HOOK, _POST_HOOK])
 def test_n8_hook_env_kill_switch_cannot_disarm_an_enrolled_control(tmp_path: Path, hook: str, switch: str) -> None:
-    """`echo 'export HOOKS_ENABLED=false' >> .trw/runtime/hook-env.sh` was a one-line
+    """`echo 'export HOOKS_ENABLED=false' >> .trw/runtime/hook-env.d/claude.sh` was a one-line
     total disarm of both enrolled control points, in a file git never shows.
 
     HOOKS_ENABLED is a convenience switch for advisory/ceremony hooks; enrollment
@@ -270,7 +271,7 @@ def test_hooks_enabled_false_leaves_an_enrolled_control_blocking(tmp_path: Path,
 @pytest_skip_no_sh
 @pytest.mark.parametrize("hook", [_PRE_HOOK, _POST_HOOK])
 def test_n8_process_environment_kill_switch_cannot_disarm_an_enrolled_control(tmp_path: Path, hook: str) -> None:
-    """The same switch arriving as an exported env var rather than via hook-env.sh."""
+    """The same switch arriving as an exported env var rather than via hook-env.d/claude.sh."""
     project = (
         _stale_hook_project(tmp_path, f"n8-env-{hook}")
         if hook == _PRE_HOOK
@@ -372,7 +373,7 @@ def test_n8_kill_switch_is_still_honoured_before_enrollment(tmp_path: Path, hook
 # failure to ANSWER was indistinguishable from a negative answer and fell back to
 # 0 — at which point the HOOKS_ENABLED switch became honourable again. Reachable
 # with Bash alone: shadow git, rm the marker, write the switch into the gitignored
-# hook-env.sh.
+# hook-env.d/claude.sh.
 
 
 def _shadow_git(tmp_path: Path, name: str) -> str:

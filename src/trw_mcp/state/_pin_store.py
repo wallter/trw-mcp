@@ -76,7 +76,6 @@ __all__ = [
     "pin_store_lock_path",
     "pin_store_path",
     "prune_pin_store_orphans",
-    "save_pin_store",
 ]
 
 
@@ -400,24 +399,6 @@ def _atomic_write_json(pins_path: Path, payload: dict[str, dict[str, Any]]) -> N
         raise
 
 
-def save_pin_store(store: dict[str, dict[str, Any]]) -> None:
-    """Persist *store* to ``.trw/runtime/pins.json`` atomically.
-
-    Concurrency (must match exactly):
-
-    1. Acquire the module-level threading lock.
-    2. Open/create the lock-file sentinel and acquire LOCK_EX on its FD.
-    3. Atomic write + chmod 0o600.
-    4. **Invalidate the 1-second cache IMMEDIATELY** — non-negotiable:
-       skipping this step reintroduces the write-after-read isolation
-       bug that PRD-CORE-141 exists to fix.  See the module docstring.
-    5. Release the file lock; close the lock FD.
-    6. Release the threading lock.
-    """
-    with _pin_store_threading_lock:
-        _save_pin_store_locked(store)
-
-
 @contextmanager
 def _pin_store_file_lock() -> Iterator[None]:
     """Hold the cross-process pin-store lock for one disk transaction."""
@@ -438,18 +419,6 @@ def _write_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
     """Write while both the process and file locks are already held."""
     _atomic_write_json(pin_store_path(), store)
     invalidate_pin_store_cache()
-
-
-def _save_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
-    """Save path executed with ``_pin_store_threading_lock`` already held.
-
-    Factored out so read-modify-write helpers (``upsert_pin_entry``,
-    ``remove_pin_entry``) can hold the threading lock across the load
-    → mutate → save cycle without releasing-then-reacquiring, which
-    would allow an interleaving thread to lose its update.
-    """
-    with _pin_store_file_lock():
-        _write_pin_store_locked(store)
 
 
 def _load_pin_store_uncached() -> dict[str, dict[str, Any]]:

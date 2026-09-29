@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from trw_mcp.state.validation._prd_scoring import (
     _extract_fr_sections,
     _score_file_path_coverage,
     score_implementation_readiness,
     score_traceability_v2,
 )
+
+pytestmark = pytest.mark.unit
+
 
 _CONTENT = """\
 ## 4. Functional Requirements

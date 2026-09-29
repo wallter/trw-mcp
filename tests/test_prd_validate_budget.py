@@ -234,7 +234,7 @@ def test_refresh_deadline_breach_skips_only_remaining_groups(
     ("patch_target", "group"),
     [
         ("trw_mcp.state.validation.prd_quality.run_prd_integrity_checks", "integrity_checks"),
-        ("trw_mcp.state.validation._prd_scoring_wiring.check_wiring_gate", "wiring_gate"),
+        ("trw_mcp.state.validation._prd_scoring_wiring.evaluate_wiring_gate", "wiring_gate"),
     ],
 )
 def test_dynamic_check_exception_is_visibly_partial(
@@ -262,6 +262,9 @@ def test_dynamic_check_exception_is_visibly_partial(
     assert report["validation_partial"] is True
     assert group in report["checks_skipped"]
     assert "dynamic validation check failure" in result.integrity_warnings[0]
+    # PRD-QUAL-148-FR03: a wiring gate that raised makes no wiring claim.
+    if group == "wiring_gate":
+        assert result.wiring_verdict == "not_evaluated"
 
 
 def test_run_prd_integrity_checks_deadline_skips_remaining_subchecks(

@@ -16,7 +16,7 @@ import pytest
 from trw_mcp.dispatch._client_specs import _SPEC_BY_ID, client_spec_for
 from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchRequest
-from trw_mcp.tools.code_search import code_search
+from trw_mcp.tools.code_search import code_symbol
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_a_dispatch_writes_no_code_index_into_the_checkout(repo: Path, posture: 
     assert (repo.parent / "ran.txt").exists()
     assert not (repo / ".trw" / "code-index").exists()
     assert not hasattr(result, "code_index")
-    assert code_search(str(repo), "reviewer_target")["error_code"] == "index_missing"
+    assert code_symbol(str(repo), "reviewer_target")["error_code"] == "index_missing"
 
 
 def test_a_symlinked_index_directory_receives_nothing(repo: Path, tmp_path: Path) -> None:
@@ -74,4 +74,4 @@ def test_a_reviewer_reads_an_index_that_is_already_there_unchanged(repo: Path) -
     _dispatch(repo, "reviewer")
 
     assert (store.read_bytes(), store.stat().st_mtime_ns) == before
-    assert code_search(str(repo), "reviewer_target")["results"][0]["path"] == "app.py"  # type: ignore[index]
+    assert code_symbol(str(repo), "reviewer_target")["results"][0]["path"] == "app.py"  # type: ignore[index]

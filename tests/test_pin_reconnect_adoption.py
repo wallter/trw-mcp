@@ -186,7 +186,7 @@ def test_the_older_server_logs_superseded_once(tmp_path: Path) -> None:
     superseded = [e for e in logs if e["event"] == "superseded_by_newer_server"]
     assert len(superseded) == 1
     assert superseded[0]["newer_pid"] == os.getpid() + 1
-    assert f"kill {os.getpid()}" in superseded[0]["remedy"]
+    assert f"process {os.getpid()}" in superseded[0]["remedy"]
 
 
 def test_the_newer_server_does_not_log_superseded(tmp_path: Path) -> None:

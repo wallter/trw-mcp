@@ -3,20 +3,17 @@
 Belongs to the ``trw_mcp.profile`` package facade. Re-exported there.
 
 ``resolve_session_profile`` is the consumer-facing entry point wired into
-``trw_session_start`` (FR-4). It assembles the full 6-layer chain from live
+``trw_session_start`` (FR-4). It assembles the layer chain from live
 runtime state:
 
   * ``defaults`` — projected from the global ``TRWConfig`` surface.
   * ``org`` / ``domain`` / ``task-type`` — discovered from ``.trw/profiles/``
     (FR-5/6/7) via inference + the loader.
-  * ``session`` — read from the run's ``meta/session_profile.yaml`` when a
-    SCALE-001 Scout has written one (sprint-97 cross-PRD contract).
   * ``client`` — re-homed from the resolved built-in ClientProfile (FR-10).
 
 then ``compose``s them into a ``ResolvedProfile``.
 
-Fail-open boundary (PRD NFRs / Behavior Switch Matrix): a missing or invalid
-*session* layer degrades to the persistent surface above it. A malformed
+Fail-closed boundary (PRD NFRs / Behavior Switch Matrix): a malformed
 *persistent* layer (org/domain/task) fails closed via ``LayerLoadError`` —
 that surfaces to the caller, which decides whether to abort or omit the
 block. The session-start wiring catches everything so session start NEVER
@@ -29,9 +26,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
-from pydantic import ValidationError
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
 
 from trw_mcp.profile.inference import infer_domain, infer_task_type
 from trw_mcp.profile.loader import LayerLoadError, discover_layers
@@ -42,8 +36,6 @@ if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
-
-_yaml = YAML(typ="safe")
 
 #: Mapping of TRWConfig fields → the ``defaults`` Profile surface. Only fields
 #: with a meaningful global analogue are projected; the rest stay unset so the
@@ -78,42 +70,6 @@ def _defaults_layer(config: TRWConfig) -> ProfileLayer:
     )
 
 
-def _session_layer(run_dir: Path | None) -> ProfileLayer | None:
-    """Read the session layer from ``{run_dir}/meta/session_profile.yaml``.
-
-    Returns ``None`` when there is no run dir or no session profile file
-    (FR-5 "absent layer is the empty overlay"). A malformed session file is
-    fail-open here: it is logged and skipped (the session layer is an escape
-    hatch, not a governance surface) — distinct from persistent layers which
-    fail closed in the loader.
-    """
-    if run_dir is None:
-        return None
-    path = run_dir / "meta" / "session_profile.yaml"
-    if not path.exists():
-        return None
-    try:
-        raw = _yaml.load(path.read_text(encoding="utf-8"))
-        if raw is None:
-            raw = {}
-        if not isinstance(raw, dict):
-            # Malformed session shape: fail open (session is an escape hatch).
-            logger.warning("profile_session_layer_not_mapping", path=str(path))
-            return None
-        raw.pop("rationale", None)
-        # Route through model_validate so the __unset__ sentinel survives the
-        # typed-vs-raw split (mirrors the loader path).
-        layer = ProfileLayer.model_validate({"name": "session", "overrides": raw, "source_path": str(path)})
-    except (YAMLError, OSError, ValueError, UnicodeDecodeError, ValidationError):
-        # ValidationError (extra session key etc.) is NOT a ValueError subclass
-        # in Pydantic v2 — list it explicitly so a malformed session overlay
-        # fails open here (layer skipped + warning) instead of propagating to
-        # the outer wiring catch (round-2 audit S1-F01).
-        logger.warning("profile_session_layer_skipped", path=str(path), exc_info=True)
-        return None
-    return layer
-
-
 def _client_layer(config: TRWConfig) -> ProfileLayer:
     """Build the ``client`` layer from the resolved built-in ClientProfile.
 
@@ -135,7 +91,6 @@ def _client_layer(config: TRWConfig) -> ProfileLayer:
 def resolve_session_profile(
     config: TRWConfig,
     *,
-    run_dir: Path | None = None,
     domain: str | None = None,
     task_type: str | None = None,
     prd_path: str | None = None,
@@ -143,13 +98,12 @@ def resolve_session_profile(
     prd_category: str | None = None,
     trw_dir: Path | None = None,
 ) -> ResolvedProfile:
-    """Resolve the full 6-layer profile for a session (FR-4).
+    """Resolve the layered profile for a session (FR-4).
 
     ``domain`` / ``task_type`` may be passed explicitly; otherwise they are
     inferred (FR-6/FR-7) from ``prd_path`` / ``task_name`` / ``prd_category``.
-    ``trw_dir`` defaults to ``run_dir``'s ``.trw`` ancestor resolution via the
-    caller; when omitted, persistent-layer discovery is skipped (defaults +
-    session + client only). Raises ``LayerLoadError`` if a persistent layer is
+    When ``trw_dir`` is omitted, persistent-layer discovery is skipped (defaults +
+    client only). Raises ``LayerLoadError`` if a persistent layer is
     malformed (FR-12) — the wiring layer decides how to surface it.
     """
     resolved_domain = infer_domain(
@@ -163,10 +117,6 @@ def resolve_session_profile(
 
     if trw_dir is not None:
         layers.extend(discover_layers(trw_dir, domain=resolved_domain, task_type=resolved_task))
-
-    session = _session_layer(run_dir)
-    if session is not None:
-        layers.append(session)
 
     layers.append(_client_layer(config))
 

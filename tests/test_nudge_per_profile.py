@@ -91,9 +91,6 @@ def test_profile_messenger_resolves_to_standard(profile_id: str, tmp_path: Path)
 
     assert config.effective_nudge_messenger == "standard"
 
-    # effective_nudge_density is the W2A field — present since Wave 2A.
-    if not hasattr(config, "effective_nudge_density"):
-        pytest.skip("W2A pending: effective_nudge_density not yet exposed")
     assert config.effective_nudge_density is None
 
 
@@ -134,40 +131,6 @@ def test_append_ceremony_status_emits_when_enabled(profile_id: str, tmp_path: Pa
     assert response.get("nudge_content") == "Injected nudge content"
     # Pinned fields (NFR03): learning_id field carries the selected learning.
     assert nudge_events[0].get("learning_id") == "L-fr10"
-
-
-# --- FR10.4: per-profile nudge budget enforcement -----------------------------
-
-
-@pytest.mark.parametrize("profile_id", _NUDGE_ON_PROFILES)
-def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
-    """FR10: ``compute_nudge`` must never return a string longer than
-    ``nudge_budget_chars`` for the active profile. Mocks the pool-message
-    loader so the raw candidate exceeds budget; the assembler must trim.
-    """
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state._ceremony_progress_state import CeremonyState
-    from trw_mcp.state.ceremony_nudge import compute_nudge
-
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=[profile_id])  # type: ignore[call-arg]  # aliased pydantic fields; valid at runtime
-    budget = config.nudge_budget_chars
-    assert budget >= 100  # sanity: Field(ge=100)
-
-    huge = "X" * (budget * 3)
-    state = CeremonyState()
-
-    with (
-        patch("trw_mcp.models.config._loader.get_config", return_value=config),
-        patch("trw_mcp.state._nudge_content.load_pool_message", return_value=huge),
-    ):
-        result = compute_nudge(state, available_learnings=0)
-
-    # compute_nudge returns either a bounded string or "" (fail-open). Either
-    # way the budget invariant holds.
-    assert isinstance(result, str)
-    assert len(result) <= budget, f"{profile_id}: compute_nudge returned {len(result)} chars, budget={budget}"
 
 
 # --- FR10.5: idempotent / dedup invariant across two calls --------------------
@@ -234,69 +197,6 @@ def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp
     # Pinned fields (NFR03).
     assert "turn_first_shown" in entry
     assert "last_shown_turn" in entry
-
-
-# --- FR03 regression: passed profile's pool weights win over config global ----
-
-
-def test_compute_nudge_uses_passed_profile_weights_not_global(tmp_path: Path) -> None:
-    """Regression: ``compute_nudge`` must select the nudge pool using the
-    RESOLVED ``profile`` argument's ``nudge_pool_weights`` — NOT
-    ``config.client_profile.nudge_pool_weights`` (the global active profile).
-
-    Construct a config whose global profile would ONLY ever pick the
-    ``context`` pool (context=100, all others 0) and pass an explicit profile
-    that would ONLY ever pick the ``workflow`` pool (workflow=100, others 0).
-    The previous code read the global weights, so it would emit a context-pool
-    nudge; the fix reads the passed profile, so it emits the workflow message.
-    """
-    from unittest.mock import PropertyMock
-
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.models.config._client_profile import NudgePoolWeights
-    from trw_mcp.models.config._profiles import resolve_client_profile
-    from trw_mcp.state._ceremony_progress_state import CeremonyState
-    from trw_mcp.state.ceremony_nudge import compute_nudge
-
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=["claude-code"])  # type: ignore[call-arg]  # aliased pydantic fields; valid at runtime
-
-    # ClientProfile is frozen — derive both profiles from the resolved registry
-    # profile via model_copy(update=...) so all required fields stay valid.
-    base = resolve_client_profile("claude-code")
-
-    # Global profile (config.client_profile) — context-only weighting. If the
-    # buggy code read this, the context pool would be selected.
-    global_profile = base.model_copy(
-        update={
-            "nudge_enabled": True,
-            "nudge_pool_weights": NudgePoolWeights(workflow=0, learnings=0, ceremony=0, context=100),
-        }
-    )
-
-    # Explicit caller-supplied profile — workflow-only weighting.
-    passed_profile = base.model_copy(
-        update={
-            "nudge_enabled": True,
-            "nudge_pool_weights": NudgePoolWeights(workflow=100, learnings=0, ceremony=0, context=0),
-        }
-    )
-
-    state = CeremonyState()
-    sentinel = "WORKFLOW-POOL-MESSAGE"
-
-    with (
-        patch("trw_mcp.models.config._loader.get_config", return_value=config),
-        patch.object(type(config), "client_profile", new_callable=PropertyMock, return_value=global_profile),
-        patch("trw_mcp.state._nudge_content.load_pool_message", return_value=sentinel),
-    ):
-        result = compute_nudge(state, available_learnings=0, profile=passed_profile)
-
-    # The workflow pool was selected (per the PASSED profile), so the sentinel
-    # workflow message appears. If the buggy global weights were used, the
-    # context pool would have been selected and the sentinel would be absent.
-    assert sentinel in result, f"expected workflow-pool message from passed profile, got: {result!r}"
 
 
 # --- FR11: nudge-off profiles emit nothing ------------------------------------

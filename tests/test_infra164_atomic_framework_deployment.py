@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH, deploy_framework_generation
-from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime, rollback_framework_runtime
+from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime
 
 FRAMEWORK_VERSION = "v99.9_TRW"
 AAREF_VERSION = "v3.2.0"
@@ -65,30 +65,6 @@ def test_interrupted_promotion_restores_complete_previous_generation(tmp_path: P
         _repair(tmp_path, framework=FRAMEWORK + "next generation\n", fail_after=fail_after)
 
     assert {path: (tmp_path / path).read_bytes() for path in tracked} == before
-
-
-def test_explicit_rollback_restores_prior_generation_receipt_last(tmp_path: Path) -> None:
-    first = deploy_framework_generation(
-        tmp_path,
-        artifacts={Path(".trw/frameworks/custom.md"): b"first\n"},
-        registry_digest="r1",
-        framework_version=FRAMEWORK_VERSION,
-        aaref_version=AAREF_VERSION,
-    )
-    first_receipt = (tmp_path / DEPLOYMENT_RELATIVE_PATH).read_bytes()
-    second = deploy_framework_generation(
-        tmp_path,
-        artifacts={Path(".trw/frameworks/custom.md"): b"second\n"},
-        registry_digest="r2",
-        framework_version=FRAMEWORK_VERSION,
-        aaref_version=AAREF_VERSION,
-    )
-    assert first.generation_id != second.generation_id
-
-    rollback_framework_runtime(tmp_path, second.rollback_id)
-
-    assert (tmp_path / ".trw/frameworks/custom.md").read_bytes() == b"first\n"
-    assert (tmp_path / DEPLOYMENT_RELATIVE_PATH).read_bytes() == first_receipt
 
 
 def test_deployment_rejects_symlinked_management_boundary(tmp_path: Path) -> None:
@@ -205,7 +181,7 @@ def test_canon_body_drift_still_fails_after_unbinding_projections(tmp_path: Path
     assert any("receipt artifact digest mismatch" in error for error in report.errors)
 
 
-def test_mutable_artifacts_are_promoted_and_rollback_covered(tmp_path: Path) -> None:
+def test_mutable_artifacts_are_promoted_outside_the_digest(tmp_path: Path) -> None:
     mutable = Path(".trw/frameworks/stamp.yaml")
     first = deploy_framework_generation(
         tmp_path,
@@ -230,9 +206,7 @@ def test_mutable_artifacts_are_promoted_and_rollback_covered(tmp_path: Path) -> 
         aaref_version=AAREF_VERSION,
     )
     assert first.generation_id != second.generation_id
-
-    rollback_framework_runtime(tmp_path, second.rollback_id)
-    assert (tmp_path / mutable).read_bytes() == b"generation: 1\n"
+    assert (tmp_path / mutable).read_bytes() == b"generation: 2\n"
 
 
 def test_generation_id_ignores_mutable_projection_bytes(tmp_path: Path) -> None:

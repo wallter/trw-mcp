@@ -14,23 +14,6 @@ class TierDistribution(TypedDict):
     low: int
 
 
-class ImpactTierInfo(TypedDict):
-    """Count and percentage for a single impact tier bucket."""
-
-    count: int
-    pct: float
-
-
-class ImpactDistributionResult(TypedDict):
-    """Return shape of ``compute_impact_distribution()``."""
-
-    total_active: int
-    critical: ImpactTierInfo
-    high: ImpactTierInfo
-    medium: ImpactTierInfo
-    low: ImpactTierInfo
-
-
 class RunAnalysisResult(TypedDict, total=False):
     """Return shape of ``_analyze_single_run()``.
 

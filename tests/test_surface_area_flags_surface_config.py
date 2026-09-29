@@ -49,12 +49,13 @@ def test_prd_core_218_nfr04() -> None:
     )
     assert set(census) == set(SURFACE_REDUCTION_TARGETS) == {"tools", "skills", "config_fields"}
 
-    # Tools meets its target since PRD-CORE-300; skills still MISSES its target.
+    # Tools meets its target since PRD-CORE-300; skills since the sprint skills were removed (2026-09-28).
     # config_fields reached its target in PRD-CORE-291 (48 unread fields deleted) and
     # may sit either side of it as lanes land, so it is asserted met-or-covered only.
     assert census["tools"].current == tool_count <= SURFACE_REDUCTION_TARGETS["tools"]
     assert census["tools"].met is True
-    assert census["skills"].current == skill_count > SURFACE_REDUCTION_TARGETS["skills"]
+    assert census["skills"].current == skill_count <= SURFACE_REDUCTION_TARGETS["skills"]
+    assert census["skills"].met is True
     assert census["config_fields"].current == config_field_count
 
     for metric, status in census.items():
@@ -87,5 +88,5 @@ def test_prd_core_218_nfr04() -> None:
     )
     assert all(s.exception_active is False for s in expired.values())
     assert all(s.reported_honestly is s.met for s in expired.values())
-    assert expired["skills"].reported_honestly is False
+    assert expired["skills"].reported_honestly is True  # met: needs no exception
     assert expired["tools"].reported_honestly is True  # met: needs no exception

@@ -303,46 +303,6 @@ def test_minimal_delivery_advice_preserves_without_completion(learnings: int) ->
     assert not state.deliver_called
 
 
-@pytest.mark.parametrize("fallback", [False, True])
-def test_ceremony_pool_delivery_text_and_fallback_are_truthful(monkeypatch: pytest.MonkeyPatch, fallback: bool) -> None:
-    from types import SimpleNamespace
-
-    from trw_mcp.models.config import _loader
-    from trw_mcp.state import _nudge_content, ceremony_nudge
-
-    profile = resolve_client_profile("codex")
-    monkeypatch.setattr(
-        _loader,
-        "get_config",
-        lambda: SimpleNamespace(
-            effective_nudge_enabled=True,
-            client_profile=profile,
-            nudge_budget_chars=500,
-            nudge_pool_cooldown_after=3,
-            nudge_pool_cooldown_calls=5,
-        ),
-    )
-    monkeypatch.setattr(ceremony_nudge, "_select_nudge_pool", lambda *_args: "ceremony")
-    _nudge_content._load_pool_yaml.cache_clear()
-    if fallback:
-        monkeypatch.setattr(_nudge_content, "load_pool_message", lambda *_args, **_kwargs: "")
-    state = ceremony_nudge.CeremonyState(
-        session_started=True,
-        checkpoint_count=1,
-        build_check_result="passed",
-        review_called=True,
-        phase="deliver",
-        learnings_this_session=2,
-    )
-    text = ceremony_nudge.compute_nudge(state, profile=profile)
-    assert "If you have material unfinished work" in text
-    assert "handoff with a next-read pointer" in text
-    assert "existing evidence gates" in text
-    assert "Session complete" not in text and "lost" not in text
-    assert not state.deliver_called
-    _nudge_content._load_pool_yaml.cache_clear()
-
-
 @pytest.mark.parametrize("learnings", [0, 2])
 def test_reactive_delivery_reports_only_observed_delivery(learnings: int) -> None:
     from trw_mcp.state._nudge_messages import _context_reactive_message

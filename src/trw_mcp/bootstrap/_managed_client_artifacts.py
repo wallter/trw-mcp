@@ -131,11 +131,16 @@ class ManagedArtifactSource:
         contents: Callable returning ``{repo-relative path: bundled bytes}`` for
             the CURRENT bundle. Registered from the generator's own content
             builder so the two can never drift.
+        licence_gated: Callable returning the subset of those keys whose writer
+            installs them only when ``distill_artifacts_entitled`` (PRD-CORE-239).
+            Such a key is legitimately absent from an unentitled install; every
+            other key is required. Built from the writer's own path constant.
     """
 
     client: str
     surface: str
     contents: Callable[[], dict[str, bytes]]
+    licence_gated: Callable[[], frozenset[str]] | None = None
 
 
 def _copilot_path_instructions() -> dict[str, bytes]:
@@ -220,6 +225,30 @@ def _opencode_distill() -> dict[str, bytes]:
     }
 
 
+def _opencode_licence_gated() -> frozenset[str]:
+    from trw_mcp.channels.opencode._explorer_agent import EXPLORER_AGENT_RELPATH
+
+    return frozenset({EXPLORER_AGENT_RELPATH})
+
+
+def _claude_licence_gated() -> frozenset[str]:
+    from trw_mcp.channels.claude_code._explorer_subagent import EXPLORER_AGENT_RELPATH
+
+    return frozenset({EXPLORER_AGENT_RELPATH})
+
+
+def _claude_explorer_agent() -> dict[str, bytes]:
+    """The CC-05 ``.claude/agents/trw-distill-explorer.md`` subagent (rendered, not bundled data).
+
+    It is written by ``install_cc05_subagent`` rather than the bundled-agent
+    loop, so ``bundled_agent_contents`` never lists it; without this source the
+    install never recorded a hash and uninstall could not prove it TRW's own.
+    """
+    from trw_mcp.channels.claude_code._explorer_subagent import EXPLORER_AGENT_RELPATH, get_explorer_agent_content
+
+    return {EXPLORER_AGENT_RELPATH: get_explorer_agent_content().encode("utf-8")}
+
+
 def _claude_loop_md() -> dict[str, bytes]:
     """The bundled ``.claude/loop.md`` `/loop` customization (init-project step 7a-1).
 
@@ -242,12 +271,18 @@ def _codex_post_edit_hook() -> dict[str, bytes]:
 
 
 def _cursor_ide_hook_scripts() -> dict[str, bytes]:
-    """The FR08 8-event ``.cursor/hooks/trw-*.sh`` adapter scripts (bundled, byte-for-byte)."""
+    """Every ``.cursor/hooks/trw-*.sh`` script either cursor surface installs (bundled, byte-for-byte).
+
+    The FR08 IDE adapter scripts plus the cursor-cli shell/mcp hooks the IDE list
+    omits (``trw-before-shell.sh``, ``trw-after-shell.sh``, ``trw-after-mcp.sh``).
+    One source per directory: two would make the same file read twice per sweep.
+    """
+    from ._cursor_cli import _CLI_HOOK_SCRIPTS
     from ._cursor_hooks_io import _CURSOR_HOOKS_DATA_DIR
     from ._cursor_ide import _IDE_HOOK_SCRIPTS
 
     contents: dict[str, bytes] = {}
-    for name in _IDE_HOOK_SCRIPTS:
+    for name in (*_IDE_HOOK_SCRIPTS, *_CLI_HOOK_SCRIPTS):
         src = _CURSOR_HOOKS_DATA_DIR / name
         if src.is_file():
             contents[f".cursor/hooks/{name}"] = src.read_bytes()
@@ -282,6 +317,28 @@ def _copilot_hook_scripts() -> dict[str, bytes]:
         src = _HOOKS_DATA_DIR / name
         if src.is_file():
             contents[f".github/hooks/{name}"] = src.read_bytes()
+    return contents
+
+
+def _cc03_hook_scripts() -> dict[str, bytes]:
+    """The Claude Code CC-03 pre-edit distill-hint hook scripts (bundled, byte-for-byte).
+
+    Installed by ``_claude_code_distill_channels._install_hook`` only while
+    ``cc03_hook_enabled`` is on. This source lists the CURRENT bundle; the
+    recorder still hashes a file only when it exists on disk and is either the
+    bundled bytes or its previously recorded bytes, so a gated-off project
+    records nothing.
+
+    Known limit (preserve-on-doubt): in a gate-off project an OLD-bundle hook left on disk is never
+    recorded (it matches neither the current bundle nor a prior record), so uninstall keeps it.
+    """
+    from ._claude_code_distill_channels import _CC03_HOOKS, _get_hook_content
+
+    contents: dict[str, bytes] = {}
+    for name in _CC03_HOOKS:
+        text = _get_hook_content(name)
+        if text is not None:
+            contents[f".claude/hooks/{name}"] = text.encode("utf-8")
     return contents
 
 
@@ -324,9 +381,8 @@ def _cursor_rules_mdc_candidates() -> set[bytes]:
 
     The file is SHARED: cursor-ide writes the full protocol + appendix (the
     steady state after any ``update-project``, since only the cursor-ide writer
-    runs on update), and cursor-cli writes a lighter body only at init time and
-    only when cursor-ide was never selected for the project (see
-    ``_install_cursor_cli_artifacts``). Both are TRW's own content -- a single
+    runs on update), and cursor-cli wrote a lighter body before PRD-CORE-301-FR14,
+    which update and doctor report as a retired artifact. Both are TRW's own content -- a single
     hash here would misclassify whichever one is not currently on disk as a
     user edit. A candidate that fails to render is skipped, never treated as a
     match.
@@ -456,11 +512,13 @@ MANAGED_CLIENT_ARTIFACT_SOURCES: tuple[ManagedArtifactSource, ...] = (
     # PRD-INFRA-192 FR12: the opencode distill installer used to keep its own
     # hashes in the manifest, which _write_manifest then dropped, so every update
     # overwrote a user's edit to these files.
-    ManagedArtifactSource("opencode", ".opencode", _opencode_distill),
+    ManagedArtifactSource("opencode", ".opencode", _opencode_distill, _opencode_licence_gated),
     # PRD-INFRA-192 FR09 C3: recorder-coverage gaps closed so a scoped uninstall
     # can tell TRW's own unedited write from a user's file under these surfaces,
     # instead of the pre-C3 fallback of wholesale-deleting the whole directory.
     ManagedArtifactSource("claude-code", ".claude", _claude_loop_md),
+    ManagedArtifactSource("claude-code", ".claude/agents", _claude_explorer_agent, _claude_licence_gated),
+    ManagedArtifactSource("claude-code", ".claude/hooks", _cc03_hook_scripts),
     ManagedArtifactSource("codex", ".codex/hooks", _codex_post_edit_hook),
     ManagedArtifactSource("antigravity-cli", ".antigravitycli/hooks", _antigravity_before_edit_hook),
     ManagedArtifactSource("cursor-ide", ".cursor/hooks", _cursor_ide_hook_scripts),

@@ -87,6 +87,18 @@ def _codex_event(line: str) -> dict[str, object] | None:
     return obj if kind in _CODEX_FAILURE_EVENTS or kind.startswith(_CODEX_STREAM_PREFIXES) else None
 
 
+def _jsonl_lines(text: str) -> list[str]:
+    """Split a JSONL stream on ``\n`` only.
+
+    ``str.splitlines`` also breaks on U+2028, U+2029, U+0085 and other separators
+    that JSON strings may carry raw. A codex review whose diff contained U+2028 had
+    one event line cut into fragments, so the stream read as ``malformed`` and a
+    completed PASS was recorded as ``auth_or_content_stop``
+    (RUNNER-SILENCE-MISCLASSIFY, core322-s3 2026-09-26).
+    """
+    return text.split("\n")
+
+
 def _codex_event_stream(lines: list[str]) -> tuple[str, dict[str, object]] | None:
     """Parse a ``codex exec --json`` stream, or ``None`` when NO line is a codex event.
 
@@ -150,7 +162,7 @@ def _codex_event_stream(lines: list[str]) -> tuple[str, dict[str, object]] | Non
 def _normalize_codex(raw: str) -> tuple[str, dict[str, object] | None]:
     """Extract supported legacy envelopes; preserve unknown/new stream schemas."""
     cleaned = _strip_ansi(raw)
-    stream_lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    stream_lines = [line.strip() for line in _jsonl_lines(cleaned) if line.strip()]
     parsed = _codex_event_stream(stream_lines) if stream_lines else None
     if parsed is not None:
         return parsed
@@ -158,7 +170,7 @@ def _normalize_codex(raw: str) -> tuple[str, dict[str, object] | None]:
     # A JSON example inside prose must not replace the surrounding findings.
     last_obj: dict[str, object] | None = None
     parts: list[str] = []
-    for line in cleaned.splitlines():
+    for line in _jsonl_lines(cleaned):
         line = line.strip()
         if not line:
             continue
@@ -200,7 +212,7 @@ def _normalize_opencode(raw: str) -> tuple[str, dict[str, object] | None]:
     parts: list[str] = []
     final: dict[str, object] | None = None
     parsed_any = False
-    for line in cleaned.splitlines():
+    for line in _jsonl_lines(cleaned):
         line = line.strip()
         if not line:
             continue
@@ -254,7 +266,7 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
 
     cleaned = _strip_ansi(raw)
     terminal: dict[str, object] | None = None
-    for line in cleaned.splitlines():
+    for line in _jsonl_lines(cleaned):
         line = line.strip()
         if not line or not line.startswith("{"):
             continue
@@ -330,7 +342,7 @@ def normalize_output(client: DispatchClient, raw_stdout: str) -> tuple[str, dict
 # against the child's STDERR and against NAMED status fields of the structured
 # payload — never against the answer text, because a review whose subject is
 # authentication would otherwise classify itself as an auth failure.
-_STOP_MARKERS: tuple[str, ...] = (
+_AUTH_MARKERS: tuple[str, ...] = (
     "401 unauthorized",
     "unauthorized",
     "not logged in",
@@ -338,6 +350,9 @@ _STOP_MARKERS: tuple[str, ...] = (
     "authentication",
     "auth expired",
     "credential",
+)
+_STOP_MARKERS: tuple[str, ...] = (
+    *_AUTH_MARKERS,
     "content filter",
     "content_filter",
     "content policy",
@@ -384,6 +399,31 @@ _QUOTA_MARKERS: tuple[str, ...] = (
     "rate limit exceeded",
     "rate limit reached",
     "resource_exhausted",
+)
+
+# PRD-CORE-304-FR01: a concurrent process already spent the single-use, rotating OAuth refresh token
+# (openai/codex#15502; anthropics/claude-code#56339). Checked before the auth stops: the remedy is to
+# retry once behind the credential lock, not to log in again.
+_REFRESH_CONFLICT_MARKERS: tuple[str, ...] = (
+    "refresh token has already been used",
+    "refresh token was already used",
+    "refresh_token_reused",
+    "invalid_grant",
+)
+# PRD-CORE-304-FR01: the provider is up but has no room for this request right now. Unlike a quota
+# refusal the same client is worth one retry (rc11 C12: codex's "Selected model is at capacity"
+# arrived as a structured error and was reported as an auth stop).
+_CAPACITY_MARKERS: tuple[str, ...] = (
+    "at capacity",
+    "server is overloaded",
+    "overloaded_error",
+    "server_is_overloaded",
+)
+# Checked in this order, first match wins: the most specific remedy first.
+_RETRYABLE_OR_FAILOVER: tuple[tuple[tuple[str, ...], str], ...] = (
+    (_REFRESH_CONFLICT_MARKERS, "credential_refresh_conflict"),
+    (_CAPACITY_MARKERS, "provider_capacity"),
+    (_QUOTA_MARKERS, "quota_exhausted"),
 )
 
 # Structured fields that carry a client's OWN verdict on the turn. Read by name;
@@ -478,6 +518,11 @@ def _structured_stop(structured: dict[str, object] | None) -> bool:
     return False
 
 
+def _status_text(structured: dict[str, object] | None) -> str:
+    """The client's own named status fields, lowercased: where its structured error events land."""
+    return " ".join(str((structured or {}).get(field) or "") for field in _STATUS_FIELDS).lower()
+
+
 def classify_silence(
     *,
     text: str,
@@ -526,21 +571,27 @@ def classify_silence(
     if timed_out:
         return "timed_out"
     produced_answer = exit_code == 0 and bool(text.strip())
-    status_text = " ".join(str((structured or {}).get(field) or "") for field in _STATUS_FIELDS)
-    if any(marker in status_text.lower() for marker in _QUOTA_MARKERS):
-        return "quota_exhausted"
+    status_text = _status_text(structured)
+    for markers, reason in _RETRYABLE_OR_FAILOVER:
+        if any(marker in status_text for marker in markers):
+            return reason
     # Only a prompt that itself carries a marker is removed: stripping every copy of
     # a two-letter prompt would cut markers apart.
-    if any(marker in prompt.lower() for marker in (*_STOP_MARKERS, *_QUOTA_MARKERS, *_HARD_STOP_MARKERS)):
+    markers_anywhere = (*_STOP_MARKERS, *_HARD_STOP_MARKERS, *(m for ms, _ in _RETRYABLE_OR_FAILOVER for m in ms))
+    if any(marker in prompt.lower() for marker in markers_anywhere):
         text, raw_stderr, merged_stderr = (stream.replace(prompt, " ") for stream in (text, raw_stderr, merged_stderr))
     # A stream marker counts only when the run produced no usable answer: a
     # complete, exit-0 review whose SUBJECT is authentication or rate limits is
     # not a stop (measured 2026-09-17 on PRD-CORE-278's adversarial-audit
     # dispatch: full text, ok=false).
     if not produced_answer:
-        if any(marker in f"{raw_stderr}\n{merged_stderr}".lower() for marker in _STOP_MARKERS):
+        streams = f"{raw_stderr}\n{merged_stderr}".lower()
+        for markers, reason in _RETRYABLE_OR_FAILOVER[:2]:  # refresh conflict, capacity: before the auth stops
+            if any(marker in streams for marker in markers):
+                return reason
+        if any(marker in streams for marker in _STOP_MARKERS):
             return "auth_or_content_stop"
-        if any(marker in f"{text}\n{raw_stderr}\n{merged_stderr}".lower() for marker in _QUOTA_MARKERS):
+        if any(marker in f"{text}\n{streams}".lower() for marker in _QUOTA_MARKERS):
             return "quota_exhausted"
     if _structured_stop(structured):
         return "auth_or_content_stop"

@@ -91,15 +91,16 @@ def test_knowledge_sync_absent_from_capability_packs() -> None:
 
 def test_removed_tools_absent_from_manifest() -> None:
     """FR02: manifest excludes all 4 removed tools and stale descriptions cannot linger."""
-    from trw_mcp.state.claude_md._tool_manifest import _ELIGIBLE_TOOLS, TOOL_DESCRIPTIONS
+    from trw_mcp.models.tool_summaries import TOOL_SUMMARIES
+    from trw_mcp.state.claude_md._tool_manifest import _ELIGIBLE_TOOLS
 
     for name in _REMOVED_TOOLS:
-        assert name not in TOOL_DESCRIPTIONS, f"{name} still described in manifest"
+        assert name not in TOOL_SUMMARIES, f"{name} still described in manifest"
     # FIX-076's invariant is the ABSENCE of the removed tools above. Exact
     # surface size is owned by the CORE-218 manifest parity test
     # (test_tool_presets.py). Assert structural sanity only: every described
     # tool is in the eligible public surface, so stale descriptions cannot linger.
-    stale = set(TOOL_DESCRIPTIONS) - set(_ELIGIBLE_TOOLS)
+    stale = set(TOOL_SUMMARIES) - set(_ELIGIBLE_TOOLS)
     assert not stale, f"manifest describes non-eligible tools: {sorted(stale)}"
 
 

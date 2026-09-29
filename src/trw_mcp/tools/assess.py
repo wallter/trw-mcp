@@ -1,8 +1,9 @@
 """trw_assess — batch-first, opt-in access to a calibrated typed-decision backend (trw-jev).
 
-Off by default on two independent axes: the tool is reachable only when ``assess_enabled``
-admits the ``assess_support`` pack onto the session's surface (mirrors ``comms_enabled``), and
-even then every outcome is a ``disabled`` failure — no network, no egress — unless the backend is
+Off by default on two independent axes: the tool is reachable only when some layer turns it on
+(``_assess_enablement.assess_surfaced``: ``assess_enabled``, or the backend cascade below), which
+admits the ``assess_support`` pack onto the session's surface, and even then every outcome is a
+``disabled`` failure — no network, no egress — unless the backend is
 enabled by one of (first explicit wins, see ``trw_memory.decisions._enablement``): the process env
 ``TRW_JEV_ENABLED``; project scope (``assess_enabled`` in the project's ``.trw/config.yaml``, or
 ``TRW_JEV_ENABLED`` in its ``.env``); or the operator's own ``~/.trw/config.yaml`` machine switch
@@ -28,7 +29,7 @@ from typing import Any
 
 import structlog
 from fastmcp import Context, FastMCP
-from trw_memory.decisions import redact_state, toolkit_from_env
+from trw_memory.decisions import toolkit_from_env
 from trw_memory.decisions.toolkit import AskResult, InvalidRequest
 
 from trw_mcp.models.config import get_config
@@ -36,16 +37,12 @@ from trw_mcp.state._call_context import build_call_context
 from trw_mcp.state._paths import find_active_run, resolve_project_root
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_secrets
+from trw_mcp.tools._assess_enablement import assess_surfaced
 
 logger = structlog.get_logger(__name__)
 
 #: Budget for the whole call, retry included. Advisory tooling must never hang a caller on a beta endpoint.
 _DECIDE_TIMEOUT_SECONDS = 10.0
-
-
-def _redact_state(state: Any) -> Any:
-    """Whole-value redaction with trw-mcp's redactor: what the toolkit applies to state, questions and items."""
-    return redact_state(state, redact_secrets)
 
 
 def _unique_key(candidate: str, taken: dict[str, Any]) -> str:
@@ -137,7 +134,7 @@ def register_assess_tools(server: FastMCP) -> None:
         Advisory: branch on probability/margin, never gate; near-tie carries "advice".
         """
         config = get_config()
-        if not getattr(config, "assess_enabled", False):
+        if not assess_surfaced(config):
             return {"status": "disabled"}
 
         project_root = resolve_project_root()

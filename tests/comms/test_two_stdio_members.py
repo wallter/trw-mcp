@@ -64,7 +64,7 @@ pytestmark = [
     # default 120 s budget is a boot-time cliff on a loaded host, not a bound
     # this test is trying to enforce.
     pytest.mark.timeout(300),
-    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),  # skip-category: optional-dependency
 ]
 
 _SESSION_A = "wp4-session-alpha"

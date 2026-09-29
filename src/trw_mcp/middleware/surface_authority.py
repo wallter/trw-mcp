@@ -16,12 +16,18 @@ A reviewer-role session (PRD-SEC-015) is bounded to ``REVIEWER_TOOLS`` ahead of
 the mode and the flags, and fails CLOSED on a resolution fault. Every other
 session fails OPEN: ANY resolution error exposes the full catalogue
 (``on_list_tools``) or executes the call (``on_call_tool``), and every fail-open
-path logs a warning. When a session's surface changes (a config reload flipped a
-flag) the list path emits ``notifications/tools/list_changed``.
+path logs a warning.
+
+A config edit reaches a connected client without a reconnect (PRD-CORE-305-FR04):
+every resolution first rebuilds the config if ``.trw/config.yaml`` (project or
+machine) or the project ``.env`` changed since it was read — three ``stat``
+calls when nothing changed — and when a session's surface differs from the one it last saw, the list OR call
+path emits ``notifications/tools/list_changed`` so the client re-lists.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
@@ -50,11 +56,30 @@ _REVIEWER_MODE = "reviewer"
 #: session_id -> last resolved base surface (P2a change detection). Process-local.
 _last_surface: dict[str, frozenset[str]] = {}
 
+#: ``[config, env key, answer]`` of the last ``assess_surfaced`` call. That call
+#: parses up to two YAML files (~1 ms), which the per-request path cannot pay
+#: (PRD-CORE-305-NFR02). Every file it reads is one the config freshness check
+#: stamps, so an edit yields a NEW config object and misses this memo.
+_assess_memo: list[object] = []
+
 
 def reset_surface_authority_state() -> None:
     """Clear the per-session surface-change ledger — for testing only."""
     _last_surface.clear()
+    _assess_memo.clear()
     reset_surface_role_state()
+
+
+def _assess_surfaced_memo(config: object) -> bool:
+    """``assess_surfaced(config)``, recomputed only for a new config or a changed env."""
+    from trw_mcp.tools._assess_enablement import assess_surfaced
+
+    key = (os.environ.get("TRW_JEV_ENABLED"), os.environ.get("TRW_PROJECT_ROOT"))
+    if len(_assess_memo) == 3 and _assess_memo[0] is config and _assess_memo[1] == key:
+        return _assess_memo[2] is True
+    answer = assess_surfaced(config)
+    _assess_memo[:] = [config, key, answer]
+    return answer
 
 
 class _Resolved(NamedTuple):
@@ -94,6 +119,11 @@ def _gating_flag(tool_name: str) -> str:
     return ""
 
 
+def resolved_surface() -> frozenset[str]:
+    """This process's resolved tool surface, for another layer that must not name a tool outside it."""
+    return SurfaceAuthorityMiddleware()._resolve().tools
+
+
 class SurfaceAuthorityMiddleware(Middleware):
     """Mask the tool catalogue + deny calls to tools outside the resolved surface."""
 
@@ -114,15 +144,17 @@ class SurfaceAuthorityMiddleware(Middleware):
         if _is_reviewer_role():
             return _Resolved(mode=_REVIEWER_MODE, tools=REVIEWER_TOOLS)
         from trw_mcp.models.config import get_config
+        from trw_mcp.models.config._loader import refresh_config_if_changed
         from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
+        refresh_config_if_changed()
         mode = _resolve_mode()
         config = get_config()
         surface = resolve_tool_surface(
             mode,
             comms_enabled=getattr(config, "comms_enabled", False) is True,
             dispatch_enabled=getattr(config, "dispatch_tools_exposed", False) is True,
-            assess_enabled=getattr(config, "assess_enabled", False) is True,
+            assess_enabled=_assess_surfaced_memo(config),
         )
         return _Resolved(mode=surface.mode, tools=frozenset(surface.tools))
 
@@ -137,7 +169,7 @@ class SurfaceAuthorityMiddleware(Middleware):
             ctx = context.fastmcp_context
             session_id = safe_session_id_from_context(ctx)
             resolved = self._resolve()
-            await self._maybe_notify_surface_change(session_id, resolved.tools, ctx)
+            await self._maybe_notify_surface_change(session_id, resolved.tools, ctx, op="list_tools")
             filtered = [t for t in tools if t.name in resolved.tools]
             logger.debug(
                 "surface_authority_filtered",
@@ -162,25 +194,35 @@ class SurfaceAuthorityMiddleware(Middleware):
 
     @staticmethod
     async def _maybe_notify_surface_change(
-        session_id: str, surface: frozenset[str], fastmcp_context: object | None
+        session_id: str, surface: frozenset[str], fastmcp_context: object | None, *, op: str
     ) -> None:
         """Emit ``notifications/tools/list_changed`` when a session's resolved
-        surface CHANGES (P2a) — e.g. a config reload flipped a pack flag. Uses the shared ``emit_list_changed`` path so a
-        capable client re-fetches ``tools/list``. The FIRST observation seeds the
-        ledger silently (no spurious notify on a client's initial listing).
-        Fail-open: a refresh fault must never break ``list_tools``.
+        surface CHANGES (P2a) — e.g. a config edit flipped a pack flag. Called
+        from both the list and the call path (PRD-CORE-305-FR04), through the
+        shared ``emit_list_changed`` so a capable client re-fetches
+        ``tools/list``. The FIRST observation seeds the ledger silently (no
+        spurious notify on a client's initial listing or call). A send that
+        fails keeps the change pending for the next request. Fail-open: a
+        refresh fault must never break the request.
         """
         if not session_id:
             return
         try:
             previous = _last_surface.get(session_id)
-            _last_surface[session_id] = surface
-            if previous is not None and previous != surface:
-                await emit_list_changed(fastmcp_context)
+            can_notify = getattr(getattr(fastmcp_context, "session", None), "send_tool_list_changed", None) is not None
+            if previous is None or not can_notify:
+                _last_surface[session_id] = surface  # seed, or a session that cannot be notified
+            elif previous != surface:
+                # Recorded only once the client was told: a failed send leaves
+                # the change pending, so the next request retries it.
+                if not await emit_list_changed(fastmcp_context):
+                    logger.warning("surface_authority_notify_pending", op=op, session_id=session_id)
+                    return
+                _last_surface[session_id] = surface
                 logger.info(
                     "surface_authority_list_changed",
                     component="surface_authority",
-                    op="list_tools",
+                    op=op,
                     session_id=session_id,
                 )
         except Exception:  # justified: fail-open — notification is advisory
@@ -211,6 +253,8 @@ class SurfaceAuthorityMiddleware(Middleware):
                 return self._deny(tool_name=tool_name, mode=_REVIEWER_MODE, reviewer=True)
             logger.warning("surface_authority_call_failed", outcome="fail_open", tool=tool_name, exc_info=True)
             return await call_next(context)
+        ctx = getattr(context, "fastmcp_context", None)
+        await self._maybe_notify_surface_change(safe_session_id_from_context(ctx), resolved.tools, ctx, op="call_tool")
         if tool_name in resolved.tools:
             return await call_next(context)
         return self._deny(tool_name=tool_name, mode=resolved.mode, reviewer=resolved.mode == _REVIEWER_MODE)

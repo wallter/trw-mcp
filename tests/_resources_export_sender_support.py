@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tests._contact_support import payload_trw_dir
 from tests.conftest import get_resources_sync
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -94,5 +95,6 @@ def _make_sender(
         max_retries=max_retries,
         backoff_base=backoff_base,
         platform_telemetry_enabled=platform_telemetry_enabled,
+        source_trw_dir=payload_trw_dir(),
     )
     return sender, input_path

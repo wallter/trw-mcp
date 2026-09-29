@@ -9,7 +9,6 @@ PRD-CORE-001: Base MCP tool suite.
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
@@ -51,7 +50,8 @@ def _check_memory_version() -> None:
     This check is fail-open — a missing or unparseable version is logged but does not abort startup.
     """
     try:
-        installed = importlib.metadata.version("trw-memory")
+        from trw_memory import __version__ as installed  # its source version, not a stale dist-info (B71-111)
+
         if _parse_version(installed) < _parse_version(_TRW_MEMORY_MIN_VERSION):
             logger.warning(
                 "trw_memory_version_below_minimum",
@@ -59,7 +59,7 @@ def _check_memory_version() -> None:
                 minimum=_TRW_MEMORY_MIN_VERSION,
                 action="upgrade trw-memory to avoid concurrent-write corruption",
             )
-    except importlib.metadata.PackageNotFoundError:
+    except ImportError:
         logger.warning(
             "trw_memory_version_check_failed",
             reason="trw-memory package not found in environment",

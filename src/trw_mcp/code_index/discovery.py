@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from trw_mcp._checkout_access import open_under
 from trw_mcp.code_index.bounds import MAX_INDEXED_FILE_BYTES, CodeIndexBounds, Deadline, IndexBoundExceeded
 
 DEFAULT_MAX_FILE_BYTES: int = 1_000_000
@@ -86,29 +87,16 @@ def normalize_repo_relative_path(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
 
 
-def _open_under(repo_root: Path, relative_path: str) -> int:
-    """Open *relative_path* for reading, each directory relative to its parent: no component may be a symlink."""
-    *directories, name = PurePosixPath(relative_path).parts
-    parent = os.open(repo_root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for directory in directories:
-            child = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-            os.close(parent)
-            parent = child
-        return os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-    finally:
-        os.close(parent)
-
-
 def read_indexed_file(repo_root: Path, relative_path: str, max_bytes: int) -> bytes:
     """Read one discovered file whole, following no symlink below *repo_root*, or raise ``ValueError``/``OSError``.
 
     The walk sized the file, but the build reopens it later, and by then any component can be a symlink,
     the file can have grown, or it can be a FIFO (rc8 pre-C12 sol review). Every directory is opened
-    relative to its parent with ``O_NOFOLLOW``, the opened file must be regular and within *max_bytes*
-    by ``fstat``, and at most ``max_bytes + 1`` bytes are read.
+    relative to its parent with ``O_NOFOLLOW`` (delegated to ``trw_mcp._checkout_access.open_under``,
+    PRD-CORE-316 Slice B), the opened file must be regular and within *max_bytes* by ``fstat``, and at
+    most ``max_bytes + 1`` bytes are read.
     """
-    fd = _open_under(repo_root, relative_path)
+    fd = open_under(repo_root, relative_path)
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
@@ -126,7 +114,7 @@ def _skip_as_binary(root: Path, path: Path) -> bool:
     the walk nor be followed (rc8 pre-C12 sol review).
     """
     try:
-        fd = _open_under(root, normalize_repo_relative_path(root, path))
+        fd = open_under(root, normalize_repo_relative_path(root, path))
     except (OSError, ValueError):
         return True
     with os.fdopen(fd, "rb") as handle:

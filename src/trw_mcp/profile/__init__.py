@@ -1,10 +1,9 @@
 """Hierarchical profile system — PRD-HPO-PROF-001 (H2 adaptive surface).
 
 Public facade for the ``trw_mcp.profile`` package. The 6-layer composition
-chain (``defaults → org → domain → task-type → session → client``) resolves a
+chain (``defaults → org → domain → task-type → client``) resolves a
 ``ResolvedProfile`` on every ``trw_session_start``; the resolved
-``surface_snapshot_id`` joins persistent-surface telemetry while
-``session_override_hash`` carries per-session deltas.
+``surface_snapshot_id`` joins persistent-surface telemetry.
 
 Single import point — callers do ``from trw_mcp.profile import compose,
 ResolvedProfile`` rather than reaching into sibling modules.
@@ -42,7 +41,6 @@ from trw_mcp.profile.model import (
 from trw_mcp.profile.resolver import compose
 from trw_mcp.profile.session_resolve import resolve_session_profile
 from trw_mcp.profile.snapshot import (
-    compute_session_override_hash,
     compute_surface_snapshot_id,
 )
 
@@ -63,7 +61,6 @@ __all__ = [
     "ResolvedProfile",
     "build_explanation",
     "compose",
-    "compute_session_override_hash",
     "compute_surface_snapshot_id",
     "discover_layers",
     "enforce_invariants",

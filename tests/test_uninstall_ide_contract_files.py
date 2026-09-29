@@ -19,7 +19,7 @@ from trw_mcp.bootstrap import init_project, update_project
 from trw_mcp.bootstrap._client_skills import PRD_READY_CONTRACTS
 from trw_mcp.server._subcommands import _run_uninstall
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_memory_daemon")]
 
 _SKILLS_ROOT = {"codex": ".agents/skills", "opencode": ".opencode/skills"}
 
@@ -81,6 +81,7 @@ def test_scoped_uninstall_keeps_an_edited_contract_and_a_users_own_file(tmp_path
     _run_uninstall(_ns(tmp_path, client))
 
     assert {path: path.read_bytes() for path in kept if path.exists()} == kept
+    # The unmodified SKILL.md goes even though an edited contract and a user file stay (no live orphan skill).
     assert sorted(p.name for p in ready.iterdir()) == sorted([edited.name, mine.name])
 
 

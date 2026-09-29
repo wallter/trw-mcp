@@ -24,8 +24,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests._contact_support import payload_trw_dir
 from trw_mcp.sync._client_push import _push_to_target
 from trw_mcp.sync.push import SyncPusher
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 def _entry() -> Any:
@@ -52,6 +56,7 @@ def _primary() -> SyncPusher:
         client_id="c1",
         learning_sharing_enabled=True,
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
 

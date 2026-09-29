@@ -10,7 +10,12 @@ from trw_mcp.canons import registry as reg
 from trw_mcp.canons._errors import CanonErrorCode, CanonRegistryError
 from trw_mcp.canons._loader import parse_registry
 from trw_mcp.canons._models import SurfaceUsage
-from trw_mcp.canons._views import current_default_surfaces
+
+
+def current_default_surfaces(registry):
+    """Test-local: the removed accessor filtered on is_current_authority."""
+    return tuple(s for s in registry.version_surfaces if s.is_current_authority)
+
 
 # The bounded D-25 governed documentation set named in the PRD.
 _GOVERNED_D25 = {

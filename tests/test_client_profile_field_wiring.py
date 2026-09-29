@@ -41,7 +41,9 @@ _SRC = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp"
 
 # Public-mirror guard mirrors test_client_profile_docs.py: the bundled-data and
 # docs assertions below are monorepo invariants.
-if not (_REPO_ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,

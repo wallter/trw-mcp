@@ -4,81 +4,92 @@ from __future__ import annotations
 
 import pytest
 
+from trw_mcp.models.tool_summaries import TOOL_SUMMARIES
 from trw_mcp.state.claude_md._tool_manifest import (
     _ELIGIBLE_TOOLS,
-    TOOL_DESCRIPTIONS,
-    ToolEntry,
     render_tool_list,
     resolve_exposed_tools,
 )
 
 
-def _strip_deliver_gate_block(output: str) -> str:
-    """Remove the canonical deliver-gate statement block from a rendered section.
-
-    The deliver-gate statement (QUAL-104 FR03) is the protocol carrier: it
-    legitimately names the rigid ceremony tools (e.g. ``trw_build_check``) as
-    part of the Constitution gate prose, and MUST keep naming them so the gate
-    text stays verbatim across every light-client surface. That gate prose is
-    distinct from the *tool list* a tool-exposure preset filters — the filter
-    contract only governs the tool LIST, not the gate prose.
-
-    Tool-filtering assertions therefore strip this block (emitted verbatim by
-    ``render_deliver_gate_statement()``, anchored by its ``trw:lifecycle-sync``
-    marker) before asserting an excluded tool is absent. This preserves the
-    tests' real intent (filtered tool LISTS must omit excluded tools) without
-    falsely flagging the load-bearing gate prose.
-    """
-    from trw_mcp.state.claude_md.sections._tool_lifecycle import (
-        render_deliver_gate_statement,
-    )
-
-    gate_block = render_deliver_gate_statement()
-    return output.replace(gate_block, "")
-
-
-def _strip_client_integration_appendix(output: str, client_id: str) -> str:
-    """Remove the FR06 client-integration appendix (transport-loss + three-class
-    capability listing) from a rendered section.
-
-    The capability block (PRD-CORE-218 FR06, marker ``trw:capabilities``)
-    legitimately NAMES discoverable/gated tools (e.g. ``trw_build_check``) as the
-    capabilities an agent can request — that is a separate carrier from the
-    task-independent tool LIST a section renders via ``render_tool_list``. These
-    filter tests assert the LIST omits unexposed tools, so they strip the
-    appendix first (it is emitted verbatim by ``render_client_integration_appendix``).
-    """
-    from trw_mcp.bootstrap._client_integration_appendix import (
-        render_client_integration_appendix,
-    )
-
-    return output.replace(render_client_integration_appendix(client_id), "")
-
-
-class TestToolDescriptions:
-    """TOOL_DESCRIPTIONS covers all tools and is well-formed."""
+class TestToolSummaries:
+    """TOOL_SUMMARIES holds one well-formed summary per registered tool (PRD-INFRA-195-FR01)."""
 
     def test_covers_all_eligible_tools(self) -> None:
-        """Every eligible (public) manifest tool has a description, and vice versa."""
+        """Every eligible (public) manifest tool has a summary, and vice versa."""
         eligible = set(_ELIGIBLE_TOOLS)
-        described = set(TOOL_DESCRIPTIONS)
-        assert eligible == described, (
-            f"Missing descriptions: {eligible - described}, Extra descriptions: {described - eligible}"
-        )
+        described = set(TOOL_SUMMARIES)
+        assert eligible == described, f"Missing summaries: {eligible - described}, Extra: {described - eligible}"
 
-    def test_descriptions_are_nonempty_strings(self) -> None:
-        """Every description is a non-empty string."""
-        for tool, desc in TOOL_DESCRIPTIONS.items():
-            assert isinstance(desc, str), f"{tool}: description is not a string"
-            assert len(desc) > 5, f"{tool}: description too short: {desc!r}"
+    def test_summaries_fit_the_length_budget(self) -> None:
+        """NFR01: one line of at most 240 characters, a sentence ending in a full stop."""
+        for tool, summary in TOOL_SUMMARIES.items():
+            assert 5 < len(summary) <= 240, f"{tool}: {len(summary)} chars"
+            assert "\n" not in summary and summary.endswith("."), f"{tool}: {summary!r}"
 
-    def test_no_duplicate_descriptions(self) -> None:
-        """No two tools share the exact same description."""
+    def test_no_duplicate_summaries(self) -> None:
+        """No two tools share the exact same summary."""
         seen: dict[str, str] = {}
-        for tool, desc in TOOL_DESCRIPTIONS.items():
-            if desc in seen:
-                pytest.fail(f"{tool} and {seen[desc]} share description: {desc!r}")
-            seen[desc] = tool
+        for tool, summary in TOOL_SUMMARIES.items():
+            if summary in seen:
+                pytest.fail(f"{tool} and {seen[summary]} share summary: {summary!r}")
+            seen[summary] = tool
+
+
+async def _served_descriptions() -> dict[str, str]:
+    """What a client receives: every registered tool's description off the production app."""
+    from trw_mcp.server import mcp
+
+    served: dict[str, str] = {}
+    for name in sorted(_ELIGIBLE_TOOLS):
+        tool = await mcp.get_tool(name)  # type: ignore[attr-defined]
+        served[name] = str(tool.to_mcp_tool().model_dump(by_alias=True)["description"])
+    return served
+
+
+class TestOneStringPerTool:
+    """PRD-INFRA-195-FR01: the model, the instruction files and /docs/tools read one string."""
+
+    async def test_served_description_opens_with_the_summary(self) -> None:
+        served = await _served_descriptions()
+        mismatched = {
+            name: description.split("\n\n", 1)[0]
+            for name, description in served.items()
+            if description.split("\n\n", 1)[0] != TOOL_SUMMARIES[name]
+        }
+        assert mismatched == {}
+        # The docstring body (Use when, output contract) still follows it.
+        assert all("Use when" in description for description in served.values())
+
+    async def test_client_list_tools_serves_the_same_description(self) -> None:
+        """The in-memory client sees the registry's description, not a rewritten one."""
+        from fastmcp import Client
+
+        from trw_mcp.server import mcp
+
+        served = await _served_descriptions()
+        async with Client(mcp) as client:  # type: ignore[arg-type]
+            listed = {tool.name: tool.description for tool in await client.list_tools()}
+        assert listed, "no tools listed"
+        assert {name: listed[name] for name in listed} == {name: served[name] for name in listed}
+
+    def test_instruction_lines_are_the_summaries(self) -> None:
+        lines = render_tool_list(None).splitlines()
+        assert [line.split(" — ", 1)[1] for line in lines] == list(TOOL_SUMMARIES.values())
+
+    async def test_reapplying_at_boot_does_not_prefix_twice(self) -> None:
+        from trw_mcp.server import mcp
+        from trw_mcp.server._tool_summaries import apply_tool_summaries
+
+        before = await _served_descriptions()
+        assert set(await apply_tool_summaries(mcp)) == set(TOOL_SUMMARIES)  # type: ignore[arg-type]
+        assert await _served_descriptions() == before
+
+    def test_served_description_joins_summary_and_body(self) -> None:
+        from trw_mcp.server._tool_summaries import served_description
+
+        assert served_description("One.", "  Use when x.\n") == "One.\n\nUse when x."
+        assert served_description("One.", None) == "One."
 
 
 class TestResolveExposedTools:
@@ -116,7 +127,7 @@ class TestRenderToolList:
     def test_none_renders_all(self) -> None:
         """exposed_tools=None renders all tools (backward compat)."""
         output = render_tool_list(None)
-        for tool_name in TOOL_DESCRIPTIONS:
+        for tool_name in TOOL_SUMMARIES:
             assert tool_name in output
 
     def test_subset_omits_unexposed(self) -> None:
@@ -134,83 +145,34 @@ class TestRenderToolList:
         assert output == ""
 
 
-class TestConditionalSectionRendering:
-    """render_agents_trw_section and render_codex_trw_section filter tools."""
+class TestAgentsSectionNamesNoGatedTool:
+    """PRD-CORE-135 FR01's property after PRD-CORE-301-FR13: the block describes no tool a session may lack.
 
-    def test_agents_section_none_renders_all(self) -> None:
-        """exposed_tools=None includes all tools."""
-        from unittest.mock import patch
+    FR13 replaced the block's filtered tool list with a pointer to the live
+    surface, so the shared block names no flag-gated tool at all — under any
+    config — and a session learns what it has from ``trw_status(detail="surface")``.
+    """
 
-        with patch(
-            "trw_mcp.state.claude_md._static_sections._load_analytics_counts",
-            return_value=(10, 50),
+    @pytest.mark.parametrize("tool", ["trw_dispatch", "trw_assess", "trw_send", "trw_inbox"])
+    def test_the_block_never_names_a_flag_gated_tool(self, tool: str) -> None:
+        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+        assert tool not in render_agents_trw_section()
+
+    def test_the_block_names_the_kernel_tools_its_rules_bind(self) -> None:
+        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+        output = render_agents_trw_section()
+        for tool in (
+            "trw_session_start",
+            "trw_checkpoint",
+            "trw_learn",
+            "trw_recall",
+            "trw_deliver",
+            "trw_build_check",
         ):
-            from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
-
-            output = render_agents_trw_section(exposed_tools=None)
-            assert "trw_session_start" in output
-            assert "trw_deliver" in output
-            assert "trw_build_check" in output
-
-    def test_agents_section_filters_tools(self) -> None:
-        """Only exposed tools appear in the rendered section."""
-        from unittest.mock import patch
-
-        with patch(
-            "trw_mcp.state.claude_md._static_sections._load_analytics_counts",
-            return_value=(10, 50),
-        ):
-            from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
-
-            exposed = {"trw_session_start", "trw_learn"}
-            output = render_agents_trw_section(exposed_tools=exposed)
-            assert "trw_session_start" in output
-            assert "trw_learn" in output
-            # Strip the verbatim deliver-gate statement (QUAL-104 FR03 gate prose)
-            # AND the FR06 capability appendix (which names discoverable/gated
-            # tools) — both legitimately name tools outside the LIST. The
-            # tool-LIST filter itself must omit unexposed tools.
-            # PRD-QUAL-143-FR01: the fixed protocol prose after the tool list
-            # (memory routing, offline table) also names tools by design.
-            tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "agents")
-            tool_list = tool_list.split("**Delegation**")[0]
-            assert "trw_build_check" not in tool_list
-            assert "trw_recall" not in tool_list
-
-    def test_codex_section_none_renders_all(self) -> None:
-        """Codex section with None includes all tools."""
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-        output = render_codex_trw_section(exposed_tools=None)
-        assert "trw_session_start" in output
-        assert "trw_deliver" in output
-
-    def test_codex_section_filters_tools(self) -> None:
-        """Codex section with subset omits unexposed tools."""
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-        exposed = {"trw_session_start", "trw_checkpoint"}
-        output = render_codex_trw_section(exposed_tools=exposed)
-        assert "trw_session_start" in output
-        assert "trw_checkpoint" in output
-        # Strip the deliver-gate prose (QUAL-104 FR03) AND the FR06 capability
-        # appendix; both legitimately name tools outside the filtered LIST.
-        tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "codex")
-        assert "trw_build_check" not in tool_list
-
-
-class TestToolEntry:
-    """ToolEntry NamedTuple is well-formed."""
-
-    def test_tool_entry_fields(self) -> None:
-        entry = ToolEntry(name="trw_learn", description="Record discoveries")
-        assert entry.name == "trw_learn"
-        assert entry.description == "Record discoveries"
-
-    def test_tool_entry_immutable(self) -> None:
-        entry = ToolEntry(name="trw_learn", description="desc")
-        with pytest.raises(AttributeError):
-            entry.name = "changed"  # type: ignore[misc]
+            assert tool in output
+        assert 'trw_status(detail="surface")' in output
 
 
 class TestResolveExposedToolsFrozenset:
@@ -225,38 +187,3 @@ class TestResolveExposedToolsFrozenset:
 
         result = resolve_exposed_tools("standard")
         assert result == frozenset(ALWAYS_ON_TOOLS)
-
-
-class TestAgentsSectionToolFiltering:
-    """Verify render_agents_trw_section truly excludes unexposed tools."""
-
-    def test_session_start_only_excludes_build_check_from_tool_list(self) -> None:
-        """When only trw_session_start is exposed, tool list omits others."""
-        from unittest.mock import patch
-
-        with patch(
-            "trw_mcp.state.claude_md._static_sections._load_analytics_counts",
-            return_value=(5, 20),
-        ):
-            from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
-
-            # The fixed protocol prose after the tool list names tools by design.
-            output = render_agents_trw_section(exposed_tools={"trw_session_start"}).split("**Delegation**")[0]
-            assert "`trw_session_start()`" in output
-            assert "`trw_build_check()`" not in output
-            assert "`trw_review()`" not in output
-            assert "`trw_recall()`" not in output
-
-    def test_codex_section_filters_tools(self) -> None:
-        """render_codex_trw_section with subset omits unexposed tools."""
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
-
-        exposed = {"trw_session_start", "trw_deliver"}
-        output = render_codex_trw_section(exposed_tools=exposed)
-        assert "trw_session_start" in output
-        assert "trw_deliver" in output
-        # Strip the deliver-gate prose (QUAL-104 FR03) AND the FR06 capability
-        # appendix; both legitimately name tools outside the filtered LIST.
-        tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "codex")
-        assert "trw_build_check" not in tool_list
-        assert "trw_recall" not in tool_list

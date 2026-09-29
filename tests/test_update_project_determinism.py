@@ -28,8 +28,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough, reap_daemons_under
 
-from tests._daemon_reaper import reap_daemons_under
 from trw_mcp.bootstrap._update_transaction import _is_surface_path
 from trw_mcp.bootstrap._utils import _DATA_DIR
 
@@ -70,12 +70,18 @@ _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 
 def _run(target: Path, mode: str, home: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")} | daemon_env_passthrough()
     # Every run sees one user environment. XDG_DATA_HOME locates the memory
     # daemon the instruction render counts from, and the function-scoped
     # isolation fixtures point it at a new directory per test, after the
     # module-scoped fixture settled the project under another one.
-    env.update(HOME=str(home), XDG_DATA_HOME=str(home / ".local" / "share"), TRW_EMBEDDINGS_ENABLED="false")
+    env.update(
+        HOME=str(home),
+        XDG_DATA_HOME=str(home / ".local" / "share"),
+        TRW_EMBEDDINGS_ENABLED="false",
+        # the daemon is a side effect here, not under test; the child env is sanitized, so pass it explicitly
+        MEMORY_DAEMON_AUTOSTART="false",
+    )
     proc = subprocess.run(
         [sys.executable, "-c", _RUNNER, str(target), mode, str(data_dir or "")],
         capture_output=True,

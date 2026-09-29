@@ -249,3 +249,74 @@ def test_save_manifest_uses_atomic_replace_and_preserves_previous_on_replace_fai
 
     assert manifest_path.read_text(encoding="utf-8") == original
     assert json.loads(original)["schema_version"] == "code-index-manifest/v1"
+
+
+def test_a_legacy_chunks_json_is_deleted_after_a_successful_build(tmp_path: Path) -> None:
+    """PRD-CORE-316 FR03/B71-25: the build deletes its own pre-SQLite-store sibling.
+
+    Fails on pre-Slice-B ``update_code_index`` (chunks.json is never touched anywhere in the publish
+    path); passes once ``_delete_legacy_chunks_json`` runs after a successful ``save_manifest``.
+    """
+    _write(tmp_path / "a.py", "one\n")
+    legacy = tmp_path / ".trw" / "code-index" / "chunks.json"
+    _write(legacy, '{"stale": true}')
+    assert legacy.exists()
+
+    update_code_index(tmp_path)
+
+    assert not legacy.exists()
+
+
+def test_a_legacy_chunks_json_symlink_is_left_untouched(tmp_path: Path) -> None:
+    """FR03 acceptance: a symlink at the exact chunks.json path is never followed, never unlinked."""
+    _write(tmp_path / "a.py", "one\n")
+    target = tmp_path / "elsewhere.json"
+    target.write_text('{"real": true}', encoding="utf-8")
+    legacy_dir = tmp_path / ".trw" / "code-index"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    legacy = legacy_dir / "chunks.json"
+    legacy.symlink_to(target)
+
+    result = update_code_index(tmp_path)
+
+    assert legacy.is_symlink()
+    assert target.exists() and target.read_text(encoding="utf-8") == '{"real": true}'
+    assert result.stats.total_files >= 1  # the build still completed normally (a.py, plus target.json itself)
+
+
+def test_repeated_builds_after_the_first_deletion_are_idempotent(tmp_path: Path) -> None:
+    """FR03's migration-test note: a checkout with no legacy chunks.json is unaffected, repeatedly."""
+    _write(tmp_path / "a.py", "one\n")
+
+    update_code_index(tmp_path)  # no chunks.json ever existed here
+    update_code_index(tmp_path)  # a second build must not raise just because it is already absent
+
+    assert not (tmp_path / ".trw" / "code-index" / "chunks.json").exists()
+
+
+def test_a_scoped_update_never_opens_the_published_store_before_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-316 FR06: B71-58's precondition (build_chunk_store reusing a previously PUBLISHED
+    store during a scoped update) no longer exists -- ``27bba9f39`` removed all store-attach/reuse
+    logic before B71-58 could be fixed on its own terms (confirmed at HEAD: build_chunk_store's own
+    docstring states nothing is read back from it). This is a tripwire, not a reproduction: no code
+    path calls ``open_store`` today, so the monkeypatch is never triggered -- that is exactly the
+    property this test proves, guarding against a future performance change reintroducing it.
+    """
+    from trw_mcp.code_index import store as store_module
+
+    def _refuse(*args: object, **kwargs: object) -> object:
+        raise AssertionError("a scoped update must never open the published chunk store")
+
+    monkeypatch.setattr(store_module, "open_store", _refuse)
+
+    _write(tmp_path / "a.py", "one\n")
+    _write(tmp_path / "b.py", "two\n")
+    update_code_index(tmp_path)
+
+    _write(tmp_path / "a.py", "one changed\n")
+    result = update_code_index(tmp_path, paths=["a.py"])
+
+    assert result.stats.total_files == 2
+    assert result.stats.modified == 1

@@ -185,7 +185,7 @@ class TestDualSurface:
 
         # CLI artifacts
         generate_cursor_cli_config(tmp_path)
-        generate_cursor_cli_agents_md(tmp_path, "CLI TRW content")
+        generate_cursor_cli_agents_md(tmp_path)
         generate_cursor_cli_hooks(tmp_path)
 
         assert (tmp_path / "AGENTS.md").is_file()

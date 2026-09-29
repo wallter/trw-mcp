@@ -38,7 +38,7 @@ skill routing, not a new MCP parameter or flag. Never pass the option to
   to existing IDs or paths; create a new PRD after the duplicate check.
 
 Mentioning an ID or path inside a feature description does not select existing input.
-For example, `Add validation to scripts/check_exec_plan_paths.py` and
+For example, `Add validation to scripts/check_prd_refs.py` and
 `Add export support compatible with PRD-CORE-EXAMPLE` are feature descriptions,
 not document selections. If an explicitly selected existing path is missing, stop and report it;
 do not infer new-creation authority or silently switch routes.
@@ -50,8 +50,8 @@ Existing PRD ID/path input without the option preserves its existing
 artifact authority and legacy readiness behavior; a missing plan or draft status does not authorize migration.
 Do not reclassify a newly created path as existing input after creation.
 Explicit project/operator requirements for separate artifacts take precedence:
-report that governing exception and select the separate route rather than silently
-converting it. Conflicting instructions or competing artifact authority stop for resolution.
+report that governing exception and stop: this skill writes embedded plans only and
+does not convert or create separate ones. Conflicting instructions or competing artifact authority stop for resolution.
 Resolve and retain the selected mode here, then forward it internally with the
 original input classification and successful creation provenance when available.
 Example: `/trw-prd-ready "Add rate limiting"` defaults to embedded;
@@ -59,7 +59,7 @@ Example: `/trw-prd-ready "Add rate limiting"` defaults to embedded;
 
 ## Pipeline Phases
 
-Diagram shows legacy routing for existing inputs or governing separate-artifact requirements.
+Diagram shows the legacy readiness routing for existing inputs.
 Default new embedded invocation: CREATE → GROOM requirements →
 DRAFT plan → full artifact validation → ONE combined review per candidate → read-only READY handoff. Existing-input
 embedded admission retains the explicit scoped branches below.
@@ -207,7 +207,7 @@ Existing-input embedded and legacy routes invoke the
 packaged internal `trw-exec-plan` contract (the `trw-exec-plan` skill, or `trw-exec-plan-contract.md` beside this skill) (inline if unavailable); forward the resolved selected mode explicitly.
 The owner handles preservation and scoped mutation; no retrospective authority upgrade.
 
-Legacy output: configured separate plan. Embedded output: `{prd_path}#execution-plan`;
+Output: `{prd_path}#execution-plan`;
 no extra sprint or separate plan is required. Report actual tier/status and substantive
 admission separately. Security, delivery and existing-input legacy gates are unchanged.
 
@@ -220,10 +220,9 @@ Optional test skeletons remain caller-requested. Return actual validation/review
 
 ## Final Report
 
-After all phases complete, output a consolidated summary. For resolved embedded mode,
-replace the separate Execution Plan artifact below with `{prd_path}#execution-plan`
-and report the selected route and its authority. The next step is the next requirement-linked task in
-that section; no sprint artifact or sprint command is required in embedded mode.
+After all phases complete, output a consolidated summary. Report the
+execution plan as `{prd_path}#execution-plan` with the selected route and its authority. The next step is the next requirement-linked task in
+that section; no sprint artifact or sprint command is required.
 For new embedded work report CREATE → requirements+plan drafting → whole-artifact
 validation → one combined review per candidate (report repair cycles) → read-only READY handoff. Show actual tier and substantive admission
 separately; do not label the PRD production-ready. Existing-input reports retain their
@@ -244,7 +243,7 @@ Report actual gate results and unresolved evidence, not efficacy claims:
 
 **Artifacts:**
 - PRD: `{prd_path}`
-- Execution Plan: `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`
+- Execution Plan: `{prd_path}#execution-plan`
 - Test Skeletons: `{path}` (include only when created)
 
 **Next step**: implement directly, or divide the work by file ownership before any writer starts.

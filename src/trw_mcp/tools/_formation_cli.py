@@ -40,6 +40,15 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     init_parser = verbs.add_parser("init", help="Write a formation manifest under an orchestrator run")
     init_parser.add_argument("--from", dest="from_file", required=True, help="YAML/JSON file holding the payload")
     init_parser.add_argument("--run", dest="run_path", default=None, help="Orchestrator run directory")
+    init_parser.add_argument("--orchestrator-member-id", help="Orchestrator member id (default 'orchestrator'; '' off)")
+
+    lead_parser = verbs.add_parser(
+        "add-orchestrator", help="Make this orchestrator session an addressable member of its formation"
+    )
+    lead_parser.add_argument("--member-id", default="orchestrator", help="Id peers use to trw_send to this session")
+    lead_parser.add_argument(
+        "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
+    )
 
     brief_parser = verbs.add_parser("brief", help="Render a member's brief from the manifest")
     brief_parser.add_argument("member_id", help="Member to brief")
@@ -100,14 +109,16 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     watch_parser.add_argument("--once", action="store_true", help="Print the current line and exit")
 
     # PRD-CORE-274 FR16: the only way a comms mailbox changes schema version.
-    upgrade_parser = verbs.add_parser("comms-upgrade", help="Upgrade this formation's v3 comms mailbox to v4")
+    upgrade_parser = verbs.add_parser("comms-upgrade", help="Upgrade this formation's v3 or v4 comms mailbox to v5")
     upgrade_parser.add_argument(
         "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
     )
     upgrade_parser.add_argument(
         "--ack", dest="acknowledged", action="append", default=[], help="Member whose live process may go dark"
     )
-    rollback_parser = verbs.add_parser("comms-rollback", help="Restore the v3 backup if nothing was written since")
+    rollback_parser = verbs.add_parser(
+        "comms-rollback", help="Restore the pre-upgrade backup if nothing was written since"
+    )
     rollback_parser.add_argument(
         "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
     )
@@ -136,6 +147,8 @@ def run_formation(args: argparse.Namespace) -> None:
     try:
         if command == "init":
             _run_init(args)
+        elif command == "add-orchestrator":
+            _run_add_orchestrator(args)
         elif command == "brief":
             _run_brief(args)
         elif command == "status":
@@ -157,7 +170,7 @@ def run_formation(args: argparse.Namespace) -> None:
             _run_merge(args)
         else:
             print(
-                "usage: trw-mcp formation {init|brief|status|add-slot|remove-slot|admit|set-status|pause|resume|watch|"
+                "usage: trw-mcp formation {init|brief|status|add-orchestrator|add-slot|remove-slot|admit|set-status|pause|resume|watch|"
                 "comms-upgrade|comms-rollback|merge}",
                 file=sys.stderr,
             )
@@ -208,7 +221,14 @@ def _run_merge(args: argparse.Namespace) -> None:
 
 
 def _orchestrator_run(args: argparse.Namespace) -> Path:
-    """The run a slot, outcome, or pause change is made AS: this session's pinned run (T29).
+    """The run this session is pinned to; see :func:`_orchestrator_session`."""
+    return _orchestrator_session(args)[0]
+
+
+def _orchestrator_session(args: argparse.Namespace) -> tuple[Path, str]:
+    """The pinned run and the pin key that FOUND it -- one derivation, never re-read from the env.
+
+    The run a slot, outcome, or pause change is made AS: this session's pinned run (T29).
 
     Authority is never a caller-supplied path: any shell can name the
     orchestrator's run directory. The pin (keyed by TRW_SESSION_ID) is what this
@@ -221,17 +241,18 @@ def _orchestrator_run(args: argparse.Namespace) -> Path:
     from trw_mcp.state._call_context import build_call_context
     from trw_mcp.state._paths_pin_mgmt import get_pinned_run
 
-    pinned = get_pinned_run(context=build_call_context(None))
+    context = build_call_context(None)
+    pinned = get_pinned_run(context=context)
     if pinned is None:
         raise FormationError("no_pinned_run: run trw_init (or trw_session_start) in the orchestrator session first")
-    explicit = getattr(args, "run_path", None)
-    if explicit and Path(explicit).resolve() != pinned.resolve():
+    if (explicit := getattr(args, "run_path", None)) and Path(explicit).resolve() != pinned.resolve():
         raise FormationError(f"run_not_pinned: --run {explicit} is not this session's pinned run {pinned}")
-    return pinned.resolve()
+    return pinned.resolve(), context.session_id
 
 
 def _run_init(args: argparse.Namespace) -> None:
-    from trw_mcp.formation import FormationError, create
+    from trw_mcp.formation import FormationError
+    from trw_mcp.tools._orchestration_formation import create_formation, resolve_orchestrator_member_id
 
     payload_path = Path(args.from_file)
     try:
@@ -240,9 +261,27 @@ def _run_init(args: argparse.Namespace) -> None:
         raise FormationError(f"formation payload {payload_path} is unreadable: {exc}") from exc
     if not isinstance(raw, dict):
         raise FormationError(f"formation payload {payload_path} must contain a mapping")
-    manifest = create(_resolve_run(args), raw)
+    flag = getattr(args, "orchestrator_member_id", None)
+    raw.update({} if flag is None else {"orchestrator_member_id": flag})
+    # An addressable orchestrator binds THIS session's pin key, so the run must be the run this
+    # session is pinned to: the key and the run come from one pin record, never an env value paired
+    # with a caller-named path. Opting out records no session, so it keeps the plain run resolution.
+    raw["orchestrator_member_id"] = resolve_orchestrator_member_id(raw)  # applies the FR11/FR12 gate
+    run, pin_key = _orchestrator_session(args) if raw["orchestrator_member_id"] else (_resolve_run(args), None)
+    manifest = create_formation(run, raw, None, pin_key=pin_key)
     print(f"formation {manifest.formation_id} created at revision {manifest.revision}")
     print(str(Path(manifest.orchestrator_run_path) / "formation.yaml"))
+
+
+def _run_add_orchestrator(args: argparse.Namespace) -> None:
+    from trw_mcp.formation import FormationError, add_orchestrator, load
+
+    run, pin_key = _orchestrator_session(args)
+    context = load(run)
+    if context is None:
+        raise FormationError(f"run {run} owns no formation")
+    manifest = add_orchestrator(context.manifest.formation_id, run, args.member_id, pin_key=pin_key)
+    print(f"formation {manifest.formation_id} add-orchestrator applied at revision {manifest.revision}")
 
 
 def _run_slots(args: argparse.Namespace, command: str) -> None:

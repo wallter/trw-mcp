@@ -189,9 +189,8 @@ def test_context_reactive_suppressed_on_failure_for_non_failure_aware_tool() -> 
 def test_context_reactive_build_check_failure_aware_reports_failure() -> None:
     ctx = NudgeContext(tool_name=ToolName.BUILD_CHECK, tool_success=False, build_passed=False)
     assert _context_reactive_message(ctx, _state()) == (
-        "Build failed. If failures reveal a design flaw, revert to PLAN "
-        "— fixing a plan costs less than patching broken code. "
-        "If the work has execution bugs, fix them in-phase and re-run."
+        "Build failed. Design flaw: revert to PLAN (cheaper than patching). Execution bug: fix in-phase and re-run. "
+        "Before fixing: trw_recall(query=<failing test or error>) — a prior session may have solved it."
     )
 
 
@@ -217,7 +216,8 @@ def test_context_reactive_review_p0_found() -> None:
     ctx = NudgeContext(tool_name=ToolName.REVIEW, tool_success=True, review_p0_count=2)
     assert _context_reactive_message(ctx, _state()) == (
         "P0 findings detected. A separate agent MUST remediate "
-        "— the reviewer SHALL NOT fix its own findings. "
+        "— the reviewer SHALL NOT fix its own findings; the remediator first runs "
+        "trw_recall(query=<finding topic>). "
         "THEN: re-validate with trw_build_check()."
     )
 
@@ -327,3 +327,28 @@ def test_selector_module_is_at_most_60_effective_loc() -> None:
         f"_nudge_template_select.py is {eloc} effective LOC; FR06 caps selection+substitution "
         "logic at 60 eLOC after templates move to YAML (PRD-QUAL-143 FR06 / R2-011)"
     )
+
+
+def test_recall_cue_on_failure_moments_only() -> None:
+    """Recall cue fires on build failure and review P0, never on a pass."""
+    fail = _context_reactive_message(NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=False), _state())
+    p0 = _context_reactive_message(NudgeContext(tool_name=ToolName.REVIEW, review_p0_count=1), _state())
+    ok = _context_reactive_message(NudgeContext(tool_name=ToolName.BUILD_CHECK, build_passed=True), _state())
+    assert fail is not None and "trw_recall(" in fail
+    assert p0 is not None and "trw_recall(" in p0
+    assert ok is not None and "trw_recall(" not in ok
+
+
+def test_recall_tool_description_names_concrete_triggers() -> None:
+    from trw_mcp.tools import learning
+
+    src = open(learning.__file__, encoding="utf-8").read()
+    assert "delegating (ids in brief)" in src
+    assert "after a failure (query it)" in src
+
+
+def test_memory_routing_pointer_names_recall_triggers() -> None:
+    from trw_mcp.state.claude_md.sections._delegation import MEMORY_ROUTING_POINTER
+
+    assert "before unfamiliar code, after failures, before delegating" in MEMORY_ROUTING_POINTER
+    assert "decision or evidence gap" not in MEMORY_ROUTING_POINTER

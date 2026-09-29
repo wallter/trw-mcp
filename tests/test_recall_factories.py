@@ -225,8 +225,7 @@ def test_known_callers_use_factories() -> None:
         text=True,
         timeout=10,
     )
-    if result.returncode not in (0, 1):
-        pytest.skip(f"grep failed: {result.stderr}")
+    assert result.returncode in (0, 1), f"grep failed: {result.stderr}"  # a failed scan must not pass as clean
 
     # The 5 migrated call sites must NO LONGER call recall_learnings directly.
     # Allowed contexts: the wrapper definition itself, imports, comments,

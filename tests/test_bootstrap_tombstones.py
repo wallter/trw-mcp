@@ -17,7 +17,7 @@ import pytest
 from trw_mcp.bootstrap import init_project, update_project
 from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes, _read_manifest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_memory_daemon")]
 
 _HOOK = ".claude/hooks/post-compact.sh"
 _SKILL_MD = ".claude/skills/trw-audit/SKILL.md"

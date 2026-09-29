@@ -16,6 +16,9 @@ import pytest
 from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import extract_tool_fn, make_test_server
 
+pytestmark = pytest.mark.e2e
+
+
 # ---------------------------------------------------------------------------
 # Helper: create a server with commonly needed tool groups
 # ---------------------------------------------------------------------------

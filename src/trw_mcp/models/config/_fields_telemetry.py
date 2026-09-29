@@ -84,6 +84,14 @@ class _TelemetryFields:
     # auto-migration for existing platform_telemetry_enabled=true installs —
     # the tightening is intentional and disclosed in the CHANGELOG.
     learning_sharing_enabled: bool = False
+    # PRD-CORE-311-FR03: separate consent for uploading a full-store backup
+    # archive (gzip of the raw local .db, not the anonymized/redacted
+    # summary+detail payload learning sync sends) to the platform via a
+    # presigned S3 PUT. Default off (fail-closed), matching
+    # learning_sharing_enabled's pattern but kept as its own field since a
+    # backup archive carries materially more sensitive content off-machine.
+    # See trw_mcp.sync.backup.BackupUploader.
+    backup_remote_enabled: bool = False
     pricing_table_path: str = ""
     llm_usage_log_enabled: bool = True
     llm_usage_log_file: str = "llm_usage.jsonl"

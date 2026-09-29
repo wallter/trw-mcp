@@ -17,7 +17,6 @@ from trw_mcp.canons._models import (
     CanonRegistry,
     InstallRole,
     VersionBinding,
-    VersionSurface,
 )
 
 
@@ -96,15 +95,9 @@ def template_artifact(registry: CanonRegistry) -> CanonArtifact:
     return templates[0]
 
 
-def current_default_surfaces(registry: CanonRegistry) -> tuple[VersionSurface, ...]:
-    """Governed surfaces that must equal the registry's current version."""
-    return tuple(s for s in registry.version_surfaces if s.is_current_authority)
-
-
 __all__ = [
     "RuntimeArtifactView",
     "SourceArtifactView",
-    "current_default_surfaces",
     "install_view",
     "managed_install_view",
     "runtime_view",

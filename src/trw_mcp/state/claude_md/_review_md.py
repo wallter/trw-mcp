@@ -14,7 +14,6 @@ Shared helpers:
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import structlog
@@ -66,22 +65,6 @@ def _sanitize_summary(summary: str) -> str:
     # Bare URLs
     text = re.sub(r"https?://\S+", "", text)
     return text.strip()
-
-
-def _get_repo_root() -> Path | None:
-    """Detect git repository root via ``git rev-parse``."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return Path(result.stdout.strip())
-    except Exception:  # justified: fail-open, git root detection failure is non-fatal
-        logger.debug("git_repo_root_detection_skipped", exc_info=True)
-    return None
 
 
 def recall_learnings(

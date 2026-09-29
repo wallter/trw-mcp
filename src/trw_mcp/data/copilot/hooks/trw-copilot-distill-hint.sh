@@ -47,22 +47,20 @@ _repo="$(_resolve_project_dir)"
 # --- Read JSON payload from stdin (Copilot preToolUse) ---
 _payload=$(cat 2>/dev/null) || _emit_nothing_and_exit
 
-# Copilot preToolUse stdin carries the model's tool arguments under toolArgs
-# (and, for cross-client compatibility, tool_input). Edit tools expose the
-# target path as filePath / file_path / path / target_file.
-_file_path=""
-
-# jq only (T29): the hint is advisory, so a jq-less host prints nothing.
-command -v jq >/dev/null 2>&1 || _emit_nothing_and_exit
-_file_path=$(printf '%s' "$_payload" | jq -r '
-    .toolArgs.filePath // .toolArgs.file_path // .toolArgs.path // .toolArgs.target_file //
-    .tool_input.file_path // .tool_input.path // .tool_input.target_file //
-    empty' 2>/dev/null) || true
-
-# --- Skip 1: shared opt-in gate (FR-6) => print nothing ---
+# --- Skip 1: shared opt-in gate (FR-6) => print nothing. It runs BEFORE the payload
+# is parsed, so a disabled hint starts no interpreter at all (PRD-FIX-156 sol r1).
 if ! _get_cc03_enabled; then
     _emit_nothing_and_exit
 fi
+
+# Copilot preToolUse stdin carries the model's tool arguments under toolArgs
+# (and, for cross-client compatibility, tool_input). Edit tools expose the
+# target path as filePath / file_path / path / target_file.
+# jq, else python (PRD-FIX-156-FR04); with neither the path stays empty and
+# Skip 2 below prints nothing.
+_file_path=$(printf '%s' "$_payload" | _read_json_field \
+    .toolArgs.filePath .toolArgs.file_path .toolArgs.path .toolArgs.target_file \
+    .tool_input.file_path .tool_input.path .tool_input.target_file) || _file_path=""
 
 # --- Skip 2: no file_path (non-file tool, e.g. shell) => print nothing ---
 [ -n "$_file_path" ] || _emit_nothing_and_exit
@@ -97,7 +95,7 @@ fi
 date +%s | _trw_safe_write "$_debounce_file" || true
 
 # --- Resolve Python path; no python => print nothing (still advisory) ---
-_py=$(_get_python_path 2>/dev/null) || _emit_nothing_and_exit
+_py=$(_get_python_path "$(_resolve_project_dir)" 2>/dev/null) || _emit_nothing_and_exit
 
 # --- Portable 2.5s bound for the hint subprocess (FR30) -----------------------
 # This call used to read `timeout 2.5 "$_py" -c ...`. `timeout` is GNU
@@ -185,7 +183,7 @@ except Exception:
     # the hint. Nothing is swallowed here: the bound below is still enforced.
     pass
 try:
-    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
+    from trw_mcp.tools._before_edit_hint_core import T2_STATUSES, compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
         format_t0_beacon, format_t1_hint, format_t2_hint,
     )
@@ -193,13 +191,17 @@ try:
     result = compute_before_edit_hint(file_path=fp)
     hint = result.distill_hint
     learnings = [{"summary": l.summary} for l in result.learnings]
-    if hint and result.distill_status == "hint_available":
+    if hint and result.distill_status in T2_STATUSES:
         text = format_t2_hint(
             file_path=fp,
             risk_score=hint.risk_score,
             hotspot_warnings=hint.hotspot_warnings,
             co_change_neighbors=hint.co_change_neighbors,
             inferred_tests=hint.inferred_tests,
+            lessons=hint.lessons,
+            lessons_status=hint.lessons_status,
+            as_of=result.distill_as_of,
+            recall_learnings=learnings,
         )
     elif learnings:
         text = format_t1_hint(learnings)

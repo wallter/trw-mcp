@@ -116,20 +116,14 @@ access_count_utility_boost_cap
 additional_repo_roots
 agents_enabled
 agents_md_enabled
-agents_md_learning_injection
-agents_md_learning_max
-agents_md_learning_min_impact
 ambiguity_rate_max
 assertion_failure_penalty
 assertion_stale_threshold_days
-auto_checkpoint_enabled
 auto_checkpoint_pre_compact
-auto_checkpoint_tool_interval
 auto_recall_enabled
 auto_recall_max_results
 auto_recall_max_tokens
 auto_recall_min_score
-auto_upgrade
 backend_api_key
 backend_url
 boot_gc_deferred
@@ -144,7 +138,6 @@ ceremony_feedback_score_threshold
 ceremony_mode
 changelog_advisory_enabled
 checkpoint_suggest_hours
-claude_md_max_lines
 cleanup_on_boot
 code_index_exclude_dirs
 code_index_include_extensions
@@ -192,7 +185,6 @@ dispatch_default_models
 dispatch_default_read_only
 dispatch_default_timeout_s
 dispatch_enabled_clients
-dispatch_role_client
 dry_check_enabled
 dry_check_min_block_size
 embeddings_coverage_warn_threshold
@@ -207,7 +199,6 @@ framework_version
 frameworks_dir
 hooks_enabled
 hybrid_rrf_k
-impact_decay_half_life_days
 impact_forced_distribution_enabled
 impact_high_threshold_pct
 impact_tier_critical_cap
@@ -297,7 +288,6 @@ pricing_table_path
 profile_system_enabled
 recall_internal_fields
 recall_max_results
-recall_receipt_max_entries
 recall_user_tier_cap
 recall_utility_lambda
 receipts_dir
@@ -316,9 +306,6 @@ run_staleness_grace_hours
 run_staleness_hours
 runs_root
 scoring_default_days_unused
-scout_blast_radius_threshold
-scout_churn_commit_threshold
-scout_enabled
 scripts_dir
 security
 self_review_blocking
@@ -326,7 +313,6 @@ semantic_checks_enabled
 session_start_recall_enabled
 skills_enabled
 source_human_utility_boost
-strict_input_criteria
 sub_claude_md_max_lines
 sync_health_failure_threshold
 sync_health_stale_hours
@@ -344,12 +330,8 @@ templates_dir
 timebox_hours
 traceability_coverage_min
 trust_crawl_boundary
-trust_locked
-trust_security_tags
 trust_walk_boundary
-trust_walk_sample_rate
 trw_dir
-update_channel
 validation_density_weight
 validation_draft_threshold
 validation_implementation_readiness_weight

@@ -140,6 +140,9 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
     # raised AttributeError on EVERY recall.
 
     base["session_count"] = entry.session_count or 0
+    # PRD-CORE-326-FR02: the scope a recall stub names; ``default`` is omitted.
+    if entry.namespace != "default":
+        base["namespace"] = entry.namespace
 
     # Bi-temporal validity (PRD-CORE-194 FR03): surface the superseded flag +
     # closer so agents see WHY a record is down-ranked. Only emitted for a closed

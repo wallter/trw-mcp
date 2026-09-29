@@ -63,7 +63,8 @@ CONFIG_MODEL_NAME = "TRWConfig"
 #: retired the two session_start_recent_bypass_* fields.
 #: 250 after PRD-CORE-300 S11a/S11b retired the phase-exposure, tool-access-grant and
 #: skill-lifecycle fields.
-SELF_REFERENTIAL_WITH_READER_CEILING = 250
+#: 230 after PRD-CORE-341 retired the three agents_md_learning_* fields.
+SELF_REFERENTIAL_WITH_READER_CEILING = 230
 
 
 class ConsumerClaimReport(BaseModel):

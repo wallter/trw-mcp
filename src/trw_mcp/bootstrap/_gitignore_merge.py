@@ -18,6 +18,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 from ._utils import ProgressCallback
 
 logger = structlog.get_logger(__name__)
@@ -34,6 +36,8 @@ logger = structlog.get_logger(__name__)
 #    (PRD-INFRA-126 FR05).
 #  - ``runtime/memory-token`` — the checkout's daemon grant token, minted by
 #    init-project and update-project (PRD-CORE-280 FR06).
+#  - ``channels/cc03-python.txt`` — the interpreter the hooks start, written by
+#    init-project and update-project (PRD-FIX-155).
 #
 #: A new entry here must ALSO be added to the bundled ``data/gitignore.txt``
 #: (fresh installs deploy that file; this list is the brownfield half).
@@ -52,6 +56,10 @@ _REQUIRED_RULES: tuple[tuple[str, str], ...] = (
         "# Secret: this checkout's memory daemon grant (mode 0600) — never track it (PRD-CORE-280).",
     ),
     ("code-index/", "# The rebuildable code index a reviewer dispatch builds — never track it (PRD-CORE-300)."),
+    (
+        "channels/cc03-python.txt",
+        "# The interpreter this machine's hooks start — a local install fact, never track it (PRD-FIX-155).",
+    ),
 )
 
 
@@ -129,8 +137,8 @@ def _ensure_credentials_gitignored(
         sep = "" if existing.endswith("\n") or existing == "" else "\n"
         appended = f"{existing}{sep}{_render_rules(missing)}"
         try:
-            gitignore.write_text(appended, encoding="utf-8")
-        except OSError as exc:
+            write_checkout_file(target_dir, gitignore, appended)
+        except (OSError, UnsafeWriteError) as exc:  # trw-fail-silent-allow: reported in result["errors"], then stops
             result.setdefault("errors", []).append(f"Failed to update {gitignore}: {exc}")
             return
         if on_progress:
@@ -139,8 +147,8 @@ def _ensure_credentials_gitignored(
 
     # No .gitignore at all: create a minimal one carrying every required rule.
     try:
-        gitignore.write_text(_render_rules(_REQUIRED_RULES), encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(target_dir, gitignore, _render_rules(_REQUIRED_RULES))
+    except (OSError, UnsafeWriteError) as exc:  # trw-fail-silent-allow: reported in result["errors"], then stops
         result.setdefault("errors", []).append(f"Failed to create {gitignore}: {exc}")
         return
     if on_progress:

@@ -7,6 +7,10 @@ __getattr__ provides lazy construction.
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 
 class TestClaudeMdNoModuleLevelCapture:
     """Verify state/claude_md/__init__.py has no module-level config capture."""

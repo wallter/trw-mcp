@@ -15,7 +15,19 @@ from trw_mcp.comms import DeliveryClass, InboxAction, MessageKind, PeerAction, i
 _PEER_ACTIONS: frozenset[str] = frozenset(get_args(PeerAction))
 
 InboxOrPeerAction = Literal[
-    "fetch", "ack", "status", "enroll", "list", "heartbeat", "announce", "withdraw", "discover", "ack_pause"
+    "fetch",
+    "ack",
+    "status",
+    "accept",
+    "report",
+    "complete",
+    "enroll",
+    "list",
+    "heartbeat",
+    "announce",
+    "withdraw",
+    "discover",
+    "ack_pause",
 ]
 
 
@@ -65,23 +77,27 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         cursor: str | None = None,
         wait_seconds: Annotated[int, Field(strict=True)] = 0,
         pause_id: str | None = None,
+        next_read: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Use when fetching messages, ACKing IDs, reading body-free status, or
-        running a peer action (enroll, list, heartbeat, announce, withdraw,
-        discover, ack_pause).
+        """Use when fetching messages, ACKing IDs, reading body-free status,
+        recording a handoff step, or running a peer action (enroll, list,
+        heartbeat, announce, withdraw, discover, ack_pause).
 
         Fetch/status/list return items or peers; next_cursor pages either.
         ACK takes message_ids only; ack_pause takes pause_id. Fresh fetch
         recovers pending traffic (pull-only; ACK is not completion).
         wait_seconds>0 retries an empty fetch in-process until the deadline.
+        Handoffs (request messages): the recipient accepts, then reports one
+        id with next_read (where to look) BEFORE its own trw_deliver; only
+        the sender completes, after checking that pointer.
         """
         if action in _PEER_ACTIONS:
             peer_action: PeerAction = action  # type: ignore[assignment]
-            return _tool_response(peers(peer_action, ctx, cursor=cursor, pause_id=pause_id))
+            return _tool_response(peers(peer_action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read))
         # strict=True: the transport rejects bool/float/str before the handler (FR11).
         inbox_action: InboxAction = action  # type: ignore[assignment]
-        return _tool_response(inbox(inbox_action, message_ids, cursor, ctx, wait_seconds))
+        return _tool_response(inbox(inbox_action, message_ids, cursor, ctx, wait_seconds, next_read))
 
 
 __all__ = ["register_swarm_comms_tools"]

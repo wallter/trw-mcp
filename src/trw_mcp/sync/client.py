@@ -54,9 +54,6 @@ if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
 
 logger = structlog.get_logger(__name__)
-
-_SLOW_LOCAL_WORK_LOG_MS = 1_000.0
-_PATHOLOGICAL_LOCAL_WORK_MS = 10_000.0
 _SYNC_FAILURE_BACKOFF_CAP_SECONDS = 3_600.0
 
 
@@ -144,6 +141,7 @@ class BackendSyncClient:
                 client_id=self._client_id,
                 learning_sharing_enabled=self._learning_sharing_enabled,
                 platform_telemetry_enabled=self._platform_telemetry_enabled,
+                source_trw_dir=trw_dir,  # the .trw the dirty entries and outcomes are read from
             )
             for t in self._targets
         }
@@ -161,6 +159,7 @@ class BackendSyncClient:
                 client_id=self._client_id,
                 learning_sharing_enabled=self._learning_sharing_enabled,
                 platform_telemetry_enabled=self._platform_telemetry_enabled,
+                source_trw_dir=trw_dir,  # the .trw the dirty entries and outcomes are read from
             )
         )
         self._puller = SyncPuller(

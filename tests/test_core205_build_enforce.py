@@ -10,10 +10,10 @@ import pytest
 from trw_mcp.models._evidence_core import ReceiptState
 from trw_mcp.models._evidence_plans import BuildCommandResult
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.tools._command_results import parse_build_command_results
 from trw_mcp.tools._delivery_build_gates import build_receipt_content_stale_warning
 from trw_mcp.tools._evidence_writers import (
     load_latest_build_evidence,
-    parse_build_command_results,
     record_build_receipt,
 )
 

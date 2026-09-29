@@ -43,6 +43,29 @@ requires_monorepo = pytest.mark.skipif(
     MONOREPO_ROOT is None, reason="needs the monorepo checkout (public repo is the package alone)"
 )
 
+
+def subprocess_pythonpath() -> str:
+    """``PACKAGE_ROOT/src`` plus, in a monorepo checkout, sibling packages'
+    ``src`` dirs -- joined for a spawned subprocess's ``PYTHONPATH``.
+
+    trw_mcp imports sibling packages (trw_memory, trw_llm) at runtime.
+    Subprocess fixtures that pin ``PYTHONPATH`` to this package's own ``src``
+    alone rely on the interpreter's installed (editable) siblings to resolve
+    those imports -- which can lag a monorepo checkout's on-disk sibling
+    sources (e.g. a worktree mid-merge). Putting the sibling ``src`` dirs
+    ahead of that install makes the spawned interpreter prefer this
+    checkout's sources. No-op for the public (package-alone) checkout, where
+    MONOREPO_ROOT is None and trw_memory must already be a real dependency.
+    """
+    entries = [str(PACKAGE_ROOT / "src")]
+    if MONOREPO_ROOT is not None:
+        for sibling in ("trw-memory", "trw-llm"):
+            sibling_src = MONOREPO_ROOT / sibling / "src"
+            if sibling_src.is_dir():
+                entries.append(str(sibling_src))
+    return os.pathsep.join(entries)
+
+
 #: The hooks read JSON fields with lib-trw.sh ``_json_get`` (jq, else python3).
 #: post-tool-degenerate-result.sh alone runs a jq filter with no fallback, so the
 #: tests that pin its advisory output must say so rather than fail without jq.

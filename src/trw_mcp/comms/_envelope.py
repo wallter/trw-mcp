@@ -6,11 +6,16 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-InboxAction = Literal["fetch", "ack", "status"]
+InboxAction = Literal["fetch", "ack", "status", "accept", "report", "complete"]
+#: PRD-CORE-322 FR02-FR04: the handoff writes. The recipient accepts and reports, the sender completes.
+HANDOFF_ACTIONS = frozenset({"accept", "report", "complete"})
+#: Actions that run the receiver incarnation fence (FR12), so a displaced recipient is refused.
+RECEIVER_ACTIONS = frozenset({"fetch", "ack", "accept", "report"})
 MessageKind = Literal["request", "reply", "status"]
 DeliveryClass = Literal["on_demand", "interrupt", "on_idle"]
 
@@ -29,8 +34,34 @@ class MessageState(str, Enum):
 
 MESSAGE_STATES = frozenset(state.value for state in MessageState)
 TERMINAL_MESSAGE_STATES = frozenset({MessageState.ACKED.value, MessageState.EXPIRED.value})
+#: Per-handoff facts on a ``request`` row (PRD-CORE-322), in the order each requires
+#: the one before: accepted needs acked, reported needs accepted, completed needs reported.
+HANDOFF_FACTS = ("accepted", "reported", "completed")
 #: Milestone facts, in lifecycle order; the terminal ones mirror the terminal states.
-MILESTONE_FACTS = ("admitted", "fetch_prepared", MessageState.ACKED.value, MessageState.EXPIRED.value)
+#: The handoff facts are valid only in a schema v5 mailbox (the verifier enforces that).
+MILESTONE_FACTS = ("admitted", "fetch_prepared", MessageState.ACKED.value, MessageState.EXPIRED.value, *HANDOFF_FACTS)
+#: PRD-CORE-322 NFR02: a next-read pointer is 1..512 UTF-8 bytes of untrusted data.
+NEXT_READ_MAX_BYTES = 512
+_LINE_BREAKS = frozenset({"Zl", "Zp"})
+
+
+def valid_next_read(value: object) -> bool:
+    """True for 1..512 UTF-8 bytes with no category C* (control, format incl. bidi, surrogate...) or
+    Zl/Zp character: U+2028/U+2029 are not "control" to Unicode but break a line wherever the
+    pointer is displayed, so a peer could forge an extra board line with them.
+
+    Soundness scope: bounds and printability of the stored text only; never whether the
+    pointed-to artifact exists. Runtime callers: the schema v5 verifier (``_schema._handoffs``)
+    and the report write (``_messages.report``), so nothing the verifier rejects is ever written.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    categories = (unicodedata.category(char) for char in value)
+    if any(category[0] == "C" or category in _LINE_BREAKS for category in categories):
+        return False
+    return len(value.encode("utf-8")) <= NEXT_READ_MAX_BYTES  # no surrogate survives the check above
+
+
 KINDS = frozenset({"request", "reply", "status"})
 DELIVERY_CLASSES = frozenset({"on_demand", "interrupt", "on_idle"})
 #: The member-id grammar, in ONE place (ledger RC-003). It was spelled out

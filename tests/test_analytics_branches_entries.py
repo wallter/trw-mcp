@@ -9,10 +9,8 @@ import pytest
 from tests._analytics_branches_support import _write_entry
 from trw_mcp.state.analytics import (
     _iter_entry_files,
-    detect_tool_sequences,
     find_entry_by_id,
     has_existing_mechanical_learning,
-    has_existing_success_learning,
 )
 
 from ._analytics_branches_support import trw_dir  # noqa: F401
@@ -93,132 +91,6 @@ class TestFindEntryByIdExceptionHandling:
         assert data["id"] == "L-target"
         assert path.suffix == ".yaml"
         assert "summary" in data
-
-
-class TestDetectToolSequences:
-    """Lines 257-266, 272-274: detect_tool_sequences."""
-
-    def test_empty_events_returns_empty(self) -> None:
-        """Less than 2 events returns empty list."""
-        assert detect_tool_sequences([]) == []
-        assert detect_tool_sequences([{"event": "session_start"}]) == []
-
-    def test_no_success_events_returns_empty(self) -> None:
-        """Events with no success anchors returns empty list."""
-        events = [
-            {"event": "run_init"},
-            {"event": "phase_transition"},
-            {"event": "tool_call"},
-        ]
-        result = detect_tool_sequences(events)
-        assert result == []
-
-    def test_single_success_event_no_repeats(self) -> None:
-        """Single success event with min_occurrences=3 returns empty."""
-        events = [
-            {"event": "run_init"},
-            {"event": "task_complete"},
-        ]
-        result = detect_tool_sequences(events, min_occurrences=3)
-        assert result == []
-
-    def test_repeated_sequence_detected(self) -> None:
-        """Repeated sequences meeting min_occurrences threshold are returned — lines 257-266."""
-        events: list[dict[str, object]] = []
-        for _ in range(3):
-            events.append({"event": "checkpoint"})
-            events.append({"event": "task_complete"})
-
-        result = detect_tool_sequences(events, lookback=1, min_occurrences=3)
-        assert len(result) > 0
-        entry = result[0]
-        assert "sequence" in entry
-        assert "count" in entry
-        assert entry["count"] == 3
-        assert "/" in str(entry["success_rate"])
-
-    def test_sequence_rate_format(self) -> None:
-        """success_rate is formatted as 'count/total_anchors' — line 273."""
-        events: list[dict[str, object]] = []
-        for _ in range(3):
-            events.append({"event": "tool_used"})
-            events.append({"event": "task_done"})
-
-        result = detect_tool_sequences(events, lookback=1, min_occurrences=3)
-        assert len(result) >= 1
-        rate = str(result[0]["success_rate"])
-        parts = rate.split("/")
-        assert len(parts) == 2
-        assert parts[0].isdigit() and parts[1].isdigit()
-
-    def test_empty_event_type_becomes_unknown_in_sequence(self) -> None:
-        """Events with no 'event' key become 'unknown' in sequence — line 260, 263."""
-        events: list[dict[str, object]] = []
-        for _ in range(3):
-            events.append({})
-            events.append({"event": "task_complete"})
-
-        result = detect_tool_sequences(events, lookback=1, min_occurrences=3)
-        if result:
-            seq = result[0]["sequence"]
-            assert "unknown" in seq
-
-    @pytest.mark.parametrize("min_occ", [1, 2, 4])
-    def test_min_occurrences_threshold(self, min_occ: int) -> None:
-        """Sequences below min_occurrences are filtered out."""
-        events: list[dict[str, object]] = []
-        for _ in range(3):
-            events.append({"event": "step_a"})
-            events.append({"event": "task_success"})
-
-        result = detect_tool_sequences(events, lookback=1, min_occurrences=min_occ)
-        if min_occ <= 3:
-            assert len(result) > 0
-        else:
-            assert len(result) == 0
-
-
-class TestHasExistingSuccessLearning:
-    """Lines 347-355: has_existing_success_learning."""
-
-    def test_nonexistent_entries_dir_returns_false(self, tmp_path: Path) -> None:
-        """Returns False when entries_dir doesn't exist."""
-        fake_trw = tmp_path / ".trw_nonexistent"
-        result = has_existing_success_learning(fake_trw, "Success: some event")
-        assert result is False
-
-    def test_finds_matching_prefix(self, trw_dir: Path) -> None:
-        """Returns True when a matching summary prefix exists — lines 352-354."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "success_entry",
-            summary="Success: task_complete pattern discovered",
-        )
-        result = has_existing_success_learning(trw_dir, "Success: task_complete pattern discovered")
-        assert result is True
-
-    def test_no_match_returns_false(self, trw_dir: Path) -> None:
-        """Returns False when no matching prefix — line 355."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(entries_dir, "other_entry", summary="Different summary entirely")
-        result = has_existing_success_learning(trw_dir, "Success: something else")
-        assert result is False
-
-    def test_prefix_truncated_to_50_chars(self, trw_dir: Path) -> None:
-        """Comparison uses only first 50 chars of summary — line 351."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        long_summary = "A" * 60 + " suffix that should be ignored"
-        _write_entry(entries_dir, "long_entry", summary=long_summary)
-        result = has_existing_success_learning(trw_dir, "A" * 60 + " different suffix")
-        assert result is True
-
-    def test_case_insensitive_match(self, trw_dir: Path) -> None:
-        """Prefix matching is case-insensitive — line 353."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(entries_dir, "upper_entry", summary="SUCCESS: Build passed cleanly")
-        result = has_existing_success_learning(trw_dir, "success: build passed cleanly")
-        assert result is True
 
 
 class TestHasExistingMechanicalLearning:

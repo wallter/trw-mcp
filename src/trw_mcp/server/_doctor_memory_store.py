@@ -6,16 +6,27 @@ through ``selected_store``, the one place trw-mcp reaches memory, so it reports
 the checkout's daemon namespace; an unpinned checkout fails with the command that
 fixes it.
 
-The project ``memory.db`` itself is read by :func:`probe_project_db` alone, over a
-``mode=ro`` connection, for the split-store WARN's count of rows left behind after
-migration. Doctor never opens it through ``SQLiteBackend``, which writes.
+The project ``memory.db`` is a file a checkout can commit, so its count of rows
+left behind after migration comes from trw-memory's ``probe_store`` alone
+(PRD-QUAL-147): bounded, read-only, never ``SQLiteBackend``, which writes.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
+
+#: The ``probe_store`` states (``StoreState`` values) that fail the row, and each one's message.
+_FAILS = {
+    "not_trw": "{db} is not a TRW memory database (no memories table; tables: {tables})",
+    "refused": "{db} was refused unread: its schema object(s) {detail} could run unbounded work on "
+    "every read (a generated column, view, trigger or expression index); inspect the file, then move it aside",
+    "unreadable": "{db} could not be read: {detail}",
+}
 
 
 def _replay_state(trw_dir: Path) -> tuple[str, bool]:
@@ -30,82 +41,51 @@ def _replay_state(trw_dir: Path) -> tuple[str, bool]:
     return ("; a sync replay is in progress" if isinstance(data, dict) and data.get("replay") else ""), True
 
 
-# Real learning rows of one namespace: a canary decoy (``metadata.system_canary``) is not one.
-_REAL_ROWS_SQL = (
-    "SELECT COUNT(*) FROM memories WHERE namespace = ? "
-    "AND NOT (json_valid(metadata) AND COALESCE(json_extract(metadata, '$.system_canary'), '') = 'true')"
-)
-
-
-class ProjectDbSchemaError(Exception):
-    """The file opened but holds no ``memories`` table; *uninitialized* when it holds no tables at all."""
-
-    def __init__(self, message: str, *, uninitialized: bool) -> None:
-        super().__init__(message)
-        self.uninitialized = uninitialized
-
-
-def probe_project_db(db_path: Path, namespace: str) -> int:
-    """Real rows in *namespace* of an existing ``memory.db``, read-only.
-
-    A ``mode=ro`` URI connection, never ``SQLiteBackend``: its constructor opens a
-    writable connection, sets WAL and creates schema, so it would write during a doctor run.
-    With no ``-wal`` beside it the file is at rest, so it is also opened
-    ``immutable=1``: ``mode=ro`` alone still creates ``-wal``/``-shm`` on a WAL
-    database. With a live writer's ``-wal`` present, plain ``mode=ro`` reads it,
-    so the count includes rows not yet checkpointed. Raises
-    ``sqlite3.DatabaseError`` on a file that is not a readable database, and
-    :class:`ProjectDbSchemaError` when it has no ``memories`` table.
-    """
-    at_rest = not db_path.with_name(db_path.name + "-wal").exists()
-    conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro{'&immutable=1' if at_rest else ''}", uri=True)
-    try:
-        tables = sorted(row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"))
-        if not tables:
-            raise ProjectDbSchemaError(f"{db_path} is uninitialized (no tables)", uninitialized=True)
-        if "memories" not in tables:
-            raise ProjectDbSchemaError(
-                f"{db_path} is not a TRW memory database (no memories table; tables: {', '.join(tables[:5])})",
-                uninitialized=False,
-            )
-        return int(conn.execute(_REAL_ROWS_SQL, (namespace,)).fetchone()[0])
-    finally:
-        conn.close()
-
-
-def _stray_rows(db_path: Path) -> int:
-    """Rows left in the project ``memory.db`` after migration; an absent or never-initialized file holds none."""
-    from trw_mcp.state._constants import DEFAULT_NAMESPACE
-
-    if not db_path.exists():
-        return 0
-    try:
-        return probe_project_db(db_path, DEFAULT_NAMESPACE)
-    except ProjectDbSchemaError as exc:
-        if exc.uninitialized:
-            return 0
-        raise
-
-
 def memory_backend_row(target: Path) -> tuple[str, str]:
     """``(status, message)`` for the ``memory_backend`` doctor row."""
+    from trw_memory.storage import probe_store
+
+    from trw_mcp.state._constants import DEFAULT_NAMESPACE
     from trw_mcp.state._store_selection import StoreUnavailableError, selected_store
 
     trw_dir = target / ".trw"
     try:
         store, namespace = selected_store(trw_dir)
         count = store.count(namespace)
-        stray = _stray_rows(trw_dir / "memory" / "memory.db")
-    except ProjectDbSchemaError as exc:
-        return ("WARN" if exc.uninitialized else "FAIL"), str(exc)
-    except (StoreUnavailableError, sqlite3.DatabaseError) as exc:
+    except StoreUnavailableError as exc:
         return "FAIL", str(exc)
+    db = trw_dir / "memory" / "memory.db"
+    probe = probe_store(db, DEFAULT_NAMESPACE)  # ABSENT and UNINITIALIZED hold no strays
+    if probe.state in _FAILS:
+        return "FAIL", _FAILS[probe.state].format(db=db, tables=", ".join(probe.tables), detail=probe.detail)
 
     replay, readable = _replay_state(trw_dir)
     message = f"store=daemon namespace={namespace} ({count} entries){replay}"
-    if stray:
+    if probe.real_rows:
         return "WARN", (
-            f"{message}; split store: {stray} row(s) remain in the project memory.db — "
+            f"{message}; split store: {probe.real_rows} row(s) remain in the project memory.db — "
             "run `trw-mcp memory migrate --to user` to merge them."
         )
     return ("PASS" if readable else "WARN"), message
+
+
+def memory_ledger_row(target: Path, config: TRWConfig) -> tuple[str, str]:
+    """``(status, message)`` for ``memory-ledger-sample`` (PRD-CORE-334 FR04): the namespace's exact decision count.
+
+    Advisory: PASS, or SKIP when the store cannot be read. With decisions and a sync target it adds the
+    rollout reminder, because a client older than 8.0 cannot take a decision row.
+    """
+    from trw_mcp.state._store_selection import StoreUnavailableError, selected_store
+
+    try:
+        store, namespace = selected_store(target / ".trw")
+        decisions = store.health(namespace).get("types", {}).get("decision", 0)
+    except StoreUnavailableError as exc:
+        return "SKIP", f"decision ledger not read: {exc}"
+    message = (
+        f"{decisions} decision row(s) in namespace={namespace}; list them with "
+        "trw_recall(query='*', options={'record_type': 'decision'})"
+    )
+    if decisions and config.resolved_sync_targets:
+        message += "; sync is configured: every client sharing this team/sync space must run trw-mcp 8.0 or later"
+    return "PASS", message

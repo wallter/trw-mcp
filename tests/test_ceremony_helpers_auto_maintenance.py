@@ -13,7 +13,7 @@ from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
 
 class TestRunAutoMaintenance:
-    """Auto-maintenance operations: upgrade, stale runs, WAL checkpoint."""
+    """Auto-maintenance operations: version sentinel, stale runs, WAL checkpoint."""
 
     def test_returns_empty_when_nothing_needed(
         self,
@@ -22,10 +22,6 @@ class TestRunAutoMaintenance:
     ) -> None:
         with (
             patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 return_value={"runs_closed": [], "count": 0, "errors": []},
             ),
@@ -33,38 +29,7 @@ class TestRunAutoMaintenance:
             result = run_auto_maintenance(trw_dir, config)
 
         assert "update_advisory" not in result
-        assert "auto_upgrade" not in result
         assert "stale_runs_closed" not in result
-
-    def test_includes_update_advisory_when_available(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": True, "advisory": "v2.0 available"},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert result["update_advisory"] == "v2.0 available"
-
-    def test_failopen_on_upgrade_error(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                side_effect=Exception("network error"),
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert isinstance(result, dict)
 
     def test_never_opens_the_checkout_memory_db_for_a_wal_checkpoint(
         self,
@@ -95,10 +60,6 @@ class TestRunAutoMaintenance:
 
         with (
             patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 return_value={"runs_closed": [], "count": 0, "errors": []},
             ),
@@ -110,28 +71,6 @@ class TestRunAutoMaintenance:
         assert db_path.read_bytes() == db_bytes
         assert wal_path.read_bytes() == wal_bytes
 
-    def test_auto_upgrade_performed_when_enabled(
-        self,
-        trw_dir: Path,
-    ) -> None:
-        """Lines 181-189: When auto_upgrade=True and upgrade is applied."""
-        cfg = TRWConfig(auto_upgrade=True)  # type: ignore[call-arg]
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": True, "advisory": "v2.0 available"},
-            ),
-            patch(
-                "trw_mcp.state.auto_upgrade.perform_upgrade",
-                return_value={"applied": True, "version": "2.0.0", "details": "patch applied"},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, cfg)
-
-        assert result["update_advisory"] == "v2.0 available"
-        assert result["auto_upgrade"]["applied"] is True
-        assert result["auto_upgrade"]["version"] == "2.0.0"
-
     def test_version_sentinel_mismatch_injects_advisory(
         self,
         trw_dir: Path,
@@ -140,10 +79,6 @@ class TestRunAutoMaintenance:
         """Version sentinel with mismatched version produces update_advisory."""
         write_installed_version(trw_dir, "99.0.0")
         with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
             patch(
                 "importlib.metadata.version",
                 return_value="0.15.0",
@@ -163,10 +98,6 @@ class TestRunAutoMaintenance:
         """Version sentinel matching running version does not inject advisory."""
         write_installed_version(trw_dir, "0.15.0")
         with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
             patch(
                 "importlib.metadata.version",
                 return_value="0.15.0",
@@ -191,10 +122,6 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "0.48.7")
         with (
             patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
                 "importlib.metadata.version",
                 return_value="0.55.14",
             ),
@@ -211,13 +138,7 @@ class TestRunAutoMaintenance:
         """Missing sentinel file does not cause errors."""
         sentinel = trw_dir / "installed-version.json"
         assert not sentinel.exists()
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
+        result = run_auto_maintenance(trw_dir, config)
 
         assert "update_advisory" not in result
 
@@ -229,13 +150,7 @@ class TestRunAutoMaintenance:
         """Corrupt sentinel JSON does not crash maintenance."""
         sentinel = trw_dir / "installed-version.json"
         sentinel.write_text("not valid json{{{", encoding="utf-8")
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
+        result = run_auto_maintenance(trw_dir, config)
 
         assert isinstance(result, dict)
 
@@ -250,13 +165,7 @@ class TestRunAutoMaintenance:
             json.dumps({"timestamp": "2026-03-14T00:00:00Z"}),
             encoding="utf-8",
         )
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
+        result = run_auto_maintenance(trw_dir, config)
 
         assert "update_advisory" not in result
 
@@ -269,10 +178,6 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "99.0.0")
         with (
             patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
                 "importlib.metadata.version",
                 side_effect=Exception("package not found"),
             ),
@@ -280,27 +185,6 @@ class TestRunAutoMaintenance:
             result = run_auto_maintenance(trw_dir, config)
 
         assert "update_advisory" not in result
-
-    def test_version_sentinel_existing_advisory_preserved(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """Pre-existing update_advisory is not overwritten by sentinel check."""
-        write_installed_version(trw_dir, "99.0.0")
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": True, "advisory": "upstream advisory"},
-            ),
-            patch(
-                "importlib.metadata.version",
-                return_value="0.15.0",
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert "update_advisory" in result
 
     def test_version_sentinel_e2e_upgrade_cycle(
         self,
@@ -311,10 +195,6 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "0.16.0")
 
         with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
             patch(
                 "importlib.metadata.version",
                 return_value="0.15.1",
@@ -337,10 +217,6 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "0.16.0")
 
         with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
             patch(
                 "importlib.metadata.version",
                 return_value="0.16.0",
@@ -407,8 +283,9 @@ def test_every_maintenance_key_is_propagated_or_declared_internal() -> None:
     # with the in-process re-embed pass, the daemon cut-over the embedder
     # warm-up key, and 6.0.0 the embeddings advisory and coverage ratio, which
     # session start now takes from the daemon-measured pipeline health, and 7.0.0
-    # the WAL checkpoint, which the daemon owns (4 remain).
-    assert len(propagated) >= 4
+    # the WAL checkpoint, which the daemon owns, and 8.0.0 the self-updater's
+    # result (3 remain).
+    assert len(propagated) >= 3
 
 
 def test_unclassified_maintenance_key_fails_the_totality_check_by_name() -> None:

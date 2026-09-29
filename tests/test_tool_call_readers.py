@@ -33,15 +33,6 @@ def test_ceremony_score_credits_tool_calls_under_either_name(event: str) -> None
     assert scored["session_start"] and scored["deliver"] and scored["checkpoint_count"] >= 1
 
 
-@pytest.mark.parametrize("event", ["tool_call", "tool_invocation"])
-def test_tier_score_credits_tool_calls_under_either_name(event: str) -> None:
-    from trw_mcp.scoring._tier_score import compute_tier_ceremony_score
-
-    assert compute_tier_ceremony_score(_rows(event), "STANDARD") == compute_tier_ceremony_score(
-        _rows("tool_call"), "STANDARD"
-    )
-
-
 def test_an_unrelated_event_earns_no_tool_credit() -> None:
     from trw_mcp.state.analytics.report import compute_ceremony_score
 

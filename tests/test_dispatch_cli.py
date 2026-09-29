@@ -117,12 +117,24 @@ def test_role_applied_to_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "read-only" in prompt.lower()
 
 
-def test_both_prompt_and_file_is_error(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+def test_a_prompt_and_a_prompt_file_are_two_variants_run_in_parallel(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """DISPATCH-SIMPLIFY: --prompt and --prompt-file no longer exclude each other; each is a prompt variant."""
     pf = tmp_path / "p.txt"
-    pf.write_text("x")
+    pf.write_text("from the file")
+    lanes: list[tuple[str, str]] = []
+
+    def run_all(reqs: list[tuple[str, object]]) -> list[dict[str, object]]:
+        lanes.extend((label, req.prompt) for label, req in reqs)  # type: ignore[attr-defined]
+        return [{"target": label, "ok": True, "text": "t"} for label, _ in reqs]
+
+    monkeypatch.setattr("trw_mcp.tools._dispatch_fanout._run_fanout", run_all)
     with pytest.raises(SystemExit) as exc:
         run_dispatch(_ns(prompt="inline", prompt_file=str(pf)))
-    assert exc.value.code == 2
+    assert exc.value.code == 0
+    assert sorted(label for label, _ in lanes) == ["codex#1", "codex#2"]
+    assert {prompt for _, prompt in lanes} == {"inline", "from the file"}
 
 
 def test_no_prompt_at_all_is_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -225,8 +237,8 @@ def test_variant_of_writes_next_free_round_without_overwrite(
         with pytest.raises(SystemExit) as exc:
             run_dispatch(_ns(variant_of=str(base), role="code-review"))
         assert exc.value.code == 0
-    first = base.parent / "design.review-codex-r1.md"
-    second = base.parent / "design.review-codex-r2.md"
+    first = base.parent / "design.notes-codex-r1.md"
+    second = base.parent / "design.notes-codex-r2.md"
     assert first.is_file() and second.is_file()
     text = first.read_text()
     assert "producer: codex" in text and "role: code-review" in text and "ok: true" in text
@@ -248,7 +260,7 @@ def test_failed_dispatch_still_leaves_a_variant_marked_failed(monkeypatch: pytes
     with pytest.raises(SystemExit) as exc:
         run_dispatch(_ns(variant_of=str(base), role="adversarial-audit"))
     assert exc.value.code == 1
-    text = (base.parent / "design.audit-codex-r1.md").read_text()
+    text = (base.parent / "design.notes-codex-r1.md").read_text()
     assert "ok: false" in text
     assert "dispatch failed" in text.lower()
 
@@ -344,3 +356,31 @@ def test_variant_of_parses_from_argv() -> None:
 
     args = _build_arg_parser().parse_args(["dispatch", "--prompt", "p", "--variant-of", "docs/x.md"])
     assert args.variant_of == "docs/x.md"
+
+
+def test_a_plain_text_run_still_reports_a_posture_downgrade(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Review r1 known issue: the answer alone would hide that the requested posture did not take."""
+
+    def downgraded(req: object) -> object:
+        result = _fake_result("The answer.")
+        return result.model_copy(update={"posture_note": "posture 'reviewer' not enforced: x. Delivered: y."})
+
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", downgraded)
+    with pytest.raises(SystemExit):
+        run_dispatch(_ns())
+    assert "dispatch posture: posture 'reviewer' not enforced" in capsys.readouterr().err
+
+
+def test_a_fan_out_writes_its_aggregate_to_the_output_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Review r1 known issue: --output-file was ignored by the fan-out path."""
+    monkeypatch.setattr(
+        "trw_mcp.tools._dispatch_fanout._run_fanout",
+        lambda reqs: [{"target": label, "ok": True, "text": "t"} for label, _ in reqs],
+    )
+    out = tmp_path / "fan.json"
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(prompt=["a", "b"], output_file=str(out)))
+    assert exc.value.code == 0
+    assert '"2/2 succeeded"' in out.read_text(encoding="utf-8")

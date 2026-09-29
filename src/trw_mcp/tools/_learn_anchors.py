@@ -105,6 +105,7 @@ def resolve_learn_anchors(
             anchors = [dict(a) for a in raw_anchors]
     except Exception:  # justified: fail-open, anchor generation is best-effort
         logger.debug("anchor_generation_skipped", exc_info=True)
+        # trw-fail-silent-allow: anchor-generation failure already logged above.
         return [], None
 
     if not anchors:

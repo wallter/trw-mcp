@@ -44,6 +44,7 @@ def test_status_feedback_mode_posts_what_submit_feedback_posts() -> None:
     assert http.call_args.kwargs["payload"]["category"] == "feedback"
 
 
+@pytest.mark.usefixtures("governing_project")  # feedback is sent only from a project (.trw)
 def test_status_feedback_mode_network_failure_is_never_a_success() -> None:
     with (
         patch("trw_mcp.models.config.get_config", return_value=_ConfiguredCfg()),

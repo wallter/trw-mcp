@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 import pytest
 
 from tests._memory_fixtures import MemoryDaemon, attach_checkout
+from tests._structlog_capture import captured_structlog  # noqa: F401  (fixture, imported by name)
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools._before_edit_hint_core import (
     _SCHEMA_VERSION_ACCEPTED,
@@ -323,15 +325,34 @@ class TestPaidTierGracefulFailures:
         )
         assert r.distill_status == "sidecar_missing"  # JSON load fails → treated as missing
 
-    def test_payload_validation_failure(self, tmp_path: Path) -> None:
+    def test_payload_extra_field_ignored_hint_still_renders(self, tmp_path: Path) -> None:
+        """A newer trw-distill's additive field must not sink the whole hint (extra="ignore")."""
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
-        # Valid envelope, but payload extra field (Pydantic extra=forbid)
         _write_sidecar(
             cache_dir,
             sha,
             "foo.py",
             hint_overrides={"unexpected_field": "boom"},
+        )
+        _write_entitlement(tmp_path / ".trw", "pro")
+        r = compute_before_edit_hint(
+            file_path="foo.py",
+            repo_root=str(tmp_path),
+        )
+        assert r.distill_status == "hint_available"
+        assert r.distill_hint is not None
+        assert r.distill_hint.target_path == "foo.py"
+
+    def test_payload_known_field_wrong_type_still_malformed(self, tmp_path: Path) -> None:
+        """Forward-compat tolerance for UNKNOWN fields must not weaken strictness on KNOWN ones."""
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_sidecar(
+            cache_dir,
+            sha,
+            "foo.py",
+            hint_overrides={"risk_score": "not-a-float"},
         )
         _write_entitlement(tmp_path / ".trw", "pro")
         r = compute_before_edit_hint(
@@ -423,12 +444,21 @@ class TestModelContracts:
         with pytest.raises(Exception):
             r.file_path = "y"  # type: ignore[misc]
 
-    def test_payload_extra_forbid(self) -> None:
+    def test_payload_extra_ignored(self) -> None:
+        """extra="ignore": an additive field from a newer trw-distill is dropped, not fatal."""
+        hint = BeforeYouEditHintPayload(  # type: ignore[call-arg]
+            target_path="x",
+            target_exists_in_map=False,
+            some_unknown_field="boom",
+        )
+        assert hint.target_path == "x"
+        assert not hasattr(hint, "some_unknown_field")
+
+    def test_payload_known_field_wrong_type_still_rejected(self) -> None:
         with pytest.raises(Exception):
-            BeforeYouEditHintPayload(  # type: ignore[call-arg]
+            BeforeYouEditHintPayload(
                 target_path="x",
-                target_exists_in_map=False,
-                some_unknown_field="boom",
+                target_exists_in_map="not-a-bool",  # type: ignore[arg-type]
             )
 
     def test_learning_summary_minimal(self) -> None:
@@ -541,13 +571,20 @@ class TestBatchArtifactFallback:
 
         assert result.distill_status == "hint_available"
 
-    def test_stale_batch_does_not_answer(self, tmp_path: Path) -> None:
-        """A batch artifact from an older commit is not a fallback.
+    @pytest.mark.parametrize(
+        ("ancestor_enabled", "expected"), [("false", "sidecar_missing"), ("true", "sidecar_too_far_behind")]
+    )
+    def test_stale_batch_does_not_answer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ancestor_enabled: str, expected: str
+    ) -> None:
+        """A batch artifact from a commit that is not HEAD's ancestor is not a fallback.
 
         Non-vacuity for the sha check: without it this test's batch file would
         satisfy the lookup and a hint from a previous commit's map would be
-        served as current.
+        served as current. With hint_sidecar_ancestor_enabled on, the refusal
+        names why: the sha is not a proven ancestor of HEAD.
         """
+        monkeypatch.setenv("TRW_HINT_SIDECAR_ANCESTOR_ENABLED", ancestor_enabled)
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
         _write_batch_sidecar(cache_dir, "0" * 40, ["a.py"])
@@ -557,7 +594,7 @@ class TestBatchArtifactFallback:
 
         result = compute_before_edit_hint(file_path="a.py", repo_root=str(tmp_path))
 
-        assert result.distill_status == "sidecar_missing"
+        assert result.distill_status == expected
         assert result.distill_hint is None
 
     def test_tier_gate_is_not_reopened_by_the_fallback(self, tmp_path: Path) -> None:
@@ -775,3 +812,537 @@ class TestExposureRecording:
         assert set(hint) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
         events = "".join(p.read_text() for p in (project / ".trw").rglob("*events*.jsonl"))
         assert "trw_code" in events
+
+
+# --- PRD-CORE-332 FR07/FR08: the anchored lookup, its degrade, and its path key ---
+
+_ANCHORED = "httpx/_client.py"
+
+
+def _anchor_rows() -> list[Any]:
+    from tests._anchor_daemon_fake import lesson
+
+    return [
+        lesson("L-text", "_client.py pools connections per host"),
+        lesson("L-anchor", "Close the transport before retrying", anchors=(_ANCHORED,)),
+    ]
+
+
+def _events(logs: list[dict[str, Any]], name: str) -> list[dict[str, Any]]:
+    return [entry for entry in logs if entry.get("event") == name]
+
+
+def _text_only_learnings(file_path: str) -> list[LearningSummary]:
+    from trw_mcp.tools._learnings_collector import build_file_queries, collect_learnings
+
+    return collect_learnings(build_file_queries(file_path))
+
+
+class TestAnchorPathKey:
+    """FR08: the anchor key is the lexical repo-relative path, never through a symlink or outside the root."""
+
+    def test_repo_relative_uses_repo_root_arg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo, elsewhere = tmp_path / "repo", tmp_path / "cwd-root"
+        daemon = AnchoredDaemon(_anchor_rows())
+        use_daemon(monkeypatch, elsewhere, daemon)  # the ambient project root is NOT the repo
+
+        result = compute_before_edit_hint(file_path=str(repo / "httpx" / "_client.py"), repo_root=str(repo))
+
+        assert daemon.files == [_ANCHORED]
+        assert [item.id for item in result.learnings] == ["L-anchor", "L-text"]
+
+    def test_path_outside_root_skips_anchor_lookup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, Any]]
+    ) -> None:
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        daemon = AnchoredDaemon(_anchor_rows())
+        use_daemon(monkeypatch, repo, daemon)
+
+        result = compute_before_edit_hint(
+            file_path=str(tmp_path / "elsewhere" / "httpx" / "_client.py"), repo_root=str(repo)
+        )
+
+        assert daemon.files == []
+        assert [item.id for item in result.learnings] == ["L-text"]  # text queries still run
+        assert [e["reason"] for e in _events(captured_structlog, "anchor_lookup_skipped")] == ["outside_root"]
+
+    def test_symlinked_path_skips_anchor_lookup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, Any]]
+    ) -> None:
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        (repo / "httpx").mkdir(parents=True)
+        (repo / "link").symlink_to(repo / "httpx", target_is_directory=True)
+        daemon = AnchoredDaemon(_anchor_rows())
+        use_daemon(monkeypatch, repo, daemon)
+
+        result = compute_before_edit_hint(file_path=str(repo / "link" / "_client.py"), repo_root=str(repo))
+
+        assert daemon.files == []
+        assert [item.id for item in result.learnings] == ["L-text"]
+        assert [e["reason"] for e in _events(captured_structlog, "anchor_lookup_skipped")] == ["symlink"]
+
+    def test_relative_path_and_dot_segments_normalize(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        daemon = AnchoredDaemon(_anchor_rows())
+        use_daemon(monkeypatch, repo, daemon)
+
+        compute_before_edit_hint(file_path="./httpx/../httpx/_client.py", repo_root=str(repo))
+
+        assert daemon.files == [_ANCHORED]
+
+
+class TestAnchorLookupDegrade:
+    """FR07: an older client or daemon yields exactly today's text-only hint, observably."""
+
+    def test_hint_degrades_when_client_lacks_anchored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, Any]]
+    ) -> None:
+        from tests._anchor_daemon_fake import TextOnlyDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        use_daemon(monkeypatch, repo, TextOnlyDaemon(_anchor_rows()))
+        file_path = str(repo / "httpx" / "_client.py")
+
+        result = compute_before_edit_hint(file_path=file_path, repo_root=str(repo))
+
+        assert [item.id for item in result.learnings] == ["L-text"]
+        assert result.learnings == _text_only_learnings(file_path)
+        assert len(_events(captured_structlog, "anchor_lookup_unsupported")) == 1
+
+    def test_hint_degrades_when_daemon_answers_unknown_tool(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, Any]]
+    ) -> None:
+        from fastmcp.exceptions import ToolError
+
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        daemon = AnchoredDaemon(_anchor_rows(), error=ToolError("Unknown tool: 'memory_anchored'"))
+        use_daemon(monkeypatch, repo, daemon)
+        file_path = str(repo / "httpx" / "_client.py")
+
+        result = compute_before_edit_hint(file_path=file_path, repo_root=str(repo))
+
+        assert daemon.files == [_ANCHORED]
+        assert [item.id for item in result.learnings] == ["L-text"]
+        assert result.learnings == _text_only_learnings(file_path)
+        assert len(_events(captured_structlog, "anchor_lookup_unsupported")) == 1
+        assert _events(captured_structlog, "recall_learnings_failed") == []
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Error calling tool 'memory_anchored': file exceeds 4096 characters",
+            "Unknown tool: 'memory_recall'",
+            "memory_anchored refused: Unknown tool: 'memory_anchored'",
+        ],
+    )
+    def test_other_tool_error_is_not_unsupported(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        captured_structlog: list[dict[str, Any]],
+        message: str,
+    ) -> None:
+        from fastmcp.exceptions import ToolError
+
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        repo = tmp_path / "repo"
+        use_daemon(monkeypatch, repo, AnchoredDaemon(_anchor_rows(), error=ToolError(message)))
+
+        result = compute_before_edit_hint(file_path=str(repo / "httpx" / "_client.py"), repo_root=str(repo))
+
+        assert _events(captured_structlog, "anchor_lookup_unsupported") == []
+        assert len(_events(captured_structlog, "recall_learnings_failed")) == 1
+        assert [item.id for item in result.learnings] == ["L-text"]
+
+    async def test_fastmcp_unknown_tool_text_is_what_the_probe_matches(self) -> None:
+        """Pins fastmcp's wording: a change here fails this test instead of silently disabling the probe."""
+        from fastmcp import Client, FastMCP
+        from fastmcp.exceptions import ToolError
+
+        from trw_mcp.state._anchored_lookup import UNKNOWN_TOOL_PREFIX
+
+        server = FastMCP("no-anchored")
+
+        @server.tool()
+        def memory_recall(query: str) -> str:
+            return query
+
+        async with Client(server) as client:
+            with pytest.raises(ToolError) as raised:
+                await client.call_tool("memory_anchored", {"namespace": "n", "file": "a.py"})
+        assert str(raised.value).startswith(UNKNOWN_TOOL_PREFIX)
+
+
+class TestAnchorLookupAgainstTheInstalledDaemon:
+    """FR07 against the real trw-memory: before S2 its client has no ``anchored``, and the hint is text-only."""
+
+    def test_installed_daemon_hint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        memory_daemon: MemoryDaemon,
+        captured_structlog: list[dict[str, Any]],
+    ) -> None:
+        import asyncio
+
+        from trw_memory.daemon.client import DaemonClient
+
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+        monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
+        namespace, client = attach_checkout(tmp_path / ".trw", memory_daemon)
+        from trw_mcp.models.config import reload_config
+
+        reload_config()
+        anchor = {"file": _ANCHORED, "symbol_name": "Client.send"}
+        asyncio.run(client.store("Close the transport before retrying", namespace, learning={"anchors": [anchor]}))
+        asyncio.run(client.store("_client.py pools connections per host", namespace))
+        file_path = str(tmp_path / "httpx" / "_client.py")
+
+        shown = [item.summary for item in compute_before_edit_hint(file_path=file_path).learnings]
+
+        if hasattr(DaemonClient, "anchored"):  # PRD-CORE-332 S2 has landed: the anchored lesson leads
+            assert shown[0] == "Close the transport before retrying"
+            assert _events(captured_structlog, "anchor_lookup_unsupported") == []
+        else:
+            assert shown == [item.summary for item in _text_only_learnings(file_path)]
+            assert shown == ["_client.py pools connections per host"]
+            assert len(_events(captured_structlog, "anchor_lookup_unsupported")) == 1
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-336-FR04: every client profile delivers the pre-edit hint, or falls back
+# ---------------------------------------------------------------------------
+
+
+def test_every_profile_wired_or_fallback() -> None:
+    """Each registered profile is wired to a documented model-visible hook channel, or listed as fallback.
+
+    The profile set is the registry's (``builtin_client_ids``), never a copied
+    list, so a ninth profile added without a pre-edit decision fails here.
+    """
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+    from trw_mcp.models.config._pre_edit_channels import PRE_EDIT_HINT_CHANNELS, unclassified_profiles
+    from trw_mcp.models.config._profiles import builtin_client_ids
+
+    registry = builtin_client_ids()
+    assert unclassified_profiles(registry) == ()
+    assert set(PRE_EDIT_HINT_CHANNELS) == set(registry), "an entry for a profile the registry does not have"
+    for client_id, entry in PRE_EDIT_HINT_CHANNELS.items():
+        assert entry.doc_url.startswith("https://"), client_id
+        if entry.delivery == "hook":
+            assert entry.hook is not None and (_DATA_DIR / entry.hook).is_file(), client_id
+            assert entry.output_path, f"{client_id}: a wired hook must pin the model-visible output field"
+            assert entry.live_check, f"{client_id}: a wired client needs a recorded live visibility check"
+        else:
+            assert entry.hook is None and entry.output_path == (), client_id
+    # Non-vacuity: both classes are populated, so neither branch above was skipped.
+    assert {entry.delivery for entry in PRE_EDIT_HINT_CHANNELS.values()} == {"hook", "instruction_fallback"}
+
+
+@pytest.mark.parametrize("extra", ["brand-new-client", "claude-code-2"])
+def test_a_profile_without_a_decision_is_reported(extra: str) -> None:
+    """Boundary: a registry id the matrix does not classify is named, not silently passed."""
+    from trw_mcp.models.config._pre_edit_channels import unclassified_profiles
+    from trw_mcp.models.config._profiles import builtin_client_ids
+
+    assert unclassified_profiles((*builtin_client_ids(), extra)) == (extra,)
+
+
+#: One PreToolUse payload per hook-wired client, in that client's own wire shape.
+#: Claude Code names the file; Codex sends apply_patch with the patch text.
+_WIRED_CLIENT_PAYLOADS: dict[str, dict[str, object]] = {
+    "claude-code": {"tool_use_id": "toolu-c1", "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}},
+    "codex": {
+        "tool_use_id": "call-c1",
+        "tool_name": "apply_patch",
+        "turn_id": "turn-1",
+        "tool_input": {"command": "*** Begin Patch\n*** Update File: src/app.py\n@@\n-x = 1\n+x = 2\n*** End Patch\n"},
+    },
+}
+
+
+def _run_cc03(project: Path, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
+
+    (project / ".trw").mkdir(parents=True, exist_ok=True)
+    (project / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
+    return subprocess.run(
+        ["sh", str(deploy_distill_hint(project))],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "TRW_PROJECT_DIR": str(project)},
+    )
+
+
+def _wired() -> list[str]:
+    from trw_mcp.models.config._pre_edit_channels import PRE_EDIT_HINT_CHANNELS
+
+    return sorted(cid for cid, entry in PRE_EDIT_HINT_CHANNELS.items() if entry.delivery == "hook")
+
+
+def test_every_wired_client_has_a_contract_payload() -> None:
+    """A newly wired client without a payload below would skip its contract test."""
+    assert set(_wired()) == set(_WIRED_CLIENT_PAYLOADS)
+
+
+@pytest.mark.parametrize("client_id", _wired())
+def test_wired_hook_prints_the_pinned_output_shape(client_id: str, tmp_path: Path) -> None:
+    """The hook prints exactly one JSON object: the documented model-visible field and nothing else."""
+    from trw_mcp.models.config._pre_edit_channels import PRE_EDIT_HINT_CHANNELS
+
+    result = _run_cc03(tmp_path, _WIRED_CLIENT_PAYLOADS[client_id])
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert len(lines) == 1, result.stdout
+    payload = json.loads(lines[0])
+    assert set(payload) == {"hookSpecificOutput"}
+    assert set(payload["hookSpecificOutput"]) == {"hookEventName", "additionalContext"}
+    assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    field: Any = payload
+    for key in PRE_EDIT_HINT_CHANNELS[client_id].output_path:
+        field = field[key]
+    assert isinstance(field, str) and field.startswith("[TRW]")
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "command"),
+    [
+        ("apply_patch", "*** Begin Patch\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch\n"),
+        ("apply_patch", "*** Begin Patch\n*** Delete File: src/app.py\n*** End Patch\n"),
+        ("Bash", "*** Update File: src/app.py"),
+    ],
+    ids=["safe-extension", "delete-only", "not-apply-patch"],
+)
+def test_codex_payload_without_an_editable_code_file_prints_nothing(
+    tool_name: str, command: str, tmp_path: Path
+) -> None:
+    """Boundary: only an apply_patch that updates or adds a code file is hinted."""
+    payload = {"tool_use_id": "call-c2", "tool_name": tool_name, "tool_input": {"command": command}}
+
+    result = _run_cc03(tmp_path, payload)
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_codex_patch_hints_every_code_file_it_touches(tmp_path: Path) -> None:
+    """A multi-file apply_patch hints each Update/Add target once (a repeat header is deduped); docs are skipped."""
+    command = (
+        "*** Begin Patch\n*** Add File: pkg/new_mod.py\n+x = 1\n*** Update File: other.py\n@@\n-a\n+b\n"
+        "*** Update File: README.md\n@@\n-a\n+b\n*** Update File: other.py\n@@\n-c\n+d\n*** End Patch\n"
+    )
+
+    result = _run_cc03(
+        tmp_path, {"tool_use_id": "call-c3", "tool_name": "apply_patch", "tool_input": {"command": command}}
+    )
+
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert context.startswith("[TRW]")
+    markers = sorted(p.name.split(".py-")[0] for p in (tmp_path / ".trw" / "context" / "cc03-debounce").iterdir())
+    assert markers == ["other", "pkg_new_mod"]
+
+
+@pytest.mark.parametrize("count", [6, 9])
+def test_codex_patch_hints_at_most_five_files(tmp_path: Path, count: int) -> None:
+    """Boundary: past the cap, further files are neither hinted nor debounced."""
+    headers = "".join(f"*** Add File: m{i}.py\n+x = {i}\n" for i in range(count))
+    command = f"*** Begin Patch\n{headers}*** End Patch\n"
+
+    _run_cc03(tmp_path, {"tool_use_id": "call-c4", "tool_name": "apply_patch", "tool_input": {"command": command}})
+
+    markers = {p.name.split(".py-")[0] for p in (tmp_path / ".trw" / "context" / "cc03-debounce").iterdir()}
+    assert markers == {f"m{i}" for i in range(5)}
+
+
+def test_codex_patch_budget_skip_does_not_debounce_the_skipped_file(tmp_path: Path) -> None:
+    """CORE-336-S3-KI (b): the in-process 1.6s batch budget stops the hook from
+
+    computing every candidate file, distinct from the shell-side 5-file cap
+    above. A file the batch budget skips was never actually attempted, so
+    debouncing it here would silently swallow its NEXT edit for 180s too --
+    only files the subprocess actually attempted may get a marker.
+    """
+    import sys
+
+    from tests.channels.claude_code._distill_hint_support import CHECKOUT_PYTHONPATH, deploy_distill_hint
+
+    (tmp_path / ".trw" / "channels").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
+    # Pin the interpreter to the one running this test suite (real trw_mcp
+    # importable), not whatever bare "python3" the restricted PATH resolves --
+    # PRD-FIX-155's _get_python_path falls back to a python3 that usually
+    # cannot import trw_mcp, which would exercise only the exception branch.
+    (tmp_path / ".trw" / "channels" / "cc03-python.txt").write_text(sys.executable, encoding="utf-8")
+    command = "*** Begin Patch\n*** Add File: first.py\n+x = 1\n*** Add File: second.py\n+x = 2\n*** End Patch\n"
+
+    result = subprocess.run(
+        ["sh", str(deploy_distill_hint(tmp_path))],
+        input=json.dumps(
+            {"tool_use_id": "call-budget", "tool_name": "apply_patch", "tool_input": {"command": command}}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=tmp_path,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "PYTHONPATH": CHECKOUT_PYTHONPATH,
+            "TRW_PROJECT_DIR": str(tmp_path),
+            "HOME": str(tmp_path),
+            # Force every file after the first to trip the in-process batch
+            # budget check immediately (any elapsed time exceeds a negative
+            # budget), without needing a real slow computation to be flaky.
+            "TRW_CC03_BATCH_BUDGET_S": "-1",
+        },
+    )
+
+    assert result.returncode == 0
+    markers = {p.name.split(".py-")[0] for p in (tmp_path / ".trw" / "context" / "cc03-debounce").iterdir()}
+    assert markers == {"first"}, (
+        f"second.py was never attempted (batch budget skip) and must not be debounced; got markers={markers}"
+    )
+
+
+def test_processed_files_journal_does_not_follow_a_symlinked_hints_dir(tmp_path: Path) -> None:
+    """Codex review core336-s3ki r1 of 6fb90b972 (BLOCK): the
+
+    TRW_CC03_PROCESSED_FILE journal used to sit at ``${_hints_dir}/.cc03-processed-$$``
+    -- a checkout-influenced path. A crafted checkout shipping
+    ``.trw/context/cc03-hints`` (or an ancestor) as a symlink could redirect
+    that write anywhere the symlink pointed, no race required. The journal is
+    now a private ``mktemp`` file outside the checkout entirely, so it can
+    never land inside whatever a symlinked hints dir points at.
+    """
+    import sys
+
+    from tests.channels.claude_code._distill_hint_support import CHECKOUT_PYTHONPATH, deploy_distill_hint
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".trw" / "channels").mkdir(parents=True, exist_ok=True)
+    (project / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
+    (project / ".trw" / "channels" / "cc03-python.txt").write_text(sys.executable, encoding="utf-8")
+
+    outside_hints_dir = tmp_path / "attacker_outside_hints_dir"
+    outside_hints_dir.mkdir()
+    (project / ".trw" / "context").mkdir(parents=True, exist_ok=True)
+    (project / ".trw" / "context" / "cc03-hints").symlink_to(outside_hints_dir, target_is_directory=True)
+
+    command = "*** Begin Patch\n*** Add File: first.py\n+x = 1\n*** Add File: second.py\n+x = 2\n*** End Patch\n"
+    result = subprocess.run(
+        ["sh", str(deploy_distill_hint(project))],
+        input=json.dumps(
+            {"tool_use_id": "call-symlink", "tool_name": "apply_patch", "tool_input": {"command": command}}
+        ),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "TRW_PROJECT_DIR": str(project),
+            "HOME": str(project),
+            "PYTHONPATH": CHECKOUT_PYTHONPATH,
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    leaked = list(outside_hints_dir.glob("*cc03-processed*")) + list(outside_hints_dir.glob(".cc03-processed*"))
+    assert leaked == [], (
+        f"the processed-files journal wrote through the symlinked cc03-hints dir into the attacker directory: {leaked}"
+    )
+
+
+def test_multi_file_batch_emits_earlier_hints_when_a_later_file_raises(tmp_path: Path) -> None:
+    """CORE-336-S3-KI (a): a later file's compute failing must not discard hints
+
+    already completed for earlier files in the same Codex multi-file batch.
+    """
+    import sys
+
+    from tests.channels.claude_code._distill_hint_support import CHECKOUT_PYTHONPATH, deploy_distill_hint
+
+    shim_dir = tmp_path / "_shim"
+    shim_dir.mkdir()
+    # A sitecustomize.py runs at interpreter startup (site init, before the
+    # hook's own -c program executes) whenever PYTHONPATH is honored -- which
+    # is every hint subprocess this hook spawns, since it never passes -S.
+    # Patching the module attribute here means the hook's own
+    # `from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint`
+    # binds the patched function, deterministically, with no timing race. The
+    # shim directory holds ONLY sitecustomize.py -- a stub trw_mcp/ package
+    # here would shadow the real one for every submodule, not just this one
+    # attribute, and shatter the rest of the import.
+    (shim_dir / "sitecustomize.py").write_text(
+        "import os\n"
+        '_boom = os.environ.get("TRW_TEST_CC03_BOOM_FILE")\n'
+        "if _boom:\n"
+        "    import trw_mcp.tools._before_edit_hint_core as _m\n"
+        "\n"
+        "    class _FakeLearning:\n"
+        "        def __init__(self, summary):\n"
+        "            self.summary = summary\n"
+        "\n"
+        "    class _FakeResult:\n"
+        "        def __init__(self):\n"
+        '            self.distill_status = "no_sidecar"\n'
+        "            self.distill_hint = None\n"
+        # Every BeforeEditHintResult field the hook reads (distill_as_of since 8.2 S3):
+        # a fake missing one raises AttributeError on the FIRST file and masks the
+        # isolation this test exists to prove.
+        "            self.distill_as_of = None\n"
+        '            self.learnings = [_FakeLearning("a fake recorded learning")]\n'
+        "\n"
+        "    def _wrapped(*, file_path, **kwargs):\n"
+        "        if file_path == _boom:\n"
+        '            raise RuntimeError("boom-for-test")\n'
+        "        return _FakeResult()\n"
+        "\n"
+        "    _m.compute_before_edit_hint = _wrapped\n"
+    )
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".trw" / "channels").mkdir(parents=True, exist_ok=True)
+    (project / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
+    (project / ".trw" / "channels" / "cc03-python.txt").write_text(sys.executable, encoding="utf-8")
+
+    command = "*** Begin Patch\n*** Add File: safe0.py\n+x = 1\n*** Add File: boom.py\n+x = 2\n*** End Patch\n"
+    result = subprocess.run(
+        ["sh", str(deploy_distill_hint(project))],
+        input=json.dumps({"tool_use_id": "call-boom", "tool_name": "apply_patch", "tool_input": {"command": command}}),
+        capture_output=True,
+        text=True,
+        timeout=15,
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "TRW_PROJECT_DIR": str(project),
+            "HOME": str(project),
+            "PYTHONPATH": os.pathsep.join([str(shim_dir), CHECKOUT_PYTHONPATH]),
+            "TRW_TEST_CC03_BOOM_FILE": "boom.py",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout, "expected an additionalContext hint despite the later file raising"
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "safe0.py" in context and "a fake recorded learning" in context, (
+        f"the hint completed for safe0.py before boom.py raised must still be emitted; got: {context!r}"
+    )

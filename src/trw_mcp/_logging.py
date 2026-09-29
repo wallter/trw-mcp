@@ -246,6 +246,7 @@ def configure_logging(
     log_dir: Path | None = None,
     package_name: str = "trw-mcp",
     suppress_noisy: bool = True,
+    force_stderr_only: bool = False,
 ) -> None:
     """Configure structlog processors and stdlib logging for the entire process.
 
@@ -266,6 +267,16 @@ def configure_logging(
             Created if it doesn't exist.
         package_name: Package identifier for log file naming.
         suppress_noisy: Suppress noisy third-party loggers below WARNING.
+        force_stderr_only: PRD-CORE-305-FR05 sol round-4 P2. When True, no file
+            handler is ever attached and no directory is ever created --
+            regardless of ``debug``/``verbosity``/``log_file``/``log_dir``, and
+            regardless of ``.trw/config.yaml``'s own ``debug`` key. The bounded-
+            lane guard already refuses a WRITE the caller asks for by name
+            (``--debug``/``-vv``); this closes the same door for the file sink
+            those flags open as a SIDE EFFECT of merely turning on verbose
+            logging, which is not itself a command a caller can be refused --
+            it is this function silently creating ``.trw/logs/`` and opening a
+            file underneath a call the guard already decided was read-only.
     """
     config_debug = _config_debug_requested(verbosity=verbosity, debug=debug, explicit_level=log_level)
     level = _resolve_log_level(
@@ -308,15 +319,19 @@ def configure_logging(
     # Build stdlib handlers
     handlers: list[logging.Handler] = [StderrHandler()]
 
-    # File logging
-    effective_log_file = log_file
-    if effective_log_file is None and (log_dir or debug):
-        if log_dir is None and debug:
-            log_dir = Path.cwd() / ".trw" / "logs"
-        if log_dir is not None:
-            log_dir.mkdir(parents=True, exist_ok=True)
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            effective_log_file = log_dir / f"{package_name}-{today}.jsonl"
+    # File logging -- entirely skipped under force_stderr_only (PRD-CORE-305-FR05
+    # sol round-4 P2): no directory created, no file opened, whatever debug/
+    # verbosity/log_file/log_dir say.
+    effective_log_file: Path | None = None
+    if not force_stderr_only:
+        effective_log_file = log_file
+        if effective_log_file is None and (log_dir or debug):
+            if log_dir is None and debug:
+                log_dir = Path.cwd() / ".trw" / "logs"
+            if log_dir is not None:
+                log_dir.mkdir(parents=True, exist_ok=True)
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                effective_log_file = log_dir / f"{package_name}-{today}.jsonl"
 
     if effective_log_file is not None:
         effective_log_file.parent.mkdir(parents=True, exist_ok=True)

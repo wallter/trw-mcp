@@ -145,8 +145,8 @@ class UninstallSurface:
 
     Attributes:
         relpath: Path relative to the project root.
-        managed_block: When True, the path is a SHARED file (e.g. CLAUDE.md,
-            settings.json, AGENTS.md) that TRW only partly owns -- uninstall
+        managed_block: When True, the path is a SHARED file (e.g. AGENTS.md,
+            settings.json) that TRW only partly owns -- uninstall
             removes the TRW-managed marker block and leaves the rest, instead
             of deleting the file wholesale.
         merged_config: When True, the path is a structured client config file
@@ -181,7 +181,7 @@ class UninstallSurface:
 # Instruction-file uninstall surfaces for retired clients (2026-07-11). Resolved
 # explicitly here rather than via resolve_client_profile(), which now returns the
 # claude-code fallback for retired ids — that fallback would surface claude-code's
-# own ``CLAUDE.md`` and LOSE the retired client's instruction file entirely.
+# own ``AGENTS.md`` and LOSE the retired client's instruction file entirely.
 # Keeping them here guarantees existing installs stay removable forever.
 _RETIRED_INSTRUCTION_SURFACES: dict[str, UninstallSurface] = {
     # aider's pre-retirement _light_profile wrote a managed block into
@@ -242,7 +242,7 @@ def _canon_root_surfaces() -> tuple[UninstallSurface, ...]:
 
 
 # Per-profile config-directory surfaces TRW provisions. Standalone instruction
-# files written into a SHARED root file (AGENTS.md, CLAUDE.md, ANTIGRAVITY.md,
+# files written into a SHARED root file (AGENTS.md, ANTIGRAVITY.md,
 # copilot-instructions.md) are handled as managed blocks so user content is
 # preserved (PRD-SEC-006 FR07).
 _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
@@ -269,6 +269,10 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # server map is the user's client config), emptied at most. Only
         # claude-code reads project-root ``.mcp.json``.
         UninstallSurface(".mcp.json", merged_config=True, config_shape="mcp-server-map"),
+        # Legacy: TRW before 8.0 wrote a root CLAUDE.md (now AGENTS.md). Update
+        # deletes a TRW-only one; uninstall does too, and takes only TRW's block
+        # out of one with user content (``strip_legacy_claude_md``).
+        UninstallSurface("CLAUDE.md", merged_config=True, config_shape="legacy-claude-md"),
         UninstallSurface(".claude/skills"),
         UninstallSurface(".claude/agents"),
         # ``.claude/hooks`` is SHARED: codex and copilot hook commands also
@@ -363,6 +367,9 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # ``{"servers": {"trw": ...}}`` -- a different container key from the
         # ``mcpServers`` maps, and .vscode/ is the user's editor config.
         UninstallSurface(".vscode/mcp.json", merged_config=True, config_shape="vscode-server-map"),
+        # The Copilot CLI's committed MCP config (it never reads .vscode/mcp.json): an
+        # ``mcpServers`` map shared with the user's own servers, so strip only ``trw``.
+        UninstallSurface(".github/mcp.json", merged_config=True, config_shape="mcp-server-map"),
     ),
     "aider": (UninstallSurface(".aider.conf.yml"),),
     "antigravity-cli": (
@@ -421,13 +428,9 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
 # alongside a TRW marker block, so they are managed-block surfaces.
 #
 # ``instruction_path`` is deliberately NOT the key here: it is display//routing
-# metadata and does not track what bootstrap writes. claude-code declares
-# ``.claude/INSTRUCTIONS.md`` but no writer in the tree ever produces that path
-# (``_init_project`` writes ``CLAUDE.md``). Deriving
-# from the flag registers the file that actually exists and stops uninstall
-# claiming ownership of a user-authored ``.claude/INSTRUCTIONS.md``.
+# metadata and does not track what bootstrap writes. Deriving from the flag
+# registers the file that actually exists.
 _ROOT_INSTRUCTION_SURFACES: tuple[tuple[str, str], ...] = (
-    ("claude_md", "CLAUDE.md"),
     ("agents_md", "AGENTS.md"),
     ("copilot_instructions", ".github/copilot-instructions.md"),
     ("antigravitycli_md", "ANTIGRAVITY.md"),
@@ -455,7 +458,7 @@ def _instruction_surfaces(profile: ClientProfile, generated: frozenset[str]) -> 
 
     Two kinds, with different removal contracts:
 
-    * shared root files (CLAUDE.md, AGENTS.md, ANTIGRAVITY.md,
+    * shared root files (AGENTS.md, ANTIGRAVITY.md,
       .github/copilot-instructions.md) -> managed block: strip TRW's markers,
       preserve everything else.
     * TRW-generated per-client files (.opencode/INSTRUCTIONS.md,

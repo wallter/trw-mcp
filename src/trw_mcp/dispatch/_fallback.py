@@ -39,7 +39,10 @@ __all__ = ["dispatch_with_fallback", "host_dispatch_client"]
 logger = structlog.get_logger(__name__)
 
 #: silence_reasons after which no child did the work, so another client may.
-_FAIL_OVER_REASONS = frozenset({"quota_exhausted", "client_unsupported", "sandbox_unsupported"})
+#: Capacity and a refresh conflict arrive here only after the client's own retry failed (PRD-CORE-304-FR03).
+_FAIL_OVER_REASONS = frozenset(
+    {"quota_exhausted", "provider_capacity", "credential_refresh_conflict", "client_unsupported", "sandbox_unsupported"}
+)
 #: The runner's exit code for a binary that could not be launched.
 _LAUNCH_FAILED_EXIT = -127
 #: Attempts that were skipped without running, so no child answered.
@@ -82,7 +85,11 @@ def dispatch_with_fallback(
     result = run(first)
     if not chain:
         return result
-    attempts = [DispatchAttempt(client=result.client, reason=_fail_over_reason(result) or result.silence_reason)]
+    # A client's own retry (PRD-CORE-304-FR03) arrives in result.attempts and is kept, in order.
+    attempts = [
+        *result.attempts,
+        DispatchAttempt(client=result.client, reason=_fail_over_reason(result) or result.silence_reason),
+    ]
     for client in chain:
         if attempts[-1].reason not in _NEXT_CLIENT_REASONS:
             break
@@ -102,9 +109,10 @@ def dispatch_with_fallback(
             logger.warning("dispatch_fallback_unresolved", client=client, error=str(exc))
             continue
         result = run(request)
-        attempts.append(
-            DispatchAttempt(client=result.client, reason=_fail_over_reason(result) or result.silence_reason)
-        )
+        attempts += [
+            *result.attempts,
+            DispatchAttempt(client=result.client, reason=_fail_over_reason(result) or result.silence_reason),
+        ]
     return result.model_copy(update={"attempts": attempts, "fallback_note": _note(attempts, result, host_client)})
 
 

@@ -22,7 +22,6 @@ returned unchanged so resume correctness is preserved.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 import structlog
@@ -88,17 +87,8 @@ _FINGERPRINT_COMPACT_FIELDS = ("build_identity", "connection_nonce")
 _COMPACT_DROP_KEYS = (
     "surface_snapshot_id",
     "profile_snapshot_id",
-    "session_override_hash",
     "profile_layers_applied",
     "first_session_emitted",
-)
-
-# ``# trw:intentional <reason>`` (Python/shell/YAML ``#``) or
-# ``// trw:intentional <reason>`` (TS/JS/C-family). The reason is everything
-# after the marker token, trimmed. Case-insensitive on the marker token.
-_INTENTIONAL_RE = re.compile(
-    r"(?:#|//)\s*trw:intentional\b[ \t:]*(?P<reason>.*?)\s*$",
-    re.IGNORECASE,
 )
 
 
@@ -200,38 +190,3 @@ def trim_session_start_payload(
     except Exception:  # justified: fail-open, trimming must never break resume
         logger.debug("session_start_trim_failed", exc_info=True)
         return results
-
-
-def find_intentional_marker(
-    source: str,
-    line_number: int,
-    *,
-    lookback: int = 1,
-) -> str | None:
-    """Return the reason from a ``trw:intentional`` marker on/above a line.
-
-    FR2. ``source`` is the full file text; ``line_number`` is 1-indexed. The
-    marker is recognized on the target line itself (trailing-comment form) or
-    on any of the ``lookback`` lines immediately above it (own-line form). The
-    nearest marker (target line, then the line directly above, etc.) wins.
-
-    Returns the trimmed reason string (possibly empty if the marker carries no
-    reason text), or ``None`` when no marker is present. Fail-open: returns
-    ``None`` on malformed input.
-    """
-    try:
-        lines = source.splitlines()
-        if line_number < 1 or line_number > len(lines):
-            return None
-        # Search the target line first, then walk upward through lookback lines.
-        for offset in range(lookback + 1):
-            idx = line_number - 1 - offset
-            if idx < 0:
-                break
-            match = _INTENTIONAL_RE.search(lines[idx])
-            if match is not None:
-                return match.group("reason").strip()
-        return None
-    except Exception:  # justified: fail-open, marker detection is best-effort tooling
-        logger.debug("intentional_marker_scan_failed", exc_info=True)
-        return None

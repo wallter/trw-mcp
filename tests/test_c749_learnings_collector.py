@@ -6,6 +6,7 @@ import json
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -246,3 +247,62 @@ class TestConstants:
 
     def test_max_queries(self) -> None:
         assert MAX_QUERIES == 10
+
+
+class TestAnchoredLessonsFirst:
+    """PRD-CORE-332 FR06: lessons anchored to the file lead the hint, deduped, capped at DEFAULT_TOP_N."""
+
+    FILE = "httpx/_client.py"
+
+    def _collect(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rows: list[Any]) -> tuple[list[str], Any]:
+        from tests._anchor_daemon_fake import AnchoredDaemon, use_daemon
+
+        daemon = AnchoredDaemon(rows)
+        use_daemon(monkeypatch, tmp_path, daemon)
+        found = collect_learnings(build_file_queries(self.FILE), anchor_file=self.FILE)
+        return [item.id for item in found], daemon
+
+    def test_anchored_lesson_listed_first(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        from tests._anchor_daemon_fake import lesson
+
+        rows = [
+            lesson("L-text", "_client.py pools connections per host"),
+            lesson("L-anchor", "Close the transport before retrying", anchors=(self.FILE,)),
+        ]
+        ids, daemon = self._collect(monkeypatch, tmp_path, rows)
+        assert ids == ["L-anchor", "L-text"]
+        assert daemon.calls[0] == ("memory_anchored", "project:anchor-test")
+        assert daemon.files == [self.FILE]
+
+    def test_anchored_and_text_matched_lesson_appears_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from tests._anchor_daemon_fake import lesson
+
+        rows = [lesson("L-both", "_client.py retries must close the transport", anchors=(self.FILE,))]
+        ids, _ = self._collect(monkeypatch, tmp_path, rows)
+        assert ids == ["L-both"]
+
+    @pytest.mark.parametrize(("anchored", "text_queried"), [(7, True), (12, False)])
+    def test_hint_holds_top_n_anchored_lessons(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, anchored: int, text_queried: bool
+    ) -> None:
+        """More than DEFAULT_TOP_N anchored lessons show DEFAULT_TOP_N anchored ones; a full page skips text."""
+        from tests._anchor_daemon_fake import lesson
+
+        rows = [
+            lesson(f"L-a{i:02d}", f"anchored finding {i}", anchors=(self.FILE,), importance=0.9 - i / 100)
+            for i in range(anchored)
+        ]
+        rows.append(lesson("L-text", "_client.py text-only hit", importance=1.0))
+        ids, daemon = self._collect(monkeypatch, tmp_path, rows)
+        assert ids == [f"L-a{i:02d}" for i in range(DEFAULT_TOP_N)]
+        assert (("memory_recall", "project:anchor-test") in daemon.calls) is text_queried
+
+    def test_no_anchor_file_issues_no_anchored_lookup(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        from tests._anchor_daemon_fake import AnchoredDaemon, lesson, use_daemon
+
+        daemon = AnchoredDaemon([lesson("L-anchor", "unrelated words", anchors=(self.FILE,))])
+        use_daemon(monkeypatch, tmp_path, daemon)
+        assert collect_learnings(build_file_queries(self.FILE)) == []
+        assert [name for name, _ in daemon.calls if name == "memory_anchored"] == []

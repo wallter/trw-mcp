@@ -1,7 +1,7 @@
 """Release builder — packages bundled data into distributable .tar.gz archives.
 
 Used by the `trw-mcp build-release` CLI subcommand to create release
-artifacts that can be uploaded to the backend for auto-upgrade distribution.
+artifacts that can be uploaded for distribution.
 """
 
 from __future__ import annotations

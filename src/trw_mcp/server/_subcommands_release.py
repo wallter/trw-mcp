@@ -273,44 +273,49 @@ def _run_version_status(args: argparse.Namespace) -> None:
 
 
 def _push_release(result: dict[str, object], backend_url: str, api_key: str) -> None:
-    """Push release metadata to the backend."""
-    import json as _json
-    import urllib.request
+    """Push release metadata to the backend.
+
+    Destination policy (PRD-SEC-021 FR04): *backend_url*/*api_key* are literal
+    operator CLI arguments (``--backend-url``/``--api-key``); the bearer is
+    attached pre-redirect-refusal via the shared
+    ``_outbound_http.outbound_http_client`` (``follow_redirects=False``),
+    which replaces the old ``urllib`` ``add_unredirected_header`` pattern with
+    an equivalent (stronger, since no redirect is followed at all) guarantee
+    that the header is never resent to a redirect target. https-or-loopback
+    (FR05) comes from the same shared helper as the other two migrated call
+    sites.
+    """
+    from trw_mcp._outbound_http import outbound_http_client, require_https_or_loopback
 
     url = f"{backend_url.rstrip('/')}/v1/releases"
-    payload = _json.dumps(
-        {
-            "version": str(result["version"]),
-            "artifact_url": str(result["path"]),
-            "artifact_checksum": str(result["checksum"]),
-            "artifact_size_bytes": int(str(result["size_bytes"])),
-            "framework_version": _get_framework_version(),
-        }
-    ).encode("utf-8")
+    payload = {
+        "version": str(result["version"]),
+        "artifact_url": str(result["path"]),
+        "artifact_checksum": str(result["checksum"]),
+        "artifact_size_bytes": int(str(result["size_bytes"])),
+        "framework_version": _get_framework_version(),
+    }
 
-    req = urllib.request.Request(  # noqa: S310 — URL comes from CLI --backend-url arg (operator-supplied, not end-user input); HTTPS enforced by deployment
-        url,
-        data=payload,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    # operator_release_bearer_value: backend_url and api_key are both literal
-    # --backend-url/--api-key CLI arguments the operator typed -- see its
-    # docstring in _platform_trust.py for the exact invariant this exception
-    # requires. add_unredirected_header (not
-    # the headers= dict above) so a 3xx from this endpoint never forwards the
-    # bearer to whatever host it redirects to -- the same pattern
-    # scripts/_release_public/installer_bundle.py::_read uses.
-    req.add_unredirected_header("Authorization", operator_release_bearer_value(api_key))
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — see Request comment above
-            data = _json.loads(resp.read().decode("utf-8"))
-            logger.info(
-                "release_published",
-                op="push_release",
-                version=data.get("version", "?"),
-                backend_url=backend_url,
-            )
+        require_https_or_loopback(url)
+        # operator_release_bearer_value: backend_url and api_key are both
+        # literal --backend-url/--api-key CLI arguments the operator typed --
+        # see its docstring in _platform_trust.py for the exact invariant
+        # this exception requires.
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": operator_release_bearer_value(api_key),
+        }
+        with outbound_http_client(timeout=10.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        logger.info(
+            "release_published",
+            op="push_release",
+            version=data.get("version", "?"),
+            backend_url=backend_url,
+        )
     except Exception as exc:  # justified: boundary, backend publish API call may fail
         logger.exception("release_publish_failed", op="push_release", error=str(exc))
         sys.exit(1)

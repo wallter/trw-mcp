@@ -18,6 +18,7 @@ missing.
 from __future__ import annotations
 
 import ast
+import copy
 import dataclasses
 import re
 import subprocess
@@ -38,7 +39,9 @@ _CLI = _SCRIPTS / "check_census_literals.py"
 
 # Monorepo-only invariant: the repo-root scripts/ layout is absent from the
 # standalone trw-mcp mirror. Skip cleanly there.
-if not _CLI.is_file():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in mirror)", allow_module_level=True)
 
 
@@ -411,12 +414,31 @@ def test_real_rule_files_are_clean_at_head() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+# Every test that needs the real-repository scan carries this group so that, under
+# ``--dist loadgroup``, xdist sends them all to ONE worker and the ~30s scan runs once
+# instead of once per worker that receives one of them.
+_REAL_SCAN_GROUP = pytest.mark.xdist_group("census_real_repository_scan")
+
+
 @pytest.fixture(scope="module")
-def real_report() -> census.ScanReport:
-    """One full-repository scan, shared by the regression assertions."""
-    return census.run_scan(REAL_SCOPE, REPO_ROOT)
+def _timed_real_scan() -> tuple[Any, float]:
+    """The single real, uncached full-repository scan of this module, with its wall time.
+
+    The budget test asserts on the elapsed time of THIS scan (a genuine scan, never a
+    cache hit); the regression tests assert on its report.
+    """
+    started = time.monotonic()
+    report = census.run_scan(REAL_SCOPE, REPO_ROOT)
+    return report, time.monotonic() - started
 
 
+@pytest.fixture
+def real_report(_timed_real_scan: tuple[Any, float]) -> census.ScanReport:
+    """A private deep copy of the shared scan, so no test can mutate what another sees."""
+    return copy.deepcopy(_timed_real_scan[0])
+
+
+@_REAL_SCAN_GROUP
 @pytest.mark.parametrize(
     "protected",
     [
@@ -431,12 +453,14 @@ def test_protected_cases_absent_from_a_real_repository_scan(protected: str, real
     assert hits == [], f"{protected} is a protected class and must never be reported: {hits}"
 
 
+@_REAL_SCAN_GROUP
 def test_real_repository_has_zero_unsuppressed_findings(real_report: census.ScanReport) -> None:
     """FR05: the corpus is clean when the gate turns on, which is what makes
     zero-tolerance viable without a frozen baseline."""
     assert real_report.findings == [], [f"{f.path}:{f.line} {f.detail}" for f in real_report.findings]
 
 
+@_REAL_SCAN_GROUP
 def test_the_stage_two_filter_removes_the_overwhelming_majority(real_report: census.ScanReport) -> None:
     """NFR03: the property is checked, not a frozen list of the 108 fixture lines.
 
@@ -450,6 +474,7 @@ def test_the_stage_two_filter_removes_the_overwhelming_majority(real_report: cen
     )
 
 
+@_REAL_SCAN_GROUP
 def test_stage_two_precision_holds_at_the_recorded_floor(real_report: census.ScanReport) -> None:
     """NFR03: precision on the measured corpus stays at or above the floor.
 
@@ -465,6 +490,7 @@ def test_stage_two_precision_holds_at_the_recorded_floor(real_report: census.Sca
     )
 
 
+@_REAL_SCAN_GROUP
 def test_report_states_both_stage_counts(real_report: census.ScanReport) -> None:
     """NFR03: precision is auditable on every run without re-deriving it by hand."""
     rendered = "\n".join(census.render(real_report, REPO_ROOT))
@@ -783,7 +809,7 @@ def test_a_sentinel_naming_an_unknown_key_is_an_error_not_a_silent_skip(tmp_path
 def test_the_convention_document_names_a_sync_script_that_exists() -> None:
     """FR08: a zero-context implementer following the convention must not hit a
     missing file."""
-    for doc in (REPO_ROOT / "CLAUDE.md", REPO_ROOT / "docs" / "documentation" / "dry-inventory-system.md"):
+    for doc in (REPO_ROOT / "AGENTS.md", REPO_ROOT / "docs" / "documentation" / "dry-inventory-system.md"):
         text = doc.read_text(encoding="utf-8")
         for named in set(re.findall(r"scripts/sync[-_]markdown[-_]counts\.py", text)):
             assert (REPO_ROOT / named).is_file(), f"{doc.name} names {named}, which does not exist"
@@ -839,12 +865,16 @@ def test_two_scans_over_identical_inputs_are_byte_identical(tmp_path: Path) -> N
     assert lines == sorted(lines)
 
 
+@_REAL_SCAN_GROUP
 @requires_local_timing
-def test_full_repository_scan_stays_within_a_gate_sized_budget() -> None:
-    """NFR01: the scan must fit the budget of the fastest existing gate targets."""
-    started = time.monotonic()
-    census.run_scan(REAL_SCOPE, REPO_ROOT)
-    elapsed = time.monotonic() - started
+def test_full_repository_scan_stays_within_a_gate_sized_budget(
+    _timed_real_scan: tuple[Any, float],
+) -> None:
+    """NFR01: the scan must fit the budget of the fastest existing gate targets.
+
+    Times the module's one real scan (see ``_timed_real_scan``), not a cache hit.
+    """
+    elapsed = _timed_real_scan[1]
     assert_budget("full_repository_census_scan", elapsed, 120.0, "s")
 
 

@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.requirements import EvaluationEpoch, SchedulingAction
 
 LEDGER_FILENAME = "scheduling-ledger.jsonl"
@@ -48,9 +49,11 @@ def _read_anchor(ledger_path: Path) -> tuple[int, str] | None:
 
 
 def _write_anchor(ledger_path: Path, sequence: int, head_digest: str) -> None:
-    _anchor_path(ledger_path).write_text(
+    """Publish the head anchor beside the ledger, atomically; a symlinked anchor is refused (PRD-CORE-337)."""
+    write_checkout_file(
+        ledger_path.parent,
+        _anchor_path(ledger_path),
         json.dumps({"sequence": sequence, "head_digest": head_digest}, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 

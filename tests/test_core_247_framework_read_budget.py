@@ -17,7 +17,9 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 
-if not (_ROOT.parent / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
@@ -29,11 +31,13 @@ _HOOK_DIRS = (
 )
 _CORE = _ROOT / "src" / "trw_mcp" / "data" / "framework.md"
 
-#: FR07's bound: the largest phase row (`plan`) measures 7,102 characters of the
-#: 53,989-character FRAMEWORK.md (S4 moved the read from the retired compact core,
-#: where it measured 6,349). A section added to a phase row has to be justified
-#: against this rather than absorbed.
-_PHASE_SCOPE_CEILING_CHARS = 7102
+#: FR07's bound: the largest phase row (`validate`/`review`) measures 10,140 characters
+#: (10,611 before the <variables> block left the always-read summary, 2026-09-26). It was 7,102 until the canon swarm (2026-09-26, v27.5) put the Constitution's hard
+#: tier into EXECUTION MODEL SUMMARY, the only normative text a user project reads
+#: (parity: test_values_block_parity.py), and named all three deliver-gate paths at every
+#: gate line; the operator accepted the raise (canon-swarm DR-024, O7). A section added to
+#: a phase row has to be justified against this rather than absorbed.
+_PHASE_SCOPE_CEILING_CHARS = 10140
 
 #: Every value ``infer_phase``/``phase_from_events`` can return. The mapping must
 #: be TOTAL over this set — an unmapped phase falling through to a whole-document

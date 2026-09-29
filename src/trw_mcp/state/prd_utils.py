@@ -8,9 +8,11 @@ All functions are pure or file-scoped — no MCP tool registration side effects.
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import tempfile
+from functools import lru_cache
 from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -52,27 +54,16 @@ _NON_SUBSTANTIVE_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
-def parse_frontmatter(content: str) -> dict[str, object]:
-    """Parse YAML frontmatter from markdown content.
-
-    Extracts the YAML block between ``---`` delimiters at the start
-    of the document. If a nested ``prd`` key is found, its contents
-    are flattened to the top level (AARE-F convention).
-
-    Args:
-        content: Markdown content with optional YAML frontmatter.
-
-    Returns:
-        Parsed frontmatter as a dict, or empty dict if none found.
-    """
-    match = _FRONTMATTER_RE.match(content)
-    if not match:
-        return {}
-
+# One parse per distinct frontmatter block: a projection sync reads every PRD twice and the YAML
+# parse was ~98% of its render time. Sized above the PRD count (a sequential scan over more distinct
+# blocks than the cache holds gets zero hits) and keyed on the block text, which fully determines
+# the result. Callers get a deep copy, so nothing they do to it reaches the cache.
+@lru_cache(maxsize=8192)
+def _parse_frontmatter_block(block: str) -> dict[str, object]:
     # Use safe loader to prevent RCE via !!python/object tags in user-supplied PRD files.
     yaml = YAML(typ="safe")
     try:
-        data = yaml.load(match.group(1))
+        data = yaml.load(block)
         if isinstance(data, dict):
             # Flatten nested 'prd' key if present (AARE-F template nests under 'prd')
             if "prd" in data and isinstance(data["prd"], dict):
@@ -85,6 +76,25 @@ def parse_frontmatter(content: str) -> dict[str, object]:
     except (YAMLError, ValueError, TypeError, AttributeError) as exc:
         logger.debug("frontmatter_parse_failed", error=str(exc))
     return {}
+
+
+def parse_frontmatter(content: str) -> dict[str, object]:
+    """Parse YAML frontmatter from markdown content.
+
+    Extracts the YAML block between ``---`` delimiters at the start
+    of the document. If a nested ``prd`` key is found, its contents
+    are flattened to the top level (AARE-F convention).
+
+    Args:
+        content: Markdown content with optional YAML frontmatter.
+
+    Returns:
+        Parsed frontmatter as a dict (a fresh copy per call), or empty dict if none found.
+    """
+    match = _FRONTMATTER_RE.match(content)
+    if not match:
+        return {}
+    return copy.deepcopy(_parse_frontmatter_block(match.group(1)))
 
 
 def extract_sections(content: str) -> list[str]:

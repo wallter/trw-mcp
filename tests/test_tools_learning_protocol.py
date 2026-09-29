@@ -65,7 +65,7 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         instructions_sync_fn(scope="root")
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         # Count lines between markers
         start = content.index("<!-- trw:start -->")
@@ -84,24 +84,11 @@ class TestProgressiveDisclosure:
                 impact=0.9,
             )
         result = instructions_sync_fn(scope="root")
-        # CORE-093: learnings_promoted always 0
-        assert result["learnings_promoted"] == 0
-        claude_md = tmp_path / "CLAUDE.md"
+        # PRD-CORE-341: sync reports no promotion count; no learning reaches an instruction file
+        assert "learnings_promoted" not in result
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
-
-    def test_auto_gen_contains_skill_reference(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
-        tools = _get_tools()
-        tools["trw_learn"].fn(
-            summary="Skill ref test",
-            detail="Testing",
-            impact=0.9,
-        )
-        instructions_sync_fn(scope="root")
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        assert "/trw-ceremony-guide" in content
 
     def test_auto_gen_no_tool_lifecycle_table(self, tmp_path: Path) -> None:
         """Tool lifecycle table is in session-start hook, not CLAUDE.md."""
@@ -112,7 +99,7 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         instructions_sync_fn(scope="root")
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "| Phase | Tool |" not in content
 
@@ -125,7 +112,7 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         instructions_sync_fn(scope="root")
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "Rationalization Watchlist" not in content
 
@@ -140,7 +127,7 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         instructions_sync_fn(scope="root")
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         start = content.index("<!-- trw:start -->")
         end = content.index("<!-- trw:end -->")
@@ -158,8 +145,10 @@ class TestProgressiveDisclosure:
 
         config = TRWConfig(max_auto_lines=5)  # Very low limit
         llm = LLMClient()
+        sub_dir = tmp_path / "sub"
+        sub_dir.mkdir()
         with pytest.raises(StateError, match="exceeding max_auto_lines=5"):
-            execute_claude_md_sync("root", None, config, reader, llm)
+            execute_claude_md_sync("sub", str(sub_dir), config, reader, llm)
 
     def test_max_auto_lines_gate_passes_at_limit(self, tmp_path: Path) -> None:
         """PRD-CORE-061-FR04: exactly max_auto_lines succeeds."""
@@ -215,25 +204,30 @@ class TestProgressiveDisclosure:
         assert "across 12 prior sessions" in result
         assert "0 learnings" not in result
 
-    def test_render_agents_trw_section_uses_analytics_counts(
+    def test_render_agents_trw_section_carries_no_live_counts(
         self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FR06: AGENTS-facing TRW section uses analytics-backed counts."""
+        """AGENTS-MD-HARDCODED-COUNTS: the Workflow step-1 line is count-free.
+
+        The committed AGENTS.md block used to embed the live store/session
+        counts, so every update-project churned it with new numbers. The line
+        must render identically whatever the analytics counters say.
+        """
         _unreachable_store(fake_memory_store, monkeypatch)
-        _write_analytics(tmp_path, sessions_tracked=7, total_learnings=19)
         from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
 
-        _analytics_cache.set(None)
+        rendered = []
+        for sessions, learnings in ((7, 19), (532, 2521)):
+            _write_analytics(tmp_path, sessions_tracked=sessions, total_learnings=learnings)
+            _analytics_cache.set(None)
+            _store_counts_cache.set(None)
+            rendered.append(render_agents_trw_section())
 
-        _store_counts_cache.set(None)
-
-        result = render_agents_trw_section()
-
-        # PRD-FIX-141-FR04: one population-naming claim, rendered once. The old
-        # sentence printed the analytics counters twice and named neither
-        # population; with the store unreachable the inventory is not measured.
-        assert "could not be measured across 7 prior sessions" in result
-        assert "and recovers any active run" in result
+        assert rendered[0] == rendered[1]
+        result = rendered[0]
+        assert "it loads prior learnings and recovers any active run" in result
+        assert "prior sessions" not in result
+        assert "could not be measured" not in result
 
     def test_closing_reminder_includes_deliver_gate(self) -> None:
         """PRD-CORE-062-FR01 / v26: render_closing_reminder carries deliver-gate language.
@@ -271,15 +265,16 @@ class TestProgressiveDisclosure:
         assert "trw_build_check" in result
         assert "acceptable-failure" in result
 
-    def test_render_codex_trw_section_includes_deliver_gate(self) -> None:
-        """Codex AGENTS.md TRW section must carry deliver-gate language.
+    def test_render_codex_instructions_includes_deliver_gate(self) -> None:
+        """Codex's instruction file must carry deliver-gate language.
 
-        Codex uses render_codex_trw_section for its AGENTS.md; without the gate
-        statement Codex agents can call trw_deliver without a passing build_check.
+        Without the gate statement Codex agents can call trw_deliver without a
+        passing build_check. PRD-CORE-301-FR02: the file is the shared block plus
+        codex framing.
         """
-        from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
+        from trw_mcp.state.claude_md._static_sections import render_codex_instructions
 
-        result = render_codex_trw_section()
+        result = render_codex_instructions()
 
         # PRD-QUAL-104: canonical bundled heading is title-cased "Deliver Gate".
         assert "Deliver Gate" in result
@@ -368,8 +363,8 @@ class TestProgressiveDisclosure:
             assert "rigid_tools:" not in content
             assert "flexible_tools:" not in content
 
-    def test_mark_promoted_still_fires(self, tmp_path: Path) -> None:
-        """CORE-093: learning promotion removed — sync produces static protocol."""
+    def test_sync_never_promotes_learnings(self, tmp_path: Path) -> None:
+        """PRD-CORE-341: a stored learning is neither promoted nor written by sync."""
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Promotion analytics test",
@@ -377,9 +372,9 @@ class TestProgressiveDisclosure:
             impact=0.9,
         )
         sync_result = instructions_sync_fn(scope="root")
-        # CORE-093: learnings_promoted always 0
-        assert sync_result["learnings_promoted"] == 0
-        claude_md = tmp_path / "CLAUDE.md"
+        # PRD-CORE-341: sync reports no promotion count; no learning reaches an instruction file
+        assert "learnings_promoted" not in sync_result
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content
 
@@ -433,7 +428,7 @@ class TestBehavioralProtocol:
         result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
 
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         # CORE-093: compact protocol with session boundaries reminder
         assert "trw:start" in content

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.models.config import resolve_client_profile, resolve_effort_adapter
+from trw_mcp.models.config import resolve_client_profile
 from trw_mcp.models.run import ComplexityClass, ComplexitySignals
 from trw_mcp.models.task_profile import resolve_task_profile
 from trw_mcp.models.task_profile_types import (
-    EffortAdapterStatus,
     ExecutionEffort,
     TaskProfile,
     TaskProfileOverrides,
@@ -164,40 +163,6 @@ def test_provisional_reasoning_effort_alias_serializes_canonically() -> None:
 
     assert loaded.recommended_effort == "medium"
     assert "reasoning_effort" not in loaded.model_dump()
-
-
-@pytest.mark.parametrize(
-    ("client_id", "recommended", "supported", "expected_value", "expected_status"),
-    [
-        ("codex", "minimal", None, "minimal", "mapped"),
-        ("codex", "max", None, "high", "clamped"),
-        ("codex", "max", frozenset({"low", "medium", "high", "xhigh"}), "xhigh", "clamped"),
-        ("claude-code", "minimal", None, "low", "clamped"),
-        ("claude-code", "high", None, "high", "mapped"),
-        ("claude-code", "max", frozenset({"low", "medium", "high", "xhigh", "max"}), "max", "mapped"),
-        ("opencode", "high", None, None, "unsupported"),
-        ("codex", "high", frozenset(), None, "unsupported"),
-        ("codex", "high", frozenset({"inherit"}), None, "unsupported"),
-        ("opencode", "inherit", None, None, "inherited"),
-    ],
-)
-def test_full_client_effort_matrix(
-    client_id: str,
-    recommended: ExecutionEffort,
-    supported: frozenset[ExecutionEffort] | None,
-    expected_value: str | None,
-    expected_status: EffortAdapterStatus,
-) -> None:
-    decision = resolve_effort_adapter(
-        client_id=client_id,
-        recommended_effort=recommended,
-        supported_efforts=supported,
-    )
-
-    assert decision.harness_value == expected_value
-    assert decision.status == expected_status
-    assert decision.recommended_effort == recommended
-    assert decision.adapter_id.startswith(client_id)
 
 
 def test_comprehensive_task_overrides_light_ceremony_depth() -> None:

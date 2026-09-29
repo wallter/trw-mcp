@@ -2,7 +2,7 @@
 
 Modularizes the two longest tool functions into focused, testable helpers:
 - perform_session_recalls: execute focused + baseline recalls, return merged results
-- run_auto_maintenance: auto-upgrade, stale run close, WAL checkpoint
+- run_auto_maintenance: version sentinel, stale run close, WAL checkpoint
 - check_delivery_gates: review/build gates, premature delivery guard
 - finalize_run: checkpoint + run status update (placeholder for future expansion)
 - step_log_session_event: log session_start event to events.jsonl
@@ -99,9 +99,6 @@ from trw_mcp.tools._delivery_helpers import (
 )
 from trw_mcp.tools._delivery_helpers import (
     copy_compliance_artifacts as copy_compliance_artifacts,
-)
-from trw_mcp.tools._delivery_helpers import (
-    finalize_run as finalize_run,
 )
 from trw_mcp.tools._session_recall_helpers import (
     _ANTIPATTERN_KEYWORDS as _ANTIPATTERN_KEYWORDS,
@@ -230,7 +227,7 @@ def run_auto_maintenance(
     trw_dir: Path,
     config: TRWConfig,
 ) -> AutoMaintenanceDict:
-    """Run auto-upgrade check, stale run close, and embeddings backfill.
+    """Run the version-sentinel check, stale run close, and embeddings backfill.
 
     Returns a dict with keys for each maintenance operation that produced results.
     All operations are fail-open — individual failures do not affect others.
@@ -242,22 +239,6 @@ def run_auto_maintenance(
         _check_version_sentinel(trw_dir, maintenance)
     except Exception:  # justified: fail-open, version sentinel check must not block session start
         logger.warning("maintenance_version_sentinel_failed", exc_info=True)
-
-    # Auto-upgrade check (PRD-INFRA-014)
-    try:
-        from trw_mcp.state.auto_upgrade import check_for_update
-
-        update_info = check_for_update()
-        if update_info.get("available"):
-            maintenance["update_advisory"] = str(update_info.get("advisory", ""))
-            if config.auto_upgrade:
-                from trw_mcp.state.auto_upgrade import perform_upgrade
-
-                upgrade_result = perform_upgrade(update_info)
-                if upgrade_result.get("applied"):
-                    maintenance["auto_upgrade"] = upgrade_result
-    except Exception:  # justified: fail-open, auto-upgrade must not block session start
-        logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
 
     # Auto-close stale runs.
     if config.run_auto_close_enabled:

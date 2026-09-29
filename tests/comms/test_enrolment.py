@@ -25,13 +25,17 @@ from tests._formation_test_support import (  # noqa: F401  (formation_env is a f
     write_pin,
 )
 from trw_mcp.comms import _identity
-from trw_mcp.comms._identity import (
-    IdentityError,
-    IdentityRefusal,
-    derive_group_id,
-    resolve_caller,
-)
+from trw_mcp.comms._identity import IdentityError, IdentityRefusal, derive_group_id
 from trw_mcp.formation import create, join, load
+
+
+def resolve_caller(ctx, *, trw_dir, project_root):
+    """Test-local: the removed wrapper asserted eligibility on the live snapshot."""
+    from trw_mcp.comms._identity import resolve_snapshot
+
+    snapshot = resolve_snapshot(ctx, trw_dir=trw_dir, project_root=project_root)
+    snapshot.assert_eligible()
+    return snapshot.binding
 
 
 def _bind(fixture: FormationFixture, monkeypatch: pytest.MonkeyPatch, pin_key: str):
@@ -180,7 +184,7 @@ def test_resolve_caller_accepts_no_caller_supplied_identity() -> None:
     """
     import inspect
 
-    params = set(inspect.signature(resolve_caller).parameters)
+    params = set(inspect.signature(_identity.resolve_snapshot).parameters)
     assert params == {"ctx", "trw_dir", "project_root"}
     forbidden = {"member_id", "group_id", "sender", "sender_member_id", "pin_key", "incarnation", "session_id"}
     assert not (params & forbidden)

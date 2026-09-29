@@ -27,7 +27,7 @@ from trw_mcp.state.analytics._stale_runs import (
     stale_advisory_first_time as stale_advisory_first_time,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter, model_to_dict
-from trw_mcp.tools import _orchestration_scaling as _scaling
+from trw_mcp.tools import _orchestration_init_profile as _init_profile
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 from trw_mcp.tools._orchestration_helpers import (
@@ -59,10 +59,7 @@ from trw_mcp.tools._orchestration_phase import (
 from trw_mcp.tools._orchestration_phase import (
     _compute_reversion_metrics as _compute_reversion_metrics,
 )
-from trw_mcp.tools._orchestration_phase import (
-    _compute_wave_progress as _compute_wave_progress,
-)
-from trw_mcp.tools._orchestration_status_assembly import assemble_status_result
+from trw_mcp.tools._orchestration_status_assembly import assemble_status_result, field_scope_label
 from trw_mcp.tools._profile_cli import surface_detail
 from trw_mcp.tools._status_feedback import status_feedback
 from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
@@ -96,9 +93,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
         advanced: dict[str, object] | str | None = None,
     ) -> dict[str, str]:
-        """Create a run directory and register it as the active run.
-
-        Use when starting a task, sprint, or investigation needing persistent
+        """Use when starting a task, sprint, or investigation needing persistent
         TRW state (run metadata, events, framework assets, active-run pinning).
 
         Input: task_name (required; [A-Za-z0-9][A-Za-z0-9_-]*, max 128 chars),
@@ -108,11 +103,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Output: run_id, run_path, trw_dir, phase, status, task_type, complexity class.
 
         Args:
-            advanced: rarely-needed settings, as an object (or JSON object
-                string). Accepted keys: artifacts, complexity_signals,
-                config_overrides, formation, join_formation, planning_mode,
-                protected, task_root, wave_manifest. An unknown key is rejected,
-                never ignored.
+            advanced: rare settings, as an object (or JSON string). Keys:
+                artifacts, complexity_signals, config_overrides, formation,
+                join_formation, protected, target_utc,
+                task_root. Unknown keys are rejected.
         """
 
         # ``advanced`` collapses seven rare flat parameters into one schema entry
@@ -122,10 +116,8 @@ def register_orchestration_tools(server: FastMCP) -> None:
         adv = parse_init_advanced(advanced)
         config_overrides = adv.config_overrides
         task_root = adv.task_root
-        wave_manifest = adv.wave_manifest
         complexity_signals = adv.complexity_signals
         protected = adv.protected
-        planning_mode = adv.planning_mode
 
         # Input validation (PRD-QUAL-042-FR01). ``task_name`` defaults to "" only
         # so FastMCP can inject ``ctx`` first (PRD-CORE-141 FR03); empty is rejected.
@@ -181,7 +173,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
                 gitignore_path.write_text(gitignore_content, encoding="utf-8")
 
         # Deploy frameworks and templates to .trw/
-        _deploy_frameworks(trw_dir)
+        deploy_result = _deploy_frameworks(trw_dir)
         _deploy_templates(trw_dir)
 
         # Resolve task_root: explicit param > config field > default "docs"
@@ -217,7 +209,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         # PRD-CORE-060/134 + PRD-CORE-184: complexity + task-type + task_profile
         # resolution (extracted to the scaling sibling to keep this module under
         # the 350 eLOC gate when SCALE-001 FR13 wiring landed).
-        prof = _scaling.resolve_init_profile(
+        prof = _init_profile.resolve_init_profile(
             config,
             task_name=task_name,
             objective=objective,
@@ -253,6 +245,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             task_profile=task_profile,
             artifacts=resolved_artifacts,
             protected=protected,
+            target_utc=adv.target_utc,
         )
         from trw_mcp.state._run_yaml_update import complete_run_yaml
 
@@ -277,6 +270,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             detection_method=detection.detection_method,
             rationale=detection.rationale,
             recall_policy=task_profile.recall_policy,
+            target_utc=adv.target_utc,
         )
 
         logger.info(
@@ -308,6 +302,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "task_type_rationale": detection.rationale,
         }
 
+        if deploy_result.get("status") == "skipped_stale_package":
+            result["framework_deploy"] = deploy_result["status"]
+            result["framework_nudge"] = deploy_result["nudge"]
+
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
         result["task_profile_hash"] = task_profile.profile_hash
@@ -321,38 +319,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
             apply_formation_init(adv.formation, adv.join_formation, run_root, ctx, result)
 
-        if wave_manifest is not None:
-            from trw_mcp.tools._orchestration_wave_manifest import create_wave_plan
-
-            wave_result = create_wave_plan(wave_manifest, run_root)
-            result["wave_plan_status"] = str(wave_result["status"])
-            result["wave_count"] = str(wave_result["wave_count"])
-            result["shard_count"] = str(wave_result["shard_count"])
-
         # PRD-CORE-184 FR01/FR02: surface an UP-FRONT REVIEW-mandatory signal
         # when the resolved run requires a REVIEW phase (STANDARD/COMPREHENSIVE).
         # The SessionStart hook may have advertised "Skip: REVIEW" before the
         # run complexity was known; this reconciles that at the trw_init boundary
         # by stating the run complexity overrides the session ceremony tier. This
         # is advisory only and does NOT alter the CORE-192 deliver gate (NFR05).
-        _scaling.apply_review_mandate_advisory(result, phase_requirements=prof.phase_requirements, config=config)
-
-        # PRD-SCALE-001 FR13/FR03: run the Cognitive Scaling Scout (honoring a
-        # --planning-mode override) and write meta/session_profile.yaml — the H2
-        # profile resolver reads it as the session-layer overlay on the next
-        # trw_session_start, making ceremony dynamic per task. Surfaces the mode
-        # + tier onto ``result``. Fail-open.
-        _scaling.run_scout_for_init(
-            config,
-            task_name=task_name,
-            objective=objective,
-            prd_scope=prd_scope,
-            run_root=run_root,
-            project_root=project_root,
-            trw_dir=trw_dir,
-            planning_mode=planning_mode,
-            result=result,
-        )
+        _init_profile.apply_review_mandate_advisory(result, phase_requirements=prof.phase_requirements, config=config)
 
         _apply_ceremony_status(
             cast("dict[str, object]", result),
@@ -371,8 +344,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         feedback: dict[str, object] | str = "",
         detail: str = "",
     ) -> TrwStatusDict | dict[str, object]:
-        """Report the active run's phase, progress and last activity.
-        delivery=<id>: a trw_deliver status. feedback={category, subject,
+        """delivery=<id>: a trw_deliver status. feedback={category, subject,
         message}: post a memo (never a false success). detail="surface":
         the resolved profile and tool surface.
 
@@ -401,13 +373,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
 
         state_data = reader.read_yaml(meta_path / "run.yaml")
 
-        wave_data: dict[str, object] = {}
-        wave_manifest_path = resolved_path / "shards" / "wave_manifest.yaml"
-        if not wave_manifest_path.exists():
-            wave_manifest_path = meta_path / "wave_manifest.yaml"
-        if wave_manifest_path.exists():
-            wave_data = reader.read_yaml(wave_manifest_path)
-
         # events.jsonl feeds only advisory analytics; run.yaml above is authoritative.
         # A torn concurrent append must drop one line, not abort status on every
         # resume, so use the resilient reader (as _do_reflect does), not read_jsonl.
@@ -417,7 +382,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         result: TrwStatusDict = assemble_status_result(
             state_data,
             events,
-            wave_data,
             resolved_path,
             reader,
             meta_path,
@@ -432,7 +396,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         logger.debug(
             "status_detail",
             run_dir=str(resolved_path),
-            wave_status=result.get("wave_status"),
         )
         logger.info("trw_status_read", run_id=result["run_id"])
 
@@ -441,7 +404,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             tool_name="STATUS",
             debug_event="status_nudge_injection_skipped",
         )
-
+        result["field_scope"] = field_scope_label(cast("dict[str, object]", result))  # PRD-CORE-305-FR06
         return result
 
     @server.tool(output_schema=None)
@@ -450,23 +413,20 @@ def register_orchestration_tools(server: FastMCP) -> None:
         run_path: str | None = None,
         message: str = "",
         shard_id: str | None = None,
-        wave_id: str | None = None,
         heartbeat: bool = False,
         pre_compact: bool = False,
         directive: str = "",
         context_anchor: str = "",
+        blocked_decision: dict[str, object] | None = None,
+        slice_done: str = "",
     ) -> dict[str, object]:
-        """Append a progress snapshot so work survives context compaction.
-
-        Use when a milestone is done; message required, blank no-ops.
+        """Use when a milestone is done; message required, blank no-ops.
         heartbeat=True refreshes a long pin. pre_compact=True takes a
         pre-compaction checkpoint (directive/context_anchor).
+        blocked_decision: record an ESCALATE no one can answer now; the loop
+        halts on it. slice_done: id of a finished PRD slice (feeds the ETA).
 
         Output: recorded, status, timestamp; reason+remedy if not.
-
-        Args:
-            heartbeat: pin-refresh mode.
-            pre_compact: pre-compact mode.
         """
         if heartbeat:
             return cast("dict[str, object]", compute_heartbeat_result(ctx, message))
@@ -480,8 +440,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
             run_path,
             message,
             shard_id,
-            wave_id,
             context=_build_call_context(ctx),
+            blocked_decision=blocked_decision,
+            slice_done=slice_done,
         )
 
         _apply_ceremony_status(

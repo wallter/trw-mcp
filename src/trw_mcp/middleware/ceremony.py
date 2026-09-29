@@ -397,6 +397,27 @@ def _is_reviewer_role() -> bool:
         return False
 
 
+def _session_start_unreachable() -> bool:
+    """True when this session cannot call ``trw_session_start``, the gate's only remedy (B71-112).
+
+    The reviewer role is the known case (:func:`_is_reviewer_role`). Beyond it, the SERVER-resolved
+    surface is asked directly, so any role or posture that leaves the tool off can never be handed a
+    remedy it cannot call. A client that dropped the tool on its own side (Claude Code after a
+    mid-session MCP reconnect, TB-25) is invisible here; the block message names the reconnect.
+
+    Fail-CLOSED like the role check: this predicate grants an exemption.
+    """
+    if _is_reviewer_role():
+        return True
+    try:
+        from trw_mcp.middleware.surface_authority import resolved_surface
+
+        return "trw_session_start" not in resolved_surface()
+    except Exception:  # justified: an exemption must never be granted by a fault
+        logger.warning("ceremony_surface_lookup_failed", op="ceremony", outcome="not_exempt", exc_info=True)
+        return False
+
+
 def _is_compaction_gate_required_for_session(session_id: str) -> bool:
     """Return True when this session still owes post-compaction recovery.
 
@@ -514,8 +535,8 @@ class CeremonyMiddleware(Middleware):
             compaction_gate_required
             and tool_name.startswith("trw_")
             and tool_name not in COMPACTION_GATE_EXEMPT_TOOLS
-            # PRD-SEC-015-FR05: a reviewer lane is exempt — see _is_reviewer_role.
-            and not _is_reviewer_role()
+            # PRD-SEC-015-FR05 / B71-112: a surface without the remedy is exempt.
+            and not _session_start_unreachable()
         ):
             blocked_count = _compaction_gate_attempts.get(session_id, 0) + 1
             _compaction_gate_attempts[session_id] = blocked_count
@@ -581,10 +602,11 @@ class CeremonyMiddleware(Middleware):
         # FR03: validate any operation-backed claim against the owner registry.
         _annotate_operation_backed_claim(tool_name, result)
 
-        # If session is NOT active (non-trw tool), prepend warning. A reviewer is
-        # exempt for the same reason as the gate above (PRD-SEC-015-FR05): the
-        # warning asks for a ceremony whose entry point it is denied.
-        if not is_session_active(session_id) and not _is_reviewer_role():
+        # If session is NOT active (non-trw tool), prepend warning. A surface
+        # without trw_session_start is exempt for the same reason as the gate
+        # above (PRD-SEC-015-FR05, B71-112): the warning asks for a ceremony
+        # whose entry point it is denied.
+        if not is_session_active(session_id) and not _session_start_unreachable():
             warning_block = TextContent(type="text", text=CEREMONY_WARNING)
             result.content.insert(0, warning_block)
             logger.debug("ceremony_warning_injected", op="ceremony", session_id=session_id, tool=tool_name)

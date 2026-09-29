@@ -119,14 +119,29 @@ def hash_file_path(file_path: str) -> str:
     return hashlib.sha256(file_path.encode("utf-8")).hexdigest()[:_PATH_HASH_CHARS]
 
 
+def _staleness_fields(commits_behind: int | None, target_changed: bool | None) -> dict[str, object]:
+    """The stale-hint fields that are set, and nothing for a fresh hint."""
+    fields: dict[str, object] = {}
+    if commits_behind is not None:
+        fields["sidecar_commits_behind"] = commits_behind
+    if target_changed is not None:
+        fields["target_changed_since_sidecar"] = target_changed
+    return fields
+
+
 def emit_hint_delivered(
     *,
     tier: str,
     distill_status: str,
     file_path: str,
     client: str | None = None,
+    sidecar_commits_behind: int | None = None,
+    target_changed_since_sidecar: bool | None = None,
 ) -> None:
     """Emit the PRD-CORE-231-FR01 ``hint_delivered`` event.
+
+    The two staleness fields are recorded only for a ``hint_available_stale``
+    hint (``hint_sidecar_ancestor_enabled``); every other record is unchanged.
 
     Fired for every ELIGIBLE edit — one where the feature was entitlement-
     allowed, i.e. ``distill_status`` resolved to anything other than
@@ -147,6 +162,7 @@ def emit_hint_delivered(
                 "distill_status": distill_status,
                 "eligible": True,
                 "file_path_hash": hash_file_path(file_path),
+                **_staleness_fields(sidecar_commits_behind, target_changed_since_sidecar),
             },
         )
     except Exception as exc:

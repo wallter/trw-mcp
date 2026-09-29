@@ -47,15 +47,16 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal, get_args
 
+from trw_mcp.dispatch._claude_context import CLAUDE_CONTEXT_ARGV
 from trw_mcp.dispatch._client_spec_types import REVIEWER_ARGV_PLACEHOLDERS as REVIEWER_ARGV_PLACEHOLDERS
 from trw_mcp.dispatch._client_spec_types import ClientSpec as ClientSpec
 from trw_mcp.dispatch._client_spec_types import ClientVerification as ClientVerification
 from trw_mcp.dispatch._client_spec_types import DispatchPosture as DispatchPosture
+from trw_mcp.dispatch._client_spec_types import OAuthLogin as OAuthLogin
 from trw_mcp.dispatch._client_spec_types import OutputShape as OutputShape
 from trw_mcp.dispatch._client_spec_types import SandboxPosture as SandboxPosture
 from trw_mcp.dispatch._client_spec_types import SubAgentSupport as SubAgentSupport
 from trw_mcp.dispatch._client_spec_types import UnknownClientError as UnknownClientError
-from trw_mcp.dispatch._client_spec_types import VerificationMethod as VerificationMethod
 
 __all__ = [
     "CLIENT_SPECS",
@@ -69,7 +70,6 @@ __all__ = [
     "SandboxPosture",
     "SubAgentSupport",
     "UnknownClientError",
-    "VerificationMethod",
     "client_spec_for",
 ]
 
@@ -92,26 +92,31 @@ _LIVE_2026_06_21 = "argv flags verified live on this box 2026-06-21; binary and 
 CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # claude -p "<prompt>" --output-format json  -> {.result: str}
     #
-    # Isolation keeps USER-level auth but drops this project's ceremony:
-    #   --setting-sources user                   -> load only user settings
+    # Isolation keeps USER-level auth and project instructions, drops hooks:
+    #   CLAUDE_CONTEXT_ARGV                      -> user+project settings, no hooks
     #   --strict-mcp-config + empty --mcp-config -> no MCP servers, so the child
     #                                               cannot recurse into the host
     #                                               trw MCP.
     # --bare was REJECTED: it also drops user login ("Not logged in").
     #
-    # read_only: in headless -p mode claude denies edits by default (there is no
-    # approval prompt to satisfy), so read_only=True adds nothing. read_only=False
+    # read_only: --permission-mode plan. Loading the project setting source also
+    # loads its permissions.allow rules, which could pre-approve edits/Bash, so
+    # headless denial alone is no longer enough; plan mode reads but never writes
+    # (live probe 2026-09-26: read succeeded, write refused). Plan mode still runs
+    # classifier-approved Bash, so --tools also REPLACES the built-in set with
+    # Read,Grep,Glob (the reviewer posture's bound). read_only=False
     # must EXPLICITLY opt in, otherwise --allow-writes would be a silent no-op.
     #
     # sandbox=none: claude exposes no sandbox flag this layer uses. Isolation
-    # limitation: the child still READS the project CLAUDE.md it is pointed at
+    # limitation: the child still READS the project AGENTS.md it is pointed at
     # (intentional — it must see the code it audits).
     "claude": ClientSpec(
         client_id="claude",
         binary="claude",
         base_argv=("claude",),
         structured_output_argv=("--output-format", "json"),
-        isolation_argv=("--setting-sources", "user", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'),
+        isolation_argv=(*CLAUDE_CONTEXT_ARGV, "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'),
+        read_only_argv=("--permission-mode", "plan", "--tools", "Read,Grep,Glob"),
         # REVIEWER POSTURE (OD-6 / PRD-SEC-015-FR06). Emitted INSTEAD of
         # isolation_argv, which is why it repeats --setting-sources/--strict-mcp-config
         # rather than adding to them: two --mcp-config values on one command line is
@@ -133,8 +138,7 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # actual control per PRD-SEC-015; the codex allowlist below is defense in depth
         # that claude simply does not get). Do not "fix" this by adding --allowedTools.
         reviewer_argv_template=(
-            "--setting-sources",
-            "user",
+            *CLAUDE_CONTEXT_ARGV,
             "--strict-mcp-config",
             "--mcp-config",
             '{"mcpServers":{"trw":{"command":"{mcp_command}","args":{mcp_args},'
@@ -161,14 +165,13 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # per-server key names — only the env payload is dropped, so the child
         # gets an ORDINARY TRW session instead of the bounded reviewer surface.
         #
-        # --setting-sources user and --strict-mcp-config are BOTH retained, and
+        # CLAUDE_CONTEXT_ARGV and --strict-mcp-config are BOTH retained, and
         # that is what keeps this an opt-in to ONE server rather than to the host:
-        # the child still loads no project settings and no hooks, and the only
+        # the child still runs no project hooks, and the only
         # MCP server it sees is the one rendered here — this repository's
         # .mcp.json cannot add one or replace ours.
         trw_access_argv_template=(
-            "--setting-sources",
-            "user",
+            *CLAUDE_CONTEXT_ARGV,
             "--strict-mcp-config",
             "--mcp-config",
             # The env payload is the nested-launch marker and nothing else: it
@@ -198,7 +201,7 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             "AWS_REGION",
             "AWS_PROFILE",
         ),
-        instruction_files=("CLAUDE.md",),
+        oauth_login=OAuthLogin(".claude/.credentials.json", "claude_ai_oauth"),
         profile_id="claude-code",
         sub_agents="yes",
         sandbox="none",
@@ -332,6 +335,11 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         read_only_argv=("--sandbox", "read-only"),
         allow_writes_argv=("--sandbox", "workspace-write"),
         model_flag="--model",
+        # Effort is a config override, not a flag: ``-c model_reasoning_effort="high"``
+        # (codex-cli 0.158.0: `-c` is the documented config override, and its models cache lists
+        # low|medium|high|xhigh|max per model). Emitted by TRW, so user ``-c`` stays forbidden.
+        effort_config_key="model_reasoning_effort",
+        effort_levels=("low", "medium", "high", "xhigh", "max"),
         version_argv=("--version",),
         output_shape="json_lines",
         # forbidden_tokens (REPAIR-DESIGN-01): ``-c``/``--config`` set ANY nested
@@ -344,7 +352,7 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # trw-loop). ``-s`` stays client-specific: it means a session to opencode.
         forbidden_tokens=frozenset({"-c", "--config", "-s", "-a"}),
         credential_env=("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-        instruction_files=("AGENTS.md",),
+        oauth_login=OAuthLogin(".codex/auth.json", "openai_tokens"),
         profile_id="codex",
         sub_agents="yes",
         sandbox="enforced",
@@ -402,6 +410,15 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # read, which is the fail-closed direction.
         confined_read_only_argv=("--dangerously-skip-permissions",),
         host_confinement=True,
+        # MEASURED 2026-09-26 (agy 1.2.11, Darwin 25.5.0; corrects the 2026-09-16 note in
+        # _enforcement_layers that headless agy spawns no MCP server): headless agy DOES spawn
+        # the global ~/.gemini/config/mcp_config.json `trw` server, and inside the confined
+        # read-only lane it listed the FULL tool set (trw_learn, trw_deliver, ...), which
+        # reach the memory daemon outside the write denial. That entry sets no env, so the
+        # server inherits agy's: with TRW_SURFACE_ROLE=reviewer on agy, the same confined run
+        # listed only mcp_trw_trw_recall and mcp_trw_trw_code and reported trw_learn "not
+        # available". A reviewer POSTURE for agy is a separate, operator-held decision.
+        read_only_env={"TRW_SURFACE_ROLE": "reviewer"},
         # isolated_review stays unset (PRD-CORE-297-FR05 probe, agy 1.2.8, 2026-09-23).
         # With the lane's temp HOME as the ONE writable path, the confined preflight
         # passed (exit 0, "No MCP servers configured."), but the run failed: that HOME
@@ -426,7 +443,6 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # is NOT a remnant of the removed `gemini` client profile. Do not delete
         # it in a gemini sweep.
         credential_env=("GEMINI_API_KEY", "ANTIGRAVITY_API_KEY"),
-        instruction_files=("AGENTS.md",),
         profile_id="antigravity-cli",
         sub_agents="yes",
         # CORRECTED 2026-09-16 from "enforced" (PRD-CORE-277). `agy --help` describes
@@ -479,7 +495,9 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         cwd_flag="--dir",
         version_argv=("--version",),
         output_shape="ndjson_events",
-        # opencode is multi-provider — forward all three provider keys. The two
+        # opencode is multi-provider — forward all three provider keys. Its google
+        # provider reads GOOGLE_GENERATIVE_AI_API_KEY, not GEMINI_API_KEY; a host
+        # that exports only GEMINI_API_KEY is covered by _env's provider synonyms. The two
         # OPENCODE_CONFIG* variables are config-LOCATION pointers, not secrets:
         # without them the child always loads the repo's opencode.json (OpenCode's
         # loader order is global -> OPENCODE_CONFIG -> project -> OPENCODE_CONFIG_DIR,
@@ -488,11 +506,10 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         credential_env=(
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
+            "GOOGLE_GENERATIVE_AI_API_KEY",
             "OPENCODE_CONFIG",
             "OPENCODE_CONFIG_DIR",
         ),
-        instruction_files=("AGENTS.md",),
         profile_id="opencode",
         sub_agents="yes",
         sandbox="none",
@@ -526,6 +543,10 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         prompt_flag="-p",
         version_argv=("--version",),
         forbidden_tokens=frozenset({"-f", "--force", "--yolo", "--approve-mcps"}),
+        # MEASURED 2026-09-26: the installed build 2025.09.12-4852336 has no --sandbox at all, and its
+        # `-p` help reads "Has access to all tools, including write and bash", so a read-only run is
+        # refused (sandbox_unsupported), never downgraded; `cursor-agent update|upgrade` is its fix.
+        install_hint="run `cursor-agent update` (builds before --sandbox cannot run read-only)",
         # The reference documents --output-format text|json|stream-json and names
         # `json` separately from `stream-json`, so a single document is the shape
         # it implies. Inferred from the page, not observed: no cursor binary runs
@@ -535,7 +556,6 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # No provider credential variable appears in the cited reference, so none
         # is forwarded. Cursor authenticates through its own login flow.
         credential_env=(),
-        instruction_files=("AGENTS.md",),
         profile_id="cursor-cli",
         # The vendor documents cloud/background agents, which is not a headless
         # sub-agent surface TRW can drive through a one-shot subprocess. Recorded
@@ -579,6 +599,9 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         client_id="copilot",
         binary="copilot",
         base_argv=("copilot",),
+        # MEASURED 2026-09-26: the only `copilot` on PATH here was the VS Code Copilot Chat shim,
+        # which answers every argv with "Cannot find GitHub Copilot CLI" and an install prompt.
+        install_hint="install it: `npm install -g @github/copilot` (the VS Code Copilot Chat shim is not the CLI)",
         structured_output_argv=("--output-format", "json"),
         allow_writes_argv=("--allow-all-tools",),
         model_flag="--model",
@@ -663,7 +686,16 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         structured_output_argv=("--output-format", "json"),
         # dontAsk IS the read-only denial, proven live 2026-09-19 (W3 probe 3): a
         # dontAsk turn asked to write ends stopReason=cancelled with nothing written.
-        read_only_argv=("--permission-mode", "dontAsk"),
+        # dontAsk also cancels every MCP call, so the allow rule re-admits the trw
+        # server's tools ONLY (grok names them trw__<tool>). Measured grok 1.0.34
+        # 2026-09-26: no rule or MCPTool(zzz*) -> trw_recall cancelled; MCPTool(trw__*)
+        # -> end_turn with the server's answer; a write prompt under the same argv ->
+        # cancelled, no file. read_only_env bounds what that admits (below).
+        read_only_argv=("--permission-mode", "dontAsk", "--allow", "MCPTool(trw__*)"),
+        # grok's MCP servers inherit its env: measured 2026-09-26, the child's tool search
+        # finds trw_code and trw_recall with TRW_SURFACE_ROLE=reviewer and all 13 without.
+        # As for agy this is the mcp_role layer, never a reviewer posture.
+        read_only_env={"TRW_SURFACE_ROLE": "reviewer"},
         # `auto`, NOT `acceptEdits`: headless `-p` has nobody to approve an edit, so
         # acceptEdits denies exactly like dontAsk. Proven live 2026-09-19 (W3 probe): the
         # same create-a-file prompt under acceptEdits ends stopReason=cancelled with no
@@ -696,7 +728,6 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # already on the dispatch base allowlist. XAI_API_KEY is a CI fallback
         # only and is not required; do not forward it (session token wins anyway).
         credential_env=(),
-        instruction_files=("AGENTS.md",),
         profile_id="grok",
         # --no-subagents is on every dispatched command line, so TRW's own runs
         # never have them, whatever the binary supports (W1 audit SF3).

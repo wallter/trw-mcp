@@ -31,6 +31,14 @@ from typing import Final
 
 import pytest
 
+
+def render_message(key, profile, **kwargs):
+    """Test-local: the removed wrapper was ``get_message(key, profile=profile)``."""
+    from trw_mcp.prompts.messaging import get_message
+
+    return get_message(key, profile=profile, **kwargs)
+
+
 pytestmark = pytest.mark.unit
 
 # Claude Code's documented truncation point for server instructions and tool
@@ -44,7 +52,6 @@ INSTRUCTIONS_CEILING_CHARS: Final[int] = 1_900
 
 def _rendered(client_id: str) -> str:
     from trw_mcp.models.config._profiles import resolve_client_profile
-    from trw_mcp.prompts.messaging import render_message
 
     return render_message("server_instructions", resolve_client_profile(client_id))
 

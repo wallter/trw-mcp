@@ -336,7 +336,7 @@ CURRENT_TRANSPORT_AUTHORITY: tuple[TransportAuthoritySurface, ...] = (
         "single-source client retry-once-then-record-gap protocol injected into every bundled agent",
     ),
     TransportAuthoritySurface(
-        "current operator documentation", "CLAUDE.md", "documents the stdio-only transport architecture"
+        "current operator documentation", "AGENTS.md", "documents the stdio-only transport architecture"
     ),
 )
 

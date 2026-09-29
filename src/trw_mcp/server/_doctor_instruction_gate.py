@@ -21,11 +21,30 @@ from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
 # An exclusion set is the mechanism, not documentation: without one, a surface
 # added to the canonical registry is silently skipped here and the omission is
 # indistinguishable from "nothing to check" (wiring-defect pattern P11).
-_GATE_SCAN_EXCLUSIONS: dict[str, str] = {
-    # Cursor rule files carry frontmatter-scoped guidance, not the ceremony block;
-    # the deliver gate reaches cursor clients through AGENTS.md.
-    ".cursor/rules/trw-ceremony.mdc": "rule file, not a ceremony-block carrier",
-}
+#
+# Empty on purpose. It used to exclude .cursor/rules/trw-ceremony.mdc on the premise
+# that the gate reached cursor through AGENTS.md, but a cursor-ide install writes no
+# AGENTS.md: the .mdc is its only carrier, so it was never checked
+# (CLIENT-SURFACE DOCTOR-CURSOR-IDE-CARRIER-UNSCANNED).
+_GATE_SCAN_EXCLUSIONS: dict[str, str] = {}
+
+
+def _whole_file_carriers() -> frozenset[str]:
+    """Carriers TRW writes whole (no managed-block markers): the gate is checked in the full text.
+
+    Every builtin profile's ``instruction_path`` that is not a shared root file, plus the
+    registry's generated per-client files, so a new profile's carrier is scanned by
+    construction.
+    """
+    from trw_mcp.client_profiles.catalog import (
+        _ROOT_INSTRUCTION_SURFACES,
+        _generated_instruction_relpaths,
+    )
+    from trw_mcp.models.config._profiles import builtin_client_ids, resolve_client_profile
+
+    roots = {relpath for _flag, relpath in _ROOT_INSTRUCTION_SURFACES}
+    own = {resolve_client_profile(cid).write_targets.instruction_path for cid in builtin_client_ids()}
+    return frozenset((own | set(_generated_instruction_relpaths())) - roots)
 
 
 def _instruction_surfaces() -> tuple[str, ...]:
@@ -38,13 +57,9 @@ def _instruction_surfaces() -> tuple[str, ...]:
     the registry is scanned here, or it appears in ``_GATE_SCAN_EXCLUSIONS`` with
     a stated reason. Nothing can be omitted silently.
     """
-    from trw_mcp.client_profiles.catalog import (
-        _ROOT_INSTRUCTION_SURFACES,
-        _generated_instruction_relpaths,
-    )
+    from trw_mcp.client_profiles.catalog import _ROOT_INSTRUCTION_SURFACES
 
-    relpaths = {relpath for _flag, relpath in _ROOT_INSTRUCTION_SURFACES}
-    relpaths |= set(_generated_instruction_relpaths())
+    relpaths = {relpath for _flag, relpath in _ROOT_INSTRUCTION_SURFACES} | _whole_file_carriers()
     return tuple(sorted(relpaths - set(_GATE_SCAN_EXCLUSIONS)))
 
 
@@ -67,16 +82,18 @@ def instruction_gate_report(target: Path) -> tuple[str, str]:
     present: list[str] = []
     missing_gate: list[str] = []
     pointers: list[str] = []  # PRD-CORE-203 FR07: single-source pointers left un-clobbered
+    whole_file = _whole_file_carriers()
     for rel in _instruction_surfaces():
         path = target / rel
         if not path.is_file():
             continue
         present.append(rel)
-        # PRD-CORE-203 FR07: a single-source pointer (e.g. CLAUDE.md == @AGENTS.md)
+        # PRD-CORE-203 FR07: a single-source pointer (a file that only imports another, e.g. `@AGENTS.md`)
         # correctly carries no inline TRW block — report it as un-clobbered and skip
         # the deliver-gate assertion (the gate lives in the pointed-to file).
         classification = classify_instruction_file(path)
-        if classification.kind is InstructionFileClass.POINTER:
+        # A carrier TRW writes whole is never a legitimate pointer: it must state the gate itself.
+        if classification.kind is InstructionFileClass.POINTER and rel not in whole_file:
             targets = ", ".join(classification.import_targets)
             pointers.append(f"{rel} -> {targets}" if targets else rel)
             continue
@@ -86,6 +103,8 @@ def instruction_gate_report(target: Path) -> tuple[str, str]:
             missing_gate.append(rel)
             continue
         block = _extract_trw_block(content)
+        if block is None and rel in whole_file:
+            block = content  # TRW owns the whole file: the gate must be in it.
         if block is None:
             continue  # no TRW-managed block in this surface — nothing to assert.
         # An ``@`` import is not followed: the gate must be stated inline, so a

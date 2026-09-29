@@ -13,6 +13,8 @@ from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.fixture(autouse=True)
 def _restore_structlog_config() -> object:

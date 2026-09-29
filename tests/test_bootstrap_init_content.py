@@ -14,6 +14,8 @@ from trw_mcp.models.config import TRWConfig
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 from .test_bootstrap_update_core import resolve_instruction_text
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,7 +69,7 @@ class TestInitProjectStructure:
             ".trw/.gitignore",
             ".claude/settings.json",
             ".mcp.json",
-            "CLAUDE.md",
+            "AGENTS.md",
             "REVIEW.md",
         ]
         for f in expected_files:
@@ -148,7 +150,7 @@ class TestIdempotency:
         init_project(fake_git_repo)
 
         # Modify a file
-        claude_md = fake_git_repo / "CLAUDE.md"
+        claude_md = fake_git_repo / "AGENTS.md"
         claude_md.write_text("modified content", encoding="utf-8")
 
         result2 = init_project(fake_git_repo, force=True)
@@ -256,26 +258,30 @@ class TestContent:
         assert "command" in data["mcpServers"]["trw"]
         assert "args" in data["mcpServers"]["trw"]
 
-    def test_claude_md_has_protocol(self, fake_git_repo: Path) -> None:
+    def test_agents_md_has_protocol(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
-        claude_md = fake_git_repo / "CLAUDE.md"
+        assert not (fake_git_repo / "CLAUDE.md").exists()  # TRW 8.0 writes no CLAUDE.md
+        claude_md = fake_git_repo / "AGENTS.md"
 
-        content = claude_md.read_text(encoding="utf-8")
+        # PRD-CORE-341: AGENTS.md links the protocol, which lives in .trw/INSTRUCTIONS.md.
+        content = resolve_instruction_text(claude_md)
         assert "trw_session_start" in content
         assert "trw_deliver" in content
 
-    def test_claude_md_carries_the_protocol_inline(self, fake_git_repo: Path) -> None:
-        """PRD-QUAL-143-FR01: the block is inline, with no ``@`` import or sidecar.
+    def test_agents_md_links_the_protocol_file(self, fake_git_repo: Path) -> None:
+        """PRD-CORE-341-FR02/FR03: AGENTS.md holds the link; ``.trw/INSTRUCTIONS.md`` holds the protocol.
 
         ``ide`` is explicit because ``detect_ide`` reads ``shutil.which("cursor")``,
         a machine-global signal.
         """
         init_project(fake_git_repo, ide="claude-code")
-        raw = (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
+        raw = (fake_git_repo / "AGENTS.md").read_text(encoding="utf-8")
 
-        assert [ln for ln in raw.splitlines() if ln.strip().startswith("@")] == []
-        assert "trw_session_start" in raw
-        assert not (fake_git_repo / ".trw" / "INSTRUCTIONS.md").exists()
+        assert [ln.strip() for ln in raw.splitlines() if ln.strip().startswith("@")] == ["@.trw/INSTRUCTIONS.md"]
+        assert "trw_session_start" not in raw
+        instructions = (fake_git_repo / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        assert instructions.startswith("<!-- TRW AUTO-GENERATED — do not edit.")
+        assert "trw_session_start" in instructions
 
     def test_framework_md_is_v24(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
@@ -426,7 +432,6 @@ class TestSkills:
         "trw-assess",
         "trw-audit",
         "trw-ceremony-guide",
-        "trw-code-search",
         "trw-commit",
         "trw-delegate",
         "trw-deliver",
@@ -446,8 +451,6 @@ class TestSkills:
         "trw-reflect",
         "trw-security-check",
         "trw-self-review",
-        "trw-sprint-finish",
-        "trw-sprint-init",
         "trw-test-strategy",
     ]
 
@@ -636,49 +639,52 @@ def _all_clients() -> list[str]:
 
 
 def _declared_carrier_clients() -> list[str]:
-    """Clients whose ``instruction_path`` is their carrier.
-
-    claude-code declares ``.claude/INSTRUCTIONS.md``, which no writer produces
-    (see ``client_profiles/catalog.py``); its carrier is CLAUDE.md, asserted by
-    ``test_claude_code_target_gets_the_inline_block``.
-    """
-    return [client for client in _all_clients() if client != "claude-code"]
+    """Clients whose ``instruction_path`` is their carrier (all of them since TRW 8.0)."""
+    return _all_clients()
 
 
-class TestEveryClientGetsAnInlineBlock:
-    """PRD-QUAL-143-FR01: the TRW block is inline for every client.
+#: Clients whose shared AGENTS.md carries the one TRW import (PRD-CORE-341-FR04);
+#: every other client reads a dedicated carrier and gets no import there.
+_AGENTS_IMPORT_CLIENTS = frozenset({"claude-code", "cursor-cli", "grok"})
 
-    The ``.trw/INSTRUCTIONS.md`` sidecar and its ``@`` import are retired, so no
-    install may emit an import, and each client's declared carrier must hold the
-    protocol and the deliver gate itself.
+
+class TestEveryClientGetsItsProtocolCarrier:
+    """PRD-CORE-341-FR04: each client's declared carrier reaches the protocol and the deliver gate.
+
+    claude-code, cursor-cli and grok carry exactly one ``@.trw/INSTRUCTIONS.md``
+    import in AGENTS.md (the protocol lives in that file); every other client
+    reads its own carrier and gets no import in the shared AGENTS.md.
     """
 
     @staticmethod
     def _shape(root: Path) -> tuple[list[str], bool]:
-        text = (root / "CLAUDE.md").read_text(encoding="utf-8")
+        path = root / "AGENTS.md"
+        if not path.exists():
+            return [], False
+        text = path.read_text(encoding="utf-8")
         imports = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("@")]
         return imports, "trw_session_start" in text
 
-    def test_claude_code_target_gets_the_inline_block(self, fake_git_repo: Path) -> None:
+    def test_claude_code_target_gets_the_link_and_the_instructions_file(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo, ide="claude-code")
 
         from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
 
         imports, inline = self._shape(fake_git_repo)
-        assert imports == []
-        assert inline
-        assert DELIVER_GATE_PHRASE in (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
-        assert not (fake_git_repo / ".trw" / "INSTRUCTIONS.md").exists()
+        assert imports == ["@.trw/INSTRUCTIONS.md"]
+        assert not inline, "AGENTS.md carries the link, not the protocol"
+        instructions = (fake_git_repo / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        assert "trw_session_start" in instructions
+        assert DELIVER_GATE_PHRASE in instructions
 
     @pytest.mark.parametrize("client", _all_clients())
-    def test_no_client_gets_an_import(self, fake_git_repo: Path, client: str) -> None:
-        """A codex-only selection writes no CLAUDE.md at all (PRD-CORE-262-FR05)."""
+    def test_only_link_clients_get_an_import(self, fake_git_repo: Path, client: str) -> None:
+        """claude-code, cursor-cli and grok get exactly one ``@`` import in AGENTS.md; no other client gets any."""
         init_project(fake_git_repo, ide=client)
 
-        if not (fake_git_repo / "CLAUDE.md").exists():
-            return
         imports, _ = self._shape(fake_git_repo)
-        assert imports == [], f"{client} got {imports}"
+        expected = ["@.trw/INSTRUCTIONS.md"] if client in _AGENTS_IMPORT_CLIENTS else []
+        assert imports == expected, f"{client} got {imports}"
 
     @pytest.mark.parametrize("client", _declared_carrier_clients())
     def test_declared_instruction_surface_carries_the_protocol(self, fake_git_repo: Path, client: str) -> None:
@@ -762,7 +768,7 @@ class TestEveryClientGetsAnInlineBlock:
         imports, inline = self._shape(fake_git_repo)
         assert imports == [], "post-install .claude/ must not add an import"
         # No inline block either. cursor-ide's protocol lives in the file Cursor
-        # documents and always applies; the CLAUDE.md copy was redundant. The
+        # documents and always applies; an AGENTS.md copy would be redundant. The
         # distinction that unblocked this — "chose cursor-ide" vs "`which cursor`
         # succeeded" — is now expressible because install records only an explicit
         # --ide or a client with an on-disk marker.

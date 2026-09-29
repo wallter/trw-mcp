@@ -49,6 +49,8 @@ class TestCollectLearningsEdgeCases:
     """
 
     def test_since_filter_excludes_older_entries(self, tmp_path: Path) -> None:
+        from trw_memory.lifecycle.correction import revision_of
+
         from trw_mcp.export import export_data
         from trw_mcp.state._store_selection import selected_store
 
@@ -60,7 +62,9 @@ class TestCollectLearningsEdgeCases:
         old_entry = store.get("L-old")
         assert old_entry is not None
         store.apply_synced(
-            namespace, old_entry.model_copy(update={"created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)})
+            namespace,
+            old_entry.model_copy(update={"created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)}),
+            if_revision=revision_of(old_entry),
         )
 
         result = export_data(project, "learnings", since="2026-02-01")
@@ -70,6 +74,8 @@ class TestCollectLearningsEdgeCases:
         assert learnings[0]["summary"] == "New entry"
 
     def test_since_filter_includes_entries_on_boundary(self, tmp_path: Path) -> None:
+        from trw_memory.lifecycle.correction import revision_of
+
         from trw_mcp.export import export_data
         from trw_mcp.state._store_selection import selected_store
 
@@ -80,7 +86,9 @@ class TestCollectLearningsEdgeCases:
         entry = store.get("L-boundary")
         assert entry is not None
         store.apply_synced(
-            namespace, entry.model_copy(update={"created_at": datetime(2026, 2, 1, tzinfo=timezone.utc)})
+            namespace,
+            entry.model_copy(update={"created_at": datetime(2026, 2, 1, tzinfo=timezone.utc)}),
+            if_revision=revision_of(entry),
         )
 
         result = export_data(project, "learnings", since="2026-02-01")

@@ -1,14 +1,22 @@
-"""``trw_code``: code search, symbol lookup and before-edit hints in one tool (PRD-CORE-300-FR12).
+"""``trw_code``: symbol lookup and before-edit hints in one tool (PRD-CORE-300-FR12).
 
-Three modes over two engines:
+Two modes over two engines:
 
-* ``search`` / ``symbol`` read the local code index that ``trw-mcp code index``
-  builds (``code_search.code_search`` / ``code_search.code_symbol``). A query
-  never builds or rewrites the index (PRD-CORE-300-FR15).
+* ``symbol`` reads the local code index that ``trw-mcp code index`` builds
+  (``code_search.code_symbol``). A query never builds or rewrites the index
+  (PRD-CORE-300-FR15).
 * ``hint`` runs ``compute_before_edit_hint`` once per listed file: prior
   learnings for the file, plus the trw-distill sidecar half when a sidecar
   exists. Without trw-distill the learnings half still returns and
-  ``distill_status`` says why there is no sidecar hint.
+  ``distill_status`` says why there is no sidecar hint. ``hint`` is the
+  default mode: it needs no query, matches the pre-edit workflow every
+  install's hooks already call, and covers nearly all of this tool's live
+  usage (retired ``search`` accounted for the rest).
+
+``mode="search"`` was retired in 8.0 (full-text lexical search over the local
+index): agents get more current results from ``rg``/``grep`` for text search
+or the ``trw-distill`` CLI for codebase intelligence, and it saw negligible use
+next to those. The mode now returns an actionable error rather than results.
 
 The tool is registered in every install. Nothing here imports the proprietary
 package; the sidecar is read through its envelope contract.
@@ -35,22 +43,28 @@ logger = structlog.get_logger(__name__)
 #: sidecar lookup (two git subprocesses), so an unbounded list is a slow call.
 MAX_HINT_FILES: int = 25
 
-_MODES: tuple[str, ...] = ("search", "symbol", "hint")
+_MODES: tuple[str, ...] = ("symbol", "hint")
+
+#: mode="search" was retired in 8.0; this is the actionable error it now returns
+#: instead of a ranking, naming its replacement.
+_SEARCH_RETIRED_ERROR: str = (
+    "trw_code search was retired in 8.0; use `rg`/`grep` for text search, or `trw-distill` CLI verbs "
+    "for codebase intelligence."
+)
 
 
 def _refuse(error: str) -> dict[str, Any]:
     return {"status": "failed", "error": error}
 
 
-def _search(mode: str, query: str, repo_root: str | None, top_k: int, path: str | None) -> dict[str, Any]:
+def _symbol(query: str, repo_root: str | None, top_k: int, path: str | None) -> dict[str, Any]:
     if not query.strip():
-        return _refuse(f"mode={mode!r} needs query: the search text or the symbol name")
+        return _refuse("mode='symbol' needs query: the symbol name")
     from trw_mcp.state._paths import resolve_project_root
-    from trw_mcp.tools.code_search import code_search, code_symbol
+    from trw_mcp.tools.code_search import code_symbol
 
     root = repo_root or str(resolve_project_root())
-    run = code_search if mode == "search" else code_symbol
-    return run(repo_root=root, query=query, top_k=top_k, path=path)
+    return code_symbol(repo_root=root, query=query, top_k=top_k, path=path)
 
 
 def _one_hint(file_path: str, repo_root: str | None, client_tier: str | None, reviewer: bool) -> dict[str, Any]:
@@ -112,7 +126,7 @@ def register_code_tools(server: FastMCP) -> None:
 
     @server.tool(name="trw_code", output_schema=None)
     def trw_code(
-        mode: str = "search",
+        mode: str = "hint",
         query: str = "",
         files: str | list[str] | None = None,
         repo_root: str | None = None,
@@ -120,24 +134,23 @@ def register_code_tools(server: FastMCP) -> None:
         path: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Search indexed code, find a symbol's definition, or get before-edit hints.
+        """Use when you need a symbol's definition or a file's before-edit context,
+        without grepping the tree or reading whole files.
 
-        Use when you need code context without grepping the tree or reading
-        whole files, or before editing a file.
-
-        Output: search/symbol give status and results (path, line_range,
-        symbol, snippet); hint gives hints, one per file, each with learnings
-        and a distill_status.
+        Output: symbol returns status and results (path, line_range, symbol,
+        snippet); hint returns one hint per file with learnings and distill_status.
 
         Args:
-            mode: "search" (query is full text), "symbol" (query is a name;
-                exact matches first) or "hint".
+            mode: "hint" (default) or "symbol" (exact matches first).
+                "search" is retired -- use `rg`/`grep` or `trw-distill`.
             files: hint mode: one path or a list.
             repo_root: defaults to the project root.
-            path: search/symbol: limit results to this path prefix.
+            path: symbol mode: limit results to this path prefix.
         """
-        if mode in ("search", "symbol"):
-            return _search(mode, query, repo_root, top_k, path)
+        if mode == "search":
+            return _refuse(_SEARCH_RETIRED_ERROR)
+        if mode == "symbol":
+            return _symbol(query, repo_root, top_k, path)
         if mode == "hint":
             return _hint(files, repo_root, ctx)
         return _refuse(f"unknown mode {mode!r}; use one of {', '.join(_MODES)}")

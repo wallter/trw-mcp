@@ -83,31 +83,6 @@ def _base_result(
 # ---------------------------------------------------------------------------
 
 
-def build_cooccurrence_matrix(
-    entries: list[MemoryEntry],
-) -> dict[tuple[str, str], int]:
-    """Build tag co-occurrence counts from entry tag sets.
-
-    Tags appearing in fewer than 2 entries are excluded from the matrix.
-    """
-    tag_freq: Counter[str] = Counter()
-    for entry in entries:
-        for tag in entry.tags:
-            tag_freq[tag] += 1
-
-    valid_tags = {t for t, count in tag_freq.items() if count >= 2}
-
-    matrix: dict[tuple[str, str], int] = {}
-    for entry in entries:
-        filtered = sorted(set(entry.tags) & valid_tags)
-        for i, tag_a in enumerate(filtered):
-            for tag_b in filtered[i + 1 :]:
-                pair = (tag_a, tag_b)
-                matrix[pair] = matrix.get(pair, 0) + 1
-
-    return matrix
-
-
 def _assign_entries_to_clusters(
     entries: list[MemoryEntry],
     similarity_threshold: float,

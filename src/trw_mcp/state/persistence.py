@@ -8,17 +8,15 @@ All state persistence goes through this module. Writes are atomic
 from __future__ import annotations
 
 __all__ = [
-    "EventLogger",
     "FileEventLogger",
     "FileStateReader",
     "FileStateWriter",
-    "StateReader",
-    "StateWriter",
 ]
 
 import contextlib
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -79,11 +77,8 @@ def write_text_atomic(path: Path, content: str, *, mode: int) -> None:
 from trw_mcp.state._persistence_helpers import (
     INTERNAL_EVENT_TYPES as INTERNAL_EVENT_TYPES,
 )
-
-# YAML factories + json/model utilities extracted to _persistence_helpers
-# (PRD-DIST-243 batch 12). Re-exported for backward compatibility.
 from trw_mcp.state._persistence_helpers import (
-    _new_yaml as _new_yaml,
+    _config_yaml as _config_yaml,
 )
 
 # _resolve_hpo_event_context extracted to _persistence_helpers (PRD-DIST-243 batch 15b).
@@ -104,18 +99,8 @@ from trw_mcp.state._persistence_helpers import (
 from trw_mcp.state._persistence_helpers import (
     json_serializer as json_serializer,
 )
-
-# Protocol interfaces extracted to _persistence_protocols (PRD-DIST-243 batch 16).
-# Re-exported here for backward compatibility with callers that type-annotate
-# against StateReader / StateWriter / EventLogger via this facade.
-from trw_mcp.state._persistence_protocols import (
-    EventLogger as EventLogger,
-)
-from trw_mcp.state._persistence_protocols import (
-    StateReader as StateReader,
-)
-from trw_mcp.state._persistence_protocols import (
-    StateWriter as StateWriter,
+from trw_mcp.state._persistence_helpers import (
+    yaml_error_text as yaml_error_text,
 )
 
 
@@ -137,11 +122,13 @@ class FileStateReader:
             raise StateError(f"state read path escapes base directory: {resolved}", path=str(resolved))
         return resolved
 
-    def read_yaml(self, path: Path) -> dict[str, object]:
+    def read_yaml(self, path: Path, *, tolerate_identical_duplicates: bool = False) -> dict[str, object]:
         """Read and parse a YAML file.
 
         Args:
             path: Path to the YAML file.
+            tolerate_identical_duplicates: config layers only. A key repeated with an IDENTICAL value is
+                read once and logged by name and line; a repeat with a different value still raises.
 
         Returns:
             Parsed YAML content as a dictionary.
@@ -153,17 +140,31 @@ class FileStateReader:
         if not checked_path.exists():
             raise StateError(f"YAML file not found: {checked_path}", path=str(checked_path))
         try:
-            with checked_path.open("r", encoding="utf-8") as fh:
+            # O_NONBLOCK + fstat: a FIFO/socket/device at a state path is refused instead of blocking forever
+            # (update-project hung on a FIFO .trw/config.yaml). No effect on a regular file's reads.
+            fd = os.open(checked_path, os.O_RDONLY | os.O_NONBLOCK)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise OSError("not a regular file")
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
-                    data = _safe_yaml().load(fh)
+                    loader = _config_yaml() if tolerate_identical_duplicates else _safe_yaml()
+                    data = loader.load(fh)
                 finally:
                     _lock_un(fh.fileno())
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
-                f"Failed to read YAML: {exc}",
+                f"Failed to read YAML: {yaml_error_text(exc)}",
                 path=str(checked_path),
-            ) from exc
+            ) from None
+        if tolerate_identical_duplicates and (tolerated := getattr(loader.constructor, "tolerated", [])):
+            logger.warning(
+                "yaml_identical_duplicate_key_tolerated",
+                path=str(checked_path),
+                keys=sorted({key for key, _ in tolerated}),
+                lines=sorted(line for _, line in tolerated),
+            )
         if data is None:
             return {}
         if not isinstance(data, dict):
@@ -377,9 +378,6 @@ class FileStateWriter:
 from trw_mcp.state._persistence_helpers import (
     lock_for_rmw as lock_for_rmw,
 )
-from trw_mcp.state._persistence_helpers import (
-    suppress_internal_events as suppress_internal_events,
-)
 
 
 class FileEventLogger:
@@ -439,17 +437,16 @@ class FileEventLogger:
         """Phase 2 retrofit — emit a HPOTelemetryEvent shape alongside the legacy row.
 
         Mapping from legacy ``event_type`` to HPOTelemetryEvent subclass
-        follows the v1_to_unified migration dictionary. Events whose path
+        follows ``LEGACY_EVENT_TYPE_MAP``. Events whose path
         is under ``<run>/meta/`` produce ``<run>/meta/events-<date>.jsonl``
         siblings; events under the context/session-events fallback write
         to a same-dir dated file.
         """
         # Lazy imports to avoid a persistence ↔ telemetry cycle at module load.
-        from trw_mcp.migration.v1_to_unified import _LEGACY_EVENT_TYPE_MAP
-        from trw_mcp.telemetry.event_base import EVENT_TYPE_REGISTRY, ObserverEvent
+        from trw_mcp.telemetry.event_base import EVENT_TYPE_REGISTRY, LEGACY_EVENT_TYPE_MAP, ObserverEvent
         from trw_mcp.telemetry.unified_events import emit as emit_unified
 
-        unified_type = _LEGACY_EVENT_TYPE_MAP.get(event_type, "observer")
+        unified_type = LEGACY_EVENT_TYPE_MAP.get(event_type, "observer")
         cls = EVENT_TYPE_REGISTRY.get(unified_type, ObserverEvent)
 
         # Carve reserved vs payload keys exactly like the migration tool.

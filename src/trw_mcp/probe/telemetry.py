@@ -32,7 +32,6 @@ PROBE_EVENT_PAYLOAD_KEYS: tuple[str, ...] = (
     "wall_ms",
     "timed_out",
     "cache_hit",
-    "planning_mode",
     "confidence",
     "decisive",
 )
@@ -42,7 +41,6 @@ def build_probe_event(
     result: ProbeResult,
     *,
     session_id: str,
-    planning_mode: str,
     surface_snapshot_id: str = "",
     parent_event_id: str | None = None,
 ) -> ProbeEvent:
@@ -58,7 +56,6 @@ def build_probe_event(
         "wall_ms": result.evidence.wall_ms,
         "timed_out": result.evidence.timed_out,
         "cache_hit": result.cache_hit,
-        "planning_mode": planning_mode,
         "confidence": result.confidence,
         "decisive": result.verdict in ("supports", "refutes"),
     }

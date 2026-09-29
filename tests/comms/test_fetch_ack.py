@@ -22,7 +22,9 @@ def transport_scene(scene: SendScene) -> SendScene:
 
 
 async def invoke(client: Client[Any], name: str, **args: Any) -> dict[str, Any]:
-    result = await client.call_tool(name, args)
+    # raise_on_error=False: an argument the tool schema rejects fails HERE, by assertion.
+    result = await client.call_tool(name, args, raise_on_error=False)
+    assert not result.is_error, result.content[0].text
     payload = result.structured_content
     assert isinstance(payload, dict)
     assert json.loads(result.content[0].text) == payload
@@ -152,3 +154,23 @@ async def test_maximum_item_page_and_ack_fit_live_body_free_bound(transport_scen
         assert (await invoke(client, "trw_inbox"))["reason"] == "response_body_policy_incompatible"
         assert s.rows("SELECT COUNT(*) FROM admissions WHERE state='pending'") == [(1,)]
         assert s.rows("SELECT charge FROM groups") == [(65,)]
+
+
+async def test_recipient_cannot_record_completion(transport_scene: SendScene) -> None:
+    """PRD-CORE-322 FR04: the owner reports; only the requester records verified completion."""
+    s = transport_scene
+    async with Client(s.server) as client:
+        sent = await invoke(client, "trw_send", recipient_member_id="impl-2", request_key="h", body="do it")
+        message_id = sent["receipt"]["message_id"]
+        s.actor("impl-2")
+        assert (await invoke(client, "trw_inbox", action="accept", message_ids=[message_id]))["status"] == "ok"
+        reported = await invoke(client, "trw_inbox", action="report", message_ids=[message_id], next_read="wt@abc123")
+        assert reported["status"] == "ok"
+        refused = await invoke(client, "trw_inbox", action="complete", message_ids=[message_id])
+        assert (refused["status"], refused["reason"]) == ("refused", "handoff_not_authorized")
+        assert s.rows("SELECT COUNT(*) FROM milestones WHERE fact='completed'") == [(0,)]
+        s.actor("impl-1")
+        completed = await invoke(client, "trw_inbox", action="complete", message_ids=[message_id])
+        assert core(completed) == {"status": "ok", "completed_ids": [message_id]}
+        status = await invoke(client, "trw_inbox", action="status")
+        assert set(status["items"][0]["milestones"]) == {"admitted", "acked", "accepted", "reported", "completed"}

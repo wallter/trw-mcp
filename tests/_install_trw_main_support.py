@@ -71,7 +71,8 @@ def drive_main(
     extra_argv: tuple[str, ...] = (),
     env: dict[str, str] | None = None,
     project_setup: bool = False,
-    semantic: str = "ok",
+    semantic: str | None = "ok",
+    stop_daemon: bool = False,
 ) -> MainRun:
     """Run the real ``main()`` against *target* with all I/O phases stubbed.
 
@@ -79,7 +80,10 @@ def drive_main(
     Raises ``SystemExit`` out to the caller — that is the exit code under test.
     ``project_setup=True`` runs the real project phase: init-project in a child
     process of this interpreter, against *target*. The semantic-readiness
-    phase is stubbed to return *semantic* (a ``SEMANTIC_*`` value).
+    phase is stubbed to return *semantic* (a ``SEMANTIC_*`` value); ``semantic=None``
+    runs the real phase, so the caller stubs its probe/fetch leaves instead.
+    ``stop_daemon=True`` runs the real ``--upgrade`` memory-daemon stop, in a
+    child process of this interpreter, against the ``TRW_USER_DIR`` in *env*.
     """
     run = MainRun()
 
@@ -114,9 +118,12 @@ def drive_main(
     else:
         monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
     monkeypatch.setattr(installer, "run_install_doctor", _record("doctor", None))
-    monkeypatch.setattr(installer, "phase_semantic_readiness", _record("semantic", semantic))
+    if semantic is not None:
+        monkeypatch.setattr(installer, "phase_semantic_readiness", _record("semantic", semantic))
     monkeypatch.setattr(installer, "phase_configure", _record("configure", "offline"))
     monkeypatch.setattr(installer, "_restart_mcp_servers", lambda *_a, **_k: None)
+    if not stop_daemon:
+        monkeypatch.setattr(installer, "stop_outdated_memory_daemon", lambda *_a, **_k: None)
     monkeypatch.setattr(installer, "_check_all_backends", lambda *_a, **_k: [])
     monkeypatch.setattr(installer, "show_success_banner", lambda *_a, **_k: None)
     monkeypatch.setattr(installer, "_emit_install_complete_event", lambda *_a, **_k: None)

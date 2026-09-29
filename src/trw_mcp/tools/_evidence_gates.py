@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from trw_mcp.state._evidence_gates import (
     read_evidence_mode,
-    select_typed_review_state,
     validate_build_receipt,
     validate_review_receipt,
     validate_verification_receipt,
@@ -18,7 +17,6 @@ from trw_mcp.state._evidence_gates import (
 
 __all__ = [
     "read_evidence_mode",
-    "select_typed_review_state",
     "validate_build_receipt",
     "validate_review_receipt",
     "validate_verification_receipt",

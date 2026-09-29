@@ -25,7 +25,7 @@ _log() {
   printf '{"ts":"%s","level":"%s","component":"cursor-hook","msg":%s}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "${level}" \
-    "$(printf '%s' "${msg}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"<log-error>"')" \
+    "$(printf '%s' "${msg}" | python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"<log-error>"')" \
     >> "${_LOG_FILE}" 2>/dev/null || true
 }
 
@@ -40,7 +40,7 @@ INPUT="$(cat)"
 # ---------------------------------------------------------------------------
 
 _event_name() {
-  printf '%s' "${INPUT}" | python3 -c \
+  printf '%s' "${INPUT}" | python3 -I -c \
     'import json,sys; d=json.load(sys.stdin); print(d.get("hook_event_name","unknown"))' \
     2>/dev/null || echo "unknown"
 }

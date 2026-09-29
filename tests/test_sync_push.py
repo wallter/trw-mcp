@@ -11,6 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests._contact_support import payload_trw_dir
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
+
 
 def _build_async_httpx_mock(response_or_responses: object) -> MagicMock:
     """Mock httpx.AsyncClient class with awaitable post() returning response(s).
@@ -62,7 +67,9 @@ async def test_push_empty_returns_zero() -> None:
     """Push with no entries returns zero counts."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     result = await pusher.push_learnings([])
     assert result.pushed == 0
     assert result.failed == 0
@@ -79,6 +86,7 @@ async def test_push_unreachable_returns_failed() -> None:
         timeout=1.0,
         client_id="sync-test",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     entries = [_make_mock_entry(f"L-{i}") for i in range(3)]
     result = await pusher.push_learnings(entries)
@@ -90,7 +98,9 @@ async def test_push_outcomes_empty_returns_zero() -> None:
     """Push outcomes with no entries returns zero counts."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     result = await pusher.push_outcomes([])
     assert result.pushed == 0
 
@@ -100,7 +110,9 @@ def test_serialize_entry_format() -> None:
     from trw_mcp.sync.push import SyncPusher
 
     valid_hash = "b" * 64
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     entry = _make_mock_entry("L-test", sync_hash=valid_hash, summary="test discovery")
     serialized = pusher._serialize_entry(entry)
 
@@ -118,7 +130,9 @@ def test_serialize_entry_carries_the_entrys_own_counter() -> None:
     """The backend judges a push by the entry's counter, not the batch max over other entries."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
 
     assert pusher._serialize_entry(_make_mock_entry("L-r", sync_seq=2))["sync_seq"] == 2
 
@@ -134,7 +148,9 @@ def _serialize_with_hash(raw: object) -> dict[str, object]:
     """Serialize an entry whose to_dict() carries the given sync_hash value."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     entry = _make_mock_entry("L-coerce", summary="discovery body")
     payload = entry.to_dict.return_value
     if raw is _MISSING:
@@ -168,7 +184,9 @@ def test_serialize_entry_synthesized_hash_changes_with_content() -> None:
     """Different content yields a different synthesized hash (backend UPDATE detection)."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     a = _make_mock_entry("L-x", summary="alpha body")
     a.to_dict.return_value.pop("sync_hash", None)
     b = _make_mock_entry("L-x", summary="beta body")
@@ -192,7 +210,9 @@ def test_serialize_entry_anonymizes_summary_and_detail() -> None:
     """Entry serialization strips PII and local paths before upload."""
     from trw_mcp.sync.push import SyncPusher
 
-    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     pusher._project_root = "/tmp/project"
     entry = _make_mock_entry("L-private", sync_hash="hash123")
     entry.to_dict.return_value["summary"] = "Email me at support@example.com"
@@ -227,6 +247,7 @@ async def test_push_outcomes_unreachable_returns_failed() -> None:
         timeout=1.0,
         client_id="sync-test",
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     result = await pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
     assert result.failed > 0
@@ -241,6 +262,7 @@ async def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None
         api_key="key",
         client_id="sync-test",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     entries = [_make_mock_entry("L-1"), _make_mock_entry("L-2")]
 
@@ -272,6 +294,7 @@ async def test_push_outcomes_boundary_failure_logs_warning_with_traceback() -> N
         api_key="key",
         client_id="sync-test",
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     outcomes = [{"session_id": "s1", "learning_ids": ["L-1"]}]
 
@@ -304,6 +327,7 @@ async def test_push_outcomes_batches_requests() -> None:
         batch_size=2,
         client_id="sync-test",
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     outcomes = [
         {"session_id": "s1", "learning_ids": ["L-1"]},
@@ -342,6 +366,7 @@ async def test_push_uses_stable_configured_client_id() -> None:
         api_key="key",
         client_id="sync-claude-code-inst-123",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     response = MagicMock()
@@ -367,6 +392,7 @@ async def test_push_treats_backend_reported_errors_as_batch_failure() -> None:
         api_key="key",
         client_id="sync-client-1",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     response = MagicMock()
@@ -392,6 +418,7 @@ async def test_push_logs_structured_start_and_complete_events() -> None:
         api_key="key",
         client_id="sync-client-1",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     response = MagicMock()
@@ -428,6 +455,7 @@ async def test_pushed_payload_masks_pii_in_tags_and_metadata_values() -> None:
         api_key="key",
         client_id="sync-client-1",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     entry = _make_mock_entry("L-pii")
     entry.to_dict.return_value["tags"] = ["incident", "reporter-alice@example.com"]
@@ -496,7 +524,13 @@ async def test_push_body_carries_no_secret_from_any_learning_field() -> None:
         detail=f"key file:\n{pem}",
         metadata={"source": "unit-test", "nested": {live_key: "x", "list": [{live_key: jwt}]}},
     )
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="c", learning_sharing_enabled=True)
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="c",
+        learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
+    )
     response = MagicMock()
     response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
     response.raise_for_status.return_value = None
@@ -522,7 +556,13 @@ async def test_push_body_redacts_a_json_authorization_header_and_tuple_metadata(
         detail=f'headers were {{"Authorization": "Basic {basic}"}}',
         metadata={"source": "unit-test", "pair": (live_key, "ok")},
     )
-    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="c", learning_sharing_enabled=True)
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="c",
+        learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
+    )
     response = MagicMock()
     response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
     response.raise_for_status.return_value = None

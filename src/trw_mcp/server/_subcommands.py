@@ -16,6 +16,8 @@ from typing import TextIO
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
+from trw_mcp.bootstrap._utils import printable
 from trw_mcp.server._subcommands_check import (
     _check_instructions_core as _check_instructions_core,
 )
@@ -105,7 +107,13 @@ def _print_warning_block(warnings: Sequence[str]) -> None:
     _print_cli_line("")
     _print_cli_line("Warnings:")
     for warning in warnings:
-        _print_cli_line(f"WARNING: {warning}")
+        _print_cli_line(f"WARNING: {printable(warning)}")
+
+
+def _print_trashed(paths: list[str]) -> None:
+    """One line per file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them)."""
+    for path in paths:
+        _print_cli_line(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
 
 
 def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_run: bool, ide: str | None) -> None:
@@ -219,6 +227,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         # had NO errors — so the runs most likely to carry a warning were
         # exactly the runs that swallowed it.
         _print_warning_block(result.get("warnings", []))
+        _print_trashed(result.get("trashed", []))
     for e in result["errors"]:
         logger.error("update_project_error", op="update_project", error=str(e))
 
@@ -238,6 +247,19 @@ def _run_update_project(args: argparse.Namespace) -> None:
     sys.exit(1 if result["errors"] else 0)
 
 
+def _write_output(requested: Path, output: str) -> Path:
+    """Write an ``--output`` report into the operator's directory, refusing a symlink AT the file.
+
+    Only the directory is resolved: resolving the whole path would follow a planted leaf symlink
+    before ``write_checkout_file`` could refuse it (PRD-CORE-337 FR08).
+    """
+    out_dir = requested.parent.resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / requested.name
+    write_checkout_file(out_dir, out_path, output)
+    return out_path
+
+
 def _run_audit(args: argparse.Namespace) -> None:
     """Handle the ``audit`` subcommand."""
     from trw_mcp.audit import format_markdown, run_audit
@@ -255,9 +277,7 @@ def _run_audit(args: argparse.Namespace) -> None:
         output = format_markdown(result)
 
     if args.output:
-        out_path = Path(args.output).resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(output, encoding="utf-8")
+        out_path = _write_output(Path(args.output), output)
         logger.info("audit_report_written", op="audit", path=str(out_path))
     else:
         logger.info("audit_report_output", op="audit", output=output)
@@ -289,9 +309,7 @@ def _run_export(args: argparse.Namespace) -> None:
         output = json.dumps(result, indent=2, default=str)
 
     if args.output:
-        out_path = Path(args.output).resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(output, encoding="utf-8")
+        out_path = _write_output(Path(args.output), output)
         logger.info("export_written", op="export", path=str(out_path))
     else:
         logger.info("export_output", op="export", output=output)
@@ -438,6 +456,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "tendencies": _run_tendencies,
     "tier": _lazy_verb("trw_mcp.server._subcommands_tier", "run_tier"),
     "memory": _lazy_verb("trw_mcp.server._subcommands_memory", "run_memory"),
+    "backup": _lazy_verb("trw_mcp.server._subcommands_backup", "run_backup"),
     "models": _lazy_verb("trw_mcp.server._subcommands_models", "run_models"),
     "dispatch": _lazy_verb("trw_mcp.dispatch._cli", "run_dispatch"),
     "formation": _lazy_verb("trw_mcp.tools._formation_cli", "run_formation"),
@@ -452,4 +471,8 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "profile": _lazy_verb("trw_mcp.tools._profile_cli", "run_profile"),
     "run": _lazy_verb("trw_mcp.tools._run_cli", "run_run"),
     "instructions": _lazy_verb("trw_mcp.tools._instructions_cli", "run_instructions"),
+    "receipt": _lazy_verb("trw_mcp.tools._receipt_cli", "run_receipt"),
+    "factory": _lazy_verb("trw_mcp.server._cli_factory", "run_factory"),
+    "decision": _lazy_verb("trw_mcp.tools._decision_cli", "run_decision"),
+    **{verb: _lazy_verb("trw_mcp.shared_server._cli", f"run_{verb}") for verb in ("swap", "status", "env")},
 }

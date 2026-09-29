@@ -18,6 +18,8 @@ from pydantic import ValidationError
 
 from trw_mcp.models.run import IntegrationReviewArtifact, ReviewFinding
 
+pytestmark = pytest.mark.unit
+
 
 def _artifact(
     *,

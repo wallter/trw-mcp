@@ -115,52 +115,28 @@ class TestAntigravityCliMcpConfigHardening:
         assert any(_GLOBAL_MCP_REL in p for p in first["created"])
         assert any(_GLOBAL_MCP_REL in p for p in second.get("preserved", []))
 
-    def test_recovers_from_invalid_json_with_backup(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("content", "reason"),
+        [
+            (b"this is not { valid json", "was not valid JSON"),
+            (b"\xff\xfe{\x00garbage", "was not valid UTF-8"),
+            (json.dumps([1, 2, 3]).encode(), "top-level was not a JSON object"),
+        ],
+    )
+    def test_unparseable_global_file_is_never_replaced(self, tmp_path: Path, content: bytes, reason: str) -> None:
+        """The file is machine-global: no rewrite, no .bak, a warning names it (W4 P1)."""
         settings = _antigravity_global_mcp_config_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text("this is not { valid json", encoding="utf-8")
-
-        result = generate_antigravity_mcp_config(tmp_path)
-        assert result["errors"] == []
-        assert any("was not valid JSON" in w for w in result.get("warnings", []))
-
-        backup = settings.with_suffix(settings.suffix + ".bak")
-        assert backup.exists()
-        assert backup.read_text(encoding="utf-8") == "this is not { valid json"
-
-        data = json.loads(settings.read_text(encoding="utf-8"))
-        assert "trw" in data["mcpServers"]
-
-    def test_recovers_from_non_utf8_with_backup(self, tmp_path: Path) -> None:
-        """Non-UTF-8 settings must not crash (regression: UnicodeDecodeError)."""
-        settings = _antigravity_global_mcp_config_path()
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_bytes(b"\xff\xfe{\x00garbage")
+        settings.write_bytes(content)
 
         result = generate_antigravity_mcp_config(tmp_path)  # must not raise
+
         assert result["errors"] == []
-        assert any("backed up" in w for w in result.get("warnings", []))
-
-        backup = settings.with_suffix(settings.suffix + ".bak")
-        assert backup.exists()
-        assert backup.read_bytes() == b"\xff\xfe{\x00garbage"
-
-        data = json.loads(settings.read_text(encoding="utf-8"))
-        assert "trw" in data["mcpServers"]
-
-    def test_recovers_from_non_object_top_level(self, tmp_path: Path) -> None:
-        """A top-level JSON array is recovered + backed up, not propagated."""
-        settings = _antigravity_global_mcp_config_path()
-        settings.parent.mkdir(parents=True, exist_ok=True)
-        settings.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-
-        result = generate_antigravity_mcp_config(tmp_path)
-        assert result["errors"] == []
-        assert any("top-level was not a JSON object" in w for w in result.get("warnings", []))
-        assert settings.with_suffix(settings.suffix + ".bak").exists()
-
-        data = json.loads(settings.read_text(encoding="utf-8"))
-        assert "trw" in data["mcpServers"]
+        assert any(
+            reason in w and "left untouched" in w and _GLOBAL_MCP_REL.split("/")[-1] in w for w in result["warnings"]
+        )
+        assert settings.read_bytes() == content
+        assert not settings.with_suffix(settings.suffix + ".bak").exists()
 
 
 @pytest.mark.unit

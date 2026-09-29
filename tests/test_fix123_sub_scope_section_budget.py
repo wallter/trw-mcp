@@ -39,18 +39,18 @@ class TestSubScopeSectionBudget:
 
         assert result["status"] == "synced", result
         assert result.get("refusals") is None, result
-        content = (sub_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (sub_dir / "AGENTS.md").read_text(encoding="utf-8")
         assert "trw:start" in content
         assert len(content.split("\n")) <= get_config().sub_claude_md_max_lines, content
         # A pointer that does not name the carrier it points at is not a pointer.
-        assert "`CLAUDE.md`" in content
+        assert "`AGENTS.md`" in content
         assert "trw_session_start()" in content
 
     def test_user_content_plus_pointer_fits_and_stays_byte_identical(self, tmp_path: Path) -> None:
         """40 lines of user content survive the write byte-for-byte and still fit."""
         sub_dir = tmp_path / "src" / "module"
         sub_dir.mkdir(parents=True)
-        target = sub_dir / "CLAUDE.md"
+        target = sub_dir / "AGENTS.md"
         user_text = "\n".join(f"# hand-written note {i}" for i in range(_USER_LINES)) + "\n"
         target.write_text(user_text, encoding="utf-8")
 
@@ -69,7 +69,7 @@ class TestSubScopeSectionBudget:
         """When the OVERFLOW is the user's bytes, the write is refused and nothing changes."""
         sub_dir = tmp_path / "src" / "module"
         sub_dir.mkdir(parents=True)
-        target = sub_dir / "CLAUDE.md"
+        target = sub_dir / "AGENTS.md"
         limit = get_config().sub_claude_md_max_lines
         user_text = "\n".join(f"# hand-written note {i}" for i in range(limit + 5)) + "\n"
         target.write_text(user_text, encoding="utf-8")
@@ -95,7 +95,7 @@ class TestSubScopeSectionBudget:
             reload_config(None)
 
         assert result["status"] == "synced", result
-        content = (sub_dir / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (sub_dir / "AGENTS.md").read_text(encoding="utf-8")
         # The full section carries the deliver gate; the pointer form does not.
         assert "Deliver Gate" in content, content[:400]
         assert len(content.split("\n")) > get_config().sub_claude_md_max_lines

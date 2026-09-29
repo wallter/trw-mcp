@@ -1,10 +1,13 @@
 """Per-client include matrix — PRD-CORE-240 FR04, FR05, FR06.
 
 TRW writes into files it does not own, so each client gets the TRW block in the
-file that client actually loads, and nowhere else. PRD-QUAL-143-FR01 retired the
-``@.trw/INSTRUCTIONS.md`` include: the block is inline for every client, and an
-instruction file that names an include the client cannot resolve exists,
-parses, reports success, and carries nothing.
+file that client actually loads, and nowhere else. PRD-QUAL-143-FR01 made the block
+inline for every client, because an instruction file that names an include the
+client cannot resolve exists, parses, reports success, and carries nothing.
+PRD-CORE-341 reintroduced one include, deliberately: the block lives in the
+TRW-owned ``.trw/INSTRUCTIONS.md`` and AGENTS.md holds a link to it (an ``@``
+import Claude Code expands, plus a sentence naming the file for clients that
+cannot). The dedicated carriers stay inline.
 """
 
 from __future__ import annotations
@@ -15,7 +18,10 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.models.config._profiles import resolve_client_profile
+from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH, LINK_BODY
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 # T2: no in-file include syntax, but the client's own config names which files to
 # load — so the TRW artifact is registered there and the shared AGENTS.md is left
@@ -56,7 +62,6 @@ class TestT2ClientsOwnTheirInstructionFile:
         profile = resolve_client_profile(client)
 
         assert profile.write_targets.instruction_path.endswith("INSTRUCTIONS.md")
-        assert profile.write_targets.claude_md is False
 
     def test_opencode_no_longer_receives_the_shared_agents_md(self) -> None:
         """PRD-CORE-240-FR04, resolved by operator decision 2026-07-28: WITHDRAWN.
@@ -209,34 +214,46 @@ class TestCopilotCannotUseAnInclude:
 class TestT4BlockIsMinimised:
     """FR06's other half: if the block must stay inline, it must be the small one.
 
-    cursor-cli cannot resolve any include, so AGENTS.md is its ONLY protocol
-    carrier and the text has to be there. That makes minimising it the obligation
-    instead — and it was not being met: the install path passed the FULL AGENTS.md
-    section to a client whose own profile declares `ceremony_mode="light"`, so a
-    light client carried the heavy body while the sync path (which picks by
-    ceremony mode) would have given it the compact one.
+    cursor-cli cannot resolve any include, so the file its AGENTS.md link names
+    (``.trw/INSTRUCTIONS.md``) is its ONLY protocol carrier and the text has to be
+    there. That makes minimising it the obligation for a light client profile, chosen by
+    ceremony mode. The choice now lives in ONE function (``render_instructions_body``) that sync,
+    init and every client installer call; the installer used to pick its own body and so
+    rewrote what sync wrote.
 
     FRAMEWORK.md sets the floor this cannot cross: for a light client the
     generated instruction file IS the protocol carrier, so the deliver gate and
     the rigid tool set stay in it verbatim. Minimise down to that, not past it.
     """
 
-    def test_cursor_cli_block_uses_the_light_body(self, tmp_path: Path) -> None:
-        import subprocess
-
-        from trw_mcp.bootstrap import init_project
+    def test_the_body_follows_the_client_profile_in_one_function(self, tmp_path: Path) -> None:
+        """A light client profile gets the minimal body, any other the full section, from ONE renderer."""
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state.claude_md._instructions_link import render_instructions_body
         from trw_mcp.state.claude_md._static_sections import (
             render_agents_trw_section,
             render_minimal_protocol,
         )
 
+        light = TRWConfig(target_platforms=["cursor-cli"])
+        assert light.effective_ceremony_mode == "light"
+        assert render_instructions_body(tmp_path, light) == render_minimal_protocol()
+        assert render_instructions_body(tmp_path, TRWConfig()) == render_agents_trw_section()
+        assert len(render_minimal_protocol()) < len(render_agents_trw_section())
+
+    def test_cursor_cli_init_writes_the_shared_body(self, tmp_path: Path) -> None:
+        """No writer renders a private variant: the installer's file is the one ``instructions sync`` writes."""
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project
+        from trw_mcp.state.claude_md._instructions_link import render_instructions_body, render_instructions_file
+
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         init_project(tmp_path, ide="cursor-cli")
 
-        text = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
-
-        assert len(text) < len(render_agents_trw_section()), "the full section is not the minimal one"
-        assert len(render_minimal_protocol()) <= len(text)
+        text = (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
+        assert LINK_BODY in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert text == render_instructions_file(render_instructions_body(tmp_path))
 
     def test_minimising_did_not_drop_the_protocol_floor(self, tmp_path: Path) -> None:
         """The gate and session-start mandate survive the reduction."""
@@ -248,7 +265,7 @@ class TestT4BlockIsMinimised:
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         init_project(tmp_path, ide="cursor-cli")
 
-        text = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        text = (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
         assert DELIVER_GATE_PHRASE in text
         assert "trw_session_start" in text
@@ -263,15 +280,11 @@ class TestT4BlockIsMinimised:
 
 
 class TestClaudeMdWrittenOnlyWhereRead:
-    """The registry decides who gets a CLAUDE.md block — not the writer's habit.
+    """TRW 8.0 writes no CLAUDE.md for any client.
 
-    Only claude-code declares `write_targets.claude_md`. The MCP sync path
-    honoured that (`_determine_write_target_decision`); bootstrap did not, and
-    scaffolded the full protocol into CLAUDE.md for every client. A codex or
-    opencode project therefore carried a THIRD copy of the framework text in a
-    file none of its clients load — which then froze in place while the
-    surfaces those clients do read moved on. Two entry points, one file,
-    opposite decisions.
+    Claude Code reads AGENTS.md natively and expands its ``@.trw/INSTRUCTIONS.md``
+    link, so claude-code shares the AGENTS.md carrier; every other client has its own. A legacy CLAUDE.md that holds only
+    TRW content is retired; one with user content is left byte-identical.
     """
 
     def _install(self, root: Path, client: str) -> str | None:
@@ -285,56 +298,18 @@ class TestClaudeMdWrittenOnlyWhereRead:
         claude_md = root / "CLAUDE.md"
         return claude_md.read_text(encoding="utf-8") if claude_md.is_file() else None
 
-    @pytest.mark.parametrize("client", ["codex", "copilot", "cursor-cli", "opencode", "antigravity-cli"])
-    def test_unclaimed_client_gets_no_trw_block(self, tmp_path: Path, client: str) -> None:
-        """PRD-CORE-262-FR05: a codex-only install gets no CLAUDE.md at all.
+    @pytest.mark.parametrize("client", ["claude-code", "codex", "copilot", "cursor-cli", "opencode", "antigravity-cli"])
+    def test_no_client_gets_a_claude_md(self, tmp_path: Path, client: str) -> None:
+        assert self._install(tmp_path, client) is None
 
-        None of the other four unclaimed clients here changed -- they still
-        receive the import-free scaffold shell this class exists to verify.
-        Only codex-only drops the file entirely, so "no TRW block" holds
-        trivially (there is no file for one to appear in).
-        """
-        text = self._install(tmp_path, client)
+    def test_claude_code_gets_the_block_in_agents_md(self, tmp_path: Path) -> None:
+        self._install(tmp_path, "claude-code")
 
-        if client == "codex":
-            assert text is None, "codex-only must get no root CLAUDE.md (FR05)"
-            return
-
-        assert text is not None, f"{client} must still receive the scaffolded CLAUDE.md shell"
-        assert TRW_MARKER_START not in text
-        assert "trw_session_start" not in text
-
-    def test_the_scaffold_itself_survives(self, tmp_path: Path) -> None:
-        """Skipping the block must not stop CLAUDE.md being scaffolded.
-
-        Uses copilot, not codex: PRD-CORE-262-FR05 made codex-only the ONE
-        selection that gets no CLAUDE.md at all (see
-        ``test_unclaimed_client_gets_no_trw_block``), so it can no longer
-        stand in for "an unclaimed client whose file still scaffolds."
-        copilot is unclaimed the same way and is unaffected by FR05.
-        """
-        text = self._install(tmp_path, "copilot")
-
-        assert text is not None
-        assert "# Project Instructions" in text
-
-    def test_claude_code_still_gets_the_block(self, tmp_path: Path) -> None:
-        text = self._install(tmp_path, "claude-code")
-
-        assert text is not None
-        assert "trw_session_start" in text
+        assert LINK_BODY in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert "trw_session_start" in (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
     def test_cursor_ide_carries_its_protocol_in_the_always_applied_rule(self, tmp_path: Path) -> None:
-        """cursor-ide's CLAUDE.md fallback is gone — but only because the rule replaced it.
-
-        The fallback existed for a client with nowhere else to put the
-        protocol. `.cursor/rules/trw-ceremony.mdc` is `alwaysApply: true`, so
-        Cursor resolves it eagerly; it now carries the full shared protocol
-        including the deliver gate, which it previously did NOT (it was built
-        from the CLAUDE.md scaffold template rather than the shared renderer).
-        Assert the replacement before asserting the removal — in that order,
-        because the removal is only safe if the replacement holds.
-        """
+        """cursor-ide's protocol lives in `.cursor/rules/trw-ceremony.mdc` (`alwaysApply: true`)."""
         from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
 
         text = self._install(tmp_path, "cursor-ide")
@@ -343,47 +318,30 @@ class TestClaudeMdWrittenOnlyWhereRead:
         assert "alwaysApply: true" in rule
         assert DELIVER_GATE_PHRASE in rule
         assert "trw_session_start" in rule
-        # Assert the replacement BEFORE the removal, in that order: withdrawing
-        # the CLAUDE.md block is only safe because the rule above carries the
-        # protocol. Retiring this needed the record to become trustworthy first
-        # — install used to launder `which cursor` into `target_platforms`.
-        assert TRW_MARKER_START not in text
+        assert text is None
 
-    def test_the_decision_is_derived_from_profiles(self) -> None:
-        """No hardcoded client name: a profile flag flip must be honoured here."""
-        from trw_mcp.state.claude_md._agents_md import _any_client_writes_claude_md
-
-        assert _any_client_writes_claude_md(["claude-code"]) is True
-        assert _any_client_writes_claude_md(["codex"]) is False
-        assert _any_client_writes_claude_md(["codex", "claude-code"]) is True
-        # An empty set is the default scaffold, not an unclaimed surface.
-        assert _any_client_writes_claude_md([]) is True
-
-    def test_a_frozen_block_is_removed_without_touching_user_prose(self, tmp_path: Path) -> None:
-        """HB-2: only the marked region goes, and only when nobody claims it."""
-        from trw_mcp.state.claude_md._agents_md import strip_orphaned_claude_md_block
+    def test_a_claude_md_with_user_prose_is_left_untouched(self, tmp_path: Path) -> None:
+        """HB-2: a legacy CLAUDE.md holding user content is never edited or deleted."""
+        from trw_mcp.state.claude_md._agents_md import retire_legacy_claude_md
 
         claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(
-            f"# My Project\n\nKeep this paragraph.\n\n{TRW_MARKER_START}\nstale protocol\n{TRW_MARKER_END}\n\nAnd this one.\n",
-            encoding="utf-8",
+        original = (
+            f"# My Project\n\nKeep this paragraph.\n\n{TRW_MARKER_START}\nstale protocol\n{TRW_MARKER_END}\n"
+            "\nAnd this one.\n"
         )
+        claude_md.write_text(original, encoding="utf-8")
 
-        assert strip_orphaned_claude_md_block(tmp_path, ["codex"]) is True
+        assert retire_legacy_claude_md(tmp_path) == "kept"
+        assert claude_md.read_text(encoding="utf-8") == original
 
-        text = claude_md.read_text(encoding="utf-8")
-        assert "Keep this paragraph." in text
-        assert "And this one." in text
-        assert "stale protocol" not in text
-
-    def test_a_claimed_surface_is_left_alone(self, tmp_path: Path) -> None:
-        from trw_mcp.state.claude_md._agents_md import strip_orphaned_claude_md_block
+    def test_a_trw_only_claude_md_is_retired(self, tmp_path: Path) -> None:
+        from trw_mcp.state.claude_md._agents_md import retire_legacy_claude_md
 
         claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(f"{TRW_MARKER_START}\nprotocol\n{TRW_MARKER_END}\n", encoding="utf-8")
+        claude_md.write_text(f"@AGENTS.md\n\n{TRW_MARKER_START}\nprotocol\n{TRW_MARKER_END}\n", encoding="utf-8")
 
-        assert strip_orphaned_claude_md_block(tmp_path, ["claude-code"]) is False
-        assert "protocol" in claude_md.read_text(encoding="utf-8")
+        assert retire_legacy_claude_md(tmp_path) == "removed"
+        assert not claude_md.exists()
 
 
 class TestTheDecisionSurvivesReinstall:
@@ -414,7 +372,7 @@ class TestTheDecisionSurvivesReinstall:
         update_project(tmp_path, ide=client)
         update_project(tmp_path, ide=client)
 
-        assert TRW_MARKER_START not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_claude_code_keeps_its_block_across_updates(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap import update_project
@@ -422,7 +380,9 @@ class TestTheDecisionSurvivesReinstall:
         self._init(tmp_path, "claude-code")
         update_project(tmp_path, ide="claude-code")
 
-        assert "trw_session_start" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert LINK_BODY in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert "trw_session_start" in (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_install_records_the_chosen_clients(self, tmp_path: Path) -> None:
         """Without the record there is nothing to prefer over poisoned detection."""
@@ -490,7 +450,7 @@ class TestReviewerFoundReinjection:
         update_project(tmp_path)
         update_project(tmp_path)
 
-        assert TRW_MARKER_START not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     @pytest.mark.parametrize("client", ["codex", "opencode"])
     def test_bare_update_does_not_record_claude_code(self, tmp_path: Path, client: str) -> None:
@@ -511,21 +471,23 @@ class TestReviewerFoundReinjection:
 
         from trw_mcp.bootstrap import update_project
 
-        self._init(tmp_path, "codex")
-        (tmp_path / "opencode.json").write_text("{}", encoding="utf-8")
-        update_project(tmp_path)
+        # A TRW-written opencode install missing from the record is adopted on file-by-file proof;
+        # a bare marker the user created (opencode.json = "{}") is not proof and is not adopted.
+        self._init(tmp_path, "opencode")
+        config = tmp_path / ".trw" / "config.yaml"
+        data = yaml.safe_load(config.read_text(encoding="utf-8"))
+        data["target_platforms"] = ["codex"]
+        config.write_text(yaml.safe_dump(data), encoding="utf-8")
+        result = update_project(tmp_path)
 
-        recorded = yaml.safe_load((tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8"))
-        assert "opencode" in recorded["target_platforms"]
+        recorded = yaml.safe_load(config.read_text(encoding="utf-8"))
+        assert "opencode" in recorded["target_platforms"], result.get("warnings")
 
     @pytest.mark.parametrize("client", ["codex", "opencode", "cursor-cli"])
     def test_instructions_sync_defaults_do_not_reinject(self, tmp_path: Path, client: str) -> None:
         """``trw-mcp instructions sync`` client="auto" is what the protocol tells agents to call.
 
-        PRD-CORE-262-FR05: a codex-only ``init_project`` no longer scaffolds a
-        root CLAUDE.md at all, so there is nothing for the sync to reinject
-        into -- and the sync call must not fabricate one either, since codex
-        reads `.codex/INSTRUCTIONS.md`, not CLAUDE.md.
+        TRW 8.0 writes no CLAUDE.md, and the sync must not fabricate one.
         """
         import os
 
@@ -543,12 +505,7 @@ class TestReviewerFoundReinjection:
             os.chdir(cwd)
             _reset_config()
 
-        claude_md = tmp_path / "CLAUDE.md"
-        if client == "codex":
-            assert not claude_md.exists(), "codex-only must get no root CLAUDE.md, sync must not fabricate one (FR05)"
-            return
-
-        assert TRW_MARKER_START not in claude_md.read_text(encoding="utf-8")
+        assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_a_second_well_formed_block_is_reported_not_silently_frozen(self, tmp_path: Path) -> None:
         """merge_trw_section binds the FIRST pair; the rest go stale without a word.
@@ -623,7 +580,7 @@ class TestOrphanedAgentsMdBlockIsRemovedByUpdate:
         assert "And this." in text
 
     def test_update_leaves_a_claimed_surface_alone(self, tmp_path: Path) -> None:
-        """cursor-cli still declares AGENTS.md, so its block must survive an update.
+        """cursor-cli still declares AGENTS.md, so its link and protocol must survive an update.
 
         The control for the strip above: without a client that still claims the
         surface, "removes the block" would pass even if the code removed it
@@ -638,10 +595,11 @@ class TestOrphanedAgentsMdBlockIsRemovedByUpdate:
         init_project(tmp_path, ide="cursor-cli")
         update_project(tmp_path, ide="cursor-cli")
 
-        # Asserted on the protocol, not the marker: TRW owns cursor-cli's
-        # AGENTS.md wholesale and writes it without a trw:start/end pair, so a
-        # marker assertion would pass vacuously whatever the strip did.
-        assert DELIVER_GATE_PHRASE in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        # PRD-CORE-341: the claimed surface keeps its link and the protocol stays
+        # in the file the link names. Asserted on the link body and the protocol,
+        # not the marker, so a marker assertion cannot pass vacuously.
+        assert LINK_BODY in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert DELIVER_GATE_PHRASE in (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
 
 class TestUpdateDoesNotScaffoldFromPath:

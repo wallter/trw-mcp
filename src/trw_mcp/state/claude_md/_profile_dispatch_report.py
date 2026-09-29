@@ -2,16 +2,12 @@
 
 Belongs to the ``_profile_dispatcher.py`` facade. Split out to keep the
 dispatcher under the 350-line ceiling enforced by
-``tests/test_module_loc_gate.py``. Neither helper writes anything.
+``tests/test_module_loc_gate.py``. It writes nothing.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import structlog
-
-from trw_mcp.models.typed_dicts._ceremony import InstructionPointerSkipDict
 
 logger = structlog.get_logger(__name__)
 
@@ -36,32 +32,4 @@ def _capability_parity_drift(write_agents: bool, client: str) -> list[str]:
     return [f.detail for f in appendix.parity_failures]
 
 
-def _cache_hit_carrier_report(
-    target: Path,
-    write_claude: bool,
-) -> tuple[str | None, list[InstructionPointerSkipDict] | None]:
-    """Read-only carrier classification for the cache-hit path (PRD-CORE-203 FR07).
-
-    No write happens on a cache hit, so this reports the carrier state of the
-    CURRENT CLAUDE.md (``healed=False`` since nothing was modified). Returns
-    ``(None, None)`` when CLAUDE.md is not a write target.
-    """
-    if not write_claude or not target.exists():
-        return None, None
-    from trw_mcp.state.claude_md._instruction_carrier import (
-        CarrierMode,
-        classify_instruction_file,
-        resolve_carrier_mode,
-    )
-
-    classification = classify_instruction_file(target)
-    mode = resolve_carrier_mode(classification)
-    if mode is CarrierMode.POINTER_SKIP:
-        skips: list[InstructionPointerSkipDict] = [
-            {"path": str(target), "import_targets": list(classification.import_targets), "healed": False}
-        ]
-        return mode.value, skips
-    return mode.value, None
-
-
-__all__ = ["_cache_hit_carrier_report", "_capability_parity_drift"]
+__all__ = ["_capability_parity_drift"]

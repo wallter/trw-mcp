@@ -45,27 +45,6 @@ def test_render_ceremony_quick_ref_generated_from_ceremony_tools() -> None:
         assert ct.example in table, f"{tool_name} example missing from quick ref"
 
 
-def test_legacy_model_family_hints_emit_portable_opencode_instructions() -> None:
-    """FR03: legacy model-family hints are accepted but do not change core protocol."""
-    outputs = []
-    for family in ("qwen", "claude", "gpt", "generic"):
-        renderer = ProtocolRenderer(
-            client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-            model_family=family,
-        )
-        instructions = renderer.render_opencode_instructions()
-        outputs.append(instructions)
-        assert "# TRW Instructions" in instructions
-        assert "project-native" in instructions
-        assert "Nudge Policy" in instructions
-        assert "/think" not in instructions
-        assert "Qwen-Coder-Next" not in instructions
-        assert "chain-of-thought" not in instructions
-        assert "extended thinking" not in instructions.lower()
-
-    assert len(set(outputs)) == 1
-
-
 def test_ceremony_mode_switching_full_vs_minimal() -> None:
     """FR04: Verify renderer output changes with ceremony mode."""
     profile = ClientProfile(client_id="claude-code", display_name="claude-code")
@@ -174,18 +153,6 @@ def test_render_behavioral_protocol_full() -> None:
     assert "Session Boundaries" in output
 
 
-def test_opencode_generic_fallback() -> None:
-    """Verify unknown model family falls back to portable instructions."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family="unknown-model",
-    )
-    instructions = renderer.render_opencode_instructions()
-    assert "TRW Instructions" in instructions
-    assert "Model and Context Policy" in instructions
-    assert "project-native" in instructions
-
-
 # ---------------------------------------------------------------------------
 # FR01: All generators delegate to ProtocolRenderer
 # ---------------------------------------------------------------------------
@@ -205,16 +172,6 @@ def test_static_sections_delegate_to_renderer(monkeypatch: pytest.MonkeyPatch) -
     assert "RESEARCH" in _static_sections.render_phase_descriptions()
     assert "Tool Lifecycle" in _static_sections.render_ceremony_table()
     assert "Quick Task" in _static_sections.render_ceremony_flows()
-
-
-def test_opencode_sections_delegate_to_renderer() -> None:
-    """FR01: _opencode_sections.render_opencode_instructions delegates to renderer."""
-    from trw_mcp.state.claude_md._opencode_sections import render_opencode_instructions
-
-    output = render_opencode_instructions("qwen")
-    assert "# TRW Instructions" in output
-    assert "Nudge Policy" in output
-    assert "Qwen" not in output
 
 
 # ---------------------------------------------------------------------------
@@ -242,33 +199,6 @@ def test_phase_descriptions_has_all_phases() -> None:
 # ---------------------------------------------------------------------------
 # FR03: Portable model-family compatibility
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("family", ["qwen", "gpt", "claude", "generic", "unknown-llm"])
-def test_opencode_model_family_content_is_portable(family: str) -> None:
-    """FR03: Every model-family hint produces the same portable v25 protocol."""
-    renderer = ProtocolRenderer(
-        client_profile=ClientProfile(client_id="opencode", display_name="opencode"),
-        model_family=family,
-    )
-    output = renderer.render_opencode_instructions()
-    assert "# TRW Instructions" in output
-    assert "Model and Context Policy" in output
-    assert "project-native" in output
-    assert "Nudge Policy" in output
-    assert "/think" not in output
-    assert "chain-of-thought" not in output
-    assert "extended thinking" not in output.lower()
-
-
-def test_opencode_families_match() -> None:
-    """FR03: Different legacy family hints no longer fork core protocol text."""
-    profile = ClientProfile(client_id="opencode", display_name="opencode")
-    outputs = {
-        family: ProtocolRenderer(client_profile=profile, model_family=family).render_opencode_instructions()
-        for family in ("qwen", "gpt", "claude", "generic")
-    }
-    assert len(set(outputs.values())) == 1
 
 
 # ---------------------------------------------------------------------------

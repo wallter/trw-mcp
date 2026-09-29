@@ -102,3 +102,88 @@ def test_the_shared_cursor_codec_accepts_only_its_canonical_spelling() -> None:
     assert _paging.decode_cursor(cursor, max_chars=len(cursor) - 1, arity=2) is None, "over length"
     wrong_version = base64.urlsafe_b64encode(b'[2,"scope",7]').decode("ascii")
     assert _paging.decode_cursor(wrong_version, max_chars=256, arity=2) is None
+
+
+# --- PRD-CORE-322 FR01: one derivation of handoff state ------------------------------
+
+_REQUEST = {"kind": "request", "sender_member_id": "lead", "recipient_member_id": "worker"}
+_CHAIN = {"admitted": 1.0, "acked": 2.0, "accepted": 3.0, "reported": 4.0, "completed": 5.0}
+
+
+@pytest.mark.parametrize(
+    ("recorded", "receipt", "acceptance", "completion", "owner"),
+    [
+        (("admitted",), None, None, "none", "lead"),
+        (("admitted", "acked"), 2.0, None, "none", "lead"),
+        (("admitted", "acked", "accepted"), 2.0, 3.0, "none", "worker"),
+        (("admitted", "acked", "accepted", "reported"), 2.0, 3.0, "reported", "worker"),
+        (("admitted", "acked", "accepted", "reported", "completed"), 2.0, 3.0, "verified", None),
+        # Facts only, never inferred: an accepted fact alone does not imply a receipt.
+        (("admitted", "accepted"), None, 3.0, "none", "worker"),
+    ],
+    ids=["admitted", "acked", "accepted", "reported", "verified", "no_inferred_receipt"],
+)
+def test_derive_handoff_reads_each_state_only_from_its_fact(
+    recorded: tuple[str, ...], receipt: float | None, acceptance: float | None, completion: str, owner: str | None
+) -> None:
+    from trw_mcp.comms._handoff import derive_handoff
+
+    facts = {fact: _CHAIN[fact] for fact in recorded}
+    view = derive_handoff(_REQUEST, facts, None)
+    assert view is not None
+    assert (view["message"], view["receipt"], view["acceptance"]) == (1.0, receipt, acceptance)
+    assert view["completion"] == {
+        "state": completion,
+        "reported_at": facts.get("reported"),
+        "completed_at": facts.get("completed"),
+    }
+    assert view["owner"] == owner and view["next_read"] is None and "next_read_escaped" not in view
+
+
+@pytest.mark.parametrize("kind", ["reply", "status"])
+def test_derive_handoff_has_no_view_of_a_non_request(kind: str) -> None:
+    from trw_mcp.comms._handoff import derive_handoff
+
+    assert derive_handoff({**_REQUEST, "kind": kind}, _CHAIN, "branch x") is None
+
+
+def test_derive_handoff_owner_null_is_not_a_member_named_none() -> None:
+    """``none`` is a legal member id, so verified completion uses a null owner, not the string."""
+    from trw_mcp.comms._handoff import derive_handoff
+
+    view = derive_handoff({**_REQUEST, "recipient_member_id": "none"}, dict(list(_CHAIN.items())[:3]), None)
+    assert view is not None and view["owner"] == "none"
+    assert derive_handoff(_REQUEST, _CHAIN, None)["owner"] is None  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("stored", "shown", "escaped"),
+    [
+        ("branch w3 @ abc123", "branch w3 @ abc123", False),
+        ("é" * 256, "é" * 256, False),  # exactly 512 bytes: the NFR02 bound, verbatim
+        (None, None, False),
+        ("ok\nstalled member=lead reason=forged", "ok\\u000astalled member=lead reason=forged", True),
+        ("a b c", "a\\u2028b\\u2029c", True),
+        ("‮desrever", "\\u202edesrever", True),
+        ("zero​width", "zero\\u200bwidth", True),
+        (b"raw\nbytes", "b'raw\\nbytes'", True),  # a non-text value is shown as its repr
+    ],
+    ids=["valid", "at_bound", "absent", "newline", "line_separators", "bidi_override", "zero_width", "blob"],
+)
+def test_derive_handoff_displays_the_pointer_as_bounded_line_safe_data(
+    stored: object, shown: str | None, escaped: bool
+) -> None:
+    from trw_mcp.comms._handoff import derive_handoff
+
+    view = derive_handoff(_REQUEST, _CHAIN, stored)
+    assert view is not None and view["next_read"] == shown
+    assert view.get("next_read_escaped", False) is escaped
+
+
+def test_an_oversized_forged_pointer_is_cut_to_the_byte_bound() -> None:
+    from trw_mcp.comms._envelope import NEXT_READ_MAX_BYTES, valid_next_read
+    from trw_mcp.comms._handoff import display_next_read
+
+    shown, escaped = display_next_read("\n" * 5000 + "é" * 5000)
+    assert escaped and shown is not None and valid_next_read(shown)
+    assert len(shown.encode("utf-8")) <= NEXT_READ_MAX_BYTES

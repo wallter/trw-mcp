@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from trw_mcp.formation._brief import render_brief
 from trw_mcp.formation._manifest import FormationError
@@ -37,6 +38,11 @@ class FormationStatus:
     stall_measurement: str = "not_measured"
     mail_measurement: str = "not_measured"
     call_measurement: str = "not_measured"
+    activity_measurement: str = "not_measured"
+    #: PRD-CORE-322 FR07: open handoffs; each ``next_read`` is untrusted peer data, displayed only.
+    handoffs: tuple[dict[str, Any], ...] = ()
+    handoffs_omitted: int = 0
+    handoff_measurement: str = "not_measured"
 
     @property
     def stall_scope(self) -> dict[str, str]:
@@ -110,11 +116,23 @@ def status(
     knobs = facade.settings()
     try:
         root = _authority_project_root(resolved.manifest_path, trw_dir)
-        scan = stall_scan(resolved.manifest, resolved.manifest_path, root, now=time.time())
+        scan = stall_scan(
+            resolved.manifest,
+            resolved.manifest_path,
+            root,
+            now=time.time(),
+            activity_stall_seconds=knobs.activity_stall_seconds,
+            include_handoffs=True,
+            handoff_ttl_seconds=knobs.handoff_ttl_seconds,
+        )
         stalls = scan.findings
+        handoffs, handoffs_omitted, handoff_measurement = scan.handoffs, scan.handoffs_omitted, scan.handoff_measurement
         mail_measurement, call_measurement = scan.mail_measurement, scan.call_measurement
+        activity_measurement = scan.activity_measurement
     except (OSError, TypeError, ValueError):  # trw-fail-silent-allow: explicit not_measured status
         stalls, mail_measurement, call_measurement = [], "not_measured", "not_measured"
+        activity_measurement = "not_measured"
+        handoffs, handoffs_omitted, handoff_measurement = (), 0, "not_measured"
     stall_measurement = "measured" if mail_measurement == call_measurement == "measured" else "not_measured"
     return FormationStatus(
         formation_id=resolved.manifest.formation_id,
@@ -130,4 +148,8 @@ def status(
         stall_measurement=stall_measurement,
         mail_measurement=mail_measurement,
         call_measurement=call_measurement,
+        activity_measurement=activity_measurement,
+        handoffs=handoffs,
+        handoffs_omitted=handoffs_omitted,
+        handoff_measurement=handoff_measurement,
     )

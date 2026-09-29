@@ -18,11 +18,50 @@ fi
 if grep -qx 'hooks_enabled=false' "$_trw_hook_env_root/.trw/runtime/hook-flags" 2>/dev/null; then
   exit 0
 fi
-# PRD-CORE-149 FR04: the profile-resolved nudge policy and client identity.
-if [ -f "$_trw_hook_env_root/.trw/runtime/hook-env.sh" ]; then
-  # shellcheck source=/dev/null
-  . "$_trw_hook_env_root/.trw/runtime/hook-env.sh" 2>/dev/null || true
+# PRD-CORE-149 FR04 / R8 hook-env-per-client: the profile-resolved nudge
+# policy and client identity, ONE FILE PER CLIENT under hook-env.d/ -- never a
+# single shared file. A shared file meant whichever client synced LAST decided
+# every OTHER client's NUDGE_ENABLED/TRW_SESSION_ID too (syncing opencode or
+# grok after claude-code silently turned Claude Code's own hooks unpinned).
+#
+# TRW_HOOK_CLIENT, when the caller set it, wins outright: codex and copilot
+# execute the SAME PHYSICAL SCRIPT as claude-code (their adapters invoke
+# `.claude/hooks/<script>.sh` directly -- see bootstrap/_codex_hooks.py and
+# _copilot.py), so the path derivation below can only ever resolve "claude"
+# for all three. Their registered hook commands export TRW_HOOK_CLIENT
+# (codex/copilot respectively) ahead of the script so each reads its OWN
+# hook-env.d/<key>.sh instead of silently inheriting claude-code's. Validated
+# against the same charset the key itself is sanitized to, so a value that
+# fails validation is treated as absent (fail-open), never passed through.
+#
+# Otherwise the key is derived from where THIS CALLING HOOK physically lives
+# -- its own "<config_dir>/hooks" install directory (e.g. ".claude/hooks" ->
+# "claude") -- never a client-id table. Every hook that sources this library
+# sets $_hook_dir to its own directory first (". \"$_hook_dir/lib-trw.sh\""),
+# and that assignment is visible here because `.` sourcing shares scope. A
+# caller that sources this file directly without setting $_hook_dir (a raw
+# shell probe, never a real hook) and with no TRW_HOOK_CLIENT resolves no key
+# and falls through to the unpinned defaults below -- fail-open, not a guess.
+# Mirrors bootstrap/_file_ops.py::_hook_env_key exactly; the two must stay in
+# lockstep or a hook silently reads the wrong client's settings.
+_trw_hook_env_key=""
+case "${TRW_HOOK_CLIENT:-}" in
+  '') ;;
+  *[!A-Za-z0-9_-]*) ;;
+  *) _trw_hook_env_key="$TRW_HOOK_CLIENT" ;;
+esac
+if [ -z "$_trw_hook_env_key" ] && [ -n "${_hook_dir:-}" ]; then
+  _trw_hook_env_key="$(basename "$(dirname "$_hook_dir")" 2>/dev/null)" || _trw_hook_env_key=""
+  _trw_hook_env_key="${_trw_hook_env_key#.}"
+  case "$_trw_hook_env_key" in
+    '' | *[!A-Za-z0-9_-]*) _trw_hook_env_key="" ;;
+  esac
 fi
+if [ -n "$_trw_hook_env_key" ] && [ -f "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" 2>/dev/null || true
+fi
+unset _trw_hook_env_key
 NUDGE_ENABLED="${NUDGE_ENABLED:-true}"
 export NUDGE_ENABLED
 unset _trw_hook_env_root
@@ -65,13 +104,14 @@ get_task_root() {
 # trw_pin_key: Print THIS session's pin key, or nothing.
 # PRD-FIX-118 FR01/FR02.
 #
-# The key is TRW_SESSION_ID, exported by .trw/runtime/hook-env.sh from the
-# client's own session variable (e.g. CLAUDE_CODE_SESSION_ID) -- the same string
-# the MCP server keys .trw/runtime/pins.json on via resolve_pin_key. This
-# function deliberately knows NOTHING about individual clients: the per-profile
-# mapping lives in exactly one place (client_profiles/session_identity.py) and
-# reaches here through the generated hook-env.sh. A stale hook-env.sh (written
-# before FR01) or a client that publishes no identity therefore yields empty --
+# The key is TRW_SESSION_ID, exported by this client's own
+# .trw/runtime/hook-env.d/<key>.sh from the client's own session variable
+# (e.g. CLAUDE_CODE_SESSION_ID) -- the same string the MCP server keys
+# .trw/runtime/pins.json on via resolve_pin_key. This function deliberately
+# knows NOTHING about individual clients: the per-profile mapping lives in
+# exactly one place (client_profiles/session_identity.py) and reaches here
+# through the generated hook-env.d/<key>.sh. A stale file (written before
+# FR01) or a client that publishes no identity therefore yields empty --
 # the honest "identity unknown" state, not a guess.
 #
 # Args: $1=optional fallback key (e.g. the session_id from a hook's stdin
@@ -364,7 +404,7 @@ _json_get() {
       jq -r --arg arg "$_jg_arg" --arg def "$_jg_def" "$_jg_filter" 2>/dev/null
     fi
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "$_TRW_JSON_GET_PY" "$_jg_file" "$_jg_arg" "$_jg_hasdef" "$_jg_def" "$_jg_strings" "$@" 2>/dev/null
+    python3 -I -c "$_TRW_JSON_GET_PY" "$_jg_file" "$_jg_arg" "$_jg_hasdef" "$_jg_def" "$_jg_strings" "$@" 2>/dev/null
   else
     return 1
   fi
@@ -438,6 +478,47 @@ _trw_has_json_parser() {
   command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1
 }
 
+# _json_string_leaves: Print every string leaf of top-level field $1 of the JSON
+# object on stdin, in document order, one per line: jq's
+# `.[$f] // "" | [.. | strings] | join("\n")` (a string field prints itself). jq,
+# else python3 (PRD-FIX-156-FR04). Returns non-zero and prints nothing unless
+# stdin is exactly one JSON object, or when neither parser exists.
+_json_string_leaves() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -n -r --arg f "$1" '[inputs] | if length == 1 and (.[0] | type) == "object"
+      then (.[0][$f] // "" | [.. | strings] | join("\n")) else error("not one JSON object") end' \
+      2>/dev/null
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -I -c "$_TRW_JSON_LEAVES_PY" "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+# The python3 half of _json_string_leaves; free of single quotes like _TRW_JSON_GET_PY.
+_TRW_JSON_LEAVES_PY='
+import json, sys
+try:
+    doc = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+except ValueError:
+    sys.exit(1)
+if not isinstance(doc, dict):
+    sys.exit(1)
+value = doc.get(sys.argv[1])
+if value is None or value is False:
+    value = ""
+def leaves(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for child in node.values():
+            yield from leaves(child)
+    elif isinstance(node, list):
+        for child in node:
+            yield from leaves(child)
+sys.stdout.buffer.write(("\n".join(leaves(value)) + "\n").encode("utf-8", "replace"))
+'
+
 # _json_str_field: Print the string value of top-level key $2 in the JSON text $1
 # (jq `.[$k] // empty | strings`), with jq or python3 via _json_get.
 _json_str_field() {
@@ -456,8 +537,10 @@ _trw_ancestor_symlinked() {
   _tas_walk="$1"
   while [ -n "$_tas_walk" ] && [ "$_tas_walk" != "/" ] && [ "$_tas_walk" != "." ]; do
     [ -L "$_tas_walk" ] && return 0
+    # The walk stops at the checkout's own state root: what lies above `.trw`
+    # (or `.claude`, for the few hook files kept there) is the user's layout.
     case "$_tas_walk" in
-      */.trw | .trw) return 1 ;;
+      */.trw | .trw | */.claude | .claude) return 1 ;;
     esac
     _tas_next=$(dirname "$_tas_walk")
     [ "$_tas_next" = "$_tas_walk" ] && return 1
@@ -522,6 +605,31 @@ _trw_safe_write() {
   mv -f "$_tsw_tmp" "$_tsw_dest" 2>/dev/null && return 0
   rm -f "$_tsw_tmp" 2>/dev/null
   return 1
+}
+
+# _trw_safe_rm: Remove checkout-state files without deleting THROUGH a symlinked
+# ancestor (PRD-FIX-156-FR03, B71-103). A plain `rm -f dir/x` resolves every
+# component of dir, so a checkout that ships `.trw/context` as a symlink turns it
+# into "delete x wherever that link points". A symlinked LEAF needs no check:
+# rm unlinks the link itself, never its target. Only the parent chain is vetted,
+# with the walk `_trw_safe_write` uses. Directories are never removed (no -r).
+#
+# Every bundled hook removes checkout state through this helper; the census in
+# tests/hooks/test_hook_safe_fs_census.py fails on any other rm.
+#
+# Args: one or more paths (an unmatched glob arrives literally and is absent).
+# Returns 1 when any path was refused or could not be removed; callers treat
+# that as "the file may still be there", which every one of them tolerates.
+_trw_safe_rm() {
+  _tsr_rc=0
+  for _tsr_path in "$@"; do
+    if _trw_ancestor_symlinked "$(dirname "$_tsr_path")"; then
+      _tsr_rc=1
+      continue
+    fi
+    rm -f "$_tsr_path" 2>/dev/null || _tsr_rc=1
+  done
+  return $_tsr_rc
 }
 
 # _trw_safe_read: Print a state file's content, treating a symlinked path as
@@ -894,7 +1002,7 @@ check_ceremony_status() {
   # Check individual ceremony events
   _cs_missing=""
   if ! has_event "$_cs_events" "reflection_complete" && ! has_event "$_cs_events" "trw_reflect_complete"; then
-    _cs_missing="${_cs_missing}, trw_reflect"
+    _cs_missing="${_cs_missing}, reflection"
   fi
   if ! has_event "$_cs_events" "checkpoint"; then
     _cs_missing="${_cs_missing}, trw_checkpoint"
@@ -913,7 +1021,7 @@ check_ceremony_status() {
 cleanup_block_files() {
   _cbd_dir="${1:-}"
   [ -d "$_cbd_dir" ] || return 0
-  rm -f "$_cbd_dir"/idle_block_* "$_cbd_dir"/tc_block_* 2>/dev/null || true
+  _trw_safe_rm "$_cbd_dir"/idle_block_* "$_cbd_dir"/tc_block_* || true
 }
 
 # cleanup_phase_cycle: Remove phase-cycle state files older than 4 hours.
@@ -926,7 +1034,7 @@ cleanup_phase_cycle() {
   [ -f "$_cpc_state" ] || return 0
   # Remove if older than 4 hours (240 minutes)
   if find "$_cpc_state" -mmin "+240" 2>/dev/null | grep -q .; then
-    rm -f "$_cpc_state" 2>/dev/null || true
+    _trw_safe_rm "$_cpc_state" || true
   fi
 }
 
@@ -1041,7 +1149,7 @@ trw_degraded_marker_path() {
 # partially-upgraded peer cannot produce a verdict.
 _trw_degraded_dir_ready() {
   if [ -f "$1" ]; then
-    rm -f "$1" 2>/dev/null || return 1
+    _trw_safe_rm "$1" || return 1
   fi
   mkdir -p "$1" 2>/dev/null || return 1
   return 0
@@ -1192,7 +1300,7 @@ _trw_pin_rows() {
         | [.key, ((.value.pid // "-") | tostring), ((.value.last_heartbeat_ts // "-") | tostring)]
         | @tsv) else error("pins.json is not an object") end' "$1" 2>/dev/null || return 1
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys
+    python3 -I -c 'import json,sys
 d = json.load(open(sys.argv[1]))
 if not isinstance(d, dict):
     raise SystemExit(1)
@@ -1324,7 +1432,7 @@ $_tdsm_live
 $_tdsm_key
 "*) continue ;;
     esac
-    rm -f "$_tdsm_path" 2>/dev/null || true
+    _trw_safe_rm "$_tdsm_path" || true
   done
   return 0
 }
@@ -1338,11 +1446,11 @@ $_tdsm_key
 trw_degraded_release_markers() {
   _tdrm_path=$(trw_degraded_marker_path epoch "${1:-}") || _tdrm_path=""
   if [ -n "$_tdrm_path" ]; then
-    rm -f "$_tdrm_path" 2>/dev/null || true
+    _trw_safe_rm "$_tdrm_path" || true
   fi
   _tdrm_path=$(trw_degraded_marker_path latch "${1:-}") || _tdrm_path=""
   if [ -n "$_tdrm_path" ]; then
-    rm -f "$_tdrm_path" 2>/dev/null || true
+    _trw_safe_rm "$_tdrm_path" || true
   fi
   return 0
 }
@@ -1364,7 +1472,7 @@ trw_clear_degraded_latch() {
   # so the legacy regular file is migrated here too, defensively, rather than
   # relying solely on the sweep.
   _trw_degraded_marker_dir_ready "$_tcdl_path" 2>/dev/null || true
-  rm -f "$_tcdl_path" 2>/dev/null || true
+  _trw_safe_rm "$_tcdl_path" || true
   return 0
 }
 
@@ -1512,7 +1620,7 @@ _trw_scan_log_for_trw_call() {
   # than the row's own timestamp (a false negative/positive on a row with more
   # than one `"ts"` key, e.g. inside a nested payload).
   if command -v python3 >/dev/null 2>&1; then
-    printf '%s\n' "$_tottc_body" | python3 -c '
+    printf '%s\n' "$_tottc_body" | python3 -I -c '
 import json
 import sys
 

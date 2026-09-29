@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -778,7 +778,11 @@ def _surface_rules(result: dict[str, object]) -> set[str]:
     return {str(failure["rule"]) for failure in failures if str(failure["rule"]).startswith("core218_surface_delta")}
 
 
-def _delta_block(*, additions: list[str], removals: list[str], exception: bool, expiry: str = "2027-01-01") -> str:
+#: An exception expiry a year past the validator's own UTC today, so the "unexpired" case never ages into "expired".
+_UNEXPIRED = (datetime.now(timezone.utc).date() + timedelta(days=365)).isoformat()
+
+
+def _delta_block(*, additions: list[str], removals: list[str], exception: bool, expiry: str = _UNEXPIRED) -> str:
     lines = [
         "surface_delta:",
         f"  additions: [{', '.join(additions)}]",

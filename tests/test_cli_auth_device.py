@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from tests._test_cli_auth_support import _DeviceAuthHandler
-from trw_mcp.cli.auth import _post_json, device_auth_login
+from trw_mcp.cli.auth import _post_json, device_auth_login, run_auth_login
 
 from ._test_cli_auth_support import _reset_handler, mock_server  # noqa: F401
 
@@ -27,6 +28,30 @@ class TestPostJson:
 
         with pytest.raises(URLError):
             _post_json("http://127.0.0.1:1/nonexistent", {"x": 1}, timeout=1)
+
+    def test_disallowed_destination_raises_typed_error(self) -> None:
+        """PRD-SEC-021 FR05: refused before any request, via the shared policy error."""
+        from trw_mcp._outbound_http import DisallowedDestinationError
+
+        with pytest.raises(DisallowedDestinationError):
+            _post_json("http://not-loopback.example/x", {"x": 1})
+
+
+class TestRunAuthLoginDisallowedDestination:
+    """PRD-SEC-021 item (3): the policy refusal must not escape as a traceback.
+
+    Exercises the SERVED CLI entrypoint (``run_auth_login``, called by the
+    ``trw-mcp auth login`` subcommand), not just the internal helper.
+    """
+
+    def test_clean_error_and_nonzero_exit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        exit_code = run_auth_login("http://not-loopback.example/api", tmp_path / "config.yaml")
+
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert "Traceback" not in captured.err
+        assert "Traceback" not in captured.out
+        assert "Refusing to contact" in captured.err
 
 
 class TestDeviceAuthLogin:

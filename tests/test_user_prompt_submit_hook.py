@@ -15,7 +15,9 @@ import pytest
 # the repo-root .claude/hooks/ copy against the bundled hook — a layout absent
 # from the standalone trw-mcp PyPI/GitHub mirror). Skip cleanly there; the
 # monorepo CI still enforces it.
-if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
@@ -28,7 +30,6 @@ from tests._auto_recall_hook_harness import (
     _MATCHING_SUMMARY,
     _ROOT,
     _SETTINGS_PATHS,
-    _copy_hook_to_temp,
     _hook_log,
     _make_path_without_jq,
     _run_hook,
@@ -54,6 +55,7 @@ from _ownership_harness import (  # noqa: I001 - must follow the sys.path line a
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_reads_prompt_field() -> None:
     for hook_path in _HOOK_PATHS:
         content = hook_path.read_text(encoding="utf-8")
@@ -62,6 +64,7 @@ def test_user_prompt_submit_hook_reads_prompt_field() -> None:
         assert ".message // empty" not in content
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_copies_stay_in_sync() -> None:
     """FR10: every deployed copy of the hook and its library is byte-identical."""
     # Arity-independent: adding or retiring a distribution copy must not require
@@ -73,26 +76,29 @@ def test_user_prompt_submit_hook_copies_stay_in_sync() -> None:
         assert len(contents) == 1, f"{label} copies diverged: {[p.as_posix() for p in paths]}"
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_timeout_is_500ms() -> None:
     for settings_path in _SETTINGS_PATHS:
         settings = settings_path.read_text(encoding="utf-8")
         assert '"timeout": 500' in settings
 
-    for hook_path in _HOOK_PATHS:
-        content = hook_path.read_text(encoding="utf-8")
-        assert "TIMEOUT_NS = 500_000_000" in content
-        assert "MAX_KEYWORDS = 16" in content
+    from trw_mcp.state import _auto_recall_hook
+
+    assert _auto_recall_hook.TIMEOUT_NS == 500_000_000
+    assert _auto_recall_hook.MAX_KEYWORDS == 16
 
 
+@pytest.mark.unit
 def test_scorer_has_no_magic_scan_cap_or_prompt_denominator() -> None:
-    """FR01/FR07: the two defects are absent from every copy of the hook."""
+    """FR01/FR07: the two defects are absent from every copy of the hook and its scorer."""
+    scorer = (_ROOT / "src" / "trw_mcp" / "state" / "_auto_recall_hook.py").read_text(encoding="utf-8")
     for hook_path in _HOOK_PATHS:
-        content = hook_path.read_text(encoding="utf-8")
+        content = hook_path.read_text(encoding="utf-8") + scorer
         assert "score = matches / len(keywords)" not in content
         assert "MAX_SCAN_FILES = 500" not in content
         assert "auto_recall_scan_cap" in content
         assert "event=AutoRecall" in content
-        assert "decision=deadline" in content or 'decision = "deadline"' in content
+        assert 'decision = "deadline"' in content
 
 
 # --------------------------------------------------------------------------
@@ -100,6 +106,7 @@ def test_scorer_has_no_magic_scan_cap_or_prompt_denominator() -> None:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_done_phase_still_injects_learnings(tmp_path: Path) -> None:
     """FR03: a delivered run must not retire the recall mechanism.
 
@@ -122,6 +129,7 @@ def test_done_phase_still_injects_learnings(tmp_path: Path) -> None:
         assert "TRW [" not in result.stdout, "the phase-guidance limb must stay silent at done"
 
 
+@pytest.mark.unit
 def test_same_phase_still_injects_learnings(tmp_path: Path) -> None:
     """FR04: the dominant suppressor — 79 of 86 live executions ended here.
 
@@ -144,6 +152,7 @@ def test_same_phase_still_injects_learnings(tmp_path: Path) -> None:
         assert "TRW [" not in result.stdout, "the phase-guidance limb must stay suppressed"
 
 
+@pytest.mark.unit
 def test_phase_guidance_still_suppressed_and_logged_as_cached(tmp_path: Path) -> None:
     """Regression: with nothing to recall, an unchanged phase is still `cached`."""
     result = _run_hook(
@@ -164,6 +173,7 @@ def test_phase_guidance_still_suppressed_and_logged_as_cached(tmp_path: Path) ->
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_none_phase_reminder_caps_at_five_prompt_cadence(tmp_path: Path) -> None:
     """PRD-CORE-301 cut 1: "none" has no phase transition to suppress on, so
     an agent that never calls trw_session_start would otherwise see this line
@@ -188,6 +198,7 @@ def test_none_phase_reminder_caps_at_five_prompt_cadence(tmp_path: Path) -> None
     assert (result.project_root / ".trw" / "context" / "none_phase_prompt_count").read_text(encoding="utf-8") == "6"
 
 
+@pytest.mark.unit
 def test_none_phase_reminder_resets_cadence_after_a_real_phase(tmp_path: Path) -> None:
     """A session that returns to "none" (e.g. a retired pin) restarts the cadence
     from prompt one rather than resuming mid-count from an earlier "none" streak.
@@ -207,6 +218,7 @@ def test_none_phase_reminder_resets_cadence_after_a_real_phase(tmp_path: Path) -
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_emits_one_diagnostic_line_when_nothing_fires(tmp_path: Path) -> None:
     """FR05: silence must be distinguishable from absence.
 
@@ -313,6 +325,7 @@ def _emitted_phase(root: Path) -> str:
         pytest.param(_ROOT.parent / ".claude" / "hooks", id="mirror"),
     ],
 )
+@pytest.mark.unit
 def test_phase_resolves_from_owned_run_not_recency(hook_dir: Path, tmp_path: Path) -> None:
     """FR11: a parallel instance's delivery must not pin THIS session's phase.
 
@@ -326,7 +339,7 @@ def test_phase_resolves_from_owned_run_not_recency(hook_dir: Path, tmp_path: Pat
         own_event_lines=(FILE_MODIFIED,),
         foreign_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     result = run_ownership_hook(
         hook_dir / "user-prompt-submit.sh",
@@ -346,6 +359,7 @@ def test_phase_resolves_from_owned_run_not_recency(hook_dir: Path, tmp_path: Pat
         pytest.param(_ROOT.parent / ".claude" / "hooks", id="mirror"),
     ],
 )
+@pytest.mark.unit
 def test_unpinned_session_does_not_adopt_the_newest_run(hook_dir: Path, tmp_path: Path) -> None:
     """R2-009: an unpinned session gets "none", not whichever run sorted newest.
 
@@ -358,7 +372,7 @@ def test_unpinned_session_does_not_adopt_the_newest_run(hook_dir: Path, tmp_path
         own_event_lines=(FILE_MODIFIED,),
         foreign_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
     )
-    write_hook_env(root)
+    write_hook_env(root, hook_dir=hook_dir)
 
     result = run_ownership_hook(
         hook_dir / "user-prompt-submit.sh",
@@ -371,6 +385,7 @@ def test_unpinned_session_does_not_adopt_the_newest_run(hook_dir: Path, tmp_path
     assert "TRW [DONE]" not in result.stdout
 
 
+@pytest.mark.unit
 def test_phase_ladder_has_exactly_one_implementation() -> None:
     """FR11: the private `_pcs_infer_phase` copy is gone (wiring pattern P10)."""
     hook_dirs = (
@@ -395,6 +410,7 @@ def test_phase_ladder_has_exactly_one_implementation() -> None:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_filters_to_active_learnings(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
@@ -413,6 +429,7 @@ def test_user_prompt_submit_hook_filters_to_active_learnings(tmp_path: Path) -> 
         assert "[L-resolved-1]" not in result.stdout
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_respects_min_score_env_override(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
@@ -428,6 +445,7 @@ def test_user_prompt_submit_hook_respects_min_score_env_override(tmp_path: Path)
         assert "[L-active-1]" not in result.stdout
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_missing_prompt_is_silent(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
@@ -442,6 +460,7 @@ def test_user_prompt_submit_hook_missing_prompt_is_silent(tmp_path: Path) -> Non
         assert "UserPromptSubmit|implement|skipped" in _hook_log(result)
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_malformed_json_is_silent(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
@@ -456,7 +475,8 @@ def test_user_prompt_submit_hook_malformed_json_is_silent(tmp_path: Path) -> Non
         assert "UserPromptSubmit|implement|skipped" in _hook_log(result)
 
 
-def test_user_prompt_submit_hook_uses_yaml_learning_ids_for_output_and_dedup(tmp_path: Path) -> None:
+@pytest.mark.unit
+def test_user_prompt_submit_hook_uses_stored_learning_ids_for_output_and_dedup(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
             tmp_path / hook_path.parent.name,
@@ -469,54 +489,18 @@ def test_user_prompt_submit_hook_uses_yaml_learning_ids_for_output_and_dedup(tmp
                     "learning_id": "L-real-id",
                     "status": "active",
                     "summary": _MATCHING_SUMMARY,
-                    "file_stem": "2026-04-10-structlog-gotcha",
                 }
             ],
         )
 
         assert "[L-real-id]" in result.stdout
-        assert "2026-04-10-structlog-gotcha" not in result.stdout
         injected_ids = (result.project_root / ".trw" / "context" / "injected_learning_ids.txt").read_text(
             encoding="utf-8"
         )
         assert injected_ids.strip() == "L-real-id"
 
 
-def test_user_prompt_submit_hook_matches_wrapped_summary_text(tmp_path: Path) -> None:
-    """A folded multi-line summary is still read whole — and now unquoted."""
-    for hook_path in _HOOK_PATHS:
-        project_root, hook, entries_dir = _copy_hook_to_temp(
-            tmp_path / hook_path.parent.name / "wrapped-summary", hook_path
-        )
-        (entries_dir / "wrapped-summary.yaml").write_text(
-            'id: "L-wrapped"\n'
-            "status: active\n"
-            "summary: 'mypy cache staleness produces phantom unused-ignore errors —\n"
-            "  clear .mypy_cache before trusting results'\n",
-            encoding="utf-8",
-        )
-        (project_root / ".trw" / "context" / "last_ups_phase").write_text("plan", encoding="utf-8")
-
-        result = subprocess.run(
-            ["sh", str(hook)],
-            input=json.dumps({"prompt": "trusting results before clearing the mypy cache"}),
-            text=True,
-            capture_output=True,
-            cwd=project_root,
-            env={
-                **os.environ,
-                "TRW_PROJECT_ROOT": str(project_root),
-                "TRW_TEST_PHASE": "implement",
-                "TRW_HOOK_LOG": str(project_root / "hook.log"),
-            },
-            check=False,
-        )
-
-        assert "[L-wrapped]" in result.stdout
-        assert "clear .mypy_cache before trusting results" in result.stdout
-        assert "TRW RECALL: [L-wrapped] mypy cache" in result.stdout, "YAML quotes leaked into context"
-
-
+@pytest.mark.unit
 def test_user_prompt_submit_hook_reads_config_yaml_runtime(tmp_path: Path) -> None:
     for hook_path in _HOOK_PATHS:
         result = _run_hook(
@@ -532,6 +516,7 @@ def test_user_prompt_submit_hook_reads_config_yaml_runtime(tmp_path: Path) -> No
         assert "event=AutoRecall" not in _hook_log(result), "a disabled limb must not score"
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_config_yaml_pin_survives_the_new_default(tmp_path: Path) -> None:
     """Migration: a project pinning the old 0.7 keeps 0.7 after the upgrade."""
     result = _run_hook(
@@ -546,6 +531,7 @@ def test_user_prompt_submit_hook_config_yaml_pin_survives_the_new_default(tmp_pa
     assert "threshold=0.700" in _hook_log(result)
 
 
+@pytest.mark.unit
 def test_user_prompt_submit_hook_without_jq_uses_python_fallback(tmp_path: Path) -> None:
     """NFR04: identical output on a PATH with no jq."""
     path_without_jq = _make_path_without_jq(tmp_path)

@@ -14,6 +14,8 @@ from trw_mcp.state.persistence import FileStateReader
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,6 +41,25 @@ def test_invalid_protection_tier_returns_rejection() -> None:
     assert out["reason"] == "invalid_protection_tier"
 
 
+def test_invalid_evidence_level_returns_rejection() -> None:
+    """PRD-CORE-312-FR01: trw_learn rejects an evidence_level outside the four-value set."""
+    out = _validate_learn_enums(
+        type="pattern", confidence="unverified", protection_tier="normal", evidence_level="guessed"
+    )
+    assert out is not None
+    assert out["status"] == "rejected"
+    assert out["reason"] == "invalid_evidence_level"
+    assert "guessed" in out["message"]
+
+
+@pytest.mark.parametrize("level", ["observed", "verified", "inferred", "unknown"])
+def test_valid_evidence_level_returns_none(level: str) -> None:
+    assert (
+        _validate_learn_enums(type="pattern", confidence="unverified", protection_tier="normal", evidence_level=level)
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     ("bad_kwargs", "reason"),
     [
@@ -48,6 +67,7 @@ def test_invalid_protection_tier_returns_rejection() -> None:
         ({"confidence": "trusted"}, "invalid_confidence"),
         # protection_tier travels in the `metadata` bag (PRD tool-definition budget).
         ({"metadata": {"protection_tier": "top-secret"}}, "invalid_protection_tier"),
+        ({"evidence_level": "guessed"}, "invalid_evidence_level"),
     ],
 )
 def test_trw_learn_tool_returns_structured_rejection_not_exception(bad_kwargs: dict[str, object], reason: str) -> None:

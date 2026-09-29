@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+from tests._stdio_harness import pinned_server_env
 
 REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 BUNDLED_LIB = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "lib-trw.sh"
@@ -86,7 +87,7 @@ def _run_cli(root: Path, *args: str, session_id: str | None = None) -> subproces
         capture_output=True,
         text=True,
         cwd=str(root),
-        env=_cli_env(root, session_id=session_id),
+        env=pinned_server_env(_cli_env(root, session_id=session_id)),
         check=False,
     )
 

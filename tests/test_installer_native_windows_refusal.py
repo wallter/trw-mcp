@@ -14,6 +14,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 from tests._layout import requires_monorepo
 
@@ -44,6 +45,7 @@ def test_a_bash_bootstrap_refuses_native_windows_before_installing(bootstrap: Pa
         ["bash", str(bootstrap), "--allow-unauthenticated"],
         cwd=str(tmp_path),
         env={
+            **daemon_env_passthrough(),
             "PATH": f"{stub_bin}:/usr/bin:/bin",
             "HOME": str(tmp_path),
             "TERM": "dumb",

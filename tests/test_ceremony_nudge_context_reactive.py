@@ -7,7 +7,6 @@ from trw_mcp.state.ceremony_nudge import (
     NudgeContext,
     ToolName,
     _context_reactive_message,
-    compute_nudge,
 )
 
 
@@ -146,14 +145,6 @@ class TestFR03ContextReactiveMessages:
         msg = _context_reactive_message(ctx, state)
         assert msg is not None
         assert "Resume" in msg
-
-    def test_fr03_compute_nudge_uses_context(self) -> None:
-        """compute_nudge with context returns non-empty content."""
-        state = CeremonyState(session_started=True, checkpoint_count=1)
-        ctx = NudgeContext(tool_name="checkpoint")
-        result = compute_nudge(state, context=ctx)
-        assert "TRW" in result
-        assert len(result) > 0
 
 
 class TestFR06ProgressiveUrgencyDirectiveness:

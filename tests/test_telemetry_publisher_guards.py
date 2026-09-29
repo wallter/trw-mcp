@@ -11,6 +11,9 @@ from structlog.testing import capture_logs
 from tests._test_telemetry_publisher_support import _make_config, _make_learning, _write_learning
 from trw_mcp.telemetry.publisher import _HASH_FILE, _load_hashes, publish_learnings
 
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
+
 
 class TestPublishOfflineMode:
     def test_publish_offline_mode_no_url(self) -> None:

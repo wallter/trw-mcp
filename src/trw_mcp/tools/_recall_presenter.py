@@ -2,7 +2,8 @@
 
 PRD-CORE-294 FR01/FR02. Ranking is finished before this module runs; it only
 decides how much of the ranked list the caller pays for. A stub is
-``{id, claim, anchor?}`` and stubs are added in rank order until the next one
+``{id, claim, anchor?}`` (plus PRD-CORE-326 provenance keys when the caller
+opts in) and stubs are added in rank order until the next one
 would take the WHOLE rendered response over the budget. The first stub is
 kept by cutting long strings (query echo, advisories, its own claim) instead,
 so a non-empty recall never reads as empty. Full rows are one
@@ -23,6 +24,8 @@ SESSION_BYTE_BUDGET = 1_500
 SESSION_MAX_STUBS = 3
 #: Shortest a cut envelope string gets before a stub is dropped instead.
 _MIN_FIELD_CHARS = 16
+#: PRD-CORE-326 FR02/FR04: longest provenance value, in ASCII-escaped JSON bytes without its quotes.
+PROVENANCE_MAX_BYTES = 32
 
 
 def _cut(text: str, limit: int) -> str:
@@ -46,12 +49,65 @@ def _anchor(row: Mapping[str, object], query_tokens: Sequence[str]) -> str:
     return next(matching, rendered[0] if rendered else "")
 
 
-def stub(row: Mapping[str, object], query_tokens: Sequence[str] = ()) -> dict[str, object]:
-    """Render one ranked row as ``{id, claim, anchor?}``, every field bounded."""
+def _rendered_bytes(text: str) -> int:
+    return len(json.dumps(text)) - 2
+
+
+def _bounded(value: str) -> str:
+    """*value*, or its longest prefix plus ``...`` whose rendering fits ``PROVENANCE_MAX_BYTES``.
+
+    The bound is on rendered bytes, so an escaped quote or a non-ASCII character
+    (six bytes once escaped) cannot carry a value past it.
+    """
+    if _rendered_bytes(value) <= PROVENANCE_MAX_BYTES:
+        return value
+    value = value[:PROVENANCE_MAX_BYTES]  # every character renders to at least one byte
+    while _rendered_bytes(value + "...") > PROVENANCE_MAX_BYTES:
+        value = value[:-1]
+    return value + "..."
+
+
+def _provenance(row: Mapping[str, object], home_namespace: str) -> dict[str, object]:
+    """PRD-CORE-326: the stored provenance a row carries beyond the defaults, read verbatim.
+
+    A remote row (``source == "shared"``) is skipped: its fields are peer-asserted,
+    and its ``[shared]`` claim prefix is its only provenance marker. A row in
+    ``default`` or in the caller's own *home_namespace* has no scope to report, and
+    only a superseded row (returned under ``include_superseded``) names its closer.
+    """
+    if row.get("source") == "shared":
+        return {}
+    keys: dict[str, object] = {}
+    source = row.get("source_type")
+    if source and source != "agent":  # ``agent`` is the stored default on every write path
+        keys["source"] = str(source)
+    namespace = row.get("namespace")
+    if namespace and namespace not in ("default", home_namespace):
+        keys["scope"] = _bounded(str(namespace))
+    closer = row.get("invalidated_by")
+    if row.get("superseded") and closer:  # a closed window only; ``status="obsolete"`` leaves it open
+        keys["superseded_by"] = _bounded(str(closer))
+    return keys
+
+
+def stub(
+    row: Mapping[str, object],
+    query_tokens: Sequence[str] = (),
+    *,
+    provenance: bool = False,
+    home_namespace: str = "default",
+) -> dict[str, object]:
+    """Render one ranked row as ``{id, claim, anchor?}``, every field bounded.
+
+    ``provenance=True`` adds the PRD-CORE-326 keys, each omitted when it carries
+    no signal; *home_namespace* is the caller's own project namespace.
+    """
     rendered: dict[str, object] = {"id": str(row.get("id", "")), "claim": claim(row.get("summary"))}
     anchor = _anchor(row, query_tokens)
     if anchor:
         rendered["anchor"] = _cut(anchor, CLAIM_MAX_CHARS)
+    if provenance:
+        rendered.update(_provenance(row, home_namespace))
     return rendered
 
 
@@ -94,6 +150,8 @@ def present(
     query_tokens: Sequence[str] = (),
     byte_budget: int = RECALL_BYTE_BUDGET,
     max_stubs: int | None = None,
+    provenance: bool = False,
+    home_namespace: str = "default",
 ) -> list[dict[str, object]]:
     """Fill ``envelope["learnings"]`` with stubs so the WHOLE envelope renders within *byte_budget*.
 
@@ -101,7 +159,8 @@ def present(
     added in rank order and the first one that does not fit ends the list;
     when even the first does not fit, the longest strings in the envelope (the
     query echo, advisories, the stub's own claim and anchor) are cut until it
-    does. ``omitted`` is set only when rows were left out.
+    does. ``omitted`` is set only when rows were left out. ``provenance`` and
+    ``home_namespace`` go to :func:`stub`; only ``trw_recall`` sets them (PRD-CORE-326-FR05).
     """
     stubs: list[dict[str, object]] = []
     envelope["learnings"] = stubs
@@ -113,7 +172,7 @@ def present(
         return _size(bounded) > byte_budget
 
     for row in rows if max_stubs is None else rows[:max_stubs]:
-        stubs.append(stub(row, query_tokens))
+        stubs.append(stub(row, query_tokens, provenance=provenance, home_namespace=home_namespace))
         if over() and len(stubs) > 1:
             stubs.pop()
             break
@@ -130,6 +189,7 @@ def present(
 
 __all__ = [
     "CLAIM_MAX_CHARS",
+    "PROVENANCE_MAX_BYTES",
     "RECALL_BYTE_BUDGET",
     "SESSION_BYTE_BUDGET",
     "SESSION_MAX_STUBS",

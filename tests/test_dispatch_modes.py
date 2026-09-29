@@ -32,13 +32,17 @@ def test_an_unknown_action_names_the_valid_ones() -> None:
         assert action in out["error"]
 
 
-@pytest.mark.parametrize(
-    ("action", "missing"), [("launch", "prompt"), ("status", "target"), ("validate_evidence", "target")]
-)
+@pytest.mark.parametrize(("action", "missing"), [("launch", "prompt"), ("validate_evidence", "target")])
 def test_a_mode_without_its_required_argument_is_refused(action: str, missing: str) -> None:
     out = _dispatch()(action=action)
     assert out["exit_code"] == 2
     assert missing in out["error"]
+
+
+def test_status_with_no_job_id_reports_credential_health() -> None:
+    """PRD-CORE-304-FR04: no job id is not a refusal any more; it asks how each OAuth client's login stands."""
+    out = _dispatch()(action="status")
+    assert "exit_code" not in out and isinstance(out["credentials"], list)
 
 
 def test_status_and_evidence_modes_work_inside_a_dispatched_child(monkeypatch: pytest.MonkeyPatch) -> None:

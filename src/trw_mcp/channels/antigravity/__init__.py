@@ -24,9 +24,6 @@ PRD-DIST-2404.
 from __future__ import annotations
 
 from trw_mcp.channels.antigravity._before_edit_hook import (
-    AG03_CHANNEL_ID as AG03_CHANNEL_ID,
-)
-from trw_mcp.channels.antigravity._before_edit_hook import (
     AG03_HOOKS_PATH as AG03_HOOKS_PATH,
 )
 from trw_mcp.channels.antigravity._before_edit_hook import (
@@ -50,7 +47,6 @@ from trw_mcp.channels.antigravity._explorer_subagent import (
 
 __all__ = [
     "AG02_CHANNEL_ID",
-    "AG03_CHANNEL_ID",
     "AG03_HOOKS_PATH",
     "HOOK_SCRIPT_CONTENT",
     "AgentWriteResult",

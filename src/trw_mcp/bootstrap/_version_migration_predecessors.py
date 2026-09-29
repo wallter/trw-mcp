@@ -13,10 +13,11 @@ and error isolation.
 from __future__ import annotations
 
 import hashlib
-import shutil
 from pathlib import Path
 
 import structlog
+
+from ._safe_remove import remove_tree_if_hash
 
 logger = structlog.get_logger(__name__)
 
@@ -69,13 +70,7 @@ def _migrate_predecessor_set(
                     continue
         if preserve_unowned(predecessor, manifest_hashes, target_dir, result):
             continue
-        try:
-            if is_dir_artifact:
-                shutil.rmtree(predecessor)
-            else:
-                predecessor.unlink()
-        except OSError:
-            logger.debug(log_event, path=str(predecessor), exc_info=True)
+        remove_proven(predecessor, manifest_hashes, target_dir, result)
 
 
 def preserve_unowned(
@@ -103,20 +98,42 @@ def _trw_authored(artifact: Path, manifest_hashes: dict[str, str], target_dir: P
     if not files:
         return False
     for path in files:
-        rel = path.relative_to(target_dir).as_posix() if target_dir is not None else path.as_posix()
-        recorded = next(
-            (digest for key, digest in manifest_hashes.items() if rel == key or rel.endswith("/" + key)),
-            None,
-        )
-        if recorded is None:
+        recorded = recorded_digests(path, manifest_hashes, target_dir)
+        if not recorded:
             return False
         try:
-            if hashlib.sha256(path.read_bytes()).hexdigest() != recorded:
+            if hashlib.sha256(path.read_bytes()).hexdigest() not in recorded:
                 return False
         except OSError:  # trw-fail-silent-allow: unreadable means unproven; False preserves the artifact (the safe direction) and the warning above-the-fold reports it
             logger.warning("predecessor_authorship_unreadable", path=str(path), exc_info=True)
             return False
     return True
+
+
+def recorded_digests(path: Path, manifest_hashes: dict[str, str], target_dir: Path | None) -> set[str]:
+    """The manifest digests that prove *path* is TRW's (see :func:`_trw_authored` for the key shapes)."""
+    rel = path.relative_to(target_dir).as_posix() if target_dir is not None else path.as_posix()
+    # The exact manifest key alone decides. Suffix records (``x/SKILL.md`` is a
+    # suffix of ``.agents/skills/x/SKILL.md`` but holds the claude-code bytes)
+    # apply only when no exact key exists, so a suffix digest can never
+    # authorize deleting a file whose own record says it was modified.
+    if rel in manifest_hashes:
+        return {manifest_hashes[rel]}
+    return {digest for key, digest in manifest_hashes.items() if rel.endswith("/" + key)}
+
+
+def remove_proven(
+    artifact: Path, manifest_hashes: dict[str, str] | None, root: Path, result: dict[str, list[str]]
+) -> None:
+    """Remove a proven-stale *artifact* via :func:`remove_tree_if_hash`, re-proving every file at the act.
+
+    The proof ``preserve_unowned`` took earlier is not trusted at delete time: each file is re-hashed and
+    captured into ``.trw/trash``, so an edit saved in between (or a file added) keeps its bytes.
+    """
+    hashes = manifest_hashes or {}
+    kept = remove_tree_if_hash(artifact, root, lambda f: recorded_digests(f, hashes, root))
+    # Warnings are what the CLI prints (preserved is summarised as a count); a kept file must say why.
+    result.setdefault("warnings", []).extend(f"{why}: kept" for why in kept)
 
 
 def _migrate_prefix_predecessors(

@@ -8,8 +8,6 @@ from pathlib import Path
 from tests._ceremony_nudge_support import _state_file, _trw_dir
 from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
-    compute_nudge,
-    increment_files_modified,
     increment_learnings,
     increment_nudge_count,
     mark_build_check,
@@ -159,17 +157,6 @@ def test_fr04_mark_checkpoint(tmp_path: Path) -> None:
     assert ts is not None
 
 
-def test_fr04_increment_files_modified(tmp_path: Path) -> None:
-    """increment_files_modified increments files_modified_since_checkpoint."""
-    trw = _trw_dir(tmp_path)
-
-    increment_files_modified(trw)
-    assert read_ceremony_state(trw).files_modified_since_checkpoint == 1
-
-    increment_files_modified(trw, 4)
-    assert read_ceremony_state(trw).files_modified_since_checkpoint == 5
-
-
 def test_fr04_increment_nudge_count(tmp_path: Path) -> None:
     """increment_nudge_count tracks per-step nudge counts."""
     trw = _trw_dir(tmp_path)
@@ -307,14 +294,6 @@ class TestFR01CeremonyStateExtension:
         state = CeremonyState(review_called=False)
         assert _step_complete("review", state) is False
 
-    def test_fr01_review_in_status_line(self) -> None:
-        """_build_status_line includes review step."""
-        from trw_mcp.state.ceremony_nudge import _build_status_line
-
-        state = CeremonyState(review_called=True)
-        line = _build_status_line(state)
-        assert "review" in line
-
     def test_fr01_review_pending_in_priority(self) -> None:
         """Review shows as pending when in review phase and not called."""
         from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
@@ -369,19 +348,6 @@ class TestFR01CeremonyStateExtension:
         assert result.review_called is False
         assert result.review_verdict is None
         assert result.review_p0_count == 0
-
-    def test_fr01_all_complete_with_review(self) -> None:
-        """All steps complete includes review step."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=True,
-            deliver_called=True,
-            phase="done",
-        )
-        result = compute_nudge(state)
-        assert "\u2717" not in result
 
     def test_fr01_review_not_pending_in_validate_phase(self) -> None:
         """phase=validate with review_called=False -> pending step is build_check, not review."""

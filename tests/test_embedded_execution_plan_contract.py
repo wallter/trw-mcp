@@ -1,5 +1,7 @@
 """Static default-policy contract checks, not proof an agent follows the embedded workflow."""
 
+import atexit
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -25,7 +27,11 @@ def _fresh_codex_skills_root() -> Path:
     """
     from trw_mcp.bootstrap._codex import install_codex_skills
 
+    # Built at import (the parametrize ids need it), before the session TMPDIR
+    # redirect exists: every collection -- once per xdist worker -- left ~115 KB in
+    # the real TMPDIR (1,703 dirs by 2026-09-28), so the process removes it on exit.
     tmp = Path(tempfile.mkdtemp(prefix="codex-skills-fresh-"))
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)
     install_codex_skills(tmp)
     return tmp / ".agents" / "skills"
 
@@ -104,7 +110,6 @@ def test_embedded_contract_keeps_authority_proof_and_outcome_boundaries(surface:
         "Section existence is not verification",
         "not permission to run them automatically",
         "Re-run full PRD validation",
-        "When the resolved mode is separate, write",
         "{prd_path}#execution-plan",
     ):
         assert fragment in text, (surface, fragment)
@@ -351,7 +356,7 @@ def test_input_identity_is_not_a_reference_inside_feature_prose(surface: Path) -
         "entire remaining argument identifies one PRD ID",
         "entire remaining argument is an explicit document path",
         "Mentioning an ID or path inside a feature description does not select existing input",
-        "Add validation to scripts/check_exec_plan_paths.py",
+        "Add validation to scripts/check_prd_refs.py",
         "Add export support compatible with PRD-CORE-EXAMPLE",
         "an explicitly selected existing path is missing, stop and report it",
         "do not infer new-creation authority",

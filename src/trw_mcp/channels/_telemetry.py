@@ -15,12 +15,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import structlog
+
+from trw_mcp._checkout_write import append_checkout_file
 
 log = structlog.get_logger(__name__)
 
@@ -28,13 +29,10 @@ __all__ = [
     "CHANNEL_EVENT_SCHEMA_VERSION",
     "CHANNEL_EVENT_V1_REQUIRED",
     "MAX_EVENTS_BYTES",
-    "MAX_EVENTS_LINES",
-    "PRUNE_LINES_ON_CAP",
     "RECORD_ID_PATH_KEYED_RE",
     "RECORD_ID_SLUG_KEYED_RE",
     "VALID_EVENT_TYPES",
     "append_channel_event",
-    "prune_channel_events",
     "validate_event_type",
     "validate_record_id",
 ]
@@ -128,8 +126,6 @@ def validate_event_type(event_type: str) -> None:
 # ---------------------------------------------------------------------------
 
 MAX_EVENTS_BYTES: int = 10 * 1024 * 1024  # 10 MB
-MAX_EVENTS_LINES: int = 50_000
-PRUNE_LINES_ON_CAP: int = 25_000
 
 # ---------------------------------------------------------------------------
 # record_id format patterns (FR11 / SYS-02 fix)
@@ -156,6 +152,19 @@ def _resolve_log_path(log_path: Path | None) -> Path:
     if root_env:
         return Path(root_env) / ".trw" / "telemetry" / "channel-events.jsonl"
     return _DEFAULT_LOG_PATH
+
+
+def _log_root(log_path: Path) -> Path:
+    """The directory an event append walks from without following a symlink (PRD-CORE-337 FR07).
+
+    The standard location (``<repo>/.trw/telemetry/channel-events.jsonl``) walks from the repo root, so a
+    symlinked ``.trw`` or ``.trw/telemetry`` is refused; any other log path is the caller's choice, and
+    only its leaf is checked.
+    """
+    depth = len(_DEFAULT_LOG_PATH.parts)
+    if log_path.parts[-depth:] == _DEFAULT_LOG_PATH.parts:
+        return Path(*log_path.parts[:-depth])
+    return log_path.parent
 
 
 # ---------------------------------------------------------------------------
@@ -283,65 +292,11 @@ def _write_channel_event(
     event.update({k: v for k, v in optional_fields.items() if v is not None})
 
     resolved = _resolve_log_path(log_path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
+    root = _log_root(resolved)
+    root.mkdir(parents=True, exist_ok=True)
 
     # Rotation check: if file exceeds MAX_EVENTS_BYTES, rotate
     if resolved.exists() and resolved.stat().st_size > MAX_EVENTS_BYTES:
         _rotate(resolved)
 
-    line = json.dumps(event, default=str) + "\n"
-    with open(resolved, "a", encoding="utf-8") as fh:
-        fh.write(line)
-
-
-# ---------------------------------------------------------------------------
-# prune_channel_events (FR09)
-# ---------------------------------------------------------------------------
-
-
-def prune_channel_events(
-    log_path: Path,
-    max_lines: int = MAX_EVENTS_LINES,
-) -> int:
-    """Prune *log_path* if it exceeds *max_lines* lines.
-
-    Keeps the MOST RECENT ``max_lines - PRUNE_LINES_ON_CAP`` lines.
-    Rewrites the file in-place.
-
-    Returns:
-        Number of lines pruned (0 if no pruning needed).
-    Fail-open: returns 0 on any I/O error.
-    """
-    try:
-        if not log_path.exists():
-            return 0
-        lines = log_path.read_text(encoding="utf-8").splitlines(keepends=True)
-        if len(lines) <= max_lines:
-            return 0
-        keep = max_lines - PRUNE_LINES_ON_CAP
-        pruned = len(lines) - keep
-        kept_lines = lines[-keep:] if keep > 0 else []
-        # Atomic rewrite
-        fd, tmp_str = tempfile.mkstemp(
-            dir=log_path.parent,
-            prefix=f".{log_path.name}.prune.",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.writelines(kept_lines)
-            os.rename(tmp_str, log_path)
-        except Exception:
-            try:
-                os.unlink(tmp_str)
-            except OSError:
-                pass
-            raise
-        return pruned
-    except Exception as exc:
-        log.debug(
-            "channel_telemetry_prune_failed",
-            log_path=str(log_path),
-            error=str(exc),
-            outcome="prune_failed",
-        )
-        return 0
+    append_checkout_file(root, resolved, json.dumps(event, default=str) + "\n")

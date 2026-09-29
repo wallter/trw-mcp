@@ -18,7 +18,7 @@ import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 from tests._delivery_support import make_uuid7, strong_capability
-from trw_mcp.tools._delivery_io_tracer import DurableWriteTrace, trace_durable_writes
+from tests.support._delivery_io_tracer import DurableWriteTrace, trace_durable_writes
 
 
 def _seed_run(tmp_path: Path) -> Path:

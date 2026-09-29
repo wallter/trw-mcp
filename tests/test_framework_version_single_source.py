@@ -21,7 +21,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Monorepo invariant: it scans sibling packages' test trees, which the standalone
 # trw-mcp mirror does not carry.
-if not (_REPO_ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in standalone mirror)", allow_module_level=True)
 
 _TEST_TREE_PATHSPECS = ("*/tests/*", "tests/*", "scripts/tests/*")

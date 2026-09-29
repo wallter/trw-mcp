@@ -16,7 +16,6 @@ from pathlib import Path
 
 from trw_mcp.state.validation._prd_scoring_counts import (
     _has_assertion_evidence,
-    classify_assertions,
 )
 
 # An FR whose ONLY assertion is behavioral (no existence syntax anywhere).
@@ -33,16 +32,6 @@ _EXISTENCE_FR = """\
 
 **Assertions**:
 - grep_present: "handle_login" in "src/**/*.py"
-"""
-
-# Mixed PRD: 1 behavioral + 2 existence assertions.
-_MIXED_PRD = """\
-### PRD-CORE-001-FR01: Mixed
-
-**Assertions**:
-- asserts_value: "result.estimate == 0.42 in tests/test_x.py"
-- grep_present: "handle_login" in "src/**/*.py"
-- grep_present: "refresh_token" in "src/**/*.py"
 """
 
 
@@ -78,43 +67,6 @@ class TestBehavioralRecognized:
         """A prose mention of the word is not an assertion line."""
         content = "We will assert the value of the estimate is correct."
         assert _has_assertion_evidence(content) is False
-
-
-# ---------------------------------------------------------------------------
-# FR02: behavioral vs existence classifier
-# ---------------------------------------------------------------------------
-
-
-class TestClassifyAssertions:
-    """PRD-QUAL-093-FR02."""
-
-    def test_classify_counts(self) -> None:
-        """1 asserts_value + 2 grep_present -> {behavioral:1, existence:2}."""
-        result = classify_assertions(_MIXED_PRD)
-        assert result == {"behavioral": 1, "existence": 2}
-
-    def test_classify_behavioral_only(self) -> None:
-        result = classify_assertions(_BEHAVIORAL_FR)
-        assert result == {"behavioral": 1, "existence": 0}
-
-    def test_classify_existence_only(self) -> None:
-        result = classify_assertions(_EXISTENCE_FR)
-        assert result == {"behavioral": 0, "existence": 1}
-
-    def test_classify_command_succeeds_is_behavioral(self) -> None:
-        """command_succeeds verifies a run outcome -> behavioral."""
-        content = '- command_succeeds: "pytest -k test_wiring"'
-        assert classify_assertions(content) == {"behavioral": 1, "existence": 0}
-
-    def test_classify_glob_exists_is_existence(self) -> None:
-        content = '- glob_exists: "src/module/new_file.py"'
-        assert classify_assertions(content) == {"behavioral": 0, "existence": 1}
-
-    def test_classify_empty(self) -> None:
-        assert classify_assertions("no assertions here") == {
-            "behavioral": 0,
-            "existence": 0,
-        }
 
 
 # ---------------------------------------------------------------------------

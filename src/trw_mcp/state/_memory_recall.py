@@ -73,6 +73,10 @@ def recall_learnings(
     include_tiers: list[str] | None = None,
     as_of: str | None = None,
     include_superseded: bool = False,
+    anchor_file: str | None = None,
+    record_type: str | None = None,
+    single_page: bool = False,
+    rerank: bool = True,
 ) -> list[dict[str, object]]:
     """Search learnings, federating project ∪ user tiers (PRD-CORE-185 FR06/FR07).
 
@@ -95,6 +99,18 @@ def recall_learnings(
     AFTER every open one rather than dropping them. The defaults (``as_of=None``,
     ``include_superseded=False``) are byte-identical to the pre-194 path.
 
+    ``single_page`` (HINT-RECALL-BUDGET) takes exactly one page per store namespace
+    instead of growing ``top_k`` to fetch a deeper one; the pre-edit hint sets it to
+    bound its own recall cost, every other caller leaves it ``False``.
+
+    ``anchor_file`` (PRD-CORE-332 FR05) lists the project rows anchored to that
+    repo-relative file, in the daemon's order, instead of searching; the user tier
+    is never read (anchors are repo-relative) and no wildcard re-ranking applies.
+    Admission is the same as for a query.
+
+    ``rerank=False`` asks the store to skip the cross-encoder re-rank and keep the
+    fusion order, for a caller with a latency budget (the pre-edit hint).
+
     Every learning that reaches the agent passes through here, so the master
     recall switch is enforced here: off, nothing is returned, whatever name the
     caller imported this function under.
@@ -105,14 +121,19 @@ def recall_learnings(
     # One admission policy for search, listing and the by-id fetch (PRD-CORE-294 FR01).
     admission = RecallAdmission.build(trw_dir, status=status, as_of=as_of_dt, include_superseded=include_superseded)
     selection, mem_status = admission.selection, admission.mem_status
-    is_wildcard = query.strip() in ("*", "")
+    is_anchor = anchor_file is not None
+    is_wildcard = not is_anchor and query.strip() in ("*", "")
     spec = RecallSpec(
         admission=admission,
         query=query,
         tags=tags,
         min_impact=min_impact,
         top_k=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
-        include_user=include_tiers is None or "user" in include_tiers,
+        include_user=not is_anchor and (include_tiers is None or "user" in include_tiers),
+        anchor_file=anchor_file,
+        record_type=record_type,
+        single_page=single_page,
+        rerank=rerank,
     )
     # PRD-CORE-280 FR01: the checkout's store serves the rows; everything below is shared.
     try:

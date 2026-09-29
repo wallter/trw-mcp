@@ -50,7 +50,6 @@ _COPILOT_SKILLS = frozenset(
         "trw-project-health",
         "trw-reflect",
         "trw-security-check",
-        "trw-sprint-init",
     }
 )
 #: Readiness phases a client ships inside ``trw-prd-ready`` as ``<phase>-contract.md``

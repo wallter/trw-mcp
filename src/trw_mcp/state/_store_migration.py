@@ -46,6 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from trw_memory._tree_removal import remove_tree
+
 from trw_mcp.state._tier_routing import USER_NAMESPACE
 
 __all__ = [
@@ -76,10 +78,9 @@ def _store(trw_dir: Path) -> Path:
 
 
 def _pin(trw_dir: Path) -> str | None:
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.models.config._loader import resolve_config_overrides
+    from trw_mcp.state._namespace_pin_read import pinned_namespace
 
-    return TRWConfig(**resolve_config_overrides(trw_dir / "config.yaml")).project_namespace  # type: ignore[arg-type]
+    return pinned_namespace(trw_dir)
 
 
 def _set_pin(trw_dir: Path, namespace: str | None) -> None:
@@ -137,32 +138,18 @@ def _daemon_paths(*, start: bool = False) -> Any:
 
 
 def holds_rows(db: Path) -> bool:
-    """Whether the project store *db* holds a learning row (a canary decoy is not one), read-only.
+    """Whether the project store *db* may hold a learning row (a system canary is not one), read-only.
 
-    A file that is absent, 0 bytes, or has no tables holds none. One that cannot
-    be read, or holds tables but no ``memories``, is not provably empty, so it
-    counts as holding rows. ``immutable=1`` at rest: ``mode=ro`` alone still
-    creates ``-wal``/``-shm`` beside a WAL database.
+    Asked of trw-memory's ``probe_store`` (PRD-QUAL-147), which owns the real-row rule: an absent or
+    uninitialized file holds none, a ``READY`` store holds its real rows, and any other state (not a
+    TRW store, refused, or unreadable) is not provably empty, so it counts as holding rows.
     """
-    if not db.is_file() or not db.stat().st_size:
-        return False
-    at_rest = not db.with_name(db.name + "-wal").exists()
-    try:
-        with contextlib.closing(
-            sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro{'&immutable=1' if at_rest else ''}", uri=True)
-        ) as conn:
-            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            if "memories" not in tables:
-                return bool(tables)
-            return bool(conn.execute(_REAL_ROWS_SQL).fetchone()[0])
-    except sqlite3.DatabaseError:  # trw-fail-silent-allow: an unreadable store is not provably empty
-        return True
+    from trw_memory.storage import StoreState, probe_store
 
-
-_REAL_ROWS_SQL = (
-    "SELECT COUNT(*) FROM memories WHERE "
-    "NOT (json_valid(metadata) AND COALESCE(json_extract(metadata, '$.system_canary'), '') = 'true')"
-)
+    probe = probe_store(db)
+    if probe.state is StoreState.READY:
+        return bool(probe.real_rows)
+    return probe.state not in (StoreState.ABSENT, StoreState.UNINITIALIZED)
 
 
 def _preflight(trw_dir: Path) -> str | None:
@@ -183,21 +170,27 @@ def _preflight(trw_dir: Path) -> str | None:
 
 @contextlib.contextmanager
 def _exclusive(db: Path) -> Iterator[sqlite3.Connection]:
-    """Hold *db* exclusively until the block ends, or refuse when another process has it open."""
-    conn = sqlite3.connect(db, timeout=0, isolation_level=None)
-    try:
-        conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-        conn.execute("BEGIN EXCLUSIVE")
-        conn.execute("COMMIT")  # the exclusive locking mode keeps the lock until close
-    except sqlite3.OperationalError as exc:
-        conn.close()
-        raise MigrationRetryError(
-            f"{db} is open in another process ({exc}); stop this checkout's other trw-mcp sessions, then retry"
-        ) from exc
-    try:
+    """Hold *db* exclusively until the block ends, or refuse when another process has it open.
+
+    The store's ``migrate`` op (PRD-CORE-306) keeps out every process that takes the
+    store lock. SQLite's ``locking_mode=EXCLUSIVE`` stays for a build older than that
+    lock (trw-memory before 4.1), which holds only SQLite's own locks.
+    """
+    from trw_memory import store_access
+    from trw_memory.exceptions import StoreBusyError
+
+    with contextlib.ExitStack() as held:
+        try:
+            held.enter_context(store_access(db, "migrate"))
+            conn = held.enter_context(contextlib.closing(sqlite3.connect(db, timeout=0, isolation_level=None)))
+            conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+            conn.execute("BEGIN EXCLUSIVE")
+            conn.execute("COMMIT")  # the exclusive locking mode keeps the lock until close
+        except (StoreBusyError, sqlite3.OperationalError) as exc:
+            raise MigrationRetryError(
+                f"{db} is open in another process ({exc}); stop this checkout's other trw-mcp sessions, then retry"
+            ) from exc
         yield conn
-    finally:
-        conn.close()
 
 
 def _snapshot(conn: sqlite3.Connection, target: Path) -> None:
@@ -205,28 +198,37 @@ def _snapshot(conn: sqlite3.Connection, target: Path) -> None:
         conn.backup(copy)
 
 
+def _probe(db: Path) -> None:
+    """Refuse *db* unless it probes as a trw store or an empty one, reading nothing else (PRD-QUAL-147 FR07)."""
+    from trw_memory.storage import StoreState, probe_store
+
+    if (probe := probe_store(db)).state not in {StoreState.READY, StoreState.UNINITIALIZED, StoreState.ABSENT}:
+        raise MigrationRefusedError(f"the project store is {probe.state.value} ({probe.detail}); {_DOCTOR}")
+
+
 def _source_rows(db: Path) -> tuple[dict[str, int], list[Any], int, int]:
     """``(rows per namespace, the default rows, their vectors, their edges)`` of a store copy.
 
-    The copy's canary decoys are dropped first: they guard this store, not the
-    user store (which seeds its own), and they are not learnings.
+    The copy's system canaries are not counted: they guard this store, not the user store (which seeds
+    its own), and ``memory_import_checkout`` leaves them behind by the same predicate.
     """
+    from trw_memory.security._runtime_canary import classify_canary
     from trw_memory.storage.interface import EntryCursor
     from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+    _probe(db)  # again: the live store may have changed since; this private copy cannot change before the open
     store = SQLiteBackend(db)
     try:
-        decoys = store.list_entries(namespace=_SOURCE, entry_filter=lambda e: e.metadata.get("system_canary") == "true")
-        for decoy in decoys:
-            store.delete(decoy.id, namespace=_SOURCE)
-        counts = {ns: store.count(namespace=ns) for ns in store.list_namespaces()}
+        counts = {ns: store.count(namespace=ns) for ns in store.list_namespaces() if ns != _SOURCE}
         rows: list[Any] = []
         cursor: EntryCursor | None = None
         while page := store.list_entries(namespace=_SOURCE, limit=1000, after=cursor):
-            rows.extend(page)
+            rows.extend(entry for entry in page if classify_canary(entry) != "canary")
             cursor = EntryCursor.from_entry(page[-1])
-        vectors = len(store.existing_vector_ids(namespace=_SOURCE)) if store.supports_vectors() else 0
-        return counts, rows, vectors, len(store.graph_edges(_SOURCE))
+        if ids := {entry.id for entry in rows}:
+            counts[_SOURCE] = len(ids)
+        vectors = len(store.existing_vector_ids(namespace=_SOURCE) & ids) if store.supports_vectors() else 0
+        return counts, rows, vectors, sum({e.source_id, e.target_id} <= ids for e in store.graph_edges(_SOURCE))
     finally:
         store.close()
 
@@ -261,10 +263,11 @@ def _call(coroutine: Any) -> dict[str, Any]:
 
 def preview_migration(trw_dir: Path) -> dict[str, object]:
     """What ``--apply`` would move, writing nothing."""
+    _probe(_store(trw_dir))
     namespace = _preflight(trw_dir) or _namespace(trw_dir)
     with contextlib.ExitStack() as stack:
         scratch = Path(stack.enter_context(tempfile.TemporaryDirectory())) / "memory.db"
-        with contextlib.closing(sqlite3.connect(f"file:{_store(trw_dir)}?mode=ro", uri=True)) as live:
+        with contextlib.closing(sqlite3.connect(f"{_store(trw_dir).resolve().as_uri()}?mode=ro", uri=True)) as live:
             _snapshot(live, scratch)
         counts, rows, vectors, edges = _source_rows(scratch)
     collisions: list[str] | None = None
@@ -276,6 +279,7 @@ def preview_migration(trw_dir: Path) -> dict[str, object]:
 
 def apply_migration(trw_dir: Path) -> Path:
     """Move the project store through the daemon and pin the checkout; returns the manifest path."""
+    _probe(_store(trw_dir))  # before the backup, the daemon start or any write
     pinned = _preflight(trw_dir)
     paths = _daemon_paths(start=True)
     # Microseconds: a strays pass can follow its migration within the second, and must not overwrite its backup.
@@ -323,7 +327,7 @@ def apply_migration(trw_dir: Path) -> Path:
             with contextlib.closing(sqlite3.connect(":memory:")) as empty:
                 empty.backup(conn)  # the project store now holds nothing; the backup keeps what it held
         finally:
-            shutil.rmtree(work.parent, ignore_errors=True)
+            remove_tree(work.parent, purpose="store migration work copy")
     return manifest_path
 
 
@@ -387,7 +391,7 @@ def rollback_migration(trw_dir: Path, manifest_path: Path) -> int:
             restored, vectorless = _copy_namespace(paths.store, namespace, staging / "memory.db")
             _swap(trw_dir, staging / "memory.db")
         finally:
-            shutil.rmtree(staging, ignore_errors=True)
+            remove_tree(staging, purpose="store rollback staging")
         # Vectors from another embedding space never reached the daemon, and no re-embed rebuilt them
         # since: the rows come back without them. Said, not silent (``memory reembed`` rebuilds them in
         # the active space; the pre-migration backup keeps the originals), and recorded before the pin
@@ -436,7 +440,12 @@ def _copy_namespace(user_store: Path, namespace: str, target: Path) -> tuple[int
     from trw_memory.storage.interface import EntryCursor
     from trw_memory.storage.sqlite_backend import SQLiteBackend
 
-    source = create_backend_from_config(MemoryConfig(), namespace, db_path_override=user_store)
+    # Read as the daemon reads it: storage_path at the user store's directory, so the quarantine
+    # ledger is the daemon's own, never one anchored at the working directory (no ``.trw`` above it:
+    # SecurityDefaultUnresolvableError; another project's ``.trw``: that project's ledger).
+    source = create_backend_from_config(
+        MemoryConfig(storage_path=str(user_store.parent)), namespace, db_path_override=user_store
+    )
     copy = SQLiteBackend(target, dim=getattr(source, "_dim", 384))
     try:
         ids: list[str] = []

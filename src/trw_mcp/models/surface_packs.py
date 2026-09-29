@@ -135,7 +135,14 @@ ALWAYS_ON_TOOLS: frozenset[str] = frozenset(
 #:   * ``trw_status`` — an unpinned child resolves through ``find_active_run``
 #:     to ANOTHER agent's run and increments a persisted ceremony counter;
 #:   * ``trw_prd_validate`` — read-only in name only: it advances the ACTIVE
-#:     run's phase to PLAN, so in an unpinned child it is a cross-session write.
+#:     run's phase to PLAN, so in an unpinned child it is a cross-session write;
+#:   * ``trw_assess`` (appends a decision event to the active run),
+#:     ``trw_send`` / ``trw_inbox`` (write peer-message state).
+#:
+#: The set is re-derived, not maintained by hand (PRD-CORE-300-FR20):
+#: ``tests/test_reviewer_surface_config.py`` states every registered tool's
+#: effect and fails, by tool name, until a tool added to or removed from the
+#: registry is classified and this set re-derived from the classification.
 REVIEWER_TOOLS: frozenset[str] = frozenset(
     {
         "trw_recall",

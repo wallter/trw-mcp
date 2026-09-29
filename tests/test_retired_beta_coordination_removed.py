@@ -77,7 +77,7 @@ class TestRetiredBetaTemplateSurface:
         result = instructions_sync_fn(scope="root")
 
         assert result["status"] == "synced"
-        content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert "trw:start" in content
         assert _BETA_LABEL not in content
         assert _BETA_CREATE not in content

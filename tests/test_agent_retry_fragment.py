@@ -19,7 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Monorepo-only invariant: the repo-root scripts/ + data/agents layout is absent
 # from the standalone trw-mcp PyPI/GitHub mirror. Skip cleanly there.
-if not (REPO_ROOT / "scripts" / "agent_fragments.py").is_file():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/agent_fragments.py absent in mirror)",
         allow_module_level=True,

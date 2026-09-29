@@ -39,8 +39,6 @@ from trw_mcp.tools._delivery_models import (
     ClaimResult,
     ClaimStatus,
     OperationState,
-    RecoverResult,
-    RecoverStatus,
 )
 
 if TYPE_CHECKING:
@@ -56,7 +54,6 @@ __all__ = [
     "claim_envelope",
     "get_owner",
     "hard_budget_stop_envelope",
-    "recover_envelope",
     "register_owner",
     "require_operation_backed",
     "reset_registry",
@@ -207,18 +204,8 @@ _RESULT_OUTCOME: dict[str, tuple[Outcome, RetrySafety]] = {
     "corrupt_store": (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
     "unsupported_schema": (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
     "legacy_wal_migration_required": (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
+    "read_capacity_exceeded": (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
     "error": (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
-}
-
-_RECOVER_OUTCOME: dict[RecoverStatus, tuple[Outcome, RetrySafety]] = {
-    RecoverStatus.OK: (Outcome.COMPLETED, RetrySafety.SAFE_EXACT_RETRY),
-    RecoverStatus.UNAUTHORIZED: (Outcome.REJECTED, RetrySafety.UNSAFE),
-    RecoverStatus.NOT_STALE: (Outcome.REJECTED, RetrySafety.SAFE_EXACT_RETRY),
-    RecoverStatus.CONFLICT: (Outcome.REJECTED, RetrySafety.UNSAFE),
-    RecoverStatus.STALE_REVISION: (Outcome.REJECTED, RetrySafety.UNSAFE),
-    RecoverStatus.LIVE_OWNER: (Outcome.REJECTED, RetrySafety.SAFE_EXACT_RETRY),
-    RecoverStatus.NOT_FOUND: (Outcome.UNCERTAIN, RetrySafety.UNKNOWN),
-    RecoverStatus.REJECTED: (Outcome.REJECTED, RetrySafety.UNSAFE),
 }
 
 
@@ -293,28 +280,6 @@ def _tombstone_outcome(terminal_state: str) -> tuple[Outcome, RetrySafety]:
         return _STATE_OUTCOME[OperationState(terminal_state)]
     except ValueError:
         return (Outcome.COMPLETED, RetrySafety.SAFE_EXACT_RETRY)
-
-
-def recover_envelope(recover: RecoverResult, *, request_id: str = "", input_digest: str = "") -> ToolResultEnvelope:
-    """Project a CORE-208 recovery decision losslessly into the common envelope."""
-    outcome, retry = _RECOVER_OUTCOME[recover.status]
-    diagnostics: dict[str, str] = {
-        "recover_status": recover.status.value,
-        "operation_state": recover.state.value,
-    }
-    if recover.indeterminate_effect_ids:
-        diagnostics["indeterminate_effect_ids"] = ",".join(recover.indeterminate_effect_ids)
-    return ToolResultEnvelope(
-        outcome=outcome,
-        reason_code=recover.reason_code or recover.status.value,
-        operation_id=recover.operation_id,
-        request_id=request_id or recover.operation_id,
-        input_digest=input_digest,
-        execution_class=_OP,
-        retry_safety=retry,
-        receipt_refs=tuple(recover.replayed_effect_ids),
-        diagnostics=diagnostics,
-    )
 
 
 def hard_budget_stop_envelope(

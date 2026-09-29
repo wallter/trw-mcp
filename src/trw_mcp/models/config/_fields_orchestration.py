@@ -18,6 +18,9 @@ class _OrchestrationFields:
 
     parallelism_max: int = DEFAULT_PARALLELISM_MAX
     timebox_hours: int = 8
+    # PRD-CORE-340-FR11: the one switch for the experimental software-factory surfaces; read strictly
+    # by state/_factory_experiment.py (an unreadable config refuses, it never enables).
+    factory_enabled: bool = False
     # min_shards_target, min_shards_floor, consensus_quorum, max_child_depth and checkpoint_secs
     # were removed 2026-09-16 (PRD-QUAL-139-FR05). The corrected consumer scan -- which now also
     # sees bundled-hook readers and flat fields aliased into a nested sub-model -- still found

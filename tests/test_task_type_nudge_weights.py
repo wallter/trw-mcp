@@ -17,6 +17,8 @@ from trw_mcp.models.task_profile_types import (
     task_type_recall_policy,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _weights(task_type: TaskType) -> tuple[int, int, int, int]:
     profile = resolve_client_profile("claude-code")

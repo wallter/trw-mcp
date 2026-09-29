@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 from trw_mcp.models.config import get_config, reload_config
 from trw_mcp.state._hook_flags import hook_flags_path, write_hook_flags
@@ -29,7 +30,7 @@ _PROBE = f'. "{LIB}"; echo hooks=on; if trw_learnings_injection_allowed; then ec
 
 def _shell(root: Path) -> dict[str, bool]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_") and "HOOKS_ENABLED" not in k}
-    env |= {"CLAUDE_PROJECT_DIR": str(root), "HOME": str(root / "home")}
+    env |= {"CLAUDE_PROJECT_DIR": str(root), "HOME": str(root / "home"), **daemon_env_passthrough()}
     out = subprocess.run(["/bin/sh", "-c", _PROBE], env=env, cwd=root, capture_output=True, text=True).stdout
     return {"hooks_enabled": "hooks=on" in out, "learning_recall_enabled": "recall=on" in out}
 
@@ -88,7 +89,7 @@ def test_the_cli_publishes_the_file_for_the_current_project(tmp_path: Path) -> N
     (tmp_path / ".trw").mkdir()
     (tmp_path / ".trw" / "config.yaml").write_text("{hooks_enabled: false}\n", encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
-    env |= {"TRW_PROJECT_ROOT": str(tmp_path), "HOME": str(tmp_path / "home")}
+    env |= {"TRW_PROJECT_ROOT": str(tmp_path), "HOME": str(tmp_path / "home"), **daemon_env_passthrough()}
     code = "import sys; from trw_mcp.server._cli import main; sys.argv = ['trw-mcp', 'hook-flags']; main()"
 
     proc = subprocess.run([sys.executable, "-c", code], env=env, cwd=tmp_path, capture_output=True, text=True)

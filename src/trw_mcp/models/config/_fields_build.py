@@ -88,6 +88,17 @@ class _BuildFields:
     #   during brownfield remediation, but the shipped default enforces
     #   completion truth (rollout observation is not completion).
     prd_transition_gate: Literal["warn", "block"] = "block"
+    # PRD-CORE-321-FR05: requirement-drift gate mode, per scoped PRD.
+    #   None (default) — block for a PRD that declares safety_critical: true now,
+    #           or did in ANY approved-or-later version of its git history (a
+    #           re-approval dropping the flag does not downgrade it), or whose
+    #           flag cannot be read; warn for every other PRD.
+    #   warn  — never block; report drift as ``requirement_drift_warning``.
+    #   block — block every PRD with a block-eligible finding.
+    # A block applies only when ``deliver_gate_mode`` blocks the run's task type
+    # (``gate_mode_blocks_task``); the PRD-CORE-191 record is the only override.
+    # Reader: trw_mcp.tools._deliver_requirement_drift._effective_mode.
+    requirement_drift_gate: Literal["warn", "block"] | None = None
     # PRD-CORE-205-FR08: content-bound evidence receipt compatibility mode.
     #   observe — new writers dual-write typed receipts AND legacy projections;
     #             readers prefer receipts; a legacy artifact keeps its existing
@@ -115,8 +126,8 @@ class _BuildFields:
 
     # -- Auto-checkpoint, auto-recall, auto-prune --
 
-    auto_checkpoint_enabled: bool = True
-    auto_checkpoint_tool_interval: int = 25
+    # auto_checkpoint_enabled and auto_checkpoint_tool_interval were removed in trw-mcp 8.0.0 (PRD-CORE-313-FR06): no
+    # production reader. Keys are listed in trw_mcp/data/config-retired-keys.json.
     auto_checkpoint_pre_compact: bool = True
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 3

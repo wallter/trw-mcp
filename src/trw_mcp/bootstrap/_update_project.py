@@ -2,10 +2,10 @@
 
 ``trw-mcp update-project`` selectively updates framework files (hooks,
 skills, agents, FRAMEWORK.md) while preserving user-customized files
-(config.yaml, learnings, CLAUDE.md user sections).
+(config.yaml, learnings, user content in AGENTS.md).
 
 This module is a thin orchestrator.  Implementation lives in:
-- ``_template_updater`` — file copying, CLAUDE.md management, IDE configs
+- ``_template_updater`` — file copying, instruction-file management, IDE configs
 - ``_version_migration`` — predecessor cleanup, stale artifact removal, manifest I/O
 """
 # ruff: noqa: I001 - backward-compat re-exports stay grouped for LOC ratchet.
@@ -13,17 +13,28 @@ This module is a thin orchestrator.  Implementation lives in:
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 import structlog
 
+from trw_memory._tree_removal import remove_tree
 from trw_mcp.agents._report_cap import project_report_cap
+from trw_mcp.state._project_root_binding import installing_into
 
 from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
 from ._client_integrations import run_update_integrations
 from ._namespace_pin import pin_empty_checkout
+
+# --- from _update_phases (split out for the eLOC ratchet) ---
+from ._update_phases import (
+    _generate_behavioral_protocol_md as _generate_behavioral_protocol_md,
+    _init_result_dict as _init_result_dict,
+    _refresh_distill_channels as _refresh_distill_channels,
+    _restore_dirty_files as _restore_dirty_files,
+    _run_core_update_phases as _run_core_update_phases,
+    _RUN_RECORDS as _RUN_RECORDS,
+)
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules — REQUIRED for backward compatibility.
@@ -38,7 +49,6 @@ from ._template_updater import (
     _extract_trw_section_content as _extract_trw_section_content,
     _get_bundled_names as _get_bundled_names,
     _get_custom_names as _get_custom_names,
-    _minimal_claude_md_trw_block as _minimal_claude_md_trw_block,
     _NEVER_OVERWRITE as _NEVER_OVERWRITE,
     _report_preserved_files as _report_preserved_files,
     _run_claude_md_sync as _run_claude_md_sync,
@@ -56,7 +66,6 @@ from ._template_updater import (
     _update_agents as _update_agents,
     _update_always_overwrite_files as _update_always_overwrite_files,
     _update_antigravity_artifacts as _update_antigravity_artifacts,
-    _update_claude_md_trw_section as _update_claude_md_trw_section,
     _update_codex_artifacts as _update_codex_artifacts,
     _update_config_target_platforms as _update_config_target_platforms,
     _update_copilot_artifacts as _update_copilot_artifacts,
@@ -71,8 +80,8 @@ from ._template_updater import (
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
-    _check_package_version,
-    _ensure_dir,
+    _check_package_version as _check_package_version,
+    _ensure_dir as _ensure_dir,
     _pip_install_package,
     _verify_installation,
     _write_installer_metadata,
@@ -100,8 +109,9 @@ from ._version_migration import (
 from ._version_manifest import (
     _manifest_content_hashes as _manifest_content_hashes,
     manifest_refusal,
-    preserve_uncommitted_changes,
+    preserve_uncommitted_changes as preserve_uncommitted_changes,
 )
+from ._client_adoption import adopt_for_update
 from ._tombstones import enforce_and_write_manifest, prepare_update_manifest_state
 from ._update_transaction import (
     _TRANSACTION_DIRS as _TRANSACTION_DIRS,
@@ -116,7 +126,6 @@ from ._update_transaction import (
     run_in_scratch,
     unpark_surface_links,
 )
-from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
 
 logger = structlog.get_logger(__name__)
 
@@ -126,116 +135,25 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
-    """Initialize result dict with optional dry-run warning."""
-    result: dict[str, list[str]] = {
-        "updated": [],
-        "created": [],
-        "preserved": [],
-        "errors": [],
-        "warnings": [],
-        "cleaned": [],
-    }
-    if dry_run:
-        result["warnings"].append("DRY RUN — no files will be modified.")
-    return result
-
-
-#: Files that record THAT an update ran rather than what it installed. Written
-#: only when the run changed something else, so a no-op update is a no-op
-#: (PRD-INFRA-190 FR03).
-_RUN_RECORDS: frozenset[str] = frozenset(
-    {".trw/installer-meta.yaml", ".trw/frameworks/VERSION.yaml", str(DEPLOYMENT_RELATIVE_PATH)}
-)
-
-
-def _generate_behavioral_protocol_md(target_dir: Path, result: dict[str, list[str]]) -> None:
-    """Generate .trw/context/behavioral_protocol.md from static sections.
-
-    PRD-CORE-093 FR03: The session-start hook reads this file once per
-    session event instead of injecting the full protocol via CLAUDE.md
-    on every message.
-    """
-    dest = target_dir / ".trw" / "context" / "behavioral_protocol.md"
-    try:
-        from trw_mcp.state.claude_md._static_sections import generate_behavioral_protocol_md
-
-        content = generate_behavioral_protocol_md()
-        if dest.is_file() and dest.read_text(encoding="utf-8") == content:
-            return
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-    except Exception as exc:  # justified: fail-open — protocol file generation must not block update
-        logger.warning("behavioral_protocol_md_generation_failed", error=str(exc))
-        result["warnings"].append(f"behavioral_protocol.md generation failed: {exc}")
-
-
-def _run_core_update_phases(
-    target_dir: Path,
-    effective_data: Path,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback,
-    manifest_hashes: dict[str, str] | None = None,
-    ide: str | None = None,
-) -> None:
-    """Execute core update phases (framework files, config, cleanup).
-
-    PRD-FIX-068-FR05: the *prior* install/update manifest's content hashes
-    (*manifest_hashes*, read in :func:`update_project` BEFORE any files are
-    rewritten) are threaded into ``_update_framework_files`` → ``_update_agents``
-    so genuinely user-edited agents are detected on the live update path and
-    preserved (reported in ``result['modified']``) instead of being silently
-    overwritten. The NEW manifest is written once, after every writer ran.
-
-    *ide* (G1, installer refinement 5.1.0) is threaded the same way, into
-    ``_update_framework_files`` → ``_update_agents`` → ``resolve_client_write_
-    targets``, so a brand-new ``--ide <client>`` selection is visible to the
-    agent-materialization phase in THIS run — it previously only registered
-    the new client in ``target_platforms`` in the later post-update phase,
-    so the first run wrote no agents for it and a second, identical run was
-    required.
-    """
-    # PRD-INFRA-192 FR09 §3: the Claude Code scaffold dirs are ensured only
-    # for a project whose recorded target_platforms (plus *ide*, if given)
-    # actually own them -- an update on a ``[opencode]`` project must not
-    # conjure ``.claude/skills``/``.claude/agents`` back into existence.
-    from ._client_ownership import update_scaffold_dirs
-
-    for rel_dir in update_scaffold_dirs(target_dir, ide):
-        _ensure_dir(target_dir / rel_dir, result, on_progress)
-
-    if on_progress:
-        on_progress("Phase", "Updating framework files...")
-    _update_framework_files(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
-
-    # PRD-CORE-093 FR03: Generate behavioral_protocol.md for session-start hook
-    _generate_behavioral_protocol_md(target_dir, result)
-
-    if on_progress:
-        on_progress("Phase", "Updating configuration files...")
-    _update_mcp_config(target_dir, result, on_progress, ide=ide)
-
-    if on_progress:
-        on_progress("Phase", "Cleaning stale artifacts...")
-    _cleanup_stale_artifacts(target_dir, result, effective_data, manifest_hashes=manifest_hashes)
-
-    _check_package_version(result)
-
-
 def _run_post_update_phases(
     target_dir: Path,
     ide: str | None,
     result: dict[str, list[str]],
     on_progress: ProgressCallback,
     manifest_hashes: dict[str, str] | None = None,
-) -> None:
-    """Execute post-update phases (metadata, instruction sync, client configs)."""
+) -> frozenset[str]:
+    """Execute post-update phases (metadata, instruction sync, client configs); return the canon pins retired."""
     # PRD-SEC-005-FR05: migrate any tracked config.yaml key into the ignored
     # credentials.yaml (idempotent, fail-open) before other post-update work.
     from trw_mcp.models.config._credentials import migrate_for_update_project
 
     migrate_for_update_project(target_dir / ".trw" / "config.yaml", result)
 
+    from ._version_pins import retire_default_version_pins
+
+    # Before installer-meta is rewritten (it is the ownership evidence) and before the redeploy: a pin an older
+    # init wrote as its default would freeze the canon at that version.
+    retired_pins = retire_default_version_pins(target_dir, result)
     if on_progress:
         on_progress("Phase", "Writing metadata...")
     _write_installer_metadata(target_dir, "update-project", result, on_progress)
@@ -248,7 +166,7 @@ def _run_post_update_phases(
     # claude-code for any project containing `.claude/` — which TRW itself
     # creates for EVERY client, since hooks and skills are universal artifacts.
     # So a bare `update-project` on a codex project appended claude-code
-    # permanently, and the CLAUDE.md block came back on the next run. The
+    # permanently, and the claude-code block came back on the next run. The
     # append-only rule exists to protect a USER's list, not to let our own
     # scaffolding vote itself into it.
     # ONE authority for both halves of the decision, and the SAME one the agent
@@ -262,7 +180,7 @@ def _run_post_update_phases(
     _update_config_target_platforms(target_dir, write_targets, result)
 
     if on_progress:
-        on_progress("Phase", "Syncing CLAUDE.md...")
+        on_progress("Phase", "Syncing instruction files...")
     # Pass the PRE-write baseline: by the time the sync runs, the on-disk
     # manifest has already been rewritten from current content, so a user's
     # hand-edited instruction file would look like TRW's own last write and be
@@ -281,37 +199,27 @@ def _run_post_update_phases(
 
     # Claude Code distill channels — always update (claude-code is the default client)
     if "claude-code" in ide_targets or not ide_targets:
-        try:
-            from ._claude_code_distill_channels import install_claude_code_distill_channels
+        _refresh_distill_channels(target_dir, manifest_hashes, result)
 
-            cc_dc = install_claude_code_distill_channels(target_dir)
-            for _key in ("preserved", "removed", "errors"):
-                _items = cc_dc.get(_key)
-                if isinstance(_items, list):
-                    result.setdefault(_key, []).extend(_items)
-        except Exception as exc:  # justified: fail-open, distill channels are additive
-            result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
-
-    # PRD-CORE-149 FR04: rewrite .trw/runtime/hook-env.sh on every sync so
-    # flag changes (hooks_enabled / nudge_enabled) propagate without re-init.
-    _rewrite_hook_env_for_primary_profile(target_dir, ide_targets)
+    # PRD-CORE-149 FR04 / R8 sol round 1 P1: rewrite EVERY resolved client's
+    # hook-env.d/<key>.sh on every sync, not just ide_targets[0] -- update
+    # installs integrations for all of them (run_update_integrations above).
+    result.setdefault("warnings", []).extend(_rewrite_hook_env_for_installed_profiles(target_dir, ide_targets))
+    return retired_pins
 
 
-def _rewrite_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[str]) -> None:
-    """PRD-CORE-149 FR04: refresh ``.trw/runtime/hook-env.sh`` on every sync.
+def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list[str]) -> list[str]:
+    """Refresh every resolved client's ``.trw/runtime/hook-env.d/<key>.sh`` on every sync.
 
-    Fail-open: hook-env rewrite never aborts an update.
+    Fail-open per client. Returns the operator-facing warnings
+    :func:`write_hook_env_for_clients` raises (empty when there is nothing to
+    report).
     """
-    from trw_mcp.models.config._profiles import resolve_client_profile
+    from ._file_ops import write_hook_env_for_clients
 
-    from ._file_ops import _write_hook_env_file
-
-    primary = ide_targets[0] if ide_targets else "claude-code"
-    try:
-        profile = resolve_client_profile(primary)
-        _write_hook_env_file(target_dir / ".trw", profile)
-    except Exception as exc:  # justified: fail-open
-        logger.warning("hook_env_rewrite_failed", error=str(exc), primary=primary)
+    warnings: list[str] = []
+    write_hook_env_for_clients(target_dir / ".trw", ide_targets, warnings=warnings)
+    return warnings
 
 
 def _apply_update(
@@ -345,59 +253,57 @@ def _apply_update(
     changes: dict[str, str] = {}
     # Every renderer that resolves "the project" (instruction sync, manifest
     # baselines, store counts) must resolve *root* — for a dry run the scratch
-    # copy, never the caller's cwd or an inherited TRW_PROJECT_ROOT.
-    inherited_root = os.environ.get("TRW_PROJECT_ROOT")
-    os.environ["TRW_PROJECT_ROOT"] = str(root)
-    # Set only when the whole writer phase finished: an interrupt (a BaseException
-    # such as KeyboardInterrupt) bypasses the handler below and never records an
-    # error, so the rollback below keys on this too — parked links come back on
-    # EVERY exit, not only the normal one.
-    completed = False
-    try:
-        parked = park_surface_links(root)
-        _run_core_update_phases(root, effective_data, result, on_progress, manifest_hashes, ide=ide)
-        _run_post_update_phases(root, ide, result, on_progress, manifest_hashes)
-        unpark_surface_links(root, snapshot_root, parked, result)
-        if dirty:
-            preserve_uncommitted_changes(root, snapshot_root, dirty, manifest_hashes, result)
-        from ._client_ownership import update_write_targets
+    # copy, never the caller's cwd or an inherited TRW_PROJECT_ROOT. Bound
+    # context-locally (B71-118): process-wide os.environ would make every other
+    # thread in this process (an MCP request, an overlapping install) resolve
+    # *root* as its own project for the whole writer phase.
+    with installing_into(root):
+        # Set only when the whole writer phase finished: an interrupt (a BaseException
+        # such as KeyboardInterrupt) bypasses the handler below and never records an
+        # error, so the rollback below keys on this too — parked links come back on
+        # EVERY exit, not only the normal one.
+        completed = False
+        try:
+            parked, adopted = park_surface_links(root), adopt_for_update(root, ide, manifest_hashes, result)
+            _run_core_update_phases(root, effective_data, result, on_progress, manifest_hashes, ide=ide)
+            retired_pins = _run_post_update_phases(root, ide, result, on_progress, manifest_hashes)
+            unpark_surface_links(root, snapshot_root, parked, result)
+            if dirty:
+                _restore_dirty_files(root, snapshot_root, dirty, manifest_hashes, retired_pins, result, adopted)
+            from ._client_ownership import update_write_targets
 
-        enforce_and_write_manifest(
-            root, result, tombstones, effective_data, update_write_targets(root, ide), skill_dir_snapshot
-        )
-        if on_progress:
-            on_progress("Phase", "Verifying installation...")
-        _verify_installation(root, result)
-        changes = _diff_transaction_paths(snapshot_root, root)
-        if changes.keys() <= _RUN_RECORDS:
-            for rel in changes:
-                _restore_transaction_file(root, snapshot_root, rel)
-            changes = {}
-        completed = True
-    except Exception as exc:  # justified: fail-open — errors captured here, rolled back in finally
-        logger.exception("update_project_exception", project_root=str(root))
-        result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
-    finally:
-        keep_snapshot = False
-        if result["errors"] or not completed:
-            changes = {}
-            try:
-                _restore_transaction_snapshot(root, snapshot_root)
-                result["warnings"].append("update-project rolled back managed directories after write failure")
-            except OSError as exc:
-                # The snapshot is the only copy of what the rollback could not put
-                # back (parked symlinks included) — keep it and say where it is.
-                keep_snapshot = True
-                logger.exception("update_snapshot_kept", snapshot=str(snapshot_root))
-                result["errors"].append(
-                    f"Failed to restore update snapshot: {exc}; recovery copy kept at {snapshot_root}"
-                )
-        if not keep_snapshot:
-            shutil.rmtree(snapshot_root, ignore_errors=True)
-        if inherited_root is None:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        else:
-            os.environ["TRW_PROJECT_ROOT"] = inherited_root
+            enforce_and_write_manifest(
+                root, result, tombstones, effective_data, update_write_targets(root, ide), skill_dir_snapshot
+            )
+            if on_progress:
+                on_progress("Phase", "Verifying installation...")
+            _verify_installation(root, result)
+            changes = _diff_transaction_paths(snapshot_root, root)
+            if changes.keys() <= _RUN_RECORDS:
+                for rel in changes:
+                    _restore_transaction_file(root, snapshot_root, rel)
+                changes = {}
+            completed = True
+        except Exception as exc:  # justified: fail-open — errors captured here, rolled back in finally
+            logger.exception("update_project_exception", project_root=str(root))
+            result["errors"].append(f"update-project failed: {type(exc).__name__}: {exc}")
+        finally:
+            keep_snapshot = False
+            if result["errors"] or not completed:
+                changes = {}
+                try:
+                    _restore_transaction_snapshot(root, snapshot_root)
+                    result["warnings"].append("update-project rolled back managed directories after write failure")
+                except OSError as exc:
+                    # The snapshot is the only copy of what the rollback could not put
+                    # back (parked symlinks included) — keep it and say where it is.
+                    keep_snapshot = True
+                    logger.exception("update_snapshot_kept", snapshot=str(snapshot_root))
+                    result["errors"].append(
+                        f"Failed to restore update snapshot: {exc}; recovery copy kept at {snapshot_root}"
+                    )
+            if not keep_snapshot:
+                remove_tree(snapshot_root, purpose="update snapshot")
     for key, kind in (("updated", "updated"), ("created", "created"), ("cleaned", "deleted")):
         result[key] = [rel for rel, change in changes.items() if change == kind]
 
@@ -425,8 +331,9 @@ def update_project(
     Smart merge: .mcp.json -- ensures ``trw`` server entry exists while preserving
     all other user-configured MCP servers.
 
-    Smart update: CLAUDE.md -- replaces content between ``trw:start``/``trw:end``
-    markers while preserving all user-written sections.
+    Smart update: AGENTS.md -- replaces content between ``trw:start``/``trw:end``
+    markers while preserving all user-written sections. A TRW-only legacy
+    ``CLAUDE.md`` is removed; one with user content is reported, never touched.
 
     Args:
         target_dir: Root of the target git repository.
@@ -492,8 +399,12 @@ def update_project(
         return result
 
     external = ["pip_install"] if pip_install else []
-    external += ["git_post_commit_hook", "memory_namespace_pin", "auto_maintenance", "context_transient_cleanup"]
-    with project_report_cap(target_dir):  # PRD-CORE-290-FR04: the target's configured report cap
+    external += ["git_post_commit_hook", "hook_interpreter", "memory_namespace_pin", "auto_maintenance"]
+    external += ["context_transient_cleanup"]
+    # PRD-CORE-290-FR04: the target's configured report cap. One install binding spans the writer phase AND the
+    # effects that follow it, so every memory-daemon wait in this update draws on one budget: auto-maintenance
+    # used to run after the writer phase's binding closed and open a second (PRD-CORE-305 FR07 queued row (a)).
+    with project_report_cap(target_dir), installing_into(target_dir):
         if dry_run:
             run_in_scratch(
                 target_dir,

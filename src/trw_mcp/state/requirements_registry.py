@@ -31,6 +31,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.requirements import (
     EvaluationEpoch,
     ExecutionState,
@@ -385,7 +386,11 @@ def build_registry(
 
 
 def persist_registry(registry: RegistryBuildResult, registry_dir: Path) -> Path:
-    """Write the canonical registry document + receipt digest (projection input)."""
+    """Write the canonical registry document + receipt digest (projection input).
+
+    Published atomically beneath *registry_dir*; a symlink planted at the registry file raises
+    ``UnsafeWriteError`` instead of being followed (PRD-CORE-337 FR08).
+    """
     registry_dir.mkdir(parents=True, exist_ok=True)
     target = registry_dir / REGISTRY_FILENAME
     document = registry.canonical_document()
@@ -394,5 +399,5 @@ def persist_registry(registry: RegistryBuildResult, registry_dir: Path) -> Path:
         sort_keys=True,
         indent=2,
     )
-    target.write_text(rendered + "\n", encoding="utf-8")
+    write_checkout_file(registry_dir, target, rendered + "\n")
     return target

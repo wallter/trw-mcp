@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from trw_mcp.profile import (
     ProfileLayer,
-    compute_session_override_hash,
     compute_surface_snapshot_id,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _layer(name: str, **overrides: object) -> ProfileLayer:
@@ -25,27 +28,12 @@ def test_snapshot_id_cross_platform_canonical() -> None:
     assert a.startswith("surf_")
 
 
-def test_snapshot_excludes_session_layer() -> None:
-    """FR-13: the session layer never contributes to surface_snapshot_id."""
+def test_snapshot_ignores_non_persistent_layer_names() -> None:
+    """FR-13: only the persistent layer names contribute to surface_snapshot_id."""
     persistent = [_layer("defaults", review_threshold="STANDARD")]
     base = compute_surface_snapshot_id(persistent)
-    with_session = compute_surface_snapshot_id([*persistent, _layer("session", cost_budget_usd=5.0)])
-    assert base == with_session
-
-
-def test_session_hash_empty_when_no_session_layer() -> None:
-    """FR-13: missing session layer yields the empty-content session hash."""
-    no_session = compute_session_override_hash([_layer("defaults", review_threshold="STANDARD")])
-    explicit_empty = compute_session_override_hash([_layer("session")])
-    assert no_session == explicit_empty
-    assert no_session.startswith("sess_")
-
-
-def test_session_hash_changes_with_session_content() -> None:
-    """FR-13: distinct session overrides yield distinct session hashes."""
-    one = compute_session_override_hash([_layer("session", cost_budget_usd=1.0)])
-    two = compute_session_override_hash([_layer("session", cost_budget_usd=2.0)])
-    assert one != two
+    with_other = compute_surface_snapshot_id([*persistent, _layer("scratch", cost_budget_usd=5.0)])
+    assert base == with_other
 
 
 def test_empty_persistent_layers_hash_stable() -> None:

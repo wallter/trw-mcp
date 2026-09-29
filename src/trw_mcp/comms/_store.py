@@ -31,7 +31,13 @@ from pathlib import Path
 #: migrates silently, because a silent migration of a shared mailbox loses the
 #: evidence of what the other side thought it had written.
 from trw_mcp.comms._schema import SCHEMA_VERSION as SCHEMA_VERSION
-from trw_mcp.comms._schema import SchemaVersionError, UpgradeRequiredError, ddl_statements, verify
+from trw_mcp.comms._schema import (
+    SchemaVersionError,
+    UpgradeRequiredError,
+    VerifyDeadlineExceeded,
+    ddl_statements,
+    verify,
+)
 
 #: Beside the canonical formation manifest (FR10), so a group's mailbox is
 #: located by the same path that derives its group_id.
@@ -49,8 +55,10 @@ class StoreRefusal(str, Enum):
     CONTENDED = "storage_contended"
     CLOSED_GROUP = "group_closed"
     UNAVAILABLE = "storage_unavailable"
+    #: verify() hit its deadline: unproven, not disproven -- never CORRUPT (PRD-QUAL-147 FR10 P2).
+    TIMEOUT = "storage_verify_timeout"
     PUBLISH_UNCERTAIN = "storage_publication_uncertain"
-    #: FR16: a v3 mailbox under a v4 build. Refused, file unchanged; the upgrade is explicit.
+    #: FR16: an older supported mailbox (v3 or v4) under a v5 build. Refused, file unchanged; the upgrade is explicit.
     UPGRADE_REQUIRED = "mailbox_upgrade_required"
     UPGRADE_NOT_QUIESCENT = "upgrade_not_quiescent"
     ROLLBACK_WOULD_DROP_TRAFFIC = "rollback_would_drop_traffic"
@@ -118,10 +126,12 @@ def _verify_schema(conn: sqlite3.Connection) -> None:
     except UpgradeRequiredError as exc:
         raise StoreError(
             StoreRefusal.UPGRADE_REQUIRED,
-            "v3 mailbox: the orchestrator runs `trw-mcp formation comms-upgrade --run <orchestrator run>`",
+            f"{exc}: the orchestrator runs `trw-mcp formation comms-upgrade --run <orchestrator run>`",
         ) from exc
     except SchemaVersionError as exc:
         raise StoreError(StoreRefusal.SCHEMA_MISMATCH, str(exc)) from exc
+    except VerifyDeadlineExceeded as exc:
+        raise StoreError(StoreRefusal.TIMEOUT, str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise StoreError(StoreRefusal.CORRUPT, "schema or accounting inconsistency") from exc
 

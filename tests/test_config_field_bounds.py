@@ -15,7 +15,6 @@ from trw_mcp.models.config._field_admission import build_field_admissions
 _NEW_FIELDS = (
     "maintain_verify_batch_limit",
     "hint_sidecar_refresh_enabled",
-    "hint_sidecar_refresh_file_cap",
     "wiring_gate_mode_overrides",
 )
 
@@ -24,7 +23,6 @@ def test_defaults_match_the_prd() -> None:
     """The shipped defaults are the ones the PRD specifies."""
     config = TRWConfig()
 
-    assert config.hint_sidecar_refresh_file_cap == 20
     assert config.hint_sidecar_refresh_enabled is True
     assert config.maintain_verify_batch_limit == 1000
     assert config.wiring_gate_mode_overrides == {}
@@ -50,15 +48,13 @@ def test_hint_delivery_fields_are_gone() -> None:
     assert "hint_delivery_measurement_window_days" not in build_field_admissions()
 
 
-def test_hint_sidecar_refresh_file_cap_bounds() -> None:
-    """The per-commit fan-out cap must stay bounded on both ends."""
-    assert TRWConfig(hint_sidecar_refresh_file_cap=1).hint_sidecar_refresh_file_cap == 1
-    assert TRWConfig(hint_sidecar_refresh_file_cap=500).hint_sidecar_refresh_file_cap == 500
+def test_hint_sidecar_refresh_file_cap_is_retired() -> None:
+    """8.2 S2b: the per-commit per-file refresh it bounded is gone; a stale key warns instead of silently vanishing."""
+    from trw_mcp.models.config._retired_keys import retired_config_keys
 
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_sidecar_refresh_file_cap=0)
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_sidecar_refresh_file_cap=501)
+    assert "hint_sidecar_refresh_file_cap" not in TRWConfig.model_fields
+    assert "hint_sidecar_refresh_file_cap" not in build_field_admissions()
+    assert retired_config_keys()["hint_sidecar_refresh_file_cap"] == ""
 
 
 def test_wiring_gate_mode_overrides_rejects_unknown_modes() -> None:

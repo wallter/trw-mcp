@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import platform
 import sys
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -229,6 +230,7 @@ def submit_feedback_via_http(
     api_key: str,
     payload: SubmissionPayload,
     timeout: float = _HTTP_TIMEOUT_SECONDS,
+    source_trw_dir: Path | None,
 ) -> SubmitFeedbackResult:
     """POST the validated payload and translate the response.
 
@@ -239,7 +241,7 @@ def submit_feedback_via_http(
     import httpx
 
     attached: dict[str, str] = payload.get("metadata", {})
-    if not platform_contact_enabled():  # the operator's egress switch covers agent-invoked sends too
+    if not platform_contact_enabled(source_trw_dir):  # the operator's egress switch covers agent-invoked sends too
         error = "platform contact is disabled (platform_contact_enabled: false); nothing was sent"
         return SubmitFeedbackResult(success=False, error=error, metadata_attached=attached)
     url = f"{backend_url.rstrip('/')}/v1/submissions"
@@ -248,7 +250,7 @@ def submit_feedback_via_http(
     # `.trw/config.yaml` cannot point backend_url at an untrusted host and
     # still receive the bearer.
     headers = {
-        **platform_auth_headers(url, api_key),
+        **platform_auth_headers(url, api_key, source_trw_dir=source_trw_dir),
         "Content-Type": "application/json",
     }
 
@@ -358,10 +360,15 @@ def _submit_feedback_impl(
     if contact_email is not None:
         payload["contact_email"] = contact_email
 
+    from trw_mcp.state._paths import resolve_trw_dir
+
     return submit_feedback_via_http(
         backend_url=backend_url,
         api_key=api_key,
         payload=payload,
+        # Census-named exception: feedback is agent-typed, so its source is the caller's
+        # project, resolved once; no .trw there means nothing is sent.
+        source_trw_dir=resolve_trw_dir(),
     )
 
 

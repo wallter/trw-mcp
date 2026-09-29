@@ -36,7 +36,9 @@ _LOCALE_PREFIX = "LC_"
 # successfully: PYTHONPATH (so an editable/source checkout resolves trw_mcp) and
 # VIRTUAL_ENV (so the active venv is honored). These are NOT secret-bearing; they
 # are forwarded ON TOP of the per-client allowlist by ``build_runner_env`` only.
-_RUNNER_PASSTHROUGH: tuple[str, ...] = ("PYTHONPATH", "VIRTUAL_ENV")
+# TRW_DISPATCH_CLAUDE_SETTING_SOURCES: the background runner re-imports the claude
+# argv, so the opt-out must survive the hop or wait=False ignores it.
+_RUNNER_PASSTHROUGH: tuple[str, ...] = ("PYTHONPATH", "VIRTUAL_ENV", "TRW_DISPATCH_CLAUDE_SETTING_SOURCES")
 
 # Per-client provider credentials are NOT listed here. They live on the client's
 # registry entry (``ClientSpec.credential_env``) alongside the flags and the
@@ -45,6 +47,24 @@ _RUNNER_PASSTHROUGH: tuple[str, ...] = ("PYTHONPATH", "VIRTUAL_ENV")
 # client with no recorded credential variable — because none appears in its cited
 # source — therefore receives the base allowlist ALONE by construction, rather
 # than by someone remembering to omit it from a second table.
+
+
+#: A credential a client reads under one name that hosts commonly export under
+#: another: ``{name the client reads: synonym}``. Keyed by VARIABLE, not by
+#: client, so it adds no client literal here: it applies only when the client's
+#: own ``credential_env`` lists the key and the host sets only the synonym. The
+#: AI SDK google provider (opencode) reads GOOGLE_GENERATIVE_AI_API_KEY; Google's
+#: own tooling documents GEMINI_API_KEY for the same key.
+_PROVIDER_SYNONYMS: dict[str, str] = {"GOOGLE_GENERATIVE_AI_API_KEY": "GEMINI_API_KEY"}
+
+
+def _provider_synonyms(allowed: set[str], src: dict[str, str]) -> dict[str, str]:
+    """The allowlisted names the host left unset but exported under a synonym."""
+    return {
+        name: src[synonym]
+        for name, synonym in _PROVIDER_SYNONYMS.items()
+        if name in allowed and name not in src and synonym in src
+    }
 
 
 def _allowed_names(client: DispatchClient) -> set[str]:
@@ -87,6 +107,7 @@ def build_subprocess_env(
     *,
     posture: DispatchPosture = "default",
     with_trw: bool = False,
+    read_only: bool = False,
 ) -> dict[str, str]:
     """Build a sanitized env for launching *client*.
 
@@ -102,6 +123,8 @@ def build_subprocess_env(
             server resolves THIS project rather than inferring one from the
             foreign CLI's working directory. Same keyword-only, default-off
             discipline as ``posture``.
+        read_only: overlays the client's ``read_only_env`` (agy: its inherited
+            ``trw`` MCP server runs the reviewer surface), same default-off discipline.
 
     Returns:
         A new dict containing only allowlisted variables that are actually set
@@ -116,7 +139,10 @@ def build_subprocess_env(
     src = dict(os.environ) if source_env is None else source_env
     allowed = _allowed_names(client)
     env = {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
+    env.update(_provider_synonyms(allowed, src))
     env.update(reviewer_env_for(client, posture))
+    if read_only:
+        env.update(client_spec_for(client).read_only_env)
     # Applied LAST and computed here, never inherited: TRW_PROJECT_ROOT is
     # outside the allowlist, so a host value cannot reach a child that did not
     # ask for a TRW connection, and a child that did gets OUR project rather
@@ -148,6 +174,7 @@ def build_runner_env(
     *,
     posture: DispatchPosture = "default",
     with_trw: bool = False,
+    read_only: bool = False,
 ) -> dict[str, str]:
     """Build the env for the INTERMEDIATE ``_run_job`` child of a background job.
 
@@ -171,7 +198,7 @@ def build_runner_env(
     the shared resolver exists to prevent.
     """
     src = dict(os.environ) if source_env is None else source_env
-    env = build_subprocess_env(client, source_env=src, posture=posture, with_trw=with_trw)
+    env = build_subprocess_env(client, source_env=src, posture=posture, with_trw=with_trw, read_only=read_only)
     for name in _RUNNER_PASSTHROUGH:
         value = src.get(name)
         if value is not None:

@@ -7,11 +7,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "7.0.1"
+version = "8.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "TRW Framework", email = "noreply@trwframework.com" },
 ]
@@ -20,7 +20,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -52,7 +51,6 @@ dependencies = [
     "sqlite-vec>=0.1.5",
     "starlette>=1.3.1",
     "structlog>=24.0.0",
-    "tomli>=2.0.0; python_version < '3.11'",
     # Floor 0.16.0 is the lowest release carrying `trw_memory.user_paths`, which
 # `state/_user_paths.py` now re-exports as the single user-space resolver
 # (PRD-CORE-253 FR01), and `trw_memory.daemon`. The previous floor, 0.12.0, was
@@ -66,13 +64,18 @@ dependencies = [
     # at runtime; the floor makes the skew fail fast at install instead. When adding an
     # import from a new trw-memory symbol, bump this floor IN THE SAME PR.
     #
-    # RELEASE ORDER (docs/deployment/CLAUDE.md): trw-memory ships FIRST. This floor
+    # RELEASE ORDER (docs/deployment/AGENTS.md): trw-memory ships FIRST. This floor
     # resolves from PyPI as of 2026-07-30 — the 0.11.0-era block described here
     # earlier has cleared. Read the current published version from PyPI rather than
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=4.0.1,<5.0.0",
+    # 5.0.0: the trw-memory major that ships with trw-mcp 8.0.0 (R8) and the first
+    # release exporting `trw_memory.storage.probe_store` (PRD-QUAL-147 FR08; 4.0.1
+    # does not). Unpublished when raised: the lock follows after trw-memory ships,
+    # and release_cut_prep.py re-derives the final pin. The floor's major is never
+    # behind trw-memory's own version (test_mcp_version_source.py guards it).
+    "trw-memory>=5.0.0,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -126,6 +129,14 @@ dev = [
     "pip-audit>=2.7.0",
     "vulture>=2.11",
     "deptry>=0.21.0",
+    "defusedxml>=0.7.1",  # PRD-SEC-020 FR06: .github/scripts/{timing_job,verify_suite}.py parse fork-PR-triggered JUnit XML with this instead of stdlib xml.etree
+    "build>=1.2.0",  # PRD skip-audit D5: lets the installer-build test fixture run `python -m build --wheel` without a repo-wide install
+    # Backend for --no-isolation wheel builds under `build` above. MUST match the
+    # [build-system] requires pin in trw-mcp/pyproject.toml AND trw-memory/pyproject.toml
+    # exactly (hatchling 1.29+ stamps Metadata-Version 2.5, which twine/packaging reject)
+    # — --no-isolation uses the venv's installed hatchling instead of an isolated one,
+    # so a looser pin here silently breaks the D5 build fixture.
+    "hatchling>=1.27,<1.29",
 ]
 ai = [
     "anthropic>=0.40.0",
@@ -140,13 +151,14 @@ Changelog = "https://trwframework.com/docs/changelog"
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"
+trw-mcp-proxy = "trw_mcp.shared_server:main_proxy"
 
 [tool.hatch.build.targets.wheel]
 # The wheel needs the SAME exclusions as the sdist below. Hatchling applies
 # excludes PER TARGET, so listing them only under `sdist` left every internal
 # sub-CLAUDE.md in the artifact `pip install` actually delivers — confirmed
 # against the published 2.0.0 wheel's RECORD. That is not merely untidy: these
-# docs state which security controls are unwired (`security/CLAUDE.md`: verify
+# docs state which security controls are unwired (`security/AGENTS.md`: verify
 # fn is an observe-mode stub, capability_scope not wired, kill switches default
 # off) and cite internal PRD paths. Found in pre-release review, 2026-09-11.
 packages = ["src/trw_mcp"]
@@ -172,7 +184,7 @@ exclude = [
 
 [tool.pyright]
 include = ["src/trw_mcp"]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "standard"
 
 [tool.deptry]
@@ -192,6 +204,8 @@ DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
 DEP003 = ["opentelemetry", "tiktoken"]
 
 [tool.ruff]
+# Style target, NOT the support floor (requires-python is >=3.11). Raising it to py311 makes ruff want
+# ~850 mechanical rewrites (datetime.UTC, StrEnum); do that as its own sweep.
 target-version = "py310"
 line-length = 120
 exclude = ["scripts/install-trw.template.py", "scripts/build_installer.py"]
@@ -309,7 +323,7 @@ indent-style = "space"
 
 [tool.mypy]
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
@@ -360,6 +374,7 @@ markers = [
     "requires_published_lock: needs uv.lock refreshed against the published trw-memory; deselected by the paired pre-cut check (release_public.py check --with-local) and by the C1 release gate -- release_public.py all's post-lock-refresh check trw-mcp runs it unfiltered and fails the cut if it fails",
     "requires_local_timing: a host-resource budget (wall-clock, throughput, RSS); skipped on CI runners, measured by the non-gating timing job (PRD-QUAL-141)",
     "live: spawns a real external CLI (agy, grok, codex, claude, ...); always skipped, a manual-probe placeholder only",
+    "duration_exempt(reason): exempt a test from the duration budget; reason is required and non-empty (PRD-INFRA-197-FR05)",
 ]
 timeout = 120
 

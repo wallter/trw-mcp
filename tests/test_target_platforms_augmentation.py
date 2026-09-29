@@ -166,7 +166,6 @@ class TestPreservesOtherConfigFields:
         cfg = _seed_config(
             tmp_path,
             target_platforms=["claude-code"],
-            update_channel="latest",
             task_root="docs",
             installation_id="test-dev",
             embeddings_enabled=True,
@@ -178,7 +177,6 @@ class TestPreservesOtherConfigFields:
 
         data = yaml.safe_load(cfg.read_text())
         assert data["target_platforms"] == ["claude-code", "cursor-cli"]
-        assert data["update_channel"] == "latest"
         assert data["task_root"] == "docs"
         assert data["installation_id"] == "test-dev"
         assert data["embeddings_enabled"] is True

@@ -24,9 +24,6 @@ TERMINAL_STATUSES: frozenset[str] = frozenset(
     status.value for status, targets in VALID_TRANSITIONS.items() if not targets
 )
 
-# Valid FR-level status values (FR04 — PRD-FIX-056)
-VALID_FR_STATUSES: frozenset[str] = frozenset({"active", "deferred", "superseded", "done"})
-
 
 def validate_status_transition(current: str, target: str) -> bool:
     """Check whether a PRD status transition is permitted.

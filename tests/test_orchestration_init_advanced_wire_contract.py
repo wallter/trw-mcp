@@ -15,7 +15,7 @@ why ``Output:``/``See Also:`` had to move above ``Args:``). It does NOT drop the
 ``Args:`` entries themselves: each entry whose name matches a parameter is
 hoisted into that parameter's JSON Schema ``description``, which is served to the
 model as part of the tool definition. Verified at the wire 2026-07-27 for
-``trw_init.advanced`` and ``trw_checkpoint.shard_id``/``wave_id``.
+``trw_init.advanced`` and ``trw_checkpoint.shard_id``.
 
 That hoisting is what publishes this contract, and it is silent when it breaks:
 rename the ``Args:`` entry so it no longer matches the parameter, or move the key

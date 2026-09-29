@@ -660,25 +660,10 @@ class TestWriterTotality:
     #: entry here is a module that can touch a user's instruction file without
     #: the totality invariant applying to it, so "the scan can't prove it" is
     #: not sufficient; the write itself must be provably content-preserving.
-    ALLOWLIST: frozenset[str] = frozenset(
+    #: Keyed by (module, enclosing function, target) with the number of writes sanctioned there -- not by line
+    #: number, which broke the census on 2026-09-26 and again on 2026-09-29 when unrelated imports shifted lines.
+    ALLOWLIST: dict[str, int] = dict.fromkeys(
         {
-            # `_write_if_missing`'s bare `dest` parameter resolves to CLAUDE.md at
-            # every call site the scan can see, including this one -- but THIS
-            # call only runs in the `else` branch of `claude_md_path.exists() and
-            # force` (see `_generate_root_files`), i.e. exactly when the file is
-            # either absent (nothing to destroy) or present-and-not-forced
-            # (`_write_if_missing` itself skips: `dest.exists() and not force`).
-            # The genuinely destructive combination (exists + force) was moved to
-            # `guarded_claude_md_scaffold_write` above it in the same function.
-            # The scan has no control-flow model, so it cannot see that split.
-            #
-            # Line number PRD-CORE-262-FR05/CORE262-13/14 drift: 361->371. FR05
-            # added a `codex_only` guard above this call (an explicit
-            # codex-only selection skips this branch and the whole write
-            # entirely, never a new write path); the branch shape and
-            # rationale above are otherwise unchanged. PRD-INFRA-192 FR09/FR10
-            # drift 366->375: the ownership-gated .mcp.json merge and tombstone detection.
-            "bootstrap/_init_project.py:375 (target_dir / 'CLAUDE.md')",
             # `_strip_orphaned_block` only ever removes the TRW-marked region
             # (`_strip_trw_section`) and rewrites `remaining` verbatim -- it is a
             # narrow heal/strip operation, never a content REPLACEMENT, and is
@@ -709,35 +694,28 @@ class TestWriterTotality:
             # widening pass here is documented one-hop-only
             # (`_widen_via_call_sites`); heal_pointer's safety is established
             # directly instead, by `test_instruction_carrier.py::TestHealPointer`.
-            "state/claude_md/_orphan_strip.py:190 (project_root / 'AGENTS.md')",
-            "state/claude_md/_orphan_strip.py:213 (project_root / 'CLAUDE.md')",
-            # `withdraw_managed_learnings` removes only the `## Key Learnings`
-            # sub-block bounded inside the TRW markers -- a narrow,
-            # marker-scoped strip, never a content REPLACEMENT -- so it is
-            # structurally identical to `_orphan_strip._strip_orphaned_block`
-            # above and cannot route through `guarded_instruction_write` for
-            # the same reason: that seam refuses any write that shrinks the
-            # file without `force=True`, and this call's whole point is a
-            # legitimate, bounded shrink when recall is switched off. Writes
-            # via `FileStateWriter`, the same seam `_strip_orphaned_block`/
-            # `heal_pointer` use, so a write failure raises `StateError`
-            # rather than disappearing; its caller
-            # (`_ceremony_step_table._ss_recall_withdraw`) runs inside the
-            # session-start step driver's blanket `except Exception` (one
-            # step must not block session start), so the failure is fail-open
-            # and logged, not silently swallowed twice.
-            "state/claude_md/_withdraw.py:49 (project_root / 'AGENTS.md')",
-        }
+            #
+            # 2026-09-26 (TRW 8.0, CLAUDE.md retired): line drift 190->176. The
+            # ':145' row is the same strip write (`_strip_orphaned_block`), which
+            # the name-based scan also attributes to the module's
+            # `project_root / 'CLAUDE.md'` path in `retire_legacy_claude_md` --
+            # that function only ever deletes a TRW-only file, never writes one.
+            "state/claude_md/_orphan_strip.py::_strip_orphaned_block (project_root / 'CLAUDE.md')",
+            "state/claude_md/_orphan_strip.py::strip_orphaned_agents_md_block (project_root / 'AGENTS.md')",
+            # 2026-09-29: the `_withdraw.py:49` AGENTS.md row is gone -- withdraw_managed_learnings no longer
+            # writes AGENTS.md (PRD-CORE-341), so the row allowlisted nothing.
+        },
+        1,
     )
 
     def test_every_instruction_writer_routes_through_the_guard(self) -> None:
         """Set difference between "writes an instruction surface" and "calls the guard"."""
-        unguarded = sorted(
-            f"{site.module}:{site.lineno} ({site.target})"
+        unguarded = [
+            site
             for site in _scan_instruction_writes(_SRC_ROOT)
             if not (self.GUARD_SYMBOLS & _referenced_names(_SRC_ROOT / site.module))
-        )
-        assert [u for u in unguarded if u not in self.ALLOWLIST] == []
+        ]
+        assert _excess(unguarded, self.ALLOWLIST) == {}
 
     def test_no_module_writes_an_instruction_surface_outside_the_seam(self) -> None:
         """No raw write to a user instruction surface survives anywhere under src/.
@@ -747,12 +725,31 @@ class TestWriterTotality:
         inside the seam itself.
         """
         seam = {"state/claude_md/_write_guard.py", "bootstrap/_guarded_write.py"}
-        offenders = sorted(
-            f"{site.module}:{site.lineno} ({site.target})"
-            for site in _scan_instruction_writes(_SRC_ROOT)
-            if site.module not in seam
+        offenders = [site for site in _scan_instruction_writes(_SRC_ROOT) if site.module not in seam]
+        assert _excess(offenders, self.ALLOWLIST) == {}
+
+    def test_a_new_write_in_an_allowlisted_function_still_fails(self) -> None:
+        """Function-keying must not widen the allowlist: a SECOND write in a sanctioned function is excess."""
+        source = (
+            "from pathlib import Path\n"
+            "def _strip_orphaned_block(project_root: Path) -> None:\n"
+            "    (project_root / 'CLAUDE.md').write_text('a')\n"
+            "    (project_root / 'CLAUDE.md').write_text('b')\n"
         )
-        assert [o for o in offenders if o not in self.ALLOWLIST] == []
+        sites = _scan_source_for_instruction_writes(source, module="state/claude_md/_orphan_strip.py")
+        key = "state/claude_md/_orphan_strip.py::_strip_orphaned_block (project_root / 'CLAUDE.md')"
+        assert [s.key for s in sites] == [key, key]
+        assert self.ALLOWLIST[key] == 1
+        assert _excess(sites, self.ALLOWLIST) == {key: 2}
+
+    def test_an_edit_that_only_shifts_lines_keeps_the_census_green(self) -> None:
+        """The two drift breaks this keying fixes: the same write at a different line matches the same key."""
+        body = "def _strip_orphaned_block(project_root):\n    (project_root / 'CLAUDE.md').write_text('a')\n"
+        module = "state/claude_md/_orphan_strip.py"
+        before = _scan_source_for_instruction_writes(body, module=module)
+        after = _scan_source_for_instruction_writes("import os\nimport sys\n" + body, module=module)
+        assert [s.lineno for s in before] != [s.lineno for s in after]
+        assert _excess(before, self.ALLOWLIST) == _excess(after, self.ALLOWLIST) == {}
 
     def test_the_scan_detects_an_unguarded_writer(self) -> None:
         """Positive control: measuring nothing is not passing.
@@ -892,7 +889,7 @@ class TestWriterTotality:
         original = _handwritten(322)
         target.write_text(original, encoding="utf-8")
 
-        forced = generate_cursor_cli_agents_md(tmp_path, "TRW BODY", force=True)
+        forced = generate_cursor_cli_agents_md(tmp_path, force=True)
 
         # ``updated``, not ``created``: pre-fix this branch reported an existing
         # file as ``created`` after replacing it — success-shaped total loss.
@@ -909,33 +906,30 @@ class TestWriterTotality:
         assert unforced is False
         assert target.read_text(encoding="utf-8") == original
 
-    def test_init_project_force_backs_up_claude_md_instead_of_clobbering(self, tmp_path: Path) -> None:
-        """PRD-CORE-247 diag-canon finding 3: a bare-parameter write escaped FR06.
+    def test_init_project_force_backs_up_agents_md_instead_of_clobbering(self, tmp_path: Path) -> None:
+        """PRD-CORE-247 diag-canon finding 3: a forced init must back up, never clobber.
 
-        ``_generate_root_files`` scaffolded CLAUDE.md via ``_write_if_missing``,
-        whose target is a bare ``dest`` parameter -- invisible to the FR06 scan,
-        which only recognizes a write target named after the surface (e.g.
-        ``claude_md``) or matching a surface filename in its own unparsed text.
-        With ``force=True`` on an existing hand-edited CLAUDE.md this was a raw
-        ``write_text`` clobber: no backup, no merge, the same success-shaped
-        total loss ``generate_cursor_cli_agents_md`` was fixed for.
+        TRW 8.0 writes claude-code's block into AGENTS.md (no CLAUDE.md). A forced
+        re-init replaces the file through the guard, which backs up the
+        pre-write bytes first.
         """
         from trw_mcp.bootstrap import init_project
 
         (tmp_path / ".git").mkdir()
         result = init_project(tmp_path, ide="claude-code")
         assert not result["errors"]
+        assert not (tmp_path / "CLAUDE.md").exists()
 
-        claude_md = tmp_path / "CLAUDE.md"
-        original = claude_md.read_text(encoding="utf-8")
+        agents_md = tmp_path / "AGENTS.md"
+        original = agents_md.read_text(encoding="utf-8")
         hand_edit = "\n\n## My private notes\n\nDo not lose this.\n"
-        claude_md.write_text(original + hand_edit, encoding="utf-8")
+        agents_md.write_text(original + hand_edit, encoding="utf-8")
 
         forced = init_project(tmp_path, ide="claude-code", force=True)
         assert not forced["errors"]
 
-        backups = list((tmp_path / TRWConfig().instruction_backup_dir).glob("CLAUDE.md.*"))
-        assert len(backups) >= 1, "a forced rewrite of an existing CLAUDE.md must be backed up, not clobbered"
+        backups = list((tmp_path / TRWConfig().instruction_backup_dir).glob("AGENTS.md.*"))
+        assert len(backups) >= 1, "a forced rewrite of an existing AGENTS.md must be backed up, not clobbered"
         assert any("My private notes" in b.read_text(encoding="utf-8") for b in backups)
 
     def test_no_writer_reports_success_while_losing_user_bytes(self, tmp_path: Path) -> None:
@@ -1107,29 +1101,9 @@ class TestPerformance:
             },
         )
         guarded, baseline = measurements["guarded"], measurements["baseline"]
-        for name in ("CLAUDE.md", "AGENTS.md"):
+        for name in ("AGENTS.md",):
             delta = guarded.target_ms[name] - baseline.target_ms[name]
             assert_budget(f"guard_overhead_{name}", delta, 50.0, "ms")
-
-    def test_guard_budget_detects_guard_only_config_cost(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from tests._instruction_write_performance import assert_guard_budget, measure_sync
-        from trw_mcp.state.claude_md import _write_guard
-
-        elapsed = 0.0
-        real_get_config = _write_guard.get_config
-
-        def costly_get_config():
-            nonlocal elapsed
-            # CLAUDE's real carrier omits config; AGENTS supplies it. Keeping this
-            # work inside the timed seam prevents concealing a guard-only cost.
-            elapsed += 0.060
-            return real_get_config()
-
-        monkeypatch.setattr(_write_guard, "get_config", costly_get_config)
-        guarded = measure_sync(tmp_path / "guarded", bypass_guard=False, clock=lambda: elapsed)
-        baseline = measure_sync(tmp_path / "baseline", bypass_guard=True, clock=lambda: elapsed)
-        with pytest.raises(AssertionError, match=r"CLAUDE\.md guard added 60\.0 ms"):
-            assert_guard_budget(guarded, baseline)
 
     def test_guard_reads_the_target_at_most_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         target = tmp_path / "AGENTS.md"
@@ -1168,6 +1142,39 @@ class _WriteSite:
     module: str
     lineno: int
     target: str
+    #: The innermost enclosing function (``<module>`` at top level). The allowlist keys on it rather than on
+    #: ``lineno``, so an unrelated edit above a sanctioned write no longer breaks the census.
+    function: str = "<module>"
+
+    @property
+    def key(self) -> str:
+        return f"{self.module}::{self.function} ({self.target})"
+
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
+    """``id(node) -> innermost enclosing function name`` for every node in *tree*."""
+    owner: dict[int, str] = {}
+    # Iterative: a deep expression (a long attribute chain) must not hit the recursion limit and crash the census.
+    stack: list[tuple[ast.AST, str]] = [(tree, "<module>")]
+    while stack:
+        node, name = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else name
+            owner[id(child)] = inner
+            stack.append((child, inner))
+    return owner
+
+
+def _excess(sites: list[_WriteSite], allowed: dict[str, int]) -> dict[str, int]:
+    """Writes beyond what *allowed* sanctions, per (module, function, target) key.
+
+    Counting (not set membership) is what keeps function-keying from widening the allowlist: a NEW write added
+    to an allowlisted function raises its count past the allowed number and fails the census.
+    """
+    counts: dict[str, int] = {}
+    for site in sites:
+        counts[site.key] = counts.get(site.key, 0) + 1
+    return {key: n for key, n in sorted(counts.items()) if n > allowed.get(key, 0)}
 
 
 #: Filenames of the instruction surfaces a USER co-authors. ``.trw`` artifacts
@@ -1257,6 +1264,7 @@ def _scan_source_for_instruction_writes(source: str, *, module: str) -> list[_Wr
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
             assignments[node.target.id] = ast.unparse(node.value)
 
+    owner = _enclosing_functions(tree)
     sites: list[_WriteSite] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -1266,7 +1274,9 @@ def _scan_source_for_instruction_writes(source: str, *, module: str) -> list[_Wr
             continue
         target = _resolve(expr, assignments)
         if _names_a_surface(target, expr):
-            sites.append(_WriteSite(module=module, lineno=node.lineno, target=target))
+            sites.append(
+                _WriteSite(module=module, lineno=node.lineno, target=target, function=owner.get(id(node), "<module>"))
+            )
     return sites
 
 
@@ -1368,6 +1378,7 @@ def _widen_via_call_sites(root: Path, parametrized: list[_ParametrizedWrite]) ->
                         assignments[tgt.id] = ast.unparse(node.value)
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
                 assignments[node.target.id] = ast.unparse(node.value)
+        owner = _enclosing_functions(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -1381,7 +1392,11 @@ def _widen_via_call_sites(root: Path, parametrized: list[_ParametrizedWrite]) ->
                     continue
                 target = _resolve(arg, assignments)
                 if _names_a_surface(target, arg):
-                    widened.append(_WriteSite(module=module, lineno=node.lineno, target=target))
+                    widened.append(
+                        _WriteSite(
+                            module=module, lineno=node.lineno, target=target, function=owner.get(id(node), "<module>")
+                        )
+                    )
     return widened
 
 
@@ -1440,3 +1455,14 @@ def _run_sync_tool(
     before = {claude_md: claude_md.read_bytes()}
     result = instructions_sync_fn(client="claude-code", dry_run=dry_run)
     return dict(result), before
+
+
+def test_enclosing_functions_handles_a_deep_attribute_chain() -> None:
+    """codex r1 known issue: a recursive walk would hit the recursion limit on a very deep expression."""
+    # Built as nodes, not parsed: the parser itself has nesting limits on older Pythons; this pins only the walk.
+    expr: ast.expr = ast.Name(id="x", ctx=ast.Load())
+    for _ in range(5000):
+        expr = ast.Attribute(value=expr, attr="a", ctx=ast.Load())
+    fn = ast.FunctionDef(name="f", args=ast.arguments(), body=[ast.Expr(expr)], decorator_list=[])
+    owner = _enclosing_functions(ast.Module(body=[fn], type_ignores=[]))
+    assert "f" in owner.values()

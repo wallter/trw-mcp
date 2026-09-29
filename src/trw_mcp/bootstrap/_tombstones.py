@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._hook_deregistration import deregister_hook_script
+from ._safe_remove import path_refusal
 from ._version_manifest import _manifest_key_path
 
 _HOOKS_DIR_PREFIX = ".claude/hooks/"
@@ -145,10 +146,15 @@ def enforce_and_write_manifest(
     One call for ``_apply_update``'s last two writer-adjacent steps, so its own
     body stays inside the 350 effective-LOC gate.
     """
+    from ._retired_artifacts import retired_artifact_notices
     from ._version_migration import _write_manifest
 
     enforce_tombstones(root, tombstones, result, skill_dir_snapshot)
     _write_manifest(root, result, effective_data, clients=clients, tombstones=tombstones)
+    # PRD-INFRA-200 FR05: report only -- never delete (three fix-delta rounds
+    # on an earlier delete-based design each found a real deletion-safety gap).
+    if notices := retired_artifact_notices(root):
+        result.setdefault("warnings", []).extend(notices)
 
 
 def enforce_tombstones(
@@ -184,6 +190,11 @@ def enforce_tombstones(
             deregister_hook_script(target_dir, rel, result)
         target = _tombstone_target(target_dir, key)
         if not target.exists():
+            continue
+        # A symlinked leaf or parent was never written by this run (checkout writes refuse
+        # them), so it is not ours to remove; deleting through it would leave the checkout.
+        if refusal := path_refusal(target, target_dir):
+            result.setdefault("preserved", []).append(f"{_manifest_key_path(key)} ({refusal})")
             continue
         try:
             if target.is_dir():

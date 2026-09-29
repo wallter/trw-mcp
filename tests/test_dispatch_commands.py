@@ -29,18 +29,25 @@ def test_supported_clients_match_specs() -> None:
 
 def test_claude_isolated_readonly_default_argv() -> None:
     argv = build_command(_req("claude"))
-    # Isolation keeps user auth (--setting-sources user) and disables the host
+    # Isolation keeps user auth plus the project's instructions (AGENTS.md is a
+    # project setting source), turns project hooks off, and disables the host
     # MCP so the child can't recurse into the trw MCP. --bare is NOT used (it
-    # drops user login). Verified live 2026-06-21.
+    # drops user login).
     assert argv == [
         "claude",
         "--output-format",
         "json",
         "--setting-sources",
-        "user",
+        "user,project",
+        "--settings",
+        '{"disableAllHooks":true}',
         "--strict-mcp-config",
         "--mcp-config",
         '{"mcpServers":{}}',
+        "--permission-mode",
+        "plan",
+        "--tools",
+        "Read,Grep,Glob",
         "-p",
         "audit this",
     ]
@@ -147,10 +154,20 @@ def test_unknown_client_is_not_a_supported_client() -> None:
 # --- read_only enforcement matrix (P1-1) --------------------------------------
 
 
-def test_claude_read_only_default_adds_no_write_flag() -> None:
-    # claude -p denies writes by default; read-only adds nothing extra.
+def test_claude_read_only_default_runs_in_plan_mode() -> None:
+    # The project setting source can carry permissions.allow rules that
+    # pre-approve edits; plan mode keeps a read-only child read-only anyway.
     argv = build_command(_req("claude"))
-    assert "--permission-mode" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "plan"
+    # Plan mode alone still runs classifier-approved Bash; the built-in tool set
+    # is replaced so no shell or edit tool exists at all.
+    assert argv[argv.index("--tools") + 1] == "Read,Grep,Glob"
+    assert "acceptEdits" not in argv
+
+
+def test_claude_allow_writes_has_no_tool_restriction() -> None:
+    argv = build_command(_req("claude", read_only=False))
+    assert "--tools" not in argv
 
 
 def test_claude_allow_writes_adds_accept_edits() -> None:

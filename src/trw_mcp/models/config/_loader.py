@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import platform
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import structlog
@@ -38,18 +40,169 @@ def _config_strict_mode() -> bool:
 
 _singleton: TRWConfig | None = None
 
+#: The key the singleton was built under: the resolved project root plus each
+#: config file's stat stamp, taken BEFORE the files were read. ``None`` means
+#: "nothing to compare against": no singleton yet, or one injected through
+#: ``reload_config(config)``, which a file edit must never replace
+#: (PRD-CORE-305-FR04).
+_FreshnessKey = tuple[Path, tuple[tuple[Path, tuple[int, int] | None], ...]]
+_built_from: _FreshnessKey | None = None
+
+#: A transform applied to every file-backed build — the serve path's CLI
+#: overrides (``--allow-unsigned``), which must survive a reload.
+_override: Callable[[TRWConfig], TRWConfig] | None = None
+
+#: Serializes building and replacing the singleton across request threads.
+_build_lock = threading.RLock()
+
+#: Set while the override runs, so a re-entrant ``get_config()`` fails clearly.
+_in_override = threading.local()
+
+#: The key of a config whose read overlapped an edit on every retry: it matches
+#: no real key, so the next refresh rebuilds it.
+_UNSETTLED: _FreshnessKey = (Path(), ())
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    """``(mtime_ns, size)`` of *path*, or ``None`` when it does not exist."""
+    try:
+        st = path.stat()
+    # trw-fail-silent-allow: an unreadable or missing config file is the "absent" stamp, compared like any other; a later appearance is a change and triggers a rebuild
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _freshness_key() -> _FreshnessKey | None:
+    """The project root and the stamps of the files a surface decision reads:
+    the machine and project YAML layers, and the project ``.env`` the
+    ``trw_assess`` backend cascade also consults. ``None`` when no project root
+    resolves; the config is then built but not tracked."""
+    from trw_mcp.state._paths import resolve_project_root
+
+    try:
+        root = resolve_project_root()
+    # trw-fail-silent-allow: no resolvable project root (outside a checkout) means an untracked config, exactly the pre-FR04 behavior; _build_config applies its own loud fallback
+    except Exception:
+        return None
+    files = (Path.home() / ".trw" / "config.yaml", root / ".trw" / "config.yaml", root / ".env")
+    return root, tuple((path, _stamp(path)) for path in files)
+
+
+def _apply_override(config: TRWConfig) -> TRWConfig:
+    """Run the override on the built *config*, refusing a re-entrant ``get_config()``."""
+    if _override is None:
+        return config
+    _in_override.active = True
+    try:
+        return _override(config)
+    finally:
+        _in_override.active = False
+
+
+def _build_tracked() -> TRWConfig:
+    """Build the singleton from the files, keyed by stamps taken before the read.
+
+    A config is tracked only under a stamp that matched both before and after
+    its read. An edit that lands during the read moves a stamp and the build is
+    retried; if every retry overlaps an edit, the last config is published under
+    ``_UNSETTLED``, which matches no real key, so the next refresh rebuilds.
+    Caller holds the lock.
+    """
+    global _singleton, _built_from
+    before = _freshness_key()
+    tracked: _FreshnessKey | None = _UNSETTLED
+    for _ in range(3):
+        config = _build_config()
+        after = _freshness_key()
+        if after == before:
+            tracked = before
+            break
+        before = after
+    _singleton = _apply_override(config)
+    _built_from = tracked
+    return _singleton
+
 
 def get_config() -> TRWConfig:
     """Return the shared TRWConfig singleton.
 
     First call creates the instance with config.yaml overrides merged.
     Subsequent calls return the same object.
-    Use ``reload_config()`` to clear cached state.
+    Use ``reload_config()`` to clear cached state, or
+    ``refresh_config_if_changed()`` to rebuild only after a config file edit.
+
+    Inside an install (``state._project_root_binding``, B71-118) it is the
+    install target's config instead, built once per binding and cached in the
+    install's own context: the singleton belongs to this process's project,
+    which other threads share, so an install neither reads it nor replaces it.
+    The CLI override (``set_config_override``) applies to that build too, so a
+    serving process keeps its flags across an in-process install.
     """
-    global _singleton
-    if _singleton is None:
-        _singleton = _build_config()
-    return _singleton
+    if getattr(_in_override, "active", False):
+        raise ConfigError(
+            "a config override must not call get_config(): it receives the built config and returns the config to use"
+        )
+    from trw_mcp.state._project_root_binding import install_cache
+
+    cache = install_cache()
+    if cache is not None:
+        installed = cache.get("config")
+        if not isinstance(installed, TRWConfig):
+            installed = cache["config"] = _apply_override(_build_config())
+        return installed
+    config = _singleton
+    if config is not None:
+        return config
+    with _build_lock:
+        return _singleton if _singleton is not None else _build_tracked()
+
+
+def set_config_override(override: Callable[[TRWConfig], TRWConfig] | None) -> None:
+    """Apply *override* to every file-backed build from now on; ``None`` removes it.
+
+    Contract: ``override(config) -> config`` receives the freshly built config
+    and returns the one to use. It must not call :func:`get_config` (that raises
+    ``ConfigError``). The caller owns the lifecycle: ``main()`` installs the
+    serve path's CLI overrides and removes them in a ``finally``.
+    ``reload_config()`` deliberately keeps the override, because a config
+    rebuilt inside a serving process must keep that process's CLI flags. The cached config is cleared
+    either way, so the next read applies the change.
+    """
+    global _override, _singleton, _built_from
+    with _build_lock:
+        _override = override
+        _singleton = None
+        _built_from = None
+
+
+def refresh_config_if_changed() -> bool:
+    """Rebuild the singleton when its project root or a config file it was built
+    from changed; ``True`` if it did.
+
+    A few ``stat`` calls and no YAML parse on the unchanged path, so a
+    per-request caller (the surface-authority middleware) can afford it. An
+    injected config is left alone, and so is everything inside an install. A stat fault is the absent stamp, never an
+    error; a rebuild raises only what the build or the override raises (the
+    middleware fails open on it), and the previous config stays installed.
+    """
+    from trw_mcp.state._project_root_binding import install_target
+
+    if install_target() is not None:
+        # Inside an install "the project" is the install's target, so the key
+        # below would read as changed and rebuild the SERVER's singleton from the
+        # target's files. An install builds its own config fresh per binding and
+        # never reads the singleton, so there is nothing here for it to refresh.
+        return False
+    built_from = _built_from
+    if _singleton is None or built_from is None or _freshness_key() == built_from:
+        return False  # a root that stops resolving (key None) differs and rebuilds
+    with _build_lock:
+        if _built_from is None or _freshness_key() == _built_from:
+            return False  # another thread rebuilt, or a config was injected meanwhile
+        _build_tracked()
+    logger.info("config_reloaded_on_change", previous_project_root=str(built_from[0]))
+    return True
 
 
 def _deep_merge(base: dict[str, object], over: dict[str, object]) -> dict[str, object]:
@@ -75,21 +228,13 @@ def _deep_merge(base: dict[str, object], over: dict[str, object]) -> dict[str, o
 def _read_yaml_overrides(config_path: object) -> dict[str, object]:
     """Read a ``config.yaml`` into a string-keyed dict, or ``{}`` on absence.
 
-    Uses ``YAML(typ="safe")`` via ``FileStateReader`` (NFR05). Never raises;
-    a missing or malformed file yields an empty mapping so the cascade collapses
-    to the next layer.
+    The one layer reader, shared with the light pin read that store selection uses
+    (``state._namespace_pin_read``, PRD-CORE-333 S3c), so the two cannot parse a layer
+    differently. A file that does not parse or is not a mapping raises ``StateError``.
     """
-    from pathlib import Path
+    from trw_mcp.state._namespace_pin_read import read_config_layer
 
-    from trw_mcp.state.persistence import FileStateReader
-
-    path = config_path if isinstance(config_path, Path) else Path(str(config_path))
-    if not path.exists():
-        return {}
-    overrides = FileStateReader().read_yaml(path)
-    if not isinstance(overrides, dict):
-        return {}
-    return {str(k): v for k, v in overrides.items() if v is not None}
+    return read_config_layer(config_path)
 
 
 def resolve_config_overrides(project_config_path: Path, *, apply_env_exclusion: bool = True) -> dict[str, object]:
@@ -134,6 +279,22 @@ def resolve_config_overrides(project_config_path: Path, *, apply_env_exclusion: 
     resolved_key = resolve_platform_api_key(project_config_path)
     if resolved_key:
         merged["platform_api_key"] = resolved_key
+    # PRD-SEC-022-FR03: a tracked config.yaml is never a credential source for
+    # backend_api_key either -- close the gap platform_api_key's drop (above)
+    # already closes for itself. Only TRW_BACKEND_API_KEY (or the
+    # platform_api_key fallback in resolved_backend_api_key) supplies it after
+    # this drop. Never log the value, only the field name.
+    dropped_backend_key = merged.pop("backend_api_key", None)
+    if isinstance(dropped_backend_key, str) and dropped_backend_key:
+        logger.warning(
+            "tracked_config_secret_dropped",
+            field="backend_api_key",
+            detail=(
+                "backend_api_key in a tracked config.yaml is ignored; set "
+                "TRW_BACKEND_API_KEY or leave it empty so the platform_api_key "
+                "fallback applies (PRD-SEC-022-FR03)."
+            ),
+        )
     if not apply_env_exclusion:
         return merged
     return exclude_env_shadowed_keys(merged)
@@ -150,7 +311,7 @@ def exclude_env_shadowed_keys(merged: dict[str, object]) -> dict[str, object]:
     return {k: v for k, v in merged.items() if k == "platform_api_key" or f"TRW_{k.upper()}" not in os.environ}
 
 
-def _build_config_unguarded() -> TRWConfig:
+def _build_config_unguarded(project_config_path: Path | None = None) -> TRWConfig:
     """Build TRWConfig with the machine -> project -> env config cascade merged.
 
     Precedence (highest wins) -- PRD-CORE-185 FR04:
@@ -185,8 +346,8 @@ def _build_config_unguarded() -> TRWConfig:
     try:
         from trw_mcp.state._paths import resolve_project_root
 
-        project_root = resolve_project_root()
-        project_config_path = project_root / ".trw" / "config.yaml"
+        if project_config_path is None:
+            project_config_path = resolve_project_root() / ".trw" / "config.yaml"
         # ONE cascade, shared with the doctor. Two hand-rolled copies had already
         # drifted apart once; a third would drift again.
         merged = resolve_config_overrides(project_config_path, apply_env_exclusion=False)
@@ -212,6 +373,9 @@ def _build_config_unguarded() -> TRWConfig:
             # when TRW_PLATFORM_API_KEY is set (its env precedence is already
             # applied), so it is exempt from the generic TRW_* exclusion.
             filtered = exclude_env_shadowed_keys(merged)
+            # B71-106: the operator's platform contact switch is read live from the files by
+            # trw_memory.platform_contact; caching the file value here would veto a later re-enable.
+            filtered.pop("platform_contact_enabled", None)
             if filtered:
                 return TRWConfig(**filtered)  # type: ignore[arg-type]
     except ConfigError:
@@ -284,6 +448,16 @@ def apply_platform_meta_tune_gate(config: TRWConfig, *, system: str | None = Non
     return config
 
 
+def config_for_trw_dir(trw_dir: Path) -> TRWConfig:
+    """The config a project's own ``.trw`` resolves to: its ``config.yaml`` over the machine
+    layer, under the environment -- the same cascade as the process config, never the cached one.
+
+    A platform send reads its policy (contact switch, consent flags) through this from the
+    ``.trw`` its payload was read from (``state._platform_trust.send_policy``).
+    """
+    return _build_config_unguarded(trw_dir / "config.yaml")
+
+
 def _build_config() -> TRWConfig:
     """The cascade in :func:`_build_config_unguarded`, then the platform meta-tune gate."""
     return apply_platform_meta_tune_gate(_build_config_unguarded())
@@ -296,12 +470,26 @@ def reload_config(config: TRWConfig | None = None) -> None:
     it from ``.trw/config.yaml`` and environment variables.  Pass an explicit
     *config* to inject a pre-built instance (useful in tests).
 
+    Inside an install it resets only that install's config; the process
+    singleton, which other threads share, is untouched (B71-118).
+
     Args:
         config: Optional replacement config. If *None*, the next
             ``get_config()`` call creates a fresh default instance.
     """
-    global _singleton
-    _singleton = config
+    from trw_mcp.state._project_root_binding import install_cache
+
+    cache = install_cache()
+    if cache is not None:
+        if config is None:
+            cache.pop("config", None)
+        else:
+            cache["config"] = config
+        return
+    global _singleton, _built_from
+    with _build_lock:
+        _singleton = config
+        _built_from = None
 
 
 # Backward-compatible alias (deprecated, use reload_config instead).

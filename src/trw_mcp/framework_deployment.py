@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from trw_memory._tree_removal import remove_tree
+
 DEPLOYMENT_RELATIVE_PATH = Path(".trw/frameworks/DEPLOYMENT.json")
 _LOCK_RELATIVE_PATH = Path(".trw/frameworks/.deployment.lock")
 _BACKUPS_RELATIVE_PATH = Path(".trw/frameworks/.rollback")
@@ -257,22 +259,11 @@ def deploy_framework_generation(
             _restore_snapshot(target, backup)
             raise
         finally:
-            shutil.rmtree(stage, ignore_errors=True)
-
-
-def rollback_framework_generation(target: Path, rollback_id: str) -> None:
-    """Restore a complete prior generation snapshot, receipt last."""
-    target = target.resolve()
-    backup = _contained_path(target, _BACKUPS_RELATIVE_PATH / rollback_id)
-    if not backup.is_dir():
-        raise FileNotFoundError(f"rollback generation not found: {rollback_id}")
-    with _deployment_lock(target):
-        _restore_snapshot(target, backup)
+            remove_tree(stage, purpose="framework deployment stage")
 
 
 __all__ = [
     "DEPLOYMENT_RELATIVE_PATH",
     "DeploymentResult",
     "deploy_framework_generation",
-    "rollback_framework_generation",
 ]

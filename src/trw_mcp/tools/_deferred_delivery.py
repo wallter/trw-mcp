@@ -410,7 +410,15 @@ def _write_deferred_evidence(
     """
     from trw_mcp.tools._delivery_journal_wiring import DeliverJournal
 
-    assert isinstance(journal, DeliverJournal)  # noqa: S101  # trw:intentional narrow the handle
+    # Not pure narrowing (PRD-FIX-157-FR04): `journal` arrives typed as `object`
+    # and nothing upstream already proved it is a DeliverJournal, unlike the
+    # other narrowing-assert sites in this codebase. An `assert` here is
+    # stripped under `python -O`, which would let a wrong-typed journal reach
+    # journal.step() below and fail open on a caller *type* bug instead of an
+    # environmental one -- a worse failure mode than the I/O failures these
+    # steps are meant to fail open on. A typed raise survives `-O`.
+    if not isinstance(journal, DeliverJournal):
+        raise TypeError(f"_write_deferred_evidence expects a DeliverJournal, got {type(journal).__name__}")
     try:
         with journal.step("D23") as run_persist:
             if run_persist:

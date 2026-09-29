@@ -10,7 +10,6 @@ from trw_mcp.channels._gitignore import (
     _get_managed_section,
     add_gitignore_entry,
     list_gitignore_entries,
-    remove_gitignore_entry,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,56 +113,6 @@ class TestAddGitignoreEntry:
         lines = after_text.splitlines()
         assert lines[0] == "before"
         assert "after" in lines
-
-
-# ---------------------------------------------------------------------------
-# remove_gitignore_entry
-# ---------------------------------------------------------------------------
-
-
-class TestRemoveGitignoreEntry:
-    def test_removes_existing_entry(self, repo):
-        add_gitignore_entry(repo, "to-remove")
-        result = remove_gitignore_entry(repo, "to-remove")
-        assert result is True
-        assert "to-remove" not in list_gitignore_entries(repo)
-
-    def test_returns_false_when_entry_absent(self, repo):
-        add_gitignore_entry(repo, "something")
-        result = remove_gitignore_entry(repo, "non-existent")
-        assert result is False
-
-    def test_returns_false_when_no_section(self, repo):
-        gitignore = repo / ".gitignore"
-        gitignore.write_text("# plain\n*.log\n", encoding="utf-8")
-        result = remove_gitignore_entry(repo, "*.log")
-        assert result is False
-
-    def test_section_preserved_when_empty_after_remove(self, repo):
-        add_gitignore_entry(repo, "only-entry")
-        remove_gitignore_entry(repo, "only-entry")
-        content = (repo / ".gitignore").read_text(encoding="utf-8")
-        assert GITIGNORE_BEGIN in content
-        assert GITIGNORE_END in content
-
-    def test_other_entries_preserved_after_remove(self, repo):
-        add_gitignore_entry(repo, "keep1")
-        add_gitignore_entry(repo, "remove-me")
-        add_gitignore_entry(repo, "keep2")
-        remove_gitignore_entry(repo, "remove-me")
-        entries = list_gitignore_entries(repo)
-        assert entries == ["keep1", "keep2"]
-
-    def test_content_outside_section_byte_identical_after_remove(self, repo):
-        gitignore = repo / ".gitignore"
-        original_header = "# top of file\n*.pyc\n"
-        gitignore.write_text(
-            original_header + f"{GITIGNORE_BEGIN}\nentry\n{GITIGNORE_END}\n",
-            encoding="utf-8",
-        )
-        remove_gitignore_entry(repo, "entry")
-        after = gitignore.read_text(encoding="utf-8")
-        assert after.startswith(original_header)
 
 
 # ---------------------------------------------------------------------------

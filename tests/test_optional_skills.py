@@ -24,9 +24,14 @@ _DESTS = {
 }
 
 
-def _set_flag(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
+def _set_flag(monkeypatch: pytest.MonkeyPatch, enabled: bool, target: Path) -> None:
+    """Set the switch where the installer reads it: the target project it is handed (B71-117)."""
     config = TRWConfig(assess_enabled=enabled)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
+    for var in ("TRW_ASSESS_ENABLED", "TRW_JEV_ENABLED"):
+        monkeypatch.delenv(var, raising=False)
+    (target / ".trw").mkdir(parents=True, exist_ok=True)
+    (target / ".trw" / "config.yaml").write_text(f"assess_enabled: {str(enabled).lower()}\n", encoding="utf-8")
 
 
 def _install(target: Path) -> dict[str, dict[str, Any]]:
@@ -48,7 +53,7 @@ def _install(target: Path) -> dict[str, dict[str, Any]]:
 
 
 def test_off_by_default_no_client_gets_the_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_flag(monkeypatch, False)
+    _set_flag(monkeypatch, False, tmp_path)
     _install(tmp_path)
     for rel in _DESTS.values():
         assert not (tmp_path / rel).exists(), rel
@@ -60,7 +65,7 @@ def test_enabled_every_skill_capable_client_gets_the_same_canonical_skill(
     from trw_mcp.bootstrap._client_skills import render_skill_md
     from trw_mcp.bootstrap._init_project_skills import _data_dir
 
-    _set_flag(monkeypatch, True)
+    _set_flag(monkeypatch, True, tmp_path)
     results = _install(tmp_path)
     canonical_text = (_data_dir() / "skills" / "trw-assess" / "SKILL.md").read_text(encoding="utf-8")
     # codex/opencode render the canonical body with a reduced frontmatter
@@ -80,12 +85,12 @@ def test_enabled_every_skill_capable_client_gets_the_same_canonical_skill(
 def test_turning_it_off_retires_pristine_copies_and_keeps_edited_ones(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _set_flag(monkeypatch, True)
+    _set_flag(monkeypatch, True, tmp_path)
     _install(tmp_path)
     edited = tmp_path / _DESTS["cursor"] / "SKILL.md"
     edited.write_text(edited.read_text(encoding="utf-8") + "\nlocal note\n", encoding="utf-8")
 
-    _set_flag(monkeypatch, False)
+    _set_flag(monkeypatch, False, tmp_path)
     results = _install(tmp_path)
 
     for client in ("claude", "codex", "copilot", "opencode"):
@@ -98,9 +103,11 @@ def test_turning_it_off_retires_pristine_copies_and_keeps_edited_ones(
 def test_unreadable_config_keeps_the_opt_in_skill_out(monkeypatch: pytest.MonkeyPatch) -> None:
     from trw_mcp.bootstrap._optional_skills import skill_enabled
 
-    def _broken() -> TRWConfig:
+    def _broken(*_args: object) -> bool:
         raise RuntimeError("config unreadable")
 
+    # The skill decision reads the bound project's cascade (B71-117), not the cached config.
+    monkeypatch.setattr("trw_mcp.tools._assess_enablement.assess_surfaced_in", _broken)
     monkeypatch.setattr("trw_mcp.models.config.get_config", _broken)
     assert skill_enabled("trw-assess") is False
     assert skill_enabled("trw-deliver") is True

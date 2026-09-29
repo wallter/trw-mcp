@@ -68,6 +68,7 @@ from _ownership_harness import (
 from _ownership_harness import (
     write_pins as _write_pins,
 )
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 from tests._layout import requires_monorepo
 
@@ -86,9 +87,19 @@ _OWNED_HOOKS = (
 # fixture construction -- see _ownership_harness for the builders
 # --------------------------------------------------------------------------- #
 def _sh(root: Path, script: str, **extra: str) -> subprocess.CompletedProcess[str]:
-    """Run *script* in a POSIX shell with lib-trw.sh sourced, as a hook would."""
+    """Run *script* in a POSIX shell with lib-trw.sh sourced, as a hook would.
+
+    ``_hook_dir`` is set first, exactly as every real hook computes it before
+    sourcing the library (``. "$_hook_dir/lib-trw.sh"``) -- lib-trw.sh derives
+    its per-client hook-env key from that variable, never a client-id table, so
+    a raw source with no ``_hook_dir`` would resolve no key at all. The fake
+    ``.claude/hooks`` path need not exist on disk: only its last two path
+    components are read (basename/dirname), and it matches the "claude-code"
+    key :func:`_write_hook_env`'s default writes under.
+    """
+    fake_hook_dir = root / ".claude" / "hooks"
     return subprocess.run(
-        ["sh", "-c", f'. "{_BUNDLED_HOOKS / "lib-trw.sh"}"\n{script}'],
+        ["sh", "-c", f'_hook_dir="{fake_hook_dir}"\n. "{_BUNDLED_HOOKS / "lib-trw.sh"}"\n{script}'],
         capture_output=True,
         text=True,
         env=_shell_env(root, **extra),
@@ -121,7 +132,7 @@ _HOOK_COPIES = pytest.mark.parametrize(
 # FR01 — one pin key, readable on both sides. THE GATE.
 # --------------------------------------------------------------------------- #
 def test_hook_env_exports_session_id(tmp_path: Path) -> None:
-    """FR01: the generated hook-env.sh turns the client variable into the key."""
+    """FR01: the generated hook-env.d/<key>.sh turns the client variable into the key."""
     root = tmp_path / "proj"
     written = _write_hook_env(root)
     content = written.read_text(encoding="utf-8")
@@ -150,6 +161,7 @@ def test_hook_env_does_not_override_an_explicit_session_id(tmp_path: Path) -> No
         capture_output=True,
         text=True,
         env={
+            **daemon_env_passthrough(),
             "PATH": os.environ.get("PATH", "/bin"),
             _CLIENT_SESSION_VAR: "from-client",
             "TRW_SESSION_ID": "forced-by-operator",
@@ -166,7 +178,7 @@ def test_server_and_hook_agree_on_one_pin_key(tmp_path: Path, monkeypatch) -> No
     Drives the real resolver against a FastMCP context whose session id is the
     unobservable value the defect was made of, and asserts the mutually-visible
     client id wins -- then asserts a plain POSIX shell derives the same string
-    through the generated hook-env.sh.
+    through this client's generated hook-env.d/<key>.sh.
     """
     from trw_mcp.state._paths import resolve_pin_key
 
@@ -419,7 +431,7 @@ def test_post_tool_event_ignores_a_foreign_run(hook_dir: Path, tmp_path: Path) -
     if not (shutil.which("jq") or shutil.which("python3")):
         pytest.skip("pins.json lookup requires jq or python3")
     root, own = _project(tmp_path, own_pin=False)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
     foreign_events = root / ".trw" / "runs" / "foreign-task" / _FOREIGN_RUN_ID / "meta" / "events.jsonl"
     before = foreign_events.read_text(encoding="utf-8")
 
@@ -443,7 +455,7 @@ def test_post_tool_event_logs_into_the_owned_run(hook_dir: Path, tmp_path: Path)
     if not (shutil.which("jq") or shutil.which("python3")):
         pytest.skip("pins.json lookup requires jq or python3")
     root, own = _project(tmp_path)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
     own_events = own / "meta" / "events.jsonl"
 
     subprocess.run(
@@ -466,7 +478,7 @@ def test_post_tool_event_logs_into_the_owned_run(hook_dir: Path, tmp_path: Path)
 def test_unpinned_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None:
     """FR04: no tier, phase, event count, or foreign run id for an unpinned session."""
     root, _ = _project(tmp_path, own_pin=False)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
 
     res = _session_start(root, hook_dir / "session-start.sh", **{_CLIENT_SESSION_VAR: _SESSION_ID})
 
@@ -481,7 +493,7 @@ def test_unpinned_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None
 @_HOOK_COPIES
 def test_pinned_session_reports_its_own_run(hook_dir: Path, tmp_path: Path) -> None:
     root, _ = _project(tmp_path)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
 
     res = _session_start(root, hook_dir / "session-start.sh", **{_CLIENT_SESSION_VAR: _SESSION_ID})
 
@@ -506,7 +518,7 @@ def test_pinned_run_path_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_
     root, _ = _project(tmp_path, own_pin=False)
     run = _mk_run(root, "task", f"{_OWN_RUN_ID}\\n{_FORGED}")
     _write_pins(root, {_SESSION_ID: {"run_path": str(run)}})
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
 
     res = _session_start(root, hook_dir / "session-start.sh", **{_CLIENT_SESSION_VAR: _SESSION_ID})
 
@@ -519,7 +531,7 @@ def test_pinned_run_path_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_
 def test_compaction_snapshot_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_path: Path, field: str) -> None:
     """PRD-FIX-151: the three RECOVERED sinks print snapshot values verbatim."""
     root, _ = _project(tmp_path)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
     snapshot = {"run_path": "r", "phase": "implement", "events_logged": 1, "last_checkpoint": "cp"}
     snapshot[field] = f"x\\n{_FORGED}"
     marker = root / ".trw" / "context" / "pre_compact" / f"{_SESSION_ID.encode().hex()}.json"
@@ -546,7 +558,7 @@ def test_no_session_var_client_degrades(hook_dir: Path, tmp_path: Path) -> None:
     Never recency: the fixture's foreign run is newer and would win a glob.
     """
     root, _ = _project(tmp_path)
-    hook_env = _write_hook_env(root, client_id="copilot")
+    hook_env = _write_hook_env(root, client_id="copilot", hook_dir=hook_dir)
     assert "TRW_SESSION_ID" not in hook_env.read_text(encoding="utf-8").replace("# TRW_SESSION_ID", ""), (
         "a profile with no session variable must export nothing"
     )
@@ -563,7 +575,7 @@ def test_no_session_var_client_degrades(hook_dir: Path, tmp_path: Path) -> None:
 def test_unpinned_resume_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None:
     """The second call site (resume) must degrade identically to startup."""
     root, _ = _project(tmp_path, own_pin=False)
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
 
     res = _session_start(
         root,
@@ -593,7 +605,7 @@ def test_pinned_run_tier_is_never_printed(hook_dir: Path, tmp_path: Path) -> Non
     """Even for an OWNED run carrying a tier, the hook defers to session_start."""
     root, own = _project(tmp_path)
     (own / "meta" / "run.yaml").write_text("task: owned-task\ncomplexity_class: COMPREHENSIVE\n", encoding="utf-8")
-    _write_hook_env(root)
+    _write_hook_env(root, hook_dir=hook_dir)
 
     res = _session_start(root, hook_dir / "session-start.sh", **{_CLIENT_SESSION_VAR: _SESSION_ID})
 
@@ -611,7 +623,7 @@ def test_degraded_emitter_passes_the_payload_session_id(tmp_path: Path, hook_dir
     Of the eight shipped ``resolve_owned_run`` call sites, this was the only one
     that called the primitive with no argument -- so on a client whose profile
     publishes no session variable (every profile except claude-code, and
-    therefore every tree whose generated hook-env.sh was written by one of them)
+    therefore every tree whose generated hook-env.d/<key>.sh was written by one of them)
     the emitter could never name a run and silently took the placeholder branch.
     """
     root, own = _project(tmp_path)

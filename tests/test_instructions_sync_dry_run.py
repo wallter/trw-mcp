@@ -2,7 +2,7 @@
 
 The dry run used to report ``status: dry_run`` while four writers ignored the
 flag: the per-client carriers (with backups), REVIEW.md, analytics and the hook
-env file. The existing FR03 test watched only CLAUDE.md, so this one compares
+env file. The existing FR03 test watched only the root instruction file, so this one compares
 every file in a real ``init_project(ide="all")`` project before and after.
 """
 
@@ -16,6 +16,8 @@ from tests._tools_learning_shared import instructions_sync_fn
 from trw_mcp.bootstrap import init_project
 from trw_mcp.state.claude_md import TRW_AUTO_COMMENT, TRW_MARKER_END, TRW_MARKER_START
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 # Carriers whose TRW block a sync rewrites; editing them makes each one stale.
 _STALE_CARRIERS = (
     ".github/copilot-instructions.md",
@@ -23,7 +25,6 @@ _STALE_CARRIERS = (
     ".agents/rules/trw-ceremony.md",
     ".codex/INSTRUCTIONS.md",
     ".opencode/INSTRUCTIONS.md",
-    "CLAUDE.md",
     "AGENTS.md",
 )
 
@@ -69,7 +70,7 @@ def test_dry_run_leaves_every_file_unchanged(tmp_path: Path, monkeypatch: pytest
     assert result["instruction_file_synced"] is False
     assert result["review_md"]["status"] == "skipped"
     if state != "fresh":
-        assert {Path(d["file"]).name for d in result["diffs"]} >= {"CLAUDE.md", "AGENTS.md"}
+        assert {Path(d["file"]).name for d in result["diffs"]} >= {"AGENTS.md"}
 
 
 def test_dry_run_does_not_heal_a_pointer_carrier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,17 +86,14 @@ def test_dry_run_does_not_heal_a_pointer_carrier(tmp_path: Path, monkeypatch: py
     _assert_untouched(tmp_path, before)
 
 
-def test_dry_run_records_no_learning_promotion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """AGENTS.md learning injection renders the bullets but promotes nothing on a dry run."""
+def test_sync_writes_no_recalled_learning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-CORE-341: a recalled learning reaches no instruction file, dry run or real sync."""
     _init(tmp_path, monkeypatch)
     entry = {"id": "L-dryrun", "summary": "Dry runs never write", "impact": 0.9, "status": "active"}
     monkeypatch.setattr("trw_mcp.state.claude_md._sync.recall_learnings", lambda *a, **k: [entry])
-    promoted: list[str] = []
-    monkeypatch.setattr(
-        "trw_mcp.state.claude_md._agents_md.mark_promoted", lambda _trw_dir, learning_id: promoted.append(learning_id)
-    )
 
     instructions_sync_fn(client="all", dry_run=True)
-    assert promoted == []
     instructions_sync_fn(client="all")
-    assert promoted == ["L-dryrun"]
+
+    for rel in ("AGENTS.md", ".trw/INSTRUCTIONS.md"):
+        assert "Dry runs never write" not in (tmp_path / rel).read_text(encoding="utf-8"), rel

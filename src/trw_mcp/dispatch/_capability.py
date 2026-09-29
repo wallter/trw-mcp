@@ -89,13 +89,12 @@ def unadvertised_flags(
     probe = " ".join([argv[0], *subcommands, "--help"])
     sandbox = [f for f in missing if read_only and f in {*spec.read_only_argv, *spec.confined_read_only_argv}]
     other = [f for f in missing if f not in sandbox]
-    unsupported = (
-        f"{binary} does not support {', '.join(other)} (not in `{probe}`); install or upgrade the {spec.binary} CLI"
-    )
+    fix = spec.install_hint or f"install or upgrade the {spec.binary} CLI"
+    unsupported = f"{binary} does not support {', '.join(other)} (not in `{probe}`); {fix}"
     if not sandbox:
         return "client_unsupported", unsupported
     refusal = (
         f"{binary} does not support {', '.join(sandbox)} (not in `{probe}`); refusing a read-only "
-        f"dispatch without its sandbox -- upgrade the {spec.binary} CLI"
+        f"dispatch without its sandbox -- upgrade the {spec.binary} CLI: {fix}"
     )
     return "sandbox_unsupported", f"{refusal}\nalso client_unsupported: {unsupported}" if other else refusal

@@ -122,10 +122,12 @@ def test_sync_pushes_and_pulls_only_the_pinned_namespace_through_the_daemon(
 def test_single_entry_lookups_and_patches_go_through_the_daemon(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from trw_memory.lifecycle.correction import LearningPatch
+
     from trw_mcp.state._memory_lookups import find_entry_by_id
-    from trw_mcp.state.analytics.entries import mark_promoted
+    from trw_mcp.state._store_selection import selected_store
     from trw_mcp.tools._ceremony_reconcile_step import _live_tags
-    from trw_mcp.tools._learning_helpers import _sync_merged_entry_to_backend
+    from trw_mcp.tools._learning_helpers import _merge_into_store
 
     with running_daemon(tmp_path / "userhome") as paths:
         token = mint_grant(paths, [_PINNED, USER_NAMESPACE])
@@ -137,15 +139,17 @@ def test_single_entry_lookups_and_patches_go_through_the_daemon(
         store_learning(checkout, "L-att5", "Lookup summary", "", tags=["kept"])
         found = find_entry_by_id(checkout, "L-att5")
         tags = _live_tags(checkout, "L-att5")
-        mark_promoted(checkout, "L-att5")
-        _sync_merged_entry_to_backend(checkout / "learnings" / "entries", {"id": "L-att5", "detail": "merged"})
+        selected_store(checkout)[0].correct("L-att5", LearningPatch(metadata_add={"reviewed": "true"}))
+        _merge_into_store(
+            checkout / "learnings" / "entries", {"id": "L-att5"}, "L-new", lambda b: b.update(detail="merged")
+        )
 
         monkeypatch.undo()
         row = asyncio.run(DaemonClient(token, paths=paths).get("L-att5", _PINNED))["entry"]
 
     assert found is not None and found["summary"] == "Lookup summary"
     assert tags is not None and "kept" in tags
-    assert row["metadata"]["promoted_to_claude_md"] == "true"
+    assert row["metadata"]["reviewed"] == "true"
     assert row["detail"] == "merged"
     assert not list(checkout.rglob("memory.db"))
 

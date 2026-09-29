@@ -111,38 +111,15 @@ def test_the_three_task_name_unreachable_keywords_are_reachable_via_objective(ke
     )
 
 
-def test_detector_and_scout_read_byte_identical_text() -> None:
-    """FR01 assertion ``value_equals``: one join, not two.
-
-    The Scout builds its classification text inline in
-    ``_orchestration_scaling.run_scout_for_init``. The detector's
-    ``_join_detection_text`` must produce the same string for the same inputs,
-    or the two classifiers in a single ``trw_init`` disagree about what the task
-    even is.
-    """
-    task_name, objective, prd_scope = "ticket-88213", "Fix the crash", ["PRD-CORE-246", "PRD-FIX-119"]
-
-    detector_text = detection_mod._join_detection_text(task_name, objective, prd_scope)
-    scout_text = "\n".join(part for part in (task_name, objective, " ".join(prd_scope)) if part)
-
-    assert detector_text == scout_text
-    # And the inline Scout expression is still the one this pins: if it is
-    # edited, this literal must be edited with it.
-    source = inspect.getsource(
-        __import__("trw_mcp.tools._orchestration_scaling", fromlist=["run_scout_for_init"]).run_scout_for_init
-    )
-    assert '"\\n".join(part for part in (task_name, objective, " ".join(prd_scope or [])) if part)' in source
-
-
 def test_resolve_init_profile_forwards_the_objective() -> None:
     """FR01 wiring: the production seam, not the leaf function.
 
     ``resolve_init_profile`` had no ``objective`` parameter at all, so the value
-    supplied at ``trw_init`` stopped at the Scout. This drives the REAL profile
+    supplied at ``trw_init`` stopped at trw_init. This drives the REAL profile
     resolver with a real config.
     """
     from trw_mcp.models.config import get_config
-    from trw_mcp.tools._orchestration_scaling import resolve_init_profile
+    from trw_mcp.tools._orchestration_init_profile import resolve_init_profile
 
     config = get_config()
     profile = resolve_init_profile(

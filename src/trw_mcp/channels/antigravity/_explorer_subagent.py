@@ -42,6 +42,7 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.agents.agent_formats import agent_format_for
 from trw_mcp.agents.tier_resolver import materialize_agent
 from trw_mcp.channels._provenance import now_utc_iso8601
@@ -80,18 +81,6 @@ _DEFAULT_TIER: str = "T1"
 #: translates instead of a literal model id the client's own docs do not
 #: accept.
 _MODEL_CAPABILITY_TIER = "local-small"
-
-# Tools: enumerated individually per Gate G-02 (OQ-03 wildcard unconfirmed).
-# NO mutation tools (FR10): write_file, edit_file, trw_deliver excluded.
-_AGENT_TOOLS = [
-    "read_file",
-    "read_many_files",
-    "glob",
-    "grep_search",
-    "list_directory",
-    "mcp_trw_trw_recall",
-    "mcp_trw_trw_code",
-]
 
 # Mutation tools are prohibited (FR10). The antigravity-cli format registry
 # entry drops the bundled ``tools`` key entirely (that client's documented
@@ -365,9 +354,8 @@ def generate_distill_explorer_agent(
         )
 
     try:
-        agent_path.parent.mkdir(parents=True, exist_ok=True)
-        agent_path.write_text(content, encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(repo_root, agent_path, content)
+    except (OSError, UnsafeWriteError) as exc:
         log.debug(
             "ag02_subagent_write_error",
             path=str(agent_path),

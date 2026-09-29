@@ -29,9 +29,6 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "COMMANDS_DIR",
     "COMMAND_QUOTA_BYTES",
-    "get_before_edit_content",
-    "get_conventions_content",
-    "get_hotspots_content",
     "install_custom_commands",
     "opencode_distill_command_contents",
 ]
@@ -66,6 +63,11 @@ When `distill_status == "hint_available"`:
   - **co_change_neighbors**: files that frequently change alongside `$1`
 - Also surface the top-3 **learnings** from the result.
 - If `risk_score > 0.7`, issue an explicit warning: ⚠️ HIGH RISK FILE
+
+When `distill_status == "hint_available_stale"`:
+- The hint comes from an older sidecar: `distill_as_of` names its sha and how
+  many commits behind HEAD it is. Say first that it is historical, not current.
+  Fields the file's own later changes could have made false are already removed.
 
 When `distill_status == "sidecar_missing"`:
 - Inform the user that no sidecar is available.
@@ -123,21 +125,6 @@ Group results by tag in the response:
 
 Return a structured Markdown summary.
 """
-
-
-def get_before_edit_content() -> str:
-    """Return the trw-before-edit command content."""
-    return _apply_quota(_BEFORE_EDIT_CONTENT)
-
-
-def get_hotspots_content() -> str:
-    """Return the trw-distill-hotspots command content."""
-    return _apply_quota(_HOTSPOTS_CONTENT)
-
-
-def get_conventions_content() -> str:
-    """Return the trw-distill-conventions command content."""
-    return _apply_quota(_CONVENTIONS_CONTENT)
 
 
 def _apply_quota(content: str) -> str:

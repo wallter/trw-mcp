@@ -215,17 +215,18 @@ def test_ceremony_weights_frozen_raises_on_assignment() -> None:
 @pytest.mark.unit
 def test_write_targets_frozen_raises_on_assignment() -> None:
     """Frozen WriteTargets raises TypeError on attribute assignment."""
-    write_targets = WriteTargets(claude_md=True)
+    write_targets = WriteTargets(agents_md=True)
     with pytest.raises((ValidationError, TypeError)):
-        write_targets.claude_md = False
+        write_targets.agents_md = False
 
 
 @pytest.mark.unit
-def test_claude_code_profile_writes_claude_md() -> None:
-    """claude-code profile has write_targets.claude_md=True."""
+def test_claude_code_profile_writes_agents_md() -> None:
+    """claude-code shares the AGENTS.md carrier (Claude Code reads it natively); TRW writes no CLAUDE.md."""
     profile = resolve_client_profile("claude-code")
-    assert profile.write_targets.claude_md is True
-    assert profile.write_targets.agents_md is False
+    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.instruction_path == "AGENTS.md"
+    assert not hasattr(profile.write_targets, "claude_md")
     assert profile.write_targets.cursor_rules is False
 
 
@@ -240,7 +241,6 @@ def test_opencode_profile_writes_no_shared_agents_md() -> None:
     profile = resolve_client_profile("opencode")
     assert profile.write_targets.agents_md is False
     assert profile.write_targets.instruction_path == ".opencode/INSTRUCTIONS.md"
-    assert profile.write_targets.claude_md is False
     assert profile.write_targets.cursor_rules is False
 
 
@@ -250,7 +250,6 @@ def test_cursor_ide_profile_writes_cursor_rules() -> None:
     profile = resolve_client_profile("cursor-ide")
     assert profile.write_targets.cursor_rules is True
     assert profile.write_targets.agents_md is False
-    assert profile.write_targets.claude_md is False
 
 
 @pytest.mark.unit

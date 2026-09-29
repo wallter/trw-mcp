@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from tests._contact_support import payload_trw_dir
 from trw_mcp.telemetry.anonymizer import redact_metadata
 from trw_mcp.tools.submit_feedback import (
     MAX_MESSAGE_LEN,
@@ -34,6 +35,9 @@ from trw_mcp.tools.submit_feedback import (
     submit_feedback,
     submit_feedback_via_http,
 )
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 # ---------------------------------------------------------------------------
 # Pure validation
@@ -293,6 +297,7 @@ def test_submit_feedback_via_http_success(monkeypatch: pytest.MonkeyPatch) -> No
                 "message": "valid length",
                 "metadata": {"a": "1"},
             },
+            source_trw_dir=payload_trw_dir(),
         )
 
     assert result.success is True
@@ -321,6 +326,7 @@ def test_submit_feedback_via_http_withholds_bearer_from_untrusted_host() -> None
             backend_url="https://attacker.example",
             api_key="key-xyz",
             payload={"category": "bugfix", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     call = mock_client.post.call_args
@@ -341,6 +347,7 @@ def test_submit_feedback_via_http_strips_trailing_slash() -> None:
             backend_url="https://api.trw.test/",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     url = mock_client.post.call_args.args[0]
@@ -362,6 +369,7 @@ def test_submit_feedback_via_http_non_2xx_surfaces_detail() -> None:
             backend_url="https://api.trw.test",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     assert result.success is False
@@ -376,6 +384,7 @@ def test_submit_feedback_via_http_transport_error_is_returned_not_raised() -> No
             backend_url="https://api.trw.test",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
     assert result.success is False
     assert "transport error" in result.error
@@ -398,6 +407,7 @@ def test_submit_feedback_via_http_non_httperror_is_returned_not_raised() -> None
             backend_url="://malformed",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     assert result.success is False
@@ -416,6 +426,7 @@ def test_submit_feedback_via_http_generic_exception_is_returned_not_raised() -> 
             backend_url="https://api.trw.test",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     assert result.success is False
@@ -762,6 +773,7 @@ def test_submit_feedback_via_http_200_with_non_dict_body_is_success() -> None:
             backend_url="https://api.trw.test",
             api_key="k",
             payload={"category": "feedback", "subject": "x", "message": "valid length"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     assert result.success is True

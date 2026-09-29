@@ -1,10 +1,12 @@
-"""OpenCode instruction renderers.
+"""Antigravity instruction renderer (``.agents/rules/trw-ceremony.md`` and ``ANTIGRAVITY.md``).
 
-The public wrapper names are kept for compatibility, but v25 emits a
-portable instruction body instead of model-family-specific prompt text.
+The opencode renderers that shared this module were deleted by PRD-CORE-301-FR02;
+opencode now renders the shared claude-code block with opencode framing.
 """
 
 from __future__ import annotations
+
+from trw_mcp.models.config._pre_edit_channels import render_pre_edit_hint_instruction
 
 # Shared Antigravity marker constants.
 _ANTIGRAVITY_TRW_START_MARKER = "<!-- trw:antigravity:start -->"
@@ -131,10 +133,12 @@ def _antigravity_tool_reference() -> str:
 
 
 def render_antigravity_instructions() -> str:
-    """Render ANTIGRAVITY.md TRW ceremony section."""
+    """Render ANTIGRAVITY.md TRW ceremony section (deliver gate from the shared single source, TB-17)."""
     delegation = _antigravity_delegation_block()
     subagents = _antigravity_subagent_block()
     tool_reference = _antigravity_tool_reference()
+    deliver_gate = _deliver_gate_block()
+    pre_edit_hint = render_pre_edit_hint_instruction()  # PRD-CORE-336-FR04 fallback line
     return f"""{_ANTIGRAVITY_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
@@ -155,19 +159,7 @@ memory — patterns, gotchas, and project knowledge accumulate across sessions.
 
 Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist.
 
-### Deliver Gate
-
-Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` reported `tests_passed=true` and `static_checks_clean=true` (or omitted), with a non-zero `test_count` and a non-empty `scope`, **or**
-- (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
-  acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
-  `expiry_iso`, **or**
-- (c) an authorized operator/config override is recorded with technical rationale.
-
-A review-verdict label or free-text reason alone is not an acceptable-failure record.
-Under the default `block_coding` mode a missing build check blocks when the task type
-expects a build artifact (`coding`, `rca`, `eval`) OR when the session modified files —
-whatever the task type. A run that changed nothing stays advisory.
+{deliver_gate}
 
 {tool_reference}
 {subagents}
@@ -177,6 +169,7 @@ whatever the task type. A run that changed nothing stays advisory.
 - Use `trw_learn()` to record discoveries, patterns, and gotchas
 - Use `trw_checkpoint()` after working milestones
 - Commit messages: `feat(scope): msg` (Conventional Commits)
+{pre_edit_hint}
 
 {delegation}
 {_ANTIGRAVITY_TRW_END_MARKER}
@@ -193,90 +186,3 @@ def _deliver_gate_block() -> str:
     from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
 
     return render_deliver_gate_statement()
-
-
-def _render_opencode_portable() -> str:
-    """Render OpenCode instructions without model/provider assumptions.
-
-    PRD-QUAL-104 FR03: appends the non-negotiable session-start + deliver-gate
-    block (bundled-source derived) so the OpenCode protocol carrier always
-    states the gate verbatim.
-    """
-    return _render_opencode_portable_body() + "\n" + _deliver_gate_block()
-
-
-def _render_opencode_portable_body() -> str:
-    """Render the portable OpenCode instruction body (pre-FR03 content)."""
-    return (
-        "# TRW Instructions\n"
-        "\n"
-        "## Model and Context Policy\n"
-        "\n"
-        "Assume capabilities vary. Keep prompts concise, reference files by path, "
-        "and discover the active model/context limits from the harness before relying "
-        "on large-context behavior. Treat family-specific prompting tricks as optional "
-        "adapter knowledge, not core TRW requirements.\n"
-        "\n"
-        "## Workflow\n"
-        "\n"
-        "1. **Start**: call `trw_session_start()` — loads prior learnings and active state\n"
-        "2. **Scope**: identify the governing request/PRD, files, language/toolchain, and verification path\n"
-        "3. **Implement**: keep changes bounded; use focused helpers only when available\n"
-        "4. **Verify**: run targeted project-native checks and fix failures immediately\n"
-        "5. **Learn**: call `trw_learn()` for durable technical discoveries (no status reports)\n"
-        "6. Preserve material unfinished work via checkpoint or durable native handoff with next-read pointer; nothing material to preserve: no artifact needed. Use `trw_deliver()` for completed-work acceptance under the delivery gates\n"
-        "\n"
-        "## Ceremony Protocol\n"
-        "\n"
-        "- `trw_session_start()` — **first action** in every session\n"
-        "- `trw_checkpoint(message)` — save progress at meaningful milestones\n"
-        "- `trw_recall(query)` — retrieve relevant prior learnings before re-solving\n"
-        "- `trw_learn(summary, detail)` — record durable gotchas/patterns, not routine status\n"
-        "- `trw_build_check()` — record project-native validation before delivery after code changes\n"
-        "- `trw_deliver()` — completed-work acceptance under unchanged delivery gates\n"
-        "\n"
-        "## Nudge Policy\n"
-        "\n"
-        "Nudges are short, evidence-grounded reminders surfaced by TRW tools or adapters. "
-        "Follow them when they identify a real missing step, but do not treat a nudge "
-        "as validation evidence. Respect density, budget, and cooldown settings.\n"
-        "\n"
-        "## Portable Prompting Patterns\n"
-        "\n"
-        "- Prefer small, schema-shaped requests with explicit file paths and acceptance criteria\n"
-        "- Ask helpers for changed paths, validation run, and residual risks\n"
-        "- Use sequential tool calls if the harness has parser or parallel-call limits\n"
-        "- Do not paste large files inline unless the harness has proven budget headroom\n"
-        "- If a model-specific adapter recommends special syntax, verify it in that adapter first\n"
-        "\n"
-        "## Known Limitations\n"
-        "\n"
-        "- **Unknown context budget**: default to bounded reads and checkpoints\n"
-        "- **Harness variance**: hooks, skills, and helper agents may be absent or advisory\n"
-        "- **Tool-call variance**: validate arguments and recover with `trw_session_start()` after restarts\n"
-        "\n"
-        "## Framework Reference\n"
-        "\n"
-        "Read `.trw/frameworks/FRAMEWORK.md` at session start for the phase gates, "
-        "quality rubric, model policy, and delivery rules that the tools implement.\n"
-    )
-
-
-def render_opencode_qwen() -> str:
-    """Compatibility wrapper; v25 emits portable OpenCode instructions."""
-    return _render_opencode_portable()
-
-
-def render_opencode_gpt() -> str:
-    """Compatibility wrapper; v25 emits portable OpenCode instructions."""
-    return _render_opencode_portable()
-
-
-def render_opencode_claude() -> str:
-    """Compatibility wrapper; v25 emits portable OpenCode instructions."""
-    return _render_opencode_portable()
-
-
-def render_opencode_generic() -> str:
-    """Render OpenCode instructions for unknown/generic models."""
-    return _render_opencode_portable()

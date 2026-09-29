@@ -179,7 +179,7 @@ class TestRequirementsTemplateNoFrontmatter:
                     ),
                 ):
                     reset_template_cache()
-                    from trw_mcp.tools.requirements import _load_template_body
+                    from trw_mcp.tools._prd_template_helpers import _load_template_body
 
                     # No `---` frontmatter (and no version markers) => fail closed.
                     with pytest.raises(ValueError, match=r"malformed or not version 3\.2"):

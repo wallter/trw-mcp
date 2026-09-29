@@ -35,7 +35,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s = 600
         self.dispatch_default_read_only = True
-        self.dispatch_role_client: dict[str, str] = {}
         self.dispatch_default_effort: str | None = None
         for key, value in overrides.items():
             setattr(self, key, value)

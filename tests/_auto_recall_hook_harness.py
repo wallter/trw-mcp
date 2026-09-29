@@ -7,7 +7,13 @@ live here so neither test module has to import the other, and so there is
 exactly one definition of what a fixture project looks like.
 
 Nothing in this module reimplements any part of the hook: it lays out a project,
-writes YAML mirror entries, runs the shipped script, and reads back what it did.
+runs the shipped script, and reads back what it did. The one stand-in is the
+STORE: the hook's filtered read (``python -m trw_mcp.state._auto_recall_hook``,
+PRD-CORE-333 FR03) reaches the checkout's daemon, so ``TRW_PYTHON`` points the
+hook at a wrapper that runs that real module -- scorer, diagnostic, emission --
+with ``read_rows`` answered from a fixture file of stored rows. What the real
+store read filters is proven against a real backend in
+``tests/test_no_direct_entries_read.py``.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,12 +70,12 @@ def _copy_hook_to_temp(
     hook_label = "bundled" if "/src/trw_mcp/data/hooks/" in source_path else "dev"
     project_root = tmp_path / hook_label
     hooks_dir = project_root / ".claude" / "hooks"
-    entries_dir = project_root / ".trw" / "learnings" / "entries"
     context_dir = project_root / ".trw" / "context"
 
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    entries_dir.mkdir(parents=True, exist_ok=True)
     context_dir.mkdir(parents=True, exist_ok=True)
+    rows_file = project_root / ".trw" / "fixture-store-rows.json"
+    rows_file.write_text("[]", encoding="utf-8")
 
     hook_path = hooks_dir / "user-prompt-submit.sh"
     hook_path.write_text(source_hook.read_text(encoding="utf-8"), encoding="utf-8")
@@ -94,31 +101,60 @@ log_hook_execution() {{ printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4" >> "$TRW_HOO
 """,
         encoding="utf-8",
     )
-    return project_root, hook_path, entries_dir
+    return project_root, hook_path, rows_file
 
 
 def _write_learning(
-    entries_dir: Path,
+    rows_file: Path,
     learning_id: str,
     *,
     status: str,
     summary: str,
-    file_stem: str | None = None,
     tags: list[str] | None = None,
-    detail_text: str | None = None,
 ) -> None:
-    """Write one YAML mirror entry.
+    """Add one stored learning to the fixture store, in the order the store returns rows."""
+    _write_learnings(rows_file, [{"learning_id": learning_id, "status": status, "summary": summary, "tags": tags}])
 
-    ``tags`` is emitted as a block sequence — the shape every real entry uses
-    and the one PRD-FIX-124-FR02 teaches the hook's field reader to read.
-    """
-    stem = file_stem or learning_id
-    body = f'id: "{learning_id}"\nstatus: {status}\nsummary: "{summary}"\n'
-    if tags is not None:
-        body += "tags:\n" + "".join(f"- {tag}\n" for tag in tags)
-    if detail_text is not None:
-        body += f'detail: "{detail_text}"\n'
-    (entries_dir / f"{stem}.yaml").write_text(body, encoding="utf-8")
+
+def _write_learnings(rows_file: Path, learnings: list[dict[str, Any]]) -> None:
+    """Add stored learnings to the fixture store in one write, in the order the store returns them."""
+    rows = json.loads(rows_file.read_text(encoding="utf-8"))
+    rows.extend(
+        {"id": row["learning_id"], "status": row["status"], "summary": row["summary"], "tags": row.get("tags") or []}
+        for row in learnings
+    )
+    rows_file.write_text(json.dumps(rows), encoding="utf-8")
+
+
+#: The fixture store: the REAL hook module, with ``read_rows`` answered from the rows file.
+#: No rows file stands for an unreachable store. TRW_TEST_RECALL_TIMEOUT_NS forces the
+#: FR08 scan deadline, the only way to observe a mid-scan expiry deterministically.
+_FIXTURE_STORE = """
+import json, os, sys
+from pathlib import Path
+from trw_mcp.state import _auto_recall_hook as hook
+from trw_mcp.state._store_selection import StoreUnavailableError
+if os.environ.get("TRW_TEST_RECALL_TIMEOUT_NS"):
+    hook.TIMEOUT_NS = int(os.environ["TRW_TEST_RECALL_TIMEOUT_NS"])
+def read_rows(root, cap):
+    path = root / ".trw" / "fixture-store-rows.json"
+    if not path.is_file():
+        raise StoreUnavailableError("the fixture has no store")
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    return [hook.Candidate(r["id"], r["status"], r["summary"], tuple(r["tags"])) for r in rows][:cap]
+sys.exit(hook.main(sys.argv[1:], read_rows=read_rows))
+"""
+
+
+def fixture_store_python(tmp_path: Path) -> Path:
+    """An executable standing in for the project interpreter, serving the fixture store."""
+    wrapper = tmp_path / "fixture-store-python"
+    wrapper.write_text(
+        f'#!/bin/sh\n[ "$1" = "-m" ] && shift 2\nexec "{sys.executable}" -c \'{_FIXTURE_STORE}\' "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return wrapper
 
 
 def _make_path_without_jq(tmp_path: Path) -> str:
@@ -145,11 +181,10 @@ def _run_hook(
     path_override: str | None = None,
 ) -> HookRun:
     """Drive the REAL hook script against a fixture project (FR10)."""
-    project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path, source_hook)
+    project_root, hook_path, rows_file = _copy_hook_to_temp(tmp_path, source_hook)
     if cached_phase is not None:
         (project_root / ".trw" / "context" / "last_ups_phase").write_text(cached_phase, encoding="utf-8")
-    for learning in learnings or []:
-        _write_learning(entries_dir, **learning)
+    _write_learnings(rows_file, learnings or [])
     if config_yaml is not None:
         (project_root / ".trw" / "config.yaml").write_text(config_yaml, encoding="utf-8")
 
@@ -159,6 +194,7 @@ def _run_hook(
             "TRW_PROJECT_ROOT": str(project_root),
             "TRW_TEST_PHASE": phase,
             "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            "TRW_PYTHON": str(fixture_store_python(project_root)),
         }
     )
     if path_override is not None:

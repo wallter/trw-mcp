@@ -359,42 +359,6 @@ class TestDeliverBuildGate:
 
 
 # ---------------------------------------------------------------------------
-# RC-004: Parse exit criteria checkboxes from sprint markdown
-# ---------------------------------------------------------------------------
-
-
-class TestParseExitCriteria:
-    """Sprint doc exit criteria parser extracts checkbox state."""
-
-    def test_parse_exit_criteria_checkboxes(self) -> None:
-        """Parses markdown checkboxes into structured pass/fail list."""
-        from trw_mcp.state.validation import parse_exit_criteria
-
-        sprint_md = """\
-# Sprint 29: Platform Polish
-
-## Exit Criteria
-- [x] Backend pytest passes (0 failures)
-- [x] mypy --strict clean
-- [ ] Coverage >= 80%
-- [ ] Admin dashboard functional
-- [x] All PRDs in done status
-
-## Notes
-Some other content here.
-"""
-        criteria = parse_exit_criteria(sprint_md)
-
-        assert len(criteria) == 5
-        checked = [c for c in criteria if c["checked"]]
-        unchecked = [c for c in criteria if not c["checked"]]
-        assert len(checked) == 3
-        assert len(unchecked) == 2
-        assert "Coverage >= 80%" in str(unchecked[0]["text"])
-        assert "Admin dashboard" in str(unchecked[1]["text"])
-
-
-# ---------------------------------------------------------------------------
 # RC-002: trw_status reports last activity timestamp
 # ---------------------------------------------------------------------------
 

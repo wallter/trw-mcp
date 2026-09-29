@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from trw_mcp.models.config._field_admission_assess import ASSESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
+from trw_mcp.models.config._field_admission_backup import BACKUP_ADMISSIONS
 from trw_mcp.models.config._field_admission_code_index import CODE_INDEX_ADMISSIONS
 from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
@@ -23,18 +24,27 @@ from trw_mcp.models.config._field_admission_dispatch_access import DISPATCH_ACCE
 from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
+from trw_mcp.models.config._field_admission_hint_delivery import HINT_DELIVERY_ADMISSIONS
+from trw_mcp.models.config._field_admission_hint_hub import HINT_HUB_ADMISSIONS
+from trw_mcp.models.config._field_admission_hint_recall_budget import HINT_RECALL_BUDGET_ADMISSIONS
+from trw_mcp.models.config._field_admission_hint_sidecar_ancestor import HINT_SIDECAR_ANCESTOR_ADMISSIONS
 from trw_mcp.models.config._field_admission_instruction_writes import INSTRUCTION_WRITE_ADMISSIONS
 from trw_mcp.models.config._field_admission_memory_truth import MEMORY_TRUTH_ADMISSIONS
+from trw_mcp.models.config._field_admission_nudge_pool import NUDGE_POOL_ADMISSIONS
 from trw_mcp.models.config._field_admission_platform_egress import PLATFORM_EGRESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_project_handoff import PROJECT_HANDOFF_ADMISSIONS
+from trw_mcp.models.config._field_admission_recall_provenance import RECALL_PROVENANCE_ADMISSIONS
 from trw_mcp.models.config._field_admission_registry_types import (
     BudgetDecision as BudgetDecision,
 )
 from trw_mcp.models.config._field_admission_registry_types import (
     ConfigAdmission as ConfigAdmission,
 )
+from trw_mcp.models.config._field_admission_requirement_drift import REQUIREMENT_DRIFT_ADMISSIONS
 from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT_ADMISSIONS
+from trw_mcp.models.config._field_admission_shared_mcp import SHARED_MCP_ADMISSIONS
 from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
+from trw_mcp.models.config._field_admission_time import TIME_ADMISSIONS
 from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
 
 #: Explicit full-metadata admissions for public fields added by PRD-CORE-218
@@ -134,38 +144,42 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     "hint_sidecar_refresh_enabled": ConfigAdmission(
         field_name="hint_sidecar_refresh_enabled",
         owner="PRD-CORE-231-FR01",
-        consumer="trw_mcp.tools._hint_sidecar_refresh.resolve_refresh_plan (data/git_hooks/trw-post-commit.sh)",
+        consumer=(
+            "trw_mcp.tools._post_commit._request_sidecar_rebuild and _run_distill_steps "
+            "(data/git_hooks/trw-post-commit.sh)"
+        ),
         default_rationale=(
-            "Defaults True so the T2 tier is live rather than dormant; flipping it False is the "
-            "FR01 rollback path (\u00a79), which degrades trw_code's hint mode to its existing T1/T0 behavior."
+            "Defaults True so post-commit keeps the T2 tier supplied: it requests the detached sidecar "
+            "rebuild (8.2 S2b) and refreshes the risk report. False is the post-commit rollback path; the "
+            "pre-edit hint's own request stays under hint_sidecar_auto_refresh_enabled."
         ),
         interaction_analysis=(
-            "Master gate read before hint_sidecar_refresh_file_cap; when False the refresh is a no-op and "
-            "the cap is never consulted. Independent of the entitlement check, which still fails open."
+            "Gates only the post-commit worker's sidecar steps. The rebuild request it gates still passes "
+            "every hint_sidecar_auto_refresh_enabled check (flag, reviewer role, entitlement, min interval). "
+            "The per-commit per-file refresh and its hint_sidecar_refresh_file_cap were retired in 8.2 S2b."
         ),
-        deprecation_plan="Retain while the T2 tier ships; removal requires the FR01 dormant-tier decision.",
+        deprecation_plan="Retain while post-commit carries sidecar work.",
         docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-231-track-r-memory-truthfulness-repair.md",
-        test_pointer="trw-mcp/tests/test_post_commit_sidecar_refresh.py::test_disabled_flag_is_a_no_op",
+        test_pointer=(
+            "trw-mcp/tests/test_post_commit_distill.py::test_post_commit_requests_the_rebuild_through_the_shared_helper"
+        ),
         budget_decision="admitted",
     ),
-    "hint_sidecar_refresh_file_cap": ConfigAdmission(
-        field_name="hint_sidecar_refresh_file_cap",
-        owner="PRD-CORE-231-FR01",
-        consumer="trw_mcp.tools._hint_sidecar_refresh.resolve_refresh_plan (data/git_hooks/trw-post-commit.sh)",
+    "post_commit_distill_incremental": ConfigAdmission(
+        field_name="post_commit_distill_incremental",
+        owner="PRD-DIST-2482-FR04",
+        consumer="trw_mcp.tools._post_commit._run_distill_steps (data/git_hooks/trw-post-commit.sh)",
         default_rationale=(
-            "Defaults to 20 changed files per commit (NFR01) so a large commit cannot stall git commit; "
-            "typed rather than hardcoded because the right cap depends on a repo's file-edit fan-out."
+            "Defaults False: the spawned `trw-distill run --incremental --live-ingest` may run an LLM "
+            "synthesis pass and writes lessons into the store, which an operator must choose per repo."
         ),
         interaction_analysis=(
-            "Bounds the per-commit subprocess fan-out only; gated behind hint_sidecar_refresh_enabled. "
-            "A cap lower than a commit's changed-file count reduces the share of eligible edits that "
-            "receive a T2 hint, which is the intended latency/coverage trade-off (OQ-06). The typed "
-            "delivery-rate pair that once named this trade-off was deleted by PRD-FIX-125-FR04: "
-            "neither field had a reader and both admission grandfathers expired 2026-08-31."
+            "Read only when trw-distill is installed. Independent of hint_sidecar_refresh_enabled, which "
+            "gates the sidecar rebuild request and risk-report refresh; the spawned run is single-flight via a pid file."
         ),
-        deprecation_plan="Retain; removing it would reintroduce an unbounded per-commit fan-out.",
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-231-track-r-memory-truthfulness-repair.md",
-        test_pointer="trw-mcp/tests/test_post_commit_sidecar_refresh.py::test_file_cap_bounds_the_plan",
+        deprecation_plan="Retain while distill ingest is operator-scheduled rather than always on.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-DIST-2482-distill-edit-hint-history.md",
+        test_pointer="trw-mcp/tests/test_post_commit_distill.py::test_incremental_spawns_only_when_flag_true",
         budget_decision="admitted",
     ),
     "wiring_gate_mode_overrides": ConfigAdmission(
@@ -309,6 +323,9 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **PROJECT_HANDOFF_ADMISSIONS,
     # PRD-CORE-248: WAL-checkpoint trigger + resetting-permit tunables (own table).
     **WAL_CHECKPOINT_ADMISSIONS,
+    **HINT_HUB_ADMISSIONS,
+    **HINT_RECALL_BUDGET_ADMISSIONS,
+    **HINT_SIDECAR_ANCESTOR_ADMISSIONS,
     **CODE_INDEX_ADMISSIONS,
     # PRD-CORE-255: review-verdict TTL (own table, see module docstring).
     **REVIEW_VERDICT_ADMISSIONS,
@@ -328,4 +345,16 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **ASSESS_ADMISSIONS,
     # W38 (7.0.0 security P1): platform-contact kill switch (own table).
     **PLATFORM_EGRESS_ADMISSIONS,
+    # PRD-CORE-311-FR03: remote-backup upload consent gate (own table).
+    **BACKUP_ADMISSIONS,
+    **RECALL_PROVENANCE_ADMISSIONS,
+    # PRD-CORE-321-FR05: requirement-drift gate mode (own table).
+    **REQUIREMENT_DRIFT_ADMISSIONS,
+    # PRD-CORE-338: wall-clock tracking switch + display zone (own table).
+    **TIME_ADMISSIONS,
+    **SHARED_MCP_ADMISSIONS,
+    # PRD-CORE-335-FR01: project-level nudge pool-weight override (own table).
+    **NUDGE_POOL_ADMISSIONS,
+    # HINT-DELIVERY-CANARY: hint_delivery doctor row tunables (own table).
+    **HINT_DELIVERY_ADMISSIONS,
 }

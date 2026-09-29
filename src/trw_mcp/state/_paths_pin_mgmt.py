@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from trw_memory.daemon._discovery import AGENT_MUST_NOT_STOP
 
 from trw_mcp.state._pin_store import (
     _iso_now,
@@ -269,6 +270,9 @@ def _note_if_superseded(pin_key: str, own: dict[str, Any]) -> None:
                 pid=os.getpid(),
                 newer_pid=entry.get("pid"),
                 newer_pin_key=key,
-                remedy=f"this server is no longer the client's current connection; kill {os.getpid()} once confirmed",
+                remedy=(
+                    f"this server is no longer the client's current connection; the user can stop process "
+                    f"{os.getpid()} once confirmed. {AGENT_MUST_NOT_STOP}"
+                ),
             )
             return

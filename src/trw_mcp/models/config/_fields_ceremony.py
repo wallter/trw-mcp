@@ -36,7 +36,6 @@ NudgeMessengerLiteral = Literal[
 class _CeremonyFields:
     """Ceremony domain mixin — mixed into _TRWConfigFields via MI."""
 
-    claude_md_max_lines: int = 500
     sub_claude_md_max_lines: int = 50
     max_auto_lines: int = 300
     agents_md_enabled: bool = True
@@ -46,12 +45,9 @@ class _CeremonyFields:
     )
     ceremony_mode: Literal["full", "light"] = "full"
     response_format: Literal["yaml", "json"] = "yaml"
-    agents_md_learning_injection: bool = True
-    agents_md_learning_max: int = 5
-    agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v27.4_TRW"
-    aaref_version: str = "v3.2.1"
+    framework_version: str = "v27.5_TRW"
+    aaref_version: str = "v3.3.0"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -95,7 +91,6 @@ class _CeremonyFields:
     # by default (single-repo). Absolute or relative to the project root.
     additional_repo_roots: list[str] = Field(default_factory=list)
     index_auto_sync_on_status_change: bool = True
-    strict_input_criteria: bool = False
 
     # The five grooming_* and three findings_* fields were removed 2026-07-28
     # (PRD-QUAL-131-FR01): no production reader, and no grooming or findings

@@ -28,6 +28,8 @@ measurements), not byte-exact snapshots. If your change trips one:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -56,6 +58,13 @@ from trw_mcp.tools._session_start_trim import trim_session_start_payload
 # 1300 to 1000.
 SESSION_START_CEILING_SIZE_UNITS = 1000
 RECALL_ENTRY_CEILING_SIZE_UNITS = 450  # per projected entry with rich content
+
+# 2026-09-26 PRD-CORE-305-FR06 sol round-1 P2: trw_status had no ceiling at
+# all before this. Measured 396 size units for a representative default
+# response (run summary, gate status, stale count, ceremony_status +
+# nudge_content, and the compact field_scope label) — ceiling is that
+# measurement plus ~35% slack, matching this file's other ceilings.
+STATUS_CEILING_SIZE_UNITS = 550
 
 _BLOAT_GUIDANCE = (
     "Response size budget exceeded — every field here is paid on EVERY call "
@@ -126,7 +135,6 @@ def _representative_session_start_payload() -> dict[str, object]:
         "resolved_profile": {"ceremony_tier": "COMPREHENSIVE"},
         "profile_layers_applied": ["defaults"],
         "profile_snapshot_id": "surf_" + "b" * 64,
-        "session_override_hash": "sess_" + "c" * 64,
         "assertion_health": {"failing": 0, "total": 5},
         "sync_health": {"status": "ok"},
         "step_durations_ms": {"total": 900.0},
@@ -148,6 +156,105 @@ def test_session_start_compact_payload_stays_under_ceiling() -> None:
         f"compact trw_session_start payload is {size_units} four-character size units "
         f"(ceiling {SESSION_START_CEILING_SIZE_UNITS}). {_BLOAT_GUIDANCE}"
     )
+
+
+def _representative_status_payload() -> dict[str, object]:
+    """A worst-case-ish default ``trw_status`` payload: an active run with
+    a formation-free gate scan, and the ceremony/nudge fields shared
+    middleware attaches to every tool response."""
+    from pathlib import Path
+
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._orchestration_status_assembly import assemble_status_result, field_scope_label
+
+    events = [{"event": "checkpoint", "phase": "implement"} for _ in range(5)]
+    state_data = {
+        "run_id": "20260101T000000Z-abcdef01",
+        "task": "representative-task-name",
+        "phase": "implement",
+        "status": "active",
+        "confidence": "medium",
+        "framework": "v27.4_TRW",
+        "task_type": "coding",
+        "task_profile": {"nudge_pool_weights": [1, 2, 3, 4], "recall_policy": "standard"},
+    }
+    result = dict(
+        assemble_status_result(state_data, events, Path("/tmp/status-budget-fixture"), FileStateReader(), Path("meta"))
+    )
+    result["build_gate_ready"] = True
+    result["review_gate_ready"] = False
+    result["deliver_gate_summary"] = "READY (advisory: no review recorded — run trw_review())"
+    result["ceremony_status"] = (
+        "scope=project_aggregate (not current-run evidence); session_started; "
+        "phase=implement; checkpoints=3; learnings=2"
+    )
+    result["nudge_content"] = "Inspect your own diff against the task's scope; preserve unrelated work."
+    result["field_scope"] = field_scope_label(result)
+    return result
+
+
+def test_status_default_payload_stays_under_ceiling() -> None:
+    payload = _representative_status_payload()
+    size_units = payload_size_units(payload)
+    assert size_units <= STATUS_CEILING_SIZE_UNITS, (
+        f"default trw_status payload is {size_units} four-character size units "
+        f"(ceiling {STATUS_CEILING_SIZE_UNITS}). {_BLOAT_GUIDANCE}"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_sync_health_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deterministic healthy sync-push read for every test in this module.
+
+    PRD-CORE-311-FR08's ``_apply_sync_push_field`` resolves the AMBIENT
+    project ``.trw`` dir via ``resolve_trw_dir()``. Without this stub, the
+    token-budget fixtures in this file would depend on whatever
+    ``sync-state.json`` happens to exist wherever the test process runs from
+    -- defeating the whole point of a deterministic ``payload_size_units``
+    measurement. Individual tests below override this with their own
+    ``monkeypatch.setattr`` call to exercise the degraded case.
+    """
+    import trw_mcp.tools._sync_health as sync_health_module
+
+    monkeypatch.setattr(
+        sync_health_module,
+        "step_sync_health",
+        lambda trw_dir, config, degradations=None: {
+            "degraded": False,
+            "consecutive_failures": 0,
+            "last_push_at": "2026-09-26T00:00:00+00:00",
+            "advisory": "",
+        },
+    )
+
+
+def test_trw_status_sync_push_field_omitted_when_healthy() -> None:
+    """PRD-CORE-311-FR08's evidence artifact: a healthy read carries no ``sync_push`` key at all."""
+    payload = _representative_status_payload()
+
+    assert "sync_push" not in payload
+
+
+def test_trw_status_sync_push_field_present_when_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A degraded fixture produces the field with the right ``consecutive_failures`` value."""
+    import trw_mcp.tools._sync_health as sync_health_module
+
+    monkeypatch.setattr(
+        sync_health_module,
+        "step_sync_health",
+        lambda trw_dir, config, degradations=None: {
+            "degraded": True,
+            "consecutive_failures": 14,
+            "last_push_at": None,
+            "advisory": "Backend sync-push is degraded: 14 consecutive failures; last successful push never.",
+        },
+    )
+    payload = _representative_status_payload()
+
+    assert "sync_push" in payload
+    sync_push = cast("dict[str, object]", payload["sync_push"])
+    assert sync_push["consecutive_failures"] == 14
+    assert sync_push["status"] == "degraded"
 
 
 def test_session_start_learning_block_stays_under_its_byte_budget() -> None:
@@ -329,3 +436,148 @@ def test_feedback_telemetry_adds_no_response_keys(tmp_project: Path, monkeypatch
     logs = tmp_project / ".trw" / "logs"
     assert (logs / "session_outcomes.jsonl").exists()
     assert '"surface": "before_edit_hint"' in (logs / "recall_tracking.jsonl").read_text()
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-326: inline provenance on trw_recall stubs, measured on what the
+# served entrypoint returns. Fixture: the PRD's Evidence stub (263 B alone).
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_KEYS = {"source", "scope", "superseded_by"}
+_WORST_PROVENANCE: dict[str, object] = {
+    "source_type": "company_sync",
+    "namespace": "n" * 40,
+    "superseded": True,
+    "invalidated_by": "L-" + "x" * 40,
+}
+
+
+def _evidence_row(index: int = 0, **provenance: object) -> dict[str, object]:
+    return {
+        "id": f"L-{index:08x}" if index else "L-1a2b3c4d",
+        "summary": f"{index:03d}" + "w" * 197,  # distinct: recall collapses exact duplicates
+        "anchors": [{"file": "trw-mcp/src/trw_mcp/tools/_recall_presenter.py", "symbol_name": "stub"}],
+        **provenance,
+    }
+
+
+@pytest.fixture()
+def served_recall(monkeypatch: pytest.MonkeyPatch) -> Callable[..., list[dict[str, object]]]:
+    """``execute_recall`` over exactly the given rows; the envelope is ``{query, total_matches}``.
+
+    Remote augmentation is stubbed out: with no store it attaches a failure
+    status that would cost this fixture one stub slot.
+    """
+    from trw_mcp.tools import _recall_impl
+
+    monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda _query, rows: (rows, None))
+
+    def serve(rows: list[dict[str, object]], *, inline: bool | None = None) -> list[dict[str, object]]:
+        update: dict[str, object] = {"project_namespace": "project:home"}
+        if inline is not None:
+            update["recall_provenance_inline"] = inline
+        result = _recall_impl.execute_recall(
+            "widget",
+            Path("/nonexistent"),
+            get_config().model_copy(update=update),
+            max_results=len(rows),
+            track=False,
+            _adapter_recall=lambda *_a, **_k: [dict(row) for row in rows],
+            _rank_by_utility=lambda items, *a, **k: list(items),
+        )
+        return cast("list[dict[str, object]]", result["learnings"])
+
+    return serve
+
+
+def _wire(payload: object) -> str:
+    import json
+
+    return json.dumps(payload)
+
+
+def _rendered(payload: object) -> int:
+    return len(_wire(payload).encode("ascii"))
+
+
+def test_kill_switch_removes_only_provenance_keys(served_recall: Callable[..., list[dict[str, object]]]) -> None:
+    """FR05: on by default; off, trw_recall stubs are exactly the pre-PRD shape."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools._recall_presenter import stub
+
+    rows = {row["id"]: row for row in (_evidence_row(1, **_WORST_PROVENANCE), _evidence_row(2, source_type="human"))}
+
+    default_on = {s["id"]: _PROVENANCE_KEYS & set(s) for s in served_recall(list(rows.values()))}
+    assert default_on == {"L-00000001": _PROVENANCE_KEYS, "L-00000002": {"source"}}
+    assert TRWConfig().recall_provenance_inline is True
+    switched_off = served_recall(list(rows.values()), inline=False)
+    assert len(switched_off) == 2
+    assert [_wire(s) for s in switched_off] == [_wire(stub(rows[s["id"]], provenance=False)) for s in switched_off]
+
+
+@pytest.mark.parametrize(
+    ("provenance", "max_delta"),
+    [
+        ({"source_type": "agent", "namespace": "project:home"}, 0),
+        ({"source_type": "agent", "namespace": "default"}, 0),
+        ({"source_type": "company_sync"}, 26),
+        ({"namespace": "n" * 40}, 45),
+        ({"superseded": True, "invalidated_by": "x" * 40}, 53),
+        (_WORST_PROVENANCE, 124),
+        ({**_WORST_PROVENANCE, "namespace": "é" * 40, "invalidated_by": "é" * 40}, 124),
+        ({**_WORST_PROVENANCE, "namespace": '"' * 40, "invalidated_by": '"' * 40}, 124),
+    ],
+    ids=["common-home", "common-default", "source", "scope", "superseded_by", "all", "non-ascii", "quotes"],
+)
+def test_provenance_bytes_are_bounded(
+    served_recall: Callable[..., list[dict[str, object]]], provenance: dict[str, object], max_delta: int
+) -> None:
+    """NFR01: the common case adds 0 B; the three keys add at most 124 B (31 chars/4 units) per stub."""
+    row = _evidence_row(**provenance)
+    [on] = served_recall([row], inline=True)
+    [off] = served_recall([row], inline=False)
+
+    assert _rendered(off) == 263
+    delta = _rendered(on) - _rendered(off)
+    assert delta <= max_delta
+    assert (delta == 0) == (max_delta == 0)
+
+
+@pytest.mark.parametrize(
+    ("provenance", "min_fit"),
+    [
+        ({"source_type": "company_sync", "namespace": "n" * 40}, 8),
+        (_WORST_PROVENANCE, 7),
+    ],
+    ids=["source+scope", "all-three"],
+)
+def test_provenance_fit_count_is_bounded(
+    served_recall: Callable[..., list[dict[str, object]]], provenance: dict[str, object], min_fit: int
+) -> None:
+    """NFR01: under RECALL_BYTE_BUDGET the worst case costs at most 4 of the baseline 11 stub slots."""
+    rows = [_evidence_row(index, **provenance) for index in range(1, 21)]
+
+    assert len(served_recall(rows, inline=False)) == 11
+    assert min_fit <= len(served_recall(rows, inline=True)) < 11
+
+
+def test_session_start_stubs_carry_no_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR05: trw_session_start stubs never carry the keys, whatever the switch says."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._recall_presenter import stub
+    from trw_mcp.tools._session_recall_helpers import perform_session_recalls
+
+    rows = [_evidence_row(index, **_WORST_PROVENANCE) for index in (1, 2)]
+    monkeypatch.setattr(
+        "trw_mcp.state.recall_factories.recall_session_start", lambda *_a, **_k: [dict(row) for row in rows]
+    )
+
+    presented, _extra = perform_session_recalls(
+        tmp_path, "*", TRWConfig(project_namespace="project:home"), FileStateReader()
+    )
+
+    assert presented
+    by_id = {str(row["id"]): row for row in rows}
+    # stub()'s default is provenance=False: a guard, so it also holds before PRD-CORE-326.
+    assert [_wire(s) for s in presented] == [_wire(stub(by_id[str(s["id"])])) for s in presented]

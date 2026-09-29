@@ -15,6 +15,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from trw_memory.daemon._discovery import AGENT_MUST_NOT_STOP
+
 from trw_mcp.state._process_identity import (
     BIRTH_EPOCH_SLACK_SECONDS,
     parse_heartbeat_ts,
@@ -56,7 +58,7 @@ def _live(trw_dir: Path) -> list[tuple[int, int | None, float]]:
 
 
 def _orphan(pid: int) -> str:
-    return f"trw-mcp pid {pid} is orphaned (its client exited): stop it with `kill {pid}`"
+    return f"trw-mcp pid {pid} is orphaned (its client exited); the user can stop process {pid}. {AGENT_MUST_NOT_STOP}"
 
 
 def live_servers(trw_dir: Path) -> list[str]:
@@ -79,7 +81,10 @@ def stray_servers(trw_dir: Path) -> list[str]:
     return [
         _orphan(pid)
         if client is None
-        else f"trw-mcp pid {pid} is superseded by a newer server under client pid {client}: stop it with `kill {pid}`"
+        else (
+            f"trw-mcp pid {pid} is superseded by a newer server under client pid {client}; the user can stop "
+            f"process {pid}. {AGENT_MUST_NOT_STOP}"
+        )
         for pid, (client, _) in servers.items()
         if client is None or newest[client][1] != pid
     ]

@@ -415,3 +415,71 @@ def test_prd_core_215_fr05(tmp_path, monkeypatch) -> None:
     assert tool_out["result"] == "ok"  # legacy authority preserved
     assert tool_out["envelope"]["outcome"] in {o.value for o in Outcome}
     assert tool_out["envelope"]["operation_id"] == did
+
+
+# --- PINNED-FD-CAP-LABEL: a full pinned-fd cache is "could not check", never "not legacy" -----------------------
+
+
+@pytest.fixture
+def pinned_cache_at_cap(tmp_path):
+    """Fill ``_checkout_access``'s pinned-fd cache to its cap with unrelated files, and restore it after."""
+    from tests._checkout_access_state import reset_pinned_reads
+    from trw_mcp import _checkout_access
+    from trw_mcp._checkout_access import read_at
+
+    reset_pinned_reads()
+    filler = tmp_path / "filler"
+    filler.mkdir()
+    for index in range(_checkout_access._MAX_PINNED_FDS):
+        path = filler / f"f{index}"
+        path.write_bytes(b"x")
+        read_at(path, 1)
+    assert len(_checkout_access._fds) == _checkout_access._MAX_PINNED_FDS, "non-vacuity: the cache is full"
+    yield
+    reset_pinned_reads()
+
+
+def _legacy_wal_store(coord):
+    db_path = coord.store.db_path
+    db_path.parent.mkdir(parents=True)
+    legacy = sqlite3.connect(db_path)
+    legacy.execute("PRAGMA journal_mode=WAL")
+    legacy.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    legacy.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '1')")
+    legacy.commit()
+    legacy.close()
+    return db_path
+
+
+def test_status_at_the_pinned_fd_cap_reports_read_capacity_not_a_verdict_about_the_store(
+    tmp_path, pinned_cache_at_cap
+) -> None:
+    coord = make_coordinator(tmp_path)
+    _legacy_wal_store(coord)
+    before = project_metadata_snapshot(tmp_path)
+
+    status = coord.project_status(make_uuid7())
+
+    assert status == {"result": "read_capacity_exceeded", "schema_version": 1}, status
+    assert project_metadata_snapshot(tmp_path) == before, "the refusal must not mutate the store"
+
+
+def test_status_with_room_in_the_cache_still_reports_the_legacy_store(tmp_path) -> None:
+    from tests._checkout_access_state import reset_pinned_reads
+
+    reset_pinned_reads()
+    coord = make_coordinator(tmp_path)
+    _legacy_wal_store(coord)
+
+    assert coord.project_status(make_uuid7())["result"] == "legacy_wal_migration_required"
+
+
+def test_the_export_projection_at_the_cap_reports_read_capacity_too(tmp_path, pinned_cache_at_cap) -> None:
+    from trw_mcp.tools._delivery_status import pack_operation_projection
+
+    coord = make_coordinator(tmp_path)
+    _legacy_wal_store(coord)
+
+    projection = pack_operation_projection(coord.store, "run-x", max_operations=10, since_utc_ms=None)
+
+    assert projection["result"] == "read_capacity_exceeded", projection

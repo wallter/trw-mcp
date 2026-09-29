@@ -11,12 +11,8 @@ import pytest
 
 
 def _import_pipeline() -> Any:
-    """Import TelemetryPipeline, skipping the test if the module is absent."""
-    try:
-        mod = importlib.import_module("trw_mcp.telemetry.pipeline")
-        return mod.TelemetryPipeline
-    except ModuleNotFoundError:
-        pytest.skip("trw_mcp.telemetry.pipeline not yet implemented")
+    """Import TelemetryPipeline; a missing module fails the test."""
+    return importlib.import_module("trw_mcp.telemetry.pipeline").TelemetryPipeline
 
 
 @pytest.fixture
@@ -67,6 +63,9 @@ def _patch_trw_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Route telemetry path resolution into the test tmp_path."""
     trw_dir = tmp_path / ".trw"
     (trw_dir / "logs").mkdir(parents=True, exist_ok=True)
+    config = trw_dir / "config.yaml"
+    if not config.exists():  # the payload project's consent: a flush's policy is read from its .trw
+        config.write_text("platform_telemetry_enabled: true\nlearning_sharing_enabled: true\n", encoding="utf-8")
     monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_trw_dir", lambda: trw_dir, raising=False)
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
     return trw_dir

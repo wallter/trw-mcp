@@ -24,7 +24,9 @@ _SCRIPT = REPO_ROOT / "scripts" / "check_agent_contracts.py"
 
 # Monorepo-only: the repo-root scripts/ layout (and .claude/agents/ mirror) is
 # absent from the standalone trw-mcp mirror. Skip cleanly there.
-if not _SCRIPT.is_file():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in mirror)", allow_module_level=True)
 
 _spec = importlib.util.spec_from_file_location("check_agent_contracts_fr01", _SCRIPT)

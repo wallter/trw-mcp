@@ -21,6 +21,9 @@ from trw_mcp.middleware.response_optimizer import (
     _yaml_dump,
 )
 
+pytestmark = pytest.mark.unit
+
+
 # --- Unit tests for _is_empty ---
 
 

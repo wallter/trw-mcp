@@ -60,11 +60,11 @@ def test_agy_gets_gemini_key_not_anthropic() -> None:
     assert "OPENAI_API_KEY" not in env
 
 
-def test_opencode_gets_all_three_provider_keys() -> None:
+def test_opencode_gets_all_three_provider_keys_under_the_names_it_reads() -> None:
     env = build_subprocess_env("opencode", source_env=_source())
     assert env["ANTHROPIC_API_KEY"] == "sk-ant-xxx"
     assert env["OPENAI_API_KEY"] == "sk-openai-yyy"
-    assert env["GEMINI_API_KEY"] == "g-zzz"
+    assert env["GOOGLE_GENERATIVE_AI_API_KEY"] == "g-zzz"  # the name opencode reads, from its GEMINI_API_KEY synonym
     # but still no unrelated secret
     assert "AWS_SECRET_ACCESS_KEY" not in env
 

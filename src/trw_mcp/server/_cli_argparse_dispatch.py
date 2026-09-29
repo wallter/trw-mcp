@@ -36,9 +36,8 @@ def add_dispatch_subcommand(
         "--client",
         default=None,
         help=(
-            f"Target CLI: {clients}. "
-            "Optional: defaults to dispatch.default_client (or a --role default) "
-            "from .trw/config.yaml."
+            f"Target CLI: {clients}, or a comma list to fan out in parallel. "
+            "Optional: defaults to dispatch.default_client from .trw/config.yaml."
         ),
     )
     dispatch_parser.add_argument(
@@ -54,32 +53,37 @@ def add_dispatch_subcommand(
     )
     dispatch_parser.add_argument(
         "--prompt",
+        action="append",
         default=None,
-        help="The prompt/instruction for the child agent (or use --prompt-file).",
+        help="The prompt, passed through as-is. Repeat it (or --prompt-file) to fan out prompt variants in parallel.",
     )
     dispatch_parser.add_argument(
         "--prompt-file",
         dest="prompt_file",
+        action="append",
         default=None,
-        help="Read the prompt body from a file instead of --prompt.",
+        help="Read a prompt from a file; repeatable, each file one variant.",
     )
     dispatch_parser.add_argument(
         "--role",
         default=None,
         choices=sorted(ROLE_TABLE),
-        help="Prepend a read-only second-opinion audit role preamble to the prompt.",
+        help="Optional preset: prepend that role's preamble. It never sets a posture or refuses a client.",
     )
     dispatch_parser.add_argument(
         "--posture",
         choices=("default", "reviewer"),
-        default=None,
+        default="default",
         help=(
-            "Confinement posture for the child. A --role that is a review/audit role "
-            "(e.g. adversarial-audit, code-review) auto-derives posture=reviewer, fail-closed, "
-            "so a review role never runs unbounded by omission. Pass --posture default to "
-            "override that derivation (a warning is printed, since the child then runs "
-            "unbounded). Maps to the same posture machinery trw_dispatch uses."
+            "Opt in to TRW's bounded reviewer surface for the child. Best effort: a client that cannot "
+            "carry it still runs, and the result says posture_enforced=false with what it did get."
         ),
+    )
+    dispatch_parser.add_argument(
+        "--require-posture",
+        dest="require_posture",
+        action="store_true",
+        help="Refuse (exit 2) instead of running when the client cannot carry --posture.",
     )
     dispatch_parser.add_argument(
         "--model",

@@ -32,6 +32,7 @@ from trw_mcp.state._path_context_probe import (
 from trw_mcp.state._path_context_probe import (
     _walk_ctx_attrs as _walk_ctx_attrs,
 )
+from trw_mcp.state._project_root_binding import install_target
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
@@ -166,8 +167,9 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     Precedence (strict):
       1. *explicit* arg — caller-supplied, wins unconditionally.
       2. ``TRW_SESSION_ID`` env var — operator-forced identity / subprocess
-         inheritance, and what ``.trw/runtime/hook-env.sh`` exports into hook
-         shells (PRD-FIX-118 FR01).
+         inheritance, and what this client's own
+         ``.trw/runtime/hook-env.d/<key>.sh`` exports into hook shells
+         (PRD-FIX-118 FR01).
       2b. The launching client's own session variable (PRD-FIX-118 FR01) — the
          one identifier the MCP server and a shell hook can BOTH observe.
       3. FastMCP :class:`~fastmcp.Context` probing via
@@ -235,7 +237,8 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     # The client's variable (e.g. CLAUDE_CODE_SESSION_ID) is present in BOTH this
     # process's environment and every hook shell, so preferring it here makes the
     # key readable on both sides. The hook side gets the identical string from
-    # ``.trw/runtime/hook-env.sh``, which exports it as TRW_SESSION_ID (layer 2).
+    # this client's own ``.trw/runtime/hook-env.d/<key>.sh`` file, which exports
+    # it as TRW_SESSION_ID (layer 2).
     #
     # Ordered ABOVE the ctx probe deliberately: an unobservable key is exactly the
     # defect. Clients that publish nothing fall through unchanged, so this is
@@ -329,15 +332,20 @@ from trw_mcp.state._paths_pin_mgmt import (
 
 
 def resolve_project_root() -> Path:
-    """Resolve the project root from environment or CWD.
+    """Resolve the project root from the enclosing install, the environment, or CWD.
 
     Resolution order:
-    1. ``TRW_PROJECT_ROOT`` environment variable (if set)
-    2. Current working directory
+    1. The target an enclosing ``init_project``/``update_project`` names
+       (context-local, ``_project_root_binding``; B71-118)
+    2. ``TRW_PROJECT_ROOT`` environment variable (if set)
+    3. Current working directory
 
     Returns:
         Absolute path to the project root directory.
     """
+    bound = install_target()
+    if bound is not None:
+        return bound
     env_root = os.environ.get("TRW_PROJECT_ROOT")
     if env_root:
         return Path(env_root).resolve()

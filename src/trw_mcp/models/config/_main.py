@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, TypeVar
 import structlog
 from pydantic import Field, model_validator
 
-from trw_mcp.models.config._client_profile import ClientProfile
+from trw_mcp.models.config._client_profile import ClientProfile, NudgePoolWeights
 from trw_mcp.models.config._local_only_guard import reject_local_only_mapping
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
@@ -272,6 +272,22 @@ class TRWConfig(_TRWConfigFields):
         if self.nudge_density is not None:
             return self.nudge_density
         return self.client_profile.nudge_density
+
+    def effective_nudge_pool_weights(
+        self, task_profile_weights: tuple[int, int, int, int] | None = None
+    ) -> NudgePoolWeights:
+        """PRD-CORE-335 FR01: resolve nudge pool routing weights, three tiers.
+
+        Explicit TRWConfig.nudge_pool_weights wins; else the caller's run
+        task_profile tuple (workflow, learnings, ceremony, context); else the
+        client profile's weights. The one runtime read of the profile value.
+        """
+        if self.nudge_pool_weights is not None:
+            return self.nudge_pool_weights
+        if task_profile_weights is not None:
+            workflow, learnings, ceremony, context = task_profile_weights
+            return NudgePoolWeights(workflow=workflow, learnings=learnings, ceremony=ceremony, context=context)
+        return self.client_profile.nudge_pool_weights
 
     @cached_property
     def active_run_complexity(self) -> str | None:

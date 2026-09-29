@@ -11,6 +11,8 @@ from trw_mcp.bootstrap import _CONTEXT_ALLOWLIST, _cleanup_context_transients, u
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 @pytest.mark.unit
 class TestContextCleanupEdgeCases:

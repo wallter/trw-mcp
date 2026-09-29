@@ -13,18 +13,13 @@ PRD-CORE-127: Copilot CLI integration as first-class TRW client profile.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import cast
 
 import structlog
 
-# Mirrored-artifact generators (.github/instructions, /agents, /skills) live in
-# _copilot_artifacts (350-eLOC gate). Re-exported so ``from ._copilot import ...``
-# keeps working for _init_project_ide.py, _ide_targets.py,
-# _version_migration_clients.py, bootstrap/__init__.py, and the test modules that
-# import through this facade.
-from ._copilot_artifacts import _COPILOT_AGENTS_DIR as _COPILOT_AGENTS_DIR
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 from ._copilot_artifacts import _COPILOT_INSTRUCTIONS_DIR as _COPILOT_INSTRUCTIONS_DIR
 from ._copilot_artifacts import _COPILOT_SKILLS_DIR as _COPILOT_SKILLS_DIR
 from ._copilot_artifacts import _PATH_SCOPED_TEMPLATES as _PATH_SCOPED_TEMPLATES
@@ -143,12 +138,9 @@ def generate_copilot_instructions(
 
     Delegates to the shared ``write_instruction_file_with_merge`` helper.
     """
-    from trw_mcp.state.claude_md._sidecar_retire import retire_instruction_sidecars
-
     result = _new_result()
     target_path = target_dir / _COPILOT_INSTRUCTIONS_PATH
     rendered = _copilot_instructions_content()
-    retire_instruction_sidecars(target_dir)
 
     write_instruction_file_with_merge(
         target_path=target_path,
@@ -214,14 +206,29 @@ def _build_hook_adapter_command(event_name: str, hook_path: str, adapter_path: s
     ``adapter_path`` is the installed location of ``trw-copilot-adapter.sh``
     inside the target project (defaults to ``$git_root/.github/hooks/…``).
     It is a plain path string — no quoting needed in the generated command.
+
+    ``TRW_HOOK_CLIENT`` is exported ahead of the adapter and inherited by the
+    target hook it execs internally: copilot's adapter invokes the SAME
+    PHYSICAL ``.claude/hooks/<script>.sh`` claude-code installs, so
+    ``lib-trw.sh``'s path-derived key would otherwise always resolve "claude"
+    here too. The value is derived with the SAME resolver the hook-env writer
+    uses (``_hook_env_key``) rather than a literal "copilot" -- a hand-typed
+    literal here previously diverged from the writer's actual key
+    (``_hook_env_key`` resolves copilot's ``.github`` config dir to
+    ``"github"``, not ``"copilot"``), so copilot silently read no file at all
+    and ran on lib-trw.sh's built-in defaults (sol round 2 P1).
     """
+    from trw_mcp.bootstrap._hook_env import _hook_env_key
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    hook_client_key = _hook_env_key(resolve_client_profile("copilot"))
     if adapter_path is None:
         git_root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
         adapter_path = f"{git_root}/.github/hooks/{_COPILOT_ADAPTER_SCRIPT_NAME}"
 
     # The generated command is a simple two-argument invocation of the adapter
     # script.  No nested quoting, no inline shell logic — shell-safe by design.
-    return f'/bin/sh "{adapter_path}" "{hook_path}" "{event_name}"'
+    return f'TRW_HOOK_CLIENT={hook_client_key} /bin/sh "{adapter_path}" "{hook_path}" "{event_name}"'
 
 
 def _copilot_hooks_payload() -> CopilotHooksPayload:
@@ -301,8 +308,8 @@ def generate_copilot_hooks(
     Also copies the bundled ``trw-copilot-adapter.sh`` into
     ``.github/hooks/`` so the generated hook commands can invoke it.
     The adapter script contains all shell logic — the hooks.json ``command``
-    strings are simple ``/bin/sh "<adapter>" "<hook>" "<event>"`` invocations
-    with no nested quoting.
+    strings are simple ``TRW_HOOK_CLIENT=copilot /bin/sh "<adapter>" "<hook>"
+    "<event>"`` invocations with no nested quoting.
     """
     result = _new_result()
     hooks_dir = target_dir / _GITHUB_DIR / "hooks"
@@ -313,11 +320,11 @@ def generate_copilot_hooks(
     adapter_dest = target_dir / _COPILOT_ADAPTER_INSTALL_PATH
     if adapter_src.is_file():
         try:
-            shutil.copy2(adapter_src, adapter_dest)
+            write_checkout_file(target_dir, adapter_dest, adapter_src.read_bytes())
             # Make it executable
             adapter_dest.chmod(adapter_dest.stat().st_mode | 0o111)
             _record_write(result, _COPILOT_ADAPTER_INSTALL_PATH, existed=adapter_dest.exists())
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to install adapter script: {exc}")
 
     # --- Write hooks.json ---
@@ -339,9 +346,9 @@ def generate_copilot_hooks(
             payload = _merge_copilot_hooks(raw_existing)
         else:
             payload = _copilot_hooks_payload()
-        hooks_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_checkout_file(target_dir, hooks_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
         _record_write(result, _COPILOT_HOOKS_PATH, existed=existed)
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
 
     return result

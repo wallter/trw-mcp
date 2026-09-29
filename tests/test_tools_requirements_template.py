@@ -13,14 +13,14 @@ class TestTemplateLoading:
     """Tests for _load_template_body() and template caching."""
 
     def test_returns_string(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert isinstance(body, str)
         assert len(body) > 100
 
     def test_strips_frontmatter(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert not body.startswith("---")
@@ -28,7 +28,7 @@ class TestTemplateLoading:
 
     def test_repeated_loads_revalidate_and_return_equal_body(self) -> None:
         import trw_mcp.tools._prd_template_helpers as helpers
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body1 = _load_template_body()
         assert helpers._CACHED_TEMPLATE_BODY is not None
@@ -37,31 +37,31 @@ class TestTemplateLoading:
         assert body1 == body2
 
     def test_contains_quality_checklist(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert "Quality Checklist" in body
 
     def test_contains_appendix(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert "## Appendix" in body
 
     def test_contains_nfr03_security(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert "NFR03: Security" in body
 
     def test_contains_acceptance_tests(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert "Acceptance Tests" in body
 
     def test_contains_phase3_release(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         body = _load_template_body()
         assert "Phase 3: Release" in body
@@ -73,7 +73,7 @@ class TestTemplateLoading:
 
         reset_template_cache()
         try:
-            from trw_mcp.tools.requirements import _load_template_body
+            from trw_mcp.tools._prd_template_helpers import _load_template_body
 
             with (
                 unittest.mock.patch.object(Path, "is_file", return_value=False),
@@ -89,7 +89,7 @@ class TestTemplateVersionExtraction:
 
     def test_version_extracted_correctly(self) -> None:
         import trw_mcp.tools._prd_template_helpers as helpers
-        from trw_mcp.tools.requirements import _load_template_body
+        from trw_mcp.tools._prd_template_helpers import _load_template_body
 
         _load_template_body()
         assert helpers._CACHED_TEMPLATE_VERSION == "3.2"
@@ -102,7 +102,7 @@ class TestTemplateVersionExtraction:
 
         reset_template_cache()
         try:
-            from trw_mcp.tools.requirements import _load_template_body
+            from trw_mcp.tools._prd_template_helpers import _load_template_body
 
             with (
                 unittest.mock.patch.object(Path, "is_file", return_value=False),
@@ -118,7 +118,7 @@ class TestTemplateSubstitution:
     """Tests for _substitute_template()."""
 
     def test_category_replaced(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body, _substitute_template
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, _substitute_template
 
         body = _load_template_body()
         result = _substitute_template(body, "PRD-CORE-007", "Test", "CORE", 7, "P1", 0.7)
@@ -126,7 +126,7 @@ class TestTemplateSubstitution:
         assert "{CAT}" not in result
 
     def test_sequence_replaced(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body, _substitute_template
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, _substitute_template
 
         body = _load_template_body()
         result = _substitute_template(body, "PRD-CORE-007", "Test", "CORE", 7, "P1", 0.7)
@@ -135,7 +135,7 @@ class TestTemplateSubstitution:
         assert "007" in result
 
     def test_title_replaced(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body, _substitute_template
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, _substitute_template
 
         body = _load_template_body()
         result = _substitute_template(body, "PRD-CORE-007", "My Feature", "CORE", 7, "P1", 0.7)
@@ -143,7 +143,7 @@ class TestTemplateSubstitution:
         assert "My Feature" in result
 
     def test_quick_reference_values(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body, _substitute_template
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, _substitute_template
 
         body = _load_template_body()
         result = _substitute_template(body, "PRD-FIX-003", "Fix", "FIX", 3, "P0", 0.9)
@@ -153,7 +153,7 @@ class TestTemplateSubstitution:
         assert "**Evidence**: Moderate" in result
 
     def test_prose_placeholders_left_intact(self) -> None:
-        from trw_mcp.tools.requirements import _load_template_body, _substitute_template
+        from trw_mcp.tools._prd_template_helpers import _load_template_body, _substitute_template
 
         body = _load_template_body()
         result = _substitute_template(body, "PRD-CORE-001", "Test", "CORE", 1, "P1", 0.7)

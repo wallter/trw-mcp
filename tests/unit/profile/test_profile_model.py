@@ -11,6 +11,8 @@ from pydantic import ValidationError
 
 from trw_mcp.profile import PROFILE_SURFACE_KEYS, Profile
 
+pytestmark = pytest.mark.unit
+
 
 def test_profile_schema_keys_exact() -> None:
     """FR-1: the surface declares exactly the documented override keys.

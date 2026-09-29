@@ -13,7 +13,6 @@ __all__ = [
     "AgentFormatError",
     "ConfigError",
     "NamespaceEnumerationError",
-    "ReflectionError",
     "StateError",
     "TRWError",
     "ValidationError",
@@ -54,14 +53,6 @@ class ValidationError(TRWError):
 
     Raised when output contracts, phase exit criteria,
     or PRD quality gates are not met.
-    """
-
-
-class ReflectionError(TRWError):
-    """Error during reflection/learning cycle.
-
-    Raised when event analysis, learning extraction,
-    or pattern discovery fails.
     """
 
 

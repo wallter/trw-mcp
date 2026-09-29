@@ -313,7 +313,7 @@ def test_an_unmarked_server_passes_the_callers_arguments_to_the_resolver(monkeyp
     monkeypatch.delenv(CHILD_MARKER_ENV, raising=False)
     monkeypatch.setattr(dispatch_tool, "resolve_dispatch_request", _record)
 
-    out = _tool()(prompt="hi", client="claude", with_trw=True, read_only=True, model="m")
+    out = _tool()(prompt="hi", client="claude:m", with_trw=True, read_only=True)
 
     assert out["exit_code"] == 2
     assert (seen["client"], seen["with_trw"], seen["read_only"], seen["model"]) == ("claude", True, True, "m")

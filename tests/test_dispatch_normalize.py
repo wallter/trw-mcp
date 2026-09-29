@@ -342,6 +342,28 @@ def test_a_non_event_line_in_a_complete_stream_is_a_stop_not_raw_text() -> None:
     assert verdict == "auth_or_content_stop"
 
 
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c"])
+def test_a_unicode_line_separator_inside_an_event_keeps_the_stream_complete(separator: str) -> None:
+    """RUNNER-SILENCE-MISCLASSIFY: JSONL splits on newline only, never str.splitlines' wider set.
+
+    JSON strings may carry U+2028 raw; a codex review of a diff that contained one had its
+    event line cut in two, read as malformed, and a completed PASS was recorded as a stop.
+    """
+    from trw_mcp.dispatch._normalize import classify_silence
+
+    lines = [
+        {"type": "thread.started", "thread_id": "t"},
+        {"type": "item.completed", "item": {"type": "command_execution", "aggregated_output": f"a{separator}b"}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": f"PASS{separator}done"}},
+        {"type": "turn.completed", "usage": {}},
+    ]
+    raw = "\n".join(json.dumps(line, ensure_ascii=False) for line in lines) + "\n"
+    text, structured = normalize_output("codex", raw)
+    assert structured is not None and structured["ignored_lines"] == 0
+    assert structured["stop_reason"] == "completed" and text == f"PASS{separator}done"
+    assert classify_silence(text=text, raw_stderr="", structured=structured, exit_code=0, timed_out=False) is None
+
+
 @pytest.mark.parametrize("failed", [False, True], ids=["truncated", "truncated+turn.failed"])
 def test_a_stream_cut_by_the_runner_cap_is_never_a_success(failed: bool) -> None:
     from trw_mcp.dispatch._normalize import classify_silence

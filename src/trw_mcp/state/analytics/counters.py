@@ -94,62 +94,6 @@ def find_success_patterns(
     return patterns[: cfg_sp.reflect_max_success_patterns]
 
 
-def detect_tool_sequences(
-    events: list[dict[str, object]],
-    lookback: int = 3,
-    min_occurrences: int = 3,
-) -> list[dict[str, object]]:
-    """Detect recurring event sequences that precede success events.
-
-    For each success anchor event, looks back at the preceding ``lookback``
-    events, extracts the event_type sequence, and counts occurrences.
-    Sequences appearing ``min_occurrences`` or more times are reported.
-
-    Args:
-        events: List of event dictionaries from events.jsonl.
-        lookback: Number of preceding events to include in each sequence.
-        min_occurrences: Minimum occurrences for a sequence to be reported.
-
-    Returns:
-        List of dicts with ``sequence`` (list[str]), ``count`` (int),
-        and ``success_rate`` (str) keys.
-    """
-    if len(events) < 2:
-        return []
-
-    sequence_counts: dict[tuple[str, ...], int] = {}
-    total_anchors = 0
-
-    for i, event in enumerate(events):
-        if not _ac.is_success_event(event):
-            continue
-        total_anchors += 1
-        start = max(0, i - lookback)
-        preceding = [_ac._get_event_type(events[j]) or "unknown" for j in range(start, i)]
-        current_type = _ac._get_event_type(event) or "unknown"
-        seq = (*preceding, current_type)
-        if len(seq) >= 2:
-            sequence_counts[seq] = sequence_counts.get(seq, 0) + 1
-
-    results: list[dict[str, object]] = []
-    for seq, count in sorted(
-        sequence_counts.items(),
-        key=lambda x: x[1],
-        reverse=True,
-    ):
-        if count >= min_occurrences:
-            rate = f"{count}/{total_anchors}" if total_anchors else "0/0"
-            results.append(
-                {
-                    "sequence": list(seq),
-                    "count": count,
-                    "success_rate": rate,
-                }
-            )
-
-    return results
-
-
 # ---------------------------------------------------------------------------
 # Analytics counter management
 # ---------------------------------------------------------------------------

@@ -9,8 +9,8 @@ apply different security/posture defaults depending on the entry point.
 
 Precedence (highest wins):
 
-- client: explicit ``client`` > ``dispatch_role_client[role]`` (when ``role``
-  set) > ``dispatch_default_client``. ``None`` after that -> error.
+- client: explicit ``client`` > ``dispatch_default_client``. ``None`` after that -> error
+  (a role never picks the client: it is a prompt preset only).
 - model: explicit ``model`` > ``dispatch_default_models[client]`` > the role's task-class tier
   where the client has a verified tier map (PRD-CORE-290-FR03).
 - effort: explicit ``effort`` > ``dispatch_default_effort`` > the role's task-class effort.
@@ -18,9 +18,11 @@ Precedence (highest wins):
 - read_only: an EXPLICIT ``read_only`` (True or False) is honored; ``None`` ->
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
   for turning an ``--allow-writes`` request into ``read_only=False``.)
-- posture: taken from the caller only; there is deliberately NO config default,
-  because a config that could turn any dispatch into a "reviewer" would let a
-  project's own file decide that a child is contained.
+- posture: taken from the caller only (a role never implies one); there is deliberately
+  NO config default, because a config that could turn any dispatch into a "reviewer"
+  would let a project's own file decide that a child is contained. Best effort: a client
+  that cannot carry it runs at ``default`` with ``posture_note`` naming what it does get,
+  unless ``require_posture`` asks for the refusal.
 - with_trw: an EXPLICIT value (True or False) is honored; ``None`` -> the
   ``dispatch_child_trw_access`` config baseline. Unlike posture, a config
   default here is safe in the one direction that matters: it can only CONNECT a
@@ -53,6 +55,7 @@ from typing import TYPE_CHECKING, cast, get_args
 import structlog
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._confine import confinement_prefix
 from trw_mcp.dispatch._policy import operator_set, resolve_effort, resolve_max_turns, resolve_model
 from trw_mcp.dispatch._posture import (
     ReviewerPostureError,
@@ -83,29 +86,15 @@ class DispatchResolutionError(ValueError):
         self.exit_code = exit_code
 
 
-def _resolve_client(
-    *,
-    client: str | None,
-    role: str | None,
-    dispatch_cfg: object,
-) -> str:
+def _resolve_client(*, client: str | None, dispatch_cfg: object) -> str:
     """Resolve the target client by precedence, raising on failure.
 
-    explicit > role mapping > default. A resolved client not in
-    ``dispatch_enabled_clients`` is rejected.
+    explicit > default. A resolved client not in ``dispatch_enabled_clients`` is rejected.
     """
-    default_client = getattr(dispatch_cfg, "dispatch_default_client", None)
-    role_client = getattr(dispatch_cfg, "dispatch_role_client", {})
-
-    resolved = client
-    if resolved is None and role is not None and isinstance(role_client, dict):
-        resolved = role_client.get(role)
-    if resolved is None:
-        resolved = default_client
+    resolved = client if client is not None else getattr(dispatch_cfg, "dispatch_default_client", None)
     if resolved is None:
         raise DispatchResolutionError(
-            "No dispatch client resolved: pass a client or set "
-            "dispatch.default_client (or dispatch.role_client) in .trw/config.yaml.",
+            "No dispatch client resolved: pass a client or set dispatch.default_client in .trw/config.yaml.",
             exit_code=2,
         )
 
@@ -161,6 +150,7 @@ def resolve_dispatch_request(
     isolate: bool,
     use_pty: bool,
     posture: str = "default",
+    require_posture: bool = False,
     with_trw: bool | None = None,
     verify_sandbox: bool = False,
     dispatch_cfg: object,
@@ -170,7 +160,7 @@ def resolve_dispatch_request(
     Raises :class:`DispatchResolutionError` (``exit_code=2``) when no client
     resolves or the resolved client is disabled.
     """
-    resolved_client = _resolve_client(client=client, role=role, dispatch_cfg=dispatch_cfg)
+    resolved_client = _resolve_client(client=client, dispatch_cfg=dispatch_cfg)
 
     # Model and effort: explicit request > operator config > the role's task-class
     # row (PRD-CORE-290-FR03); the winning source is recorded on the request.
@@ -209,7 +199,9 @@ def resolve_dispatch_request(
     else:
         effective_read_only = read_only
 
-    resolved_posture = _resolve_posture(posture, client=resolved_client, read_only=effective_read_only)
+    resolved_posture, posture_note = _resolve_posture(
+        posture, client=resolved_client, read_only=effective_read_only, require=require_posture
+    )
 
     # TRW access: an explicit caller value (True or False) is AUTHORITATIVE; only
     # ``None`` falls back to the config default — the same precedence read_only
@@ -259,6 +251,7 @@ def resolve_dispatch_request(
         isolate=isolate,
         use_pty=use_pty,
         posture=resolved_posture,
+        posture_note=posture_note,
         with_trw=effective_with_trw,
         verify_sandbox=verify_sandbox,
     )
@@ -284,14 +277,25 @@ def _resolve_cwd(cwd: Path | None, *, client: str) -> Path | None:
     return Path.cwd().resolve() if spec.cwd_flag is not None else None
 
 
-def _resolve_posture(posture: str, *, client: str, read_only: bool) -> DispatchPosture:
-    """Validate the requested posture for this client, or refuse with exit_code=2.
+def delivered_confinement(client: str, *, read_only: bool) -> str:
+    """What *client* is confined by without a posture: the caller's view of what it DID get."""
+    if not read_only:
+        return "writes allowed; TRW surface unbounded"
+    spec = client_spec_for(client)
+    parts = ["sandbox-exec write-deny active"] if spec.host_confinement and confinement_prefix() else []
+    parts += [f"client flag {' '.join(spec.read_only_argv)}"] if spec.read_only_argv else []
+    bounded = spec.read_only_env.get("TRW_SURFACE_ROLE") == "reviewer"
+    parts.append("TRW surface reviewer (inherited env)" if bounded else "TRW surface unbounded")
+    return "; ".join(parts)
 
-    Refusal, not degradation, for the same reason ``_refuse_unverified`` refuses:
-    a caller who asked for a bounded reviewer and silently received an unbounded
-    child would have no way to know the bound was missing, and would then cite
-    that child's output as contained evidence. The message names the client and
-    the reason so the caller has a next step other than a bypass.
+
+def _resolve_posture(posture: str, *, client: str, read_only: bool, require: bool) -> tuple[DispatchPosture, str]:
+    """The posture to launch with, and a note when the requested one could not be carried.
+
+    Best effort (operator directive 2026-09-26): a client that cannot carry the requested posture
+    runs at ``default``, and the note names why and what confinement it does deliver, so the
+    caller never mistakes the output for bounded evidence. ``require`` restores the refusal.
+    A reviewer with writes is a contradiction in the request itself and is always refused.
     """
     postures = get_args(DispatchPosture)
     if posture not in postures:
@@ -302,5 +306,41 @@ def _resolve_posture(posture: str, *, client: str, read_only: bool) -> DispatchP
     try:
         verify_reviewer_posture(client, posture, read_only=read_only)
     except ReviewerPostureError as exc:
-        raise DispatchResolutionError(str(exc), exit_code=2) from exc
-    return cast("DispatchPosture", posture)
+        if require or not read_only:
+            raise DispatchResolutionError(str(exc), exit_code=2) from exc
+        delivered = delivered_confinement(client, read_only=read_only)
+        why = str(exc).split(". ")[0].rstrip(".")  # the refusal's advice ("dispatch it with ...") no longer applies
+        return "default", f"posture {posture!r} not enforced ({why}). Delivered: {delivered}."
+    return cast("DispatchPosture", posture), ""
+
+
+def uncommitted_work_warning(cwd: Path | None, *, writes: bool) -> str:
+    """A warning when a WRITABLE child is pointed at a git tree holding uncommitted work.
+
+    Warns rather than refuses: dispatching an implementer into a dirty tree is
+    sometimes the intent. A read-only child, a non-git directory or a git failure
+    yields ``""`` -- the check is advisory and must never block a launch.
+    """
+    if not writes:
+        return ""
+    import subprocess
+
+    where = (cwd or Path.cwd()).resolve()
+    try:
+        out = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", "-C", str(where), "status", "--porcelain"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # trw-fail-silent-allow: advisory check only
+        return ""
+    dirty = [line for line in out.stdout.splitlines() if line.strip()] if out.returncode == 0 else []
+    if not dirty:
+        return ""
+    logger.warning("dispatch_writes_into_uncommitted_tree", cwd=str(where), dirty_paths=len(dirty))
+    return (
+        f"writable child dispatched into {where}, which has {len(dirty)} uncommitted path(s); "
+        "the child may overwrite them -- commit first or dispatch read-only"
+    )

@@ -39,14 +39,12 @@ def test_before_edit_hook_is_importable() -> None:
 def test_before_edit_hook_exports_public_api() -> None:
     """AG-03: module exports expected public symbols."""
     from trw_mcp.channels.antigravity._before_edit_hook import (
-        AG03_CHANNEL_ID,
         AG03_HOOKS_PATH,
         HOOK_SCRIPT_CONTENT,
         generate_hook_script,
         install_before_edit_hook,
     )
 
-    assert AG03_CHANNEL_ID == "ag-03-before-edit-hook"
     assert AG03_HOOKS_PATH == ".antigravitycli/hooks.json"
     assert isinstance(HOOK_SCRIPT_CONTENT, str)
     assert callable(generate_hook_script)
@@ -159,16 +157,14 @@ def test_install_before_edit_hook_merges_existing_hooks_json(tmp_path: Path) -> 
 
 
 def test_ag03_channel_id_in_init_exports() -> None:
-    """AG-03: AG03_CHANNEL_ID and install_before_edit_hook re-exported from __init__."""
+    """AG-03: the hook installer surface is re-exported from __init__."""
     from trw_mcp.channels.antigravity import (
-        AG03_CHANNEL_ID,
         AG03_HOOKS_PATH,
         HOOK_SCRIPT_CONTENT,
         generate_hook_script,
         install_before_edit_hook,
     )
 
-    assert AG03_CHANNEL_ID == "ag-03-before-edit-hook"
     assert AG03_HOOKS_PATH == ".antigravitycli/hooks.json"
     assert isinstance(HOOK_SCRIPT_CONTENT, str)
     assert callable(generate_hook_script)

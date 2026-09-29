@@ -20,9 +20,15 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 from tests._layout import path_without
-from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
+from tests.channels.claude_code._distill_hint_support import (
+    CHECKOUT_PYTHONPATH,
+    deploy_distill_hint,
+    init_isolated_repo,
+    run_distill_hint_hook,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,18 +41,23 @@ def _run_hook(
     *,
     timeout: int = 8,
 ) -> subprocess.CompletedProcess[str]:
-    """Run the CC-03 hook with the given stdin payload and project dir."""
-    return subprocess.run(
-        ["sh", str(deploy_distill_hint(tmp_project))],
-        input=stdin_payload,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "TRW_PROJECT_DIR": str(tmp_project),
-        },
-    )
+    """Run the CC-03 hook with the given stdin payload and project dir.
+
+    L-CUAX: routed through run_distill_hint_hook, which pins cwd/HOME to
+    tmp_project so the hook can never resolve the enclosing checkout.
+    """
+    return run_distill_hint_hook(stdin_payload, tmp_project, timeout=timeout)
+
+
+def _context(stdout: str) -> str:
+    """The text Claude Code adds to the model's context: hookSpecificOutput.additionalContext.
+
+    Plain PreToolUse stdout reaches no context, so the hook emits one JSON object
+    and every text-size contract applies to this field, not to the envelope.
+    """
+    payload = json.loads(stdout)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    return str(payload["hookSpecificOutput"]["additionalContext"])
 
 
 def _enable_cc03(tmp_project: Path) -> None:
@@ -115,13 +126,20 @@ class TestNeverExitsNonZero:
         assert result.returncode == 0
 
     def test_rc0_binary_garbage(self, tmp_path: Path) -> None:
+        # L-CUAX: cwd/HOME pinned to tmp_path (binary input, so this cannot go
+        # through run_distill_hint_hook, which is text-mode only).
+        init_isolated_repo(tmp_path)
         result = subprocess.run(
             ["sh", str(deploy_distill_hint(tmp_path))],
             input=b"\x00\xff\xfe\xfd",
             capture_output=True,
             timeout=8,
+            cwd=tmp_path,
             env={
+                **daemon_env_passthrough(),
                 "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "PYTHONPATH": CHECKOUT_PYTHONPATH,
+                "HOME": str(tmp_path),
                 "TRW_PROJECT_DIR": str(tmp_path),
             },
         )
@@ -181,6 +199,7 @@ class TestOptInGate:
         """No jq: lib-trw.sh _json_get reads the payload with python3, so the hint still fires."""
         project = tmp_path / "project"
         project.mkdir()
+        init_isolated_repo(project)
         _enable_cc03(project)
         result = subprocess.run(
             ["sh", str(deploy_distill_hint(project))],
@@ -188,8 +207,11 @@ class TestOptInGate:
             capture_output=True,
             text=True,
             timeout=8,
+            cwd=project,
             env={
+                **daemon_env_passthrough(),
                 "PATH": path_without(tmp_path, {"jq"}, "/usr/bin:/bin:/usr/local/bin"),
+                "HOME": str(tmp_path),
                 "TRW_PROJECT_DIR": str(project),
             },
         )
@@ -352,7 +374,7 @@ class TestT0BeaconShape:
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
         if result.stdout:
-            assert len(result.stdout.strip()) <= 120
+            assert len(_context(result.stdout)) <= 120
 
     def test_t0_beacon_contains_trw_marker(self, tmp_path: Path) -> None:
         """T0 beacon output references TRW."""
@@ -413,7 +435,7 @@ class TestPythonFallback:
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
         if result.stdout:
-            assert len(result.stdout.strip()) <= 120
+            assert len(_context(result.stdout)) <= 120
 
 
 # ---------------------------------------------------------------------------

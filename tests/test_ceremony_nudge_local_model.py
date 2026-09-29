@@ -10,30 +10,11 @@ from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
     compute_nudge_contextual,
     compute_nudge_minimal,
-    is_local_model,
 )
 
 
 class TestLocalModelScoping:
     """FR12: Local model tool scoping and minimal ceremony."""
-
-    def test_fr12_detect_ollama_model(self) -> None:
-        assert is_local_model("ollama/qwen3-coder-next") is True
-
-    def test_fr12_detect_non_local(self) -> None:
-        assert is_local_model("anthropic/claude-sonnet-4-5") is False
-
-    def test_fr12_detect_local_prefix(self) -> None:
-        assert is_local_model("local/my-model") is True
-
-    def test_fr12_detect_localhost_in_name(self) -> None:
-        assert is_local_model("http://localhost:11434/model") is True
-
-    def test_fr12_detect_non_local_claude(self) -> None:
-        assert is_local_model("claude-opus-4-6") is False
-
-    def test_fr12_detect_non_local_openai(self) -> None:
-        assert is_local_model("openai/gpt-4o") is False
 
     def test_core269_minimal_nudge_preserves_conditionally(self, tmp_path: Path) -> None:
         """CORE269: optional preservation is not a mandatory checkpoint phase."""

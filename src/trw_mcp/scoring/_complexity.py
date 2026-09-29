@@ -16,18 +16,8 @@ from trw_mcp.models.run import (
     ComplexitySignals,
     PhaseRequirements,
 )
-
-# Tier-aware ceremony scoring lives in the sibling ``_tier_score`` Module.
-# Re-exported here so the historical ``trw_mcp.scoring._complexity`` import
-# path keeps working alongside the ``trw_mcp.scoring`` facade.
-from trw_mcp.scoring._tier_score import (
-    _TIER_EXPECTATIONS as _TIER_EXPECTATIONS,
-)
 from trw_mcp.scoring._tier_score import (
     _TierExpectation as _TierExpectation,
-)
-from trw_mcp.scoring._tier_score import (
-    compute_tier_ceremony_score as compute_tier_ceremony_score,
 )
 from trw_mcp.scoring._utils import get_config
 
@@ -184,10 +174,8 @@ def get_ceremony_depth_contract(tier: ComplexityClass) -> CeremonyDepthContract:
 
 __all__ = [
     "_HIGH_RISK_SIGNALS",
-    "_TIER_EXPECTATIONS",
     "_TierExpectation",
     "classify_complexity",
-    "compute_tier_ceremony_score",
     "get_ceremony_depth_contract",
     "get_phase_requirements",
 ]

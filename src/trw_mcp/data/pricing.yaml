@@ -9,8 +9,13 @@
 # Conventions across every row: cache_write = 1.25x input (5-minute TTL),
 # cache_read = 0.1x input -- EXCEPT the Fable/Mythos 5.1 line, whose cache
 # reads are 0.025x input, and Opus 5.5, whose cache reads are 0.05x input.
+# Sonnet 5.5 fits the standard 0.1x cache-read / 1.25x 5m-cache-write
+# convention, but also has a vendor-quoted 1h cache-write rate (2x input,
+# $4/MTok). This table has no 1h-cache-write column for ANY row -- not just
+# Sonnet 5.5's -- so that rate is not modeled here at all.
 # Do not assume 0.1x when adding a row; check the vendor page.
-# (Verified 2026-09-10; Opus 5.5 row added 2026-09-22.)
+# (Verified 2026-09-10; Opus 5.5 row added 2026-09-22; Sonnet 5.5 row added
+# 2026-09-28.)
 #
 # Keys are bare model aliases. The lookup normalises the incoming id
 # before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
@@ -22,7 +27,7 @@
 # `pricing_model_unknown` once per distinct id. Add the row rather than
 # leaving a real cost reported as free.
 
-version: "2026-09-22"
+version: "2026-09-28"
 
 models:
   # --- Frontier tier -------------------------------------------------
@@ -104,15 +109,31 @@ models:
     cache_write_per_1k: 0.00625
     cache_read_per_1k: 0.0005
 
-  # --- Sonnet tier ---------------------------------------------------
-  # Standard rates. Sonnet 5 carries introductory pricing of $2/$10 per
+  # --- Sonnet tier -----------------------------------------------------
   # Corrected 2026-09-10: this row previously held 0.003/0.015 on the premise
   # that $2/$10 was introductory through 2026-08-31 and $3/$15 was the durable
   # rate. That premise is false. Anthropic's pricing page (note id
   # `claude-sonnet-5-introductory-pricing`) states the $2/$10 rate "is now the
   # standard price" and "the previously scheduled increase to $3/$15 ... on
   # September 1, 2026 will not occur." The old row over-reported every Sonnet 5
-  # cost estimate by 1.5x. Batch table ($1/$5) agrees.
+  # cost estimate by 1.5x. Batch table ($1/$5) agrees. $2/$10 is the PERMANENT
+  # standard price, not an introductory rate -- Sonnet 5.5 (below) launched at
+  # the same $2/$10 sticker.
+  #
+  # trw:intentional `claude-sonnet-5-5` is explicit even though it happens to
+  # share Sonnet 5's $2/$10 sticker and 0.1x/1.25x cache ratios: without an
+  # explicit key the `-`-boundary prefix match would still resolve it onto
+  # `claude-sonnet-5` and give the right numbers today, but silently keep
+  # doing so if a future Sonnet 5.5 rate change diverges from Sonnet 5's.
+  # Declare each point release deliberately (same rationale as Opus 5.5
+  # above). Source: platform.claude.com/docs/en/about-claude/pricing
+  # (Verified 2026-09-28.)
+  claude-sonnet-5-5:
+    input_per_1k: 0.002
+    output_per_1k: 0.010
+    cache_write_per_1k: 0.0025
+    cache_read_per_1k: 0.0002
+
   claude-sonnet-5:
     input_per_1k: 0.002
     output_per_1k: 0.010

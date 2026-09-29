@@ -17,18 +17,13 @@ from trw_mcp.models.config._client_profile import (
     ScoringDimensionWeights,
     WriteTargets,
 )
-from trw_mcp.models.config._execution_effort import EffortAdapterDecision, resolve_effort_adapter
 from trw_mcp.models.config._loader import (
     _reset_config,
     get_config,
     reload_config,
 )
 from trw_mcp.models.config._main import TRWConfig
-from trw_mcp.models.config._model_capabilities import (
-    ANTHROPIC_MODEL_CATALOG_VERSION,
-    lookup_model_effort_capabilities,
-    match_model_family,
-)
+from trw_mcp.models.config._model_capabilities import lookup_model_effort_capabilities, match_model_family
 from trw_mcp.models.config._profiles import (
     builtin_client_ids,
     resolve_client_profile,
@@ -42,7 +37,6 @@ from trw_mcp.models.config._sub_models import (
     MemoryConfig,
     OrchestrationConfig,
     PathsConfig,
-    PhaseTimeCaps,
     ScoringConfig,
     SecurityConfig,
     TelemetryConfig,
@@ -52,14 +46,12 @@ from trw_mcp.models.config._sub_models import (
 from trw_mcp.models.config._unread_fields import unread_config_fields
 
 __all__ = [
-    "ANTHROPIC_MODEL_CATALOG_VERSION",
     "BuildConfig",
     "CapabilityTier",
     "CeremonyFeedbackConfig",
     "CeremonyWeights",
     "ClientProfile",
     "DispatchConfig",
-    "EffortAdapterDecision",
     "IntentContractConfig",
     "LegacyModelTier",
     "MemoryConfig",
@@ -67,7 +59,6 @@ __all__ = [
     "NudgePoolWeights",
     "OrchestrationConfig",
     "PathsConfig",
-    "PhaseTimeCaps",
     "ScoringConfig",
     "ScoringDimensionWeights",
     "SecurityConfig",
@@ -84,7 +75,6 @@ __all__ = [
     "normalize_capability_tier",
     "reload_config",
     "resolve_client_profile",
-    "resolve_effort_adapter",
     "retired_client_ids",
     "unread_config_fields",
 ]

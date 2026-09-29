@@ -131,7 +131,7 @@ def _check_deliver_input(
                 ValidationFailure(
                     field="reflection",
                     rule="reflection_complete",
-                    message="Reflection not completed — call trw_reflect before delivery",
+                    message="Reflection not recorded yet — trw_deliver() records it once its delivery gates pass",
                     severity=severity,
                 )
             )
@@ -147,12 +147,3 @@ def _check_deliver_input(
 
 
 _InputChecker = Callable[[Path, TRWConfig, str, list[ValidationFailure]], None]
-
-_INPUT_CHECKERS: dict[str, _InputChecker] = {
-    "plan": _check_plan_input,
-    "implement": _check_implement_input,
-    "validate": _check_validate_input,
-    "review": _check_review_input,
-    "deliver": _check_deliver_input,
-    # research: no per-phase prerequisites beyond run.yaml
-}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from trw_mcp.models.config import TRWConfig
 
@@ -28,19 +29,18 @@ def _key_source(target: Path) -> str:
     return ""
 
 
-def jev_row(target: Path, config: TRWConfig) -> tuple[str, str]:
+def jev_row(target: Path, config: TRWConfig) -> tuple[Literal["PASS", "WARN", "SKIP"], str]:
     """``(status, message)``: SKIP when off, WARN when shown but unusable, PASS when usable."""
     from trw_mcp.tools._assess_enablement import backend_enablement
 
-    visible = bool(getattr(config, "assess_enabled", False))
     enabled, source = backend_enablement(target)
     key = _key_source(target)
-    if not visible and not enabled:
+    # The tool is shown whenever either switch is on (``assess_surfaced``), so "off" means both are.
+    if not getattr(config, "assess_enabled", False) and not enabled:
         return "SKIP", f"trw_assess off (experimental, opt-in): {_ENABLE_HINT}"
     # A layer that said no is named, so an operator can see which switch turned it off.
     off_reason = f"switched off by {source}" if source else _ENABLE_HINT
     missing = [
-        *([] if visible else ["tool hidden (assess_enabled false for this project)"]),
         *([] if enabled else [f"backend off: {off_reason}"]),
         *([] if key else ["no OPENROUTER_API_KEY in the environment or the project .env"]),
     ]

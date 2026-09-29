@@ -17,6 +17,7 @@ from typing import TypeVar
 
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, ConfigDict, ValidationError
+from trw_memory.models.memory import MemoryType
 
 from trw_mcp.tools._learn_arg_bags import _coerce_json, _first_validation_problem
 
@@ -42,6 +43,8 @@ class RecallOptions(BaseModel):
     graph_depth: int = 1
     graph_edge_types: list[str] | None = None
     graph_limit: int = 50
+    #: PRD-CORE-334 FR02: only rows of this type; search only (``ids``/``graph_id`` refuse it).
+    record_type: MemoryType | None = None
 
 
 class BuildCheckOptions(BaseModel):

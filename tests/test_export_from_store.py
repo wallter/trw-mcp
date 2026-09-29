@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from trw_memory.lifecycle.correction import revision_of
 
 from tests._memory_store_fake import FakeMemoryStore
 from tests._test_export_support import _setup_project, _store_entry
@@ -57,7 +58,7 @@ def test_exported_row_carries_namespace_origin_project_and_remote_id(tmp_path: P
     # through the store so the export path is exercised against a realistic row.
     entry = store.get("L-synced1")
     assert entry is not None
-    store.apply_synced(namespace, entry.model_copy(update={"remote_id": "R-abc123"}))
+    store.apply_synced(namespace, entry.model_copy(update={"remote_id": "R-abc123"}), if_revision=revision_of(entry))
 
     result = export_data(project, "learnings")
     learnings = result.get("learnings")
@@ -103,7 +104,9 @@ def test_export_keeps_non_active_learnings_with_their_status(tmp_path: Path) -> 
     _store_entry(trw_dir, summary="Retired learning", entry_id="L-old1")
     entry = store.get("L-old1")
     assert entry is not None
-    store.apply_synced(namespace, entry.model_copy(update={"status": MemoryStatus.OBSOLETE}))
+    store.apply_synced(
+        namespace, entry.model_copy(update={"status": MemoryStatus.OBSOLETE}), if_revision=revision_of(entry)
+    )
 
     learnings = export_data(project, "learnings").get("learnings")
 
@@ -121,7 +124,7 @@ def test_csv_export_carries_namespace_origin_project_and_remote_id(tmp_path: Pat
     store.put("Synced learning", namespace, {"entry_id": "L-csv1", "metadata": {ORIGIN_PROJECT_KEY: "other-repo"}})
     entry = store.get("L-csv1")
     assert entry is not None
-    store.apply_synced(namespace, entry.model_copy(update={"remote_id": "R-csv"}))
+    store.apply_synced(namespace, entry.model_copy(update={"remote_id": "R-csv"}), if_revision=revision_of(entry))
 
     text = export_data(project, "learnings", fmt="csv").get("learnings_csv")
 

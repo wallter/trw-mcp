@@ -7,6 +7,7 @@ No checkout, index, worktree, reset, stash, rebase or force operation occurs.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -15,6 +16,34 @@ from trw_mcp.formation._manifest import FormationError
 
 _SHA = re.compile(r"[0-9a-f]{40,64}\Z")
 _VERSION = re.compile(r"git version (\d+)\.(\d+)")
+# Git's own ``rev-parse --local-env-vars`` list: variables that pick a repository,
+# index or object store. Inherited from a caller (a hook, another repo's shell),
+# any of them overrides ``-C repo`` and points the queue at the wrong repository
+# (B71-26 D5), so every queue call drops them.
+_REPO_ENV = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_INTERNAL_SUPER_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    }
+)
+
+
+def _env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in _REPO_ENV}
 
 
 class MergeGitError(FormationError):
@@ -30,6 +59,7 @@ def _git(repo: Path, *args: str, input_text: str | None = None) -> str:
         out = subprocess.run(  # noqa: S603 - fixed Git executable, argv only, no shell
             ["git", "-C", str(repo), *args],  # noqa: S607 - Git is resolved from PATH by design
             input=input_text,
+            env=_env(),
             capture_output=True,
             text=True,
             check=False,
@@ -83,6 +113,7 @@ def _protected_target(repo: Path, target: str) -> None:
     try:
         origin_head = subprocess.run(  # noqa: S603 - fixed read-only Git argv, no shell
             ["git", "-C", str(repo), "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],  # noqa: S607 - Git from PATH
+            env=_env(),
             capture_output=True,
             text=True,
             check=False,

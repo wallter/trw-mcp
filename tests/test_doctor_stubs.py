@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._doctor_stubs import (
     _is_partial_prd,
@@ -17,6 +19,8 @@ from trw_mcp.server._doctor_stubs import (
     scan_partial_prds,
 )
 from trw_mcp.server._subcommands_doctor import _check_stubs, _doctor_core
+
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes")
 
 _PRDS_REL = "docs/requirements-aare-f/prds"
 

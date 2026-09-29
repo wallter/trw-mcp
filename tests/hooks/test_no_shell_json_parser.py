@@ -22,6 +22,7 @@ import pytest
 
 import trw_mcp.tools._delivery_helpers  # noqa: F401  (import-cycle order guard)
 from tests._layout import PACKAGE_ROOT
+from tests.hooks._sh_census import census
 
 _DATA = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
 #: A grep that pulls a quoted key's quoted value out of JSON text.
@@ -72,6 +73,7 @@ def test_with_python3_but_no_jq_the_edit_is_recorded(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         env={
+            **daemon_env_passthrough(),
             "PATH": _jq_free_path(tmp_path, "python3", "awk"),
             "CLAUDE_PROJECT_DIR": str(root),
             "TRW_SESSION_ID": "sess-1",
@@ -135,6 +137,7 @@ from _ownership_harness import (
     build_project,
     write_hook_env,
 )
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 
 def _jq_free_env(root: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
@@ -154,13 +157,12 @@ def _jq_free_env(root: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> None:
-    """FR02: with jq hidden, the snapshot carries the same ten keys as with jq."""
+    """FR02: with jq hidden, the snapshot carries the same nine keys as with jq."""
     root, own, _foreign = build_project(tmp_path, own_events=1)
     write_hook_env(root)
     (own / "meta" / "checkpoints.jsonl").write_text(
         json.dumps({"message": "did the thing", "pending_decisions": "ship it?"}) + "\n", encoding="utf-8"
     )
-    (own / "meta" / "wave_manifest.yaml").write_text("status: in_progress\n", encoding="utf-8")
     task_dir = own / "tasks" / "t1"
     task_dir.mkdir(parents=True)
     (task_dir / "task.json").write_text(json.dumps({"status": "in_progress"}), encoding="utf-8")
@@ -185,7 +187,6 @@ def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> Non
         "phase",
         "events_logged",
         "last_checkpoint",
-        "wave_manifest",
         "active_tasks",
         "pending_decisions",
         "ownership",
@@ -194,7 +195,6 @@ def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> Non
     assert snapshot["trigger"] == "manual"
     assert snapshot["ownership"] == "owned"
     assert snapshot["last_checkpoint"] == "did the thing"
-    assert snapshot["wave_manifest"] == "in_progress"
     assert snapshot["active_tasks"] == 1
     assert snapshot["pending_decisions"] == "ship it?"
 
@@ -289,7 +289,6 @@ def test_instructions_loaded_carries_file_and_reason_without_jq(tmp_path: Path) 
 # --------------------------------------------------------------------------- #
 
 _JQ_WORD = re.compile(r"\bjq\b")
-_FN_DEF = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{\s*$")
 
 #: (relative-to-data path, enclosing function or "" at top level, a fragment of the call's line)
 #: -> one-line reason the call stays. Keyed by content, not line number: an edit elsewhere in a
@@ -345,51 +344,6 @@ _JQ_ALLOWLIST: dict[tuple[str, str, str], str] = {
         "_trw_scan_log_for_trw_call",
         'jq -e -R --arg cut "$_tottc_since"',
     ): "jq log scan (fromjson? per line); _json_get reads one object, not a stream",
-    # FR05: the degenerate-result hook's plain field reads go through _json_get (rc9). The two
-    # below stay jq: a validity check of the whole payload, and a walk of every string leaf of
-    # tool_response, whatever its shape; the hook exits early without jq, so neither degrades.
-    (
-        "hooks/post-tool-degenerate-result.sh",
-        "",
-        "command -v jq >/dev/null 2>&1 || exit 0",
-    ): "FR05: early jq-absence exit; the walk below needs jq",
-    ("hooks/post-tool-degenerate-result.sh", "", "jq -e . >/dev/null"): "FR05: whole-payload validity check",
-    (
-        "hooks/post-tool-degenerate-result.sh",
-        "",
-        'jq -r \'.tool_response // "" | [.. | strings]',
-    ): "FR05: every string leaf of tool_response, whatever its shape",
-    (
-        "hooks/cursor/trw-before-edit-hint.sh",
-        "",
-        "command -v jq",
-    ): "FR04 deferred: jq-absence allows and exits, no fallback yet",
-    ("hooks/cursor/trw-before-edit-hint.sh", "", "jq -r '.tool_name // empty'"): "FR04 deferred: tool_name read",
-    ("hooks/cursor/trw-before-edit-hint.sh", "", "jq -r '.tool_input.file_path"): "FR04 deferred: file_path read",
-    # PRD-CORE-301 cut 2 (added after PRD-FIX-154): the session-scoped dedup
-    # extracts agent_message from the JSON envelope this SAME hook already
-    # built. jq is required earlier in this file (it exits via _allow_and_exit
-    # when absent), so here it is guaranteed present -- there is no jq-absent
-    # path for _json_get to fall back from. Sourcing lib-trw.sh to reach
-    # _json_get is not a like-for-like substitution either: lib-trw.sh's
-    # top-level hooks_enabled=false branch calls `exit 0` directly (not
-    # `return`), which mid-script here would discard the response this hook
-    # already computed and was about to emit.
-    (
-        "hooks/cursor/trw-before-edit-hint.sh",
-        "",
-        "jq -r '.agent_message // empty'",
-    ): "PRD-CORE-301 cut 2: dedup read, jq required earlier",
-    (
-        "copilot/hooks/trw-copilot-distill-hint.sh",
-        "",
-        "command -v jq",
-    ): "FR04 deferred: jq-absence prints nothing, no fallback yet",
-    (
-        "copilot/hooks/trw-copilot-distill-hint.sh",
-        "",
-        "_file_path=$(printf '%s' \"$_payload\" | jq -r",
-    ): "FR04 deferred: file_path read",
 }
 
 
@@ -397,9 +351,15 @@ def _allowlisted(relpath: str, fn: str, source: str) -> bool:
     return any(path == relpath and owner == fn and needle in source for path, owner, needle in _JQ_ALLOWLIST)
 
 
-#: Helper names inside lib-trw.sh whose jq call IS the converted, shared
-#: builder/reader this PRD introduced -- always allowed, regardless of line.
-_LIB_TRW_ALLOWED_FUNCTIONS = {"_json_get", "_json_object"}
+#: The shared readers/builders whose jq call IS the jq-else-python3 helper, per library --
+#: always allowed, regardless of line. The cursor and copilot bundles do not ship lib-trw.sh,
+#: so each carries its own reader (PRD-FIX-156-FR04).
+_SHARED_READERS: dict[str, frozenset[str]] = {
+    "hooks/lib-trw.sh": frozenset({"_json_get", "_json_object", "_json_string_leaves"}),
+    "hooks/cursor/lib-distill-hint.sh": frozenset({"_read_json_field"}),
+    "copilot/hooks/lib-copilot-distill-hint.sh": frozenset({"_read_json_field"}),
+}
+_JQ_OWNED_BLOCKS = {"_TRW_JSON_GET_PY='": "_json_get"}
 
 
 def _bundled_hook_dirs() -> list[Path]:
@@ -409,32 +369,12 @@ def _bundled_hook_dirs() -> list[Path]:
 def _census_jq_calls(path: Path) -> list[tuple[int, str, str]]:
     """(line_no, enclosing_function_or_empty, source_line) for every jq call.
 
-    Tracks lib-trw.sh's ``_TRW_JSON_GET_PY`` python heredoc as belonging to
-    ``_json_get`` (it is that function's fallback body), so a `# ... jq ...`
-    comment inside it is not misattributed as an unallowed top-level call.
+    lib-trw.sh's ``_TRW_JSON_GET_PY`` python string belongs to ``_json_get`` (it
+    is that function's fallback body), so a `# ... jq ...` comment inside it is
+    not misattributed as an unallowed top-level call.
     """
-    calls: list[tuple[int, str, str]] = []
-    current_fn = ""
-    in_json_get_py = False
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = line.strip()
-        if stripped.startswith("_TRW_JSON_GET_PY='"):
-            in_json_get_py = True
-            continue
-        if in_json_get_py and stripped == "'":
-            in_json_get_py = False
-            continue
-        match = _FN_DEF.match(stripped)
-        if match:
-            current_fn = match.group(1)
-        elif stripped == "}":
-            current_fn = ""
-        if stripped.startswith("#"):
-            continue
-        if _JQ_WORD.search(line):
-            effective_fn = current_fn or ("_json_get" if in_json_get_py else "")
-            calls.append((lineno, effective_fn, stripped))
-    return calls
+    sites = census(path, _JQ_WORD, owned_blocks=_JQ_OWNED_BLOCKS)
+    return [(site.lineno, site.function, site.source) for site in sites]
 
 
 def test_census_every_jq_call_is_in_the_shared_helpers_or_allowlisted() -> None:
@@ -443,7 +383,7 @@ def test_census_every_jq_call_is_in_the_shared_helpers_or_allowlisted() -> None:
         for path in sorted(hook_dir.glob("*.sh")):
             relpath = str(path.relative_to(_DATA))
             for lineno, fn, _source in _census_jq_calls(path):
-                if path.name == "lib-trw.sh" and fn in _LIB_TRW_ALLOWED_FUNCTIONS:
+                if fn in _SHARED_READERS.get(relpath, frozenset()):
                     continue
                 if _allowlisted(relpath, fn, _source):
                     continue
@@ -474,6 +414,13 @@ def test_the_census_is_keyed_by_content_so_a_line_shift_keeps_listed_calls_liste
     unlisted = [
         (lineno, fn)
         for lineno, fn, source in _census_jq_calls(shifted)
-        if fn not in _LIB_TRW_ALLOWED_FUNCTIONS and not _allowlisted("hooks/lib-trw.sh", fn, source)
+        if fn not in _SHARED_READERS["hooks/lib-trw.sh"] and not _allowlisted("hooks/lib-trw.sh", fn, source)
     ]
     assert unlisted == []
+
+
+def test_no_jq_only_path_is_left_deferred() -> None:
+    """PRD-FIX-156-FR04 (B71-22): every allowlisted jq call is a fast path in front of a
+    fallback, never a jq-only path parked for later."""
+    deferred = [key for key, reason in _JQ_ALLOWLIST.items() if "deferred" in reason.lower()]
+    assert deferred == []

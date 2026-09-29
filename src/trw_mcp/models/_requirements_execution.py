@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from trw_mcp.models.requirements import ExecutionState, PRDQualityTier, Priority
+from trw_mcp.models.requirements import ExecutionState, PRDQualityTier
 
 # ---------------------------------------------------------------------------
 # Activation-gate ownership (PRD-QUAL-119-FR02)
@@ -245,25 +245,6 @@ class SeamEntry(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Requirement model
-# ---------------------------------------------------------------------------
-
-
-class Requirement(BaseModel):
-    """Individual requirement with confidence and traceability."""
-
-    model_config = ConfigDict(strict=True)
-
-    id: str
-    description: str
-    priority: Priority = Priority.P1
-    confidence: float = Field(ge=0.0, le=1.0, default=0.8)
-    acceptance_criteria: list[str] = Field(default_factory=list)
-    traces_to: list[str] = Field(default_factory=list)
-    traced_from: list[str] = Field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
 # Validation models
 # ---------------------------------------------------------------------------
 
@@ -408,20 +389,10 @@ class ValidationResultV2(BaseModel):
     verdict: str = "NEEDS_WORK"
     verdict_note: str = ""
 
-
-# ---------------------------------------------------------------------------
-# Traceability
-# ---------------------------------------------------------------------------
-
-
-class TraceabilityResult(BaseModel):
-    """Result of traceability analysis."""
-
-    model_config = ConfigDict(strict=True)
-
-    total_requirements: int = 0
-    traced_requirements: int = 0
-    untraced_requirements: list[str] = Field(default_factory=list)
-    coverage: float = 0.0
-    orphan_implementations: list[str] = Field(default_factory=list)
-    missing_tests: list[str] = Field(default_factory=list)
+    # Wiring answer (PRD-QUAL-148-FR03), separate from readiness: a PRD may be
+    # ready to implement while one of its public surfaces rests only on a
+    # declared seam. One of pass|partial|unwired|not_applicable|not_evaluated
+    # (``_prd_scoring_wiring.WiringVerdict``); set by the dynamic refresh, and
+    # ``not_evaluated`` until the wiring gate actually runs, so a skipped gate
+    # is never read as a pass.
+    wiring_verdict: str = "not_evaluated"

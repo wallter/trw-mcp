@@ -1,4 +1,4 @@
-"""Split bootstrap CLAUDE.md sync tests."""
+"""Split bootstrap instruction-file sync tests."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import pytest
 from trw_mcp.bootstrap import init_project
 
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 
 class TestRunClaudeMdSync:
@@ -49,8 +51,8 @@ class TestRunClaudeMdSync:
         _run_claude_md_sync(fake_git_repo, result)
 
         # The TypeError from LLMClient is caught by the except-Exception handler
-        # and recorded as a warning (format: "CLAUDE.md sync skipped: <exc>").
-        assert any("CLAUDE.md sync skipped" in w for w in result["warnings"])
+        # and recorded as a warning (format: "Instruction sync skipped: <exc>").
+        assert any("Instruction sync skipped" in w for w in result["warnings"])
         assert result["errors"] == []
 
     def test_auth_error_does_not_leak_to_stdout(
@@ -90,113 +92,11 @@ class TestRunClaudeMdSync:
         assert "authentication" not in plain_output.lower()
         assert "TypeError" not in plain_output
 
-    def test_timeout_captured_as_warning(
-        self,
-        fake_git_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Sync operations that exceed the timeout are captured as warnings."""
-        import concurrent.futures
 
-        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
-
-        # Provide a fake API key so the early-return guard is bypassed and
-        # _run_claude_md_sync proceeds to call LLMClient().
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout")
-
-        class _TimeoutFuture:
-            def result(self, timeout: float | None = None) -> dict[str, object]:
-                raise concurrent.futures.TimeoutError()
-
-        class _TimeoutExecutor:
-            def __init__(self, max_workers: int = 1) -> None:
-                self.max_workers = max_workers
-
-            def submit(self, fn: object, /, *args: object, **kwargs: object) -> _TimeoutFuture:
-                return _TimeoutFuture()
-
-            def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
-                return None
-
-        monkeypatch.setattr(
-            "concurrent.futures.ThreadPoolExecutor",
-            _TimeoutExecutor,
-        )
-
-        result: dict[str, list[str]] = {
-            "updated": [],
-            "created": [],
-            "preserved": [],
-            "errors": [],
-            "warnings": [],
-        }
-        init_project(fake_git_repo)
-
-        _run_claude_md_sync(fake_git_repo, result, timeout=1)
-
-        assert any("timed out" in w for w in result["warnings"])
-        assert result["errors"] == []
-
-
-class TestClaudeMdSyncTimeoutFix:
-    """Tests for _run_claude_md_sync ThreadPoolExecutor timeout handling.
-
-    The fix changed ``with ThreadPoolExecutor() as pool:`` to an explicit
-    ``pool = ThreadPoolExecutor()`` + ``pool.shutdown(wait=False,
-    cancel_futures=True)`` in a finally block, preventing the context-manager
-    ``__exit__`` from blocking when a worker thread (e.g. LLMClient) hangs.
-    """
-
-    def test_sync_timeout_returns_promptly(
-        self,
-        fake_git_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """When sync times out, the function returns within timeout + buffer — not indefinitely."""
-        import concurrent.futures
-        import time as time_mod
-
-        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
-
-        # Provide a fake API key so the early-return guard is bypassed and
-        # _run_claude_md_sync proceeds to call LLMClient().
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-timeout-fix")
-
-        class _TimeoutFuture:
-            def result(self, timeout: float | None = None) -> dict[str, object]:
-                raise concurrent.futures.TimeoutError()
-
-        class _TimeoutExecutor:
-            def __init__(self, max_workers: int = 1) -> None:
-                self.max_workers = max_workers
-
-            def submit(self, fn: object, /, *args: object, **kwargs: object) -> _TimeoutFuture:
-                return _TimeoutFuture()
-
-            def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
-                return None
-
-        monkeypatch.setattr(
-            "concurrent.futures.ThreadPoolExecutor",
-            _TimeoutExecutor,
-        )
-
-        init_project(fake_git_repo)
-        result: dict[str, list[str]] = {
-            "updated": [],
-            "created": [],
-            "preserved": [],
-            "errors": [],
-            "warnings": [],
-        }
-
-        start = time_mod.monotonic()
-        _run_claude_md_sync(fake_git_repo, result, timeout=2)
-        elapsed = time_mod.monotonic() - start
-
-        # Must complete well under 10s — the old code would block for 300s
-        assert elapsed < 10, f"_run_claude_md_sync blocked for {elapsed:.1f}s; expected <10s (timeout was 2s)"
-        assert any("timed out" in w for w in result["warnings"])
+class TestClaudeMdSyncOutcomes:
+    """What _run_claude_md_sync reports. It runs in the caller's thread with no timeout (B71-118): the old
+    pool-thread timeout left a running sync writing after update-project's transaction had ended, and is
+    covered by ``test_claude_md_sync_stays_inside_the_update.py``."""
 
     def test_sync_success_adds_updated_entry(
         self,
@@ -214,7 +114,7 @@ class TestClaudeMdSyncTimeoutFix:
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md.execute_claude_md_sync",
-            lambda **kwargs: {"learnings_promoted": 3},
+            lambda **kwargs: {"status": "synced"},
         )
         monkeypatch.setattr(
             "trw_mcp.state.llm_helpers.LLMClient",
@@ -230,11 +130,9 @@ class TestClaudeMdSyncTimeoutFix:
             "warnings": [],
         }
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+        _run_claude_md_sync(fake_git_repo, result)
 
-        assert any("synced" in u for u in result["updated"])
-        # Verify the learnings count is included in the message
-        assert any("3" in u for u in result["updated"])
+        assert "Instruction files synced" in result["updated"]
 
     def test_sync_generic_exception_adds_warning(
         self,
@@ -263,12 +161,12 @@ class TestClaudeMdSyncTimeoutFix:
             "warnings": [],
         }
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=5)
+        _run_claude_md_sync(fake_git_repo, result)
 
         # Assert the *specific* handler message, not a bare "skipped" substring:
         # the retired no-API-key guard also emitted a warning containing
         # "skipped", so the loose form passed without ever reaching _broken_sync.
-        assert any("CLAUDE.md sync skipped" in w for w in result["warnings"])
+        assert any("Instruction sync skipped" in w for w in result["warnings"])
         assert result["errors"] == []
 
 
@@ -291,20 +189,14 @@ class TestSyncRunsWithoutApiKey:
         fake_git_repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With no API key, the sync still runs: a legacy sidecar import is inlined."""
+        """With no API key, the sync still runs: a missing AGENTS.md block is rewritten."""
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         init_project(fake_git_repo)
-        claude_md = fake_git_repo / "CLAUDE.md"
-        # PRD-QUAL-143-FR01: a legacy install imports a sidecar; only a real sync
-        # replaces that import with the inline block and deletes the sidecar.
-        claude_md.write_text(
-            "# Project\n\n<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n", encoding="utf-8"
-        )
-        sidecar = fake_git_repo / ".trw" / "INSTRUCTIONS.md"
-        sidecar.write_text("<!-- TRW AUTO-GENERATED \u2014 do not edit. -->\nstale sidecar\n", encoding="utf-8")
+        agents_md = fake_git_repo / "AGENTS.md"
+        agents_md.write_text("# Project\n", encoding="utf-8")
 
         result: dict[str, list[str]] = {
             "updated": [],
@@ -314,12 +206,13 @@ class TestSyncRunsWithoutApiKey:
             "warnings": [],
         }
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=30)
+        _run_claude_md_sync(fake_git_repo, result)
 
-        content = claude_md.read_text(encoding="utf-8")
-        assert "@.trw/INSTRUCTIONS.md" not in content, f"sync did not run; warnings={result['warnings']}"
-        assert "trw_session_start" in content
-        assert not sidecar.exists()
+        content = agents_md.read_text(encoding="utf-8")
+        # PRD-CORE-341: the block is the link; the protocol is in the generated file.
+        assert "@.trw/INSTRUCTIONS.md" in content.splitlines(), f"sync did not run; warnings={result['warnings']}"
+        assert "trw_session_start" in (fake_git_repo / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        assert content.startswith("# Project")
 
     def test_no_api_key_does_not_emit_a_skip_warning(
         self,
@@ -340,7 +233,7 @@ class TestSyncRunsWithoutApiKey:
             "warnings": [],
         }
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=30)
+        _run_claude_md_sync(fake_git_repo, result)
 
         assert not any("ANTHROPIC_API_KEY" in w for w in result["warnings"]), (
             f"no-API-key must not gate the sync; warnings={result['warnings']}"
@@ -353,7 +246,7 @@ class TestSyncSurfacesWriteRefusals:
 
     ``execute_claude_md_sync`` reports a guarded write it declined to perform in
     ``refusals`` and still returns normally. ``_run_claude_md_sync`` read only
-    ``learnings_promoted``, so an oversized CLAUDE.md/AGENTS.md produced the line
+    the (since removed) promotion count, so an oversized CLAUDE.md/AGENTS.md produced the line
     "CLAUDE.md synced" — the operator was told their instruction file had been
     updated when the writer had deliberately left it alone. Nobody but them can
     fix that, and nothing else in the update report said so.
@@ -385,14 +278,14 @@ class TestSyncSurfacesWriteRefusals:
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md.execute_claude_md_sync",
-            lambda **_kwargs: {"learnings_promoted": 0, "refusals": [self._REFUSAL]},
+            lambda **_kwargs: {"refusals": [self._REFUSAL]},
         )
         monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
 
         init_project(fake_git_repo)
         result = self._blank_result()
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+        _run_claude_md_sync(fake_git_repo, result)
 
         warnings = result["warnings"]
         assert any("AGENTS.md" in w for w in warnings), f"the refused file must be named: {warnings}"
@@ -409,14 +302,14 @@ class TestSyncSurfacesWriteRefusals:
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md.execute_claude_md_sync",
-            lambda **_kwargs: {"learnings_promoted": 0, "refusals": [self._REFUSAL]},
+            lambda **_kwargs: {"refusals": [self._REFUSAL]},
         )
         monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
 
         init_project(fake_git_repo)
         result = self._blank_result()
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+        _run_claude_md_sync(fake_git_repo, result)
 
         assert not any("synced" in u for u in result["updated"]), (
             f"a refused write must not be reported as a sync: {result['updated']}"
@@ -431,14 +324,14 @@ class TestSyncSurfacesWriteRefusals:
 
         monkeypatch.setattr(
             "trw_mcp.state.claude_md.execute_claude_md_sync",
-            lambda **_kwargs: {"learnings_promoted": 2, "refusals": []},
+            lambda **_kwargs: {"refusals": []},
         )
         monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
 
         init_project(fake_git_repo)
         result = self._blank_result()
 
-        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+        _run_claude_md_sync(fake_git_repo, result)
 
-        assert any("synced" in u and "2" in u for u in result["updated"])
+        assert "Instruction files synced" in result["updated"]
         assert result["warnings"] == []

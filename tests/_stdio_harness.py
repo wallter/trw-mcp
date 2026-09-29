@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
+
 _TESTS_DIR = Path(__file__).resolve().parent
 _TRW_MCP_SRC = _TESTS_DIR.parent / "src"
 _TRW_MEMORY_SRC = _TESTS_DIR.parent.parent / "trw-memory" / "src"
@@ -89,6 +91,17 @@ class StdioClosed(HarnessError):
 
 class ChildLeak(HarnessError):
     """Teardown could not prove every spawned pid is gone."""
+
+
+def pinned_server_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """A child environment whose ``PYTHONPATH`` puts THIS tree's source roots first (PRD-QUAL-146 FR06).
+
+    Every test that spawns ``python -m trw_mcp.server`` passes this as ``env=``;
+    ``test_server_spawn_pinning.py`` fails a spawn that does not.
+    """
+    env = dict(os.environ if base is None else base)
+    env["PYTHONPATH"] = os.pathsep.join([*_SRC_ROOTS, *filter(None, [env.get("PYTHONPATH")])])
+    return env
 
 
 def stdio_import_skip_reason() -> str | None:
@@ -205,7 +218,7 @@ class StdioServerHarness:
     # ── environment ──────────────────────────────────────────────────────
 
     def child_env(self, session_id: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
-        """Build the child environment: no inherited ``TRW_*`` reaches the child.
+        """Build the child environment: no inherited ``TRW_*`` reaches the child but the daemon-owner token.
 
         Dropping the whole ``TRW_*`` namespace first is what makes the "never
         touches a live store" claim checkable -- the test session's own
@@ -219,6 +232,9 @@ class StdioServerHarness:
         to be injected here or not at all.
         """
         env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
+        # The one inherited TRW_* exception: the session's daemon-owner token (and idle cap), so a
+        # memory daemon the child auto-starts is still reaped by this test session.
+        env.update(daemon_env_passthrough())
         env["PYTHONPATH"] = os.pathsep.join(_SRC_ROOTS)
         env["PYTHONUNBUFFERED"] = "1"
         env["TRW_PROJECT_ROOT"] = str(self.project_root)

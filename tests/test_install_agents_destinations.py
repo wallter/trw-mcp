@@ -20,6 +20,8 @@ from trw_mcp.agents.agent_formats import agent_format_for
 from trw_mcp.agents.tier_resolver import KNOWN_CLIENTS, materialize_agent
 from trw_mcp.bootstrap._init_project_skills import _install_agents
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT
 BUNDLED_AGENTS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents"
 BOOTSTRAP_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "bootstrap"

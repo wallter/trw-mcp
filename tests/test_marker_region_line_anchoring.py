@@ -194,7 +194,7 @@ class TestOpencodeAgentsMdWriter:
             encoding="utf-8",
         )
 
-        generate_agents_md(tmp_path, "REGENERATED TRW BODY")
+        generate_agents_md(tmp_path)
 
         out = agents_md.read_text(encoding="utf-8")
         assert f"Our block sits between `{START}` and `{END}`." in out

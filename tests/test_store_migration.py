@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import os
 import signal
 import sqlite3
 import subprocess
@@ -37,6 +38,7 @@ from trw_mcp.state._store_migration import (
     MigrationRefusedError,
     MigrationRetryError,
     apply_migration,
+    holds_rows,
     preview_migration,
     rollback_migration,
 )
@@ -194,6 +196,37 @@ def test_apply_refuses_a_project_store_another_process_holds(checkout: Path, dae
         holder.wait()
 
 
+@contextlib.contextmanager
+def _store_lock_holder(db: Path) -> Iterator[None]:
+    """Another process holding the store's ``open`` op (PRD-CORE-306) but no SQLite connection: only the store lock sees it."""
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; from trw_memory import _store_lock; _store_lock.acquire(sys.argv[1], 'open'); "
+            "print('ready', flush=True); time.sleep(60)",
+            str(db),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+    )
+    try:
+        assert holder.stdout is not None and holder.stdout.readline().strip() == "ready"
+        yield
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_apply_refuses_while_another_process_holds_the_store_lock(checkout: Path, daemon: MemoryDaemon) -> None:
+    with _store_lock_holder(checkout / ".trw" / "memory" / "memory.db"):
+        before = _snapshot(checkout)
+        with pytest.raises(MigrationRetryError, match="open in another process"):
+            apply_migration(checkout / ".trw")
+        assert _snapshot(checkout) == before
+
+
 def test_apply_moves_everything_through_the_daemon_and_pins_last(
     checkout: Path, daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -223,20 +256,96 @@ def test_apply_moves_everything_through_the_daemon_and_pins_last(
     assert not list((checkout / ".trw" / "memory").glob("migration-work-*")), "the working copy is removed"
 
 
-def test_the_stores_canary_decoys_stay_behind(checkout: Path, daemon: MemoryDaemon) -> None:
-    """The decoys guard the project store; the daemon's store seeds its own, so they are not learnings to move."""
+def _plant(checkout: Path, *entries: MemoryEntry) -> None:
     store = SQLiteBackend(checkout / ".trw" / "memory" / "memory.db")
     try:
-        store.store(MemoryEntry(id="C-1", content="decoy", namespace="default", metadata={"system_canary": "true"}))
+        for entry in entries:
+            store.store(entry)
     finally:
         store.close()
+
+
+_CANARY_FLAG = {"system_canary": "true"}
+
+
+def test_the_stores_canary_decoys_stay_behind(checkout: Path, daemon: MemoryDaemon) -> None:
+    """PRD-CORE-309: a pinned canary guards the project store, and the daemon's store seeds its own, so it is
+    not a learning to move. The flag alone does not make a canary: a flagged ordinary row moves."""
+    from trw_memory.security._runtime_canary import _seeded_canary
+
+    canary = _seeded_canary("canary-001")  # exactly as the project store seeded it
+    _plant(checkout, canary, MemoryEntry(id="F-1", content="flagged", namespace="default", metadata=_CANARY_FLAG))
     namespace = _namespace(checkout)
 
-    assert preview_migration(checkout / ".trw")["rows"] == {"default": 3}
+    assert preview_migration(checkout / ".trw")["rows"] == {"default": 4}
+    manifest = json.loads(apply_migration(checkout / ".trw").read_text(encoding="utf-8"))
+
+    assert sorted(row["id"] for row in manifest["rows"]) == sorted([*_IDS, "F-1"])
+    # The apply verified F-1 landed (every manifest id must); health, like recall, does not count a flagged row.
+    assert _served(checkout, namespace) == (3, 3, 1)
+
+
+def _through_intake(tmp_path: Path, canary_id: str) -> MemoryEntry:
+    """A seeded canary exported and imported through the real intake, as 4.0.0's CLI import did, read back:
+    its ``system_canary`` flag stripped, trust and provenance metadata added."""
+    from trw_memory.cli_storage import _rebuild_own_export
+    from trw_memory.models.config import MemoryConfig
+    from trw_memory.security._runtime_canary import _seeded_canary
+    from trw_memory.security.write_gate import guarded_store
+
+    config = MemoryConfig(storage_path=str(tmp_path / "intake"))
+    store = SQLiteBackend(tmp_path / "intake" / "memory.db", dim=config.embedding_dim)
+    try:
+        row = json.loads(json.dumps(_seeded_canary(canary_id).to_dict(), default=str))
+        assert guarded_store(store, _rebuild_own_export(row, "default"), config=config).stored
+        entry = store.get(canary_id, namespace="default")
+    finally:
+        store.close()
+    assert entry is not None and "trust_score" in entry.metadata and "system_canary" not in entry.metadata
+    return entry
+
+
+def test_a_canary_that_went_through_an_import_stays_behind(
+    checkout: Path, daemon: MemoryDaemon, tmp_path: Path
+) -> None:
+    """PRD-CORE-309: the rows 8.0 migrates went through 4.0.0's import intake; their canaries are still canaries."""
+    _plant(checkout, _through_intake(tmp_path, "canary-001"))
+
     manifest = json.loads(apply_migration(checkout / ".trw").read_text(encoding="utf-8"))
 
     assert sorted(row["id"] for row in manifest["rows"]) == _IDS
-    assert _served(checkout, namespace) == (3, 3, 1)
+    assert _served(checkout, _namespace(checkout)) == (3, 3, 1)
+
+
+def test_a_pinned_checkout_holding_only_flagged_ordinary_rows_still_migrates_them(
+    checkout: Path, daemon: MemoryDaemon
+) -> None:
+    """PRD-CORE-309: ``holds_rows`` asks ``classify_canary``, not the caller-settable flag."""
+    from trw_memory.security._runtime_canary import _seeded_canary
+
+    apply_migration(checkout / ".trw")  # pinned; the project store is empty
+    _plant(checkout, _seeded_canary("canary-001"))
+    assert not holds_rows(_store_migration._store(checkout / ".trw")), "a seeded canary is not a learning"
+    _plant(checkout, MemoryEntry(id="F-1", content="flagged", namespace="default", metadata=_CANARY_FLAG))
+    assert holds_rows(_store_migration._store(checkout / ".trw"))
+
+    manifest = json.loads(apply_migration(checkout / ".trw").read_text(encoding="utf-8"))
+
+    assert [row["id"] for row in manifest["rows"]] == ["F-1"]
+
+
+def test_a_canary_carrying_user_data_refuses_the_cutover_by_id(checkout: Path, daemon: MemoryDaemon) -> None:
+    """PRD-CORE-309 (B71-115): a pinned canary's identity with user data is refused, never dropped silently."""
+    from trw_memory.security.canary import _CANARY_FIXTURES
+
+    (canary_id, content) = _CANARY_FIXTURES[1]
+    _plant(
+        checkout, MemoryEntry(id=canary_id, content=content, namespace="default", tags=["mine"], metadata=_CANARY_FLAG)
+    )
+
+    with pytest.raises(MigrationRefusedError, match=canary_id):
+        apply_migration(checkout / ".trw")
+    assert not _store_migration._pin(checkout / ".trw"), "nothing was cut over"
 
 
 def test_an_id_the_namespace_holds_with_other_content_refuses_the_cutover(checkout: Path, daemon: MemoryDaemon) -> None:
@@ -304,7 +413,9 @@ def _edit_served(store_path: Path, namespace: str) -> None:
     from trw_memory.integrations._backend import create_backend_from_config
     from trw_memory.models.config import MemoryConfig
 
-    served = create_backend_from_config(MemoryConfig(), namespace, db_path_override=store_path)
+    served = create_backend_from_config(
+        MemoryConfig(storage_path=str(store_path.parent)), namespace, db_path_override=store_path
+    )
     try:
         served.store(MemoryEntry(id="L-late", content="written after cutover", namespace=namespace))
         late, fresh = [0.0] * served._dim, [0.0] * served._dim
@@ -347,6 +458,20 @@ def test_a_rollback_is_the_exact_inverse_of_the_namespace_now(checkout: Path, mi
     assert Path(json.loads(manifest_path.read_text(encoding="utf-8"))["backup"]).is_file()
 
 
+def test_a_rollback_run_from_outside_any_checkout_reads_the_daemons_ledger(
+    checkout: Path, migrated: tuple[Path, Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``memory migrate --rollback --target-dir <repo>`` from a directory with no ``.trw`` above it."""
+    manifest_path = migrated[0]
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.delenv("TRW_DIR", raising=False)
+
+    assert rollback_migration(checkout / ".trw", manifest_path) == 3
+    assert _project(checkout)[0] == _IDS
+
+
 def test_a_stop_mid_swap_is_resumed_by_rerunning_the_rollback(
     checkout: Path, migrated: tuple[Path, Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,6 +491,18 @@ def test_a_stop_mid_swap_is_resumed_by_rerunning_the_rollback(
     assert rollback_migration(checkout / ".trw", manifest_path) == 4
     assert _project(checkout)[0] == [*_IDS, "L-late"]
     assert not list((checkout / ".trw" / "memory").glob("migration-rollback-*")), "no staging left behind"
+
+
+def test_a_rollback_refuses_while_another_process_holds_the_project_store(
+    checkout: Path, migrated: tuple[Path, Path, str]
+) -> None:
+    manifest_path, _store_path, _namespace = migrated
+    with _store_lock_holder(checkout / ".trw" / "memory" / "memory.db"):
+        with pytest.raises(MigrationRetryError, match="open in another process"):
+            rollback_migration(checkout / ".trw", manifest_path)
+        assert "project_namespace" in (checkout / ".trw" / "config.yaml").read_text(encoding="utf-8")
+
+    assert rollback_migration(checkout / ".trw", manifest_path) == 3
 
 
 _CLAIM = (

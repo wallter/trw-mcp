@@ -9,7 +9,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
 
-if not (ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only PRD skill projection invariant", allow_module_level=True)
 
 #: codex no longer forks trw-prd-ready/trw-prd-groom on disk

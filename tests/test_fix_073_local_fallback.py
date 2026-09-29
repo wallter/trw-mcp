@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests._memory_fixtures import DaemonCheckout
+from tests._stdio_harness import pinned_server_env
 
 # ---------------------------------------------------------------------------
 # FR02 — Shared service layer
@@ -184,13 +185,12 @@ class TestOrchestrationServiceCheckpoint:
             "with-ids",
             run_path=Path(scaffold["run_path"]),
             shard_id="shard-01",
-            wave_id="wave-a",
         )
 
         cp_path = Path(scaffold["run_path"]) / "meta" / "checkpoints.jsonl"
         record = json.loads(cp_path.read_text().strip())
         assert record["shard_id"] == "shard-01"
-        assert record["wave_id"] == "wave-a"
+        assert "wave_id" not in record
 
     def test_checkpoint_raises_on_missing_path(self, tmp_path: Path) -> None:
         """FileNotFoundError when explicit run_path doesn't exist."""
@@ -268,6 +268,7 @@ class TestOrchestrationServiceLearnParity:
             impact=0.9,
             type="incident",
             confidence="high",
+            evidence_level="observed",
         )
 
         assert result["status"] == "recorded"
@@ -275,6 +276,7 @@ class TestOrchestrationServiceLearnParity:
         assert captured["impact"] == pytest.approx(0.9)
         assert captured["type"] == "incident"
         assert captured["confidence"] == "high"
+        assert captured["evidence_level"] == "observed"
 
     def test_invalid_type_is_rejected_not_raised(self, tmp_path: Path) -> None:
         """An out-of-range type returns the same structured rejection trw_learn does."""
@@ -305,6 +307,7 @@ class TestOrchestrationServiceLearnParity:
             "detail text",
             trw_dir=daemon_checkout.trw_dir,
             confidence="verified",
+            evidence_level="verified",  # PRD-CORE-312-FR02: isolate the artifact-substantiation axis
         )
 
         assert result["status"] == "rejected"
@@ -326,6 +329,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 0
@@ -347,6 +351,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
         run_path = _run_path_from_init(init.stdout)
 
@@ -365,6 +370,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 0, result.stdout + result.stderr
@@ -378,6 +384,7 @@ class TestLocalCLISubcommand:
             text=True,
             cwd=str(tmp_path),
             check=True,
+            env=pinned_server_env(),
         )
         run_path = _run_path_from_init(init.stdout)
 
@@ -386,6 +393,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
         assert status.returncode == 0, status.stdout + status.stderr
         assert "Status: active" in status.stdout
@@ -405,6 +413,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
         assert delivered.returncode == 0, delivered.stdout + delivered.stderr
         assert "Run delivered" in delivered.stdout
@@ -414,6 +423,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
         assert "Status: delivered" in after.stdout
 
@@ -436,6 +446,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(daemon_checkout.trw_dir.parent),
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 0, result.stderr
@@ -460,6 +471,8 @@ class TestLocalCLISubcommand:
                 "incident",
                 "--confidence",
                 "high",
+                "--evidence-level",
+                "observed",
                 "--impact",
                 "0.9",
                 "--evidence",
@@ -470,6 +483,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(daemon_checkout.trw_dir.parent),
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 0, result.stderr
@@ -479,6 +493,7 @@ class TestLocalCLISubcommand:
         entry_text = entry_files[0].read_text(encoding="utf-8")
         assert "type: incident" in entry_text
         assert "confidence: high" in entry_text
+        assert "evidence_level: observed" in entry_text
         assert "second evidence item" in entry_text
 
     def test_local_learn_verified_without_evidence_fails_cleanly(self, daemon_checkout: DaemonCheckout) -> None:
@@ -500,6 +515,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(daemon_checkout.trw_dir.parent),
+            env=pinned_server_env(),
         )
 
         # A clean, structured rejection message on stdout with a non-zero exit —
@@ -518,6 +534,7 @@ class TestLocalCLISubcommand:
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 1
@@ -530,6 +547,7 @@ class TestLocalCLISubcommand:
             [sys.executable, "-m", "trw_mcp.server", "local"],
             capture_output=True,
             text=True,
+            env=pinned_server_env(),
         )
 
         assert result.returncode == 0

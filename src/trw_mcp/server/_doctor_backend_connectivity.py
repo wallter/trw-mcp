@@ -37,15 +37,25 @@ __all__ = ["backend_connectivity_row", "probe_backend_url"]
 
 
 def probe_backend_url(url: str) -> tuple[bool, str]:
-    """Probe an owned/local ``backend_url`` (patchable seam). Never a prod host."""
-    import urllib.error
-    import urllib.request
+    """Probe an owned/local ``backend_url`` (patchable seam). Never a prod host.
+
+    Destination policy (PRD-SEC-021 FR04): *url* is the owned/local
+    ``config.backend_url`` (see the module docstring's "Probe scope" note).
+    No bearer is attached. ``follow_redirects=False`` and https-or-loopback
+    (FR05) come from the shared ``_outbound_http`` helper, same as the other
+    two migrated call sites; any refusal or transport error is reported as
+    ``(False, <message>)`` rather than raised, matching this function's
+    existing never-raises contract.
+    """
+    from trw_mcp._outbound_http import outbound_http_client, require_https_or_loopback
 
     try:
-        with urllib.request.urlopen(url, timeout=2) as resp:  # noqa: S310 — owned URL only
-            return True, f"{resp.status} {getattr(resp, 'reason', '')}".strip()
-    except urllib.error.URLError as exc:
-        return False, str(exc)
+        require_https_or_loopback(url)
+        with outbound_http_client(timeout=2.0) as client:
+            resp = client.get(url)
+        if 200 <= resp.status_code < 300:
+            return True, f"{resp.status_code} {resp.reason_phrase}".strip()
+        return False, f"{resp.status_code} {resp.reason_phrase}".strip()
     except Exception as exc:
         return False, str(exc)
 

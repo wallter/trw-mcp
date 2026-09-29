@@ -6,7 +6,6 @@ import pytest
 
 from tests._knowledge_topology_support import _make_entry
 from trw_mcp.state.knowledge_topology import (
-    build_cooccurrence_matrix,
     form_jaccard_clusters,
     sanitize_slug,
 )
@@ -58,68 +57,6 @@ class TestSanitizeSlug:
         name = "a" * 65
         result = sanitize_slug(name)
         assert len(result) == 64
-
-
-class TestBuildCooccurrenceMatrix:
-    """FR02: Tag co-occurrence counting with frequency filter."""
-
-    def test_basic_cooccurrence(self) -> None:
-        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b"]) for i in range(5)] + [
-            _make_entry(f"L-{i + 5:03d}", tags=["a", "c"]) for i in range(3)
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        assert ("a", "b") in matrix
-        assert matrix[("a", "b")] == 5
-        assert ("a", "c") in matrix
-        assert matrix[("a", "c")] == 3
-
-    def test_tag_in_only_one_entry_excluded(self) -> None:
-        entries = [
-            _make_entry("L-001", tags=["common", "rare"]),
-            _make_entry("L-002", tags=["common", "other"]),
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        for pair in matrix:
-            assert "rare" not in pair
-
-    def test_no_tags_produces_empty_matrix(self) -> None:
-        entries = [_make_entry(f"L-{i:03d}", tags=[]) for i in range(5)]
-        matrix = build_cooccurrence_matrix(entries)
-        assert matrix == {}
-
-    def test_single_tag_entries_no_pairs(self) -> None:
-        entries = [_make_entry(f"L-{i:03d}", tags=["solo"]) for i in range(10)]
-        matrix = build_cooccurrence_matrix(entries)
-        assert matrix == {}
-
-    def test_pairs_sorted_alphabetically(self) -> None:
-        entries = [
-            _make_entry("L-001", tags=["z", "a"]),
-            _make_entry("L-002", tags=["z", "a"]),
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        assert ("a", "z") in matrix
-        assert ("z", "a") not in matrix
-
-    def test_empty_entries_list(self) -> None:
-        matrix = build_cooccurrence_matrix([])
-        assert matrix == {}
-
-    def test_frequency_threshold_boundary(self) -> None:
-        entries = [
-            _make_entry("L-001", tags=["alpha", "beta"]),
-            _make_entry("L-002", tags=["alpha", "beta"]),
-        ]
-        matrix = build_cooccurrence_matrix(entries)
-        assert ("alpha", "beta") in matrix
-        assert matrix[("alpha", "beta")] == 2
-
-    def test_three_tags_produces_three_pairs(self) -> None:
-        entries = [_make_entry(f"L-{i:03d}", tags=["a", "b", "c"]) for i in range(3)]
-        matrix = build_cooccurrence_matrix(entries)
-        assert ("a", "b") in matrix
-        assert ("a", "c") in matrix
-        assert ("b", "c") in matrix
 
 
 class TestFormJaccardClusters:

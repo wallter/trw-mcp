@@ -343,6 +343,7 @@ def _save_yaml_backup(
             confidence=LearningConfidence(params.confidence)
             if isinstance(params.confidence, str)
             else params.confidence,
+            evidence_level=str(params.evidence_level),
             task_type=params.task_type,
             domain=params.domain or [],
             phase_origin=params.phase_origin,

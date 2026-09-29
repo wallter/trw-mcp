@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.telemetry.retention import rotate_telemetry_log
-
 
 def _seed_jsonl_over_threshold(path: Path, target_mb: float = 11) -> int:
     """Write enough JSONL lines to exceed the rotation threshold."""
@@ -78,20 +76,6 @@ def test_deferred_deliver_log_rotates_when_oversized(tmp_path: Path) -> None:
 # trw-mcp/tests/ ships to the public GitHub mirror via `git subtree split`, so a
 # `from trw_swarm...` import would leak proprietary API surface and hard-fail (ImportError)
 # on the standalone mirror where no trw-swarm sibling exists.
-
-
-def test_rotate_telemetry_log_compresses_dense_jsonl(tmp_path: Path) -> None:
-    path = tmp_path / "events.jsonl"
-    path.write_text('{"event":"one"}\n' * 10, encoding="utf-8")
-
-    result = rotate_telemetry_log(path, max_bytes=10, compress=True)
-
-    assert result["rotated"] is True
-    archive = Path(str(result["archive_path"]))
-    assert archive.suffix == ".gz"
-    with gzip.open(archive, "rt", encoding="utf-8") as handle:
-        assert '"event":"one"' in handle.read()
-    assert path.read_text(encoding="utf-8") == ""
 
 
 # ---------------------------------------------------------------------------

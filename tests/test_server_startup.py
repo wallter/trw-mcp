@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.smoke
+
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -335,7 +337,7 @@ class TestArgParser:
         with (
             patch("sys.argv", ["trw-mcp", "--debug"]),
             patch("trw_mcp.server._cli.get_config", return_value=config) as mock_get_config,
-            patch("trw_mcp.server._cli.reload_config") as mock_reload_config,
+            patch("trw_mcp.server._cli.set_config_override") as mock_set_override,
             patch("trw_mcp.server._cli.configure_logging"),
             patch("trw_mcp.server._cli._check_mcp_json_portability"),
             patch("trw_mcp.server._cli._start_boot_sequence") as mock_boot_sequence,
@@ -344,7 +346,10 @@ class TestArgParser:
             main()
 
         mock_get_config.assert_called_once_with()
-        mock_reload_config.assert_called_once_with(config)
+        # PRD-CORE-305-FR04: the CLI overrides are installed as a rebuild transform, not a frozen injection.
+        assert mock_set_override.call_count == 2
+        assert callable(mock_set_override.call_args_list[0].args[0])
+        assert mock_set_override.call_args_list[1].args == (None,), "main() must remove its override on exit"
         mock_boot_sequence.assert_called_once()
         mock_run_transport.assert_called_once()
 

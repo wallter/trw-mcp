@@ -1,13 +1,12 @@
-"""Deterministic 6-layer profile resolver — PRD-HPO-PROF-001 FR-2/3/4/13.
+"""Deterministic layered profile resolver — PRD-HPO-PROF-001 FR-2/3/4/13.
 
 Belongs to the ``trw_mcp.profile`` package facade. Re-exported there.
 
 ``compose(layers)`` applies layers in the fixed canonical order
-``defaults → org → domain → task-type → session → client`` (FR-2), merges
+``defaults → org → domain → task-type → client`` (FR-2), merges
 field-by-field with later-wins semantics (FR-3), honors the ``__unset__``
 removal sentinel, records per-field attribution for explain (FR-11 input),
-computes the persistent ``surface_snapshot_id`` + the sibling
-``session_override_hash`` (FR-13), and enforces governance invariants
+computes the persistent ``surface_snapshot_id`` (FR-13), and enforces governance invariants
 fail-closed (FR-9/FR-15) on the effective surface.
 
 Determinism (FR-2 assertion / NFR-7): layers are sorted into ``LAYER_ORDER``
@@ -28,7 +27,6 @@ from trw_mcp.profile.model import (
     ResolvedProfile,
 )
 from trw_mcp.profile.snapshot import (
-    compute_session_override_hash,
     compute_surface_snapshot_id,
 )
 
@@ -56,7 +54,7 @@ def compose(layers: list[ProfileLayer]) -> ResolvedProfile:
          a concrete value overrides; ``__unset__`` removes the inherited
          field. Track the origin chain for attribution (FR-11 input).
       3. Build the effective ``Profile`` and enforce invariants fail-closed.
-      4. Compute persistent snapshot id + session override hash (FR-13).
+      4. Compute the persistent snapshot id (FR-13).
     """
     ordered = _ordered(layers)
 
@@ -109,8 +107,7 @@ def compose(layers: list[ProfileLayer]) -> ResolvedProfile:
     # LAYER_ORDER position, not surface-key-iteration order. ``contributed`` is
     # populated as each layer first sets SOME field, so a deeper layer that sets
     # an earlier-processed key could be inserted ahead of a shallower one (the
-    # e2e observed ['defaults', 'session', 'org'] where 'org' outranks
-    # 'session'). This is REPORTING-ONLY — the merge above already walks
+    # e2e observed a deeper layer listed ahead of a shallower one). This is REPORTING-ONLY — the merge above already walks
     # ``ordered`` (canonical), so effective values + attribution are unchanged.
     # Unknown layer names sort last (stable), matching ``_ordered``.
     layers_applied = sorted(
@@ -122,7 +119,6 @@ def compose(layers: list[ProfileLayer]) -> ResolvedProfile:
         profile=profile,
         layers_applied=layers_applied,
         surface_snapshot_id=compute_surface_snapshot_id(ordered),
-        session_override_hash=compute_session_override_hash(ordered),
         attribution=attribution,
     )
 

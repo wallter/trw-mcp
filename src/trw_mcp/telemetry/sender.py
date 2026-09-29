@@ -8,16 +8,23 @@ attempt. Zero overhead when platform_url is empty (offline mode).
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import BatchSendResult
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state._platform_trust import (
+    payload_trw_dir,
+    platform_auth_headers,
+    platform_contact_enabled,
+    send_policy,
+)
+from trw_mcp.state.persistence import FileStateReader, json_serializer
 
 logger = structlog.get_logger(__name__)
 
@@ -73,6 +80,7 @@ class BatchSender:
         max_retries: int = 3,
         backoff_base: float = 1.0,
         platform_telemetry_enabled: bool = False,
+        source_trw_dir: Path | None,
     ) -> None:
         self._platform_urls = platform_urls
         self._platform_api_key = platform_api_key
@@ -84,20 +92,23 @@ class BatchSender:
         # send. Default False is fail-closed for egress — a sender built without
         # an explicit flag never transmits.
         self._platform_telemetry_enabled = platform_telemetry_enabled
+        # The .trw the queue (input_path) belongs to; its send policy governs these sends.
+        self._source_trw_dir = source_trw_dir
         self._reader = FileStateReader()
-        self._writer = FileStateWriter()
 
     @classmethod
     def from_config(cls) -> BatchSender:
         """Construct a sender from the active TRWConfig singleton."""
         cfg = get_config()
-        trw_dir = resolve_trw_dir()
-        input_path = trw_dir / cfg.logs_dir / cfg.telemetry_file
+        # An absolute logs_dir/telemetry_file may place the queue in another project: its policy
+        # root is the .trw that owns the queue FILE, never the current project's (review r3 P0).
+        input_path = resolve_trw_dir() / cfg.logs_dir / cfg.telemetry_file
         return cls(
             platform_urls=cfg.effective_platform_urls,
             platform_api_key=cfg.platform_api_key.get_secret_value(),
             input_path=input_path,
             platform_telemetry_enabled=cfg.platform_telemetry_enabled,
+            source_trw_dir=payload_trw_dir(input_path),
         )
 
     def send(self) -> BatchSendResult:
@@ -112,13 +123,16 @@ class BatchSender:
         # flag before any off-machine send. Zero POST when disabled; the local
         # JSONL queue is left untouched (no rewrite/truncation), so opt-out
         # suppresses only the network transmission.
-        if not self._platform_telemetry_enabled:
+        if self._source_trw_dir is None:  # the queue has no owning project: it has no policy to send under
+            return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "no_source_project"}
+        policy = send_policy(self._source_trw_dir)  # the queue's project: its consent and switch
+        if not (self._platform_telemetry_enabled and policy.platform_telemetry):
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "platform_telemetry_disabled"}
 
         # P1-C follow-up: platform_contact_enabled is the global egress kill
         # switch, on top of the per-purpose consent flag above. No request is
         # attempted; the local JSONL queue is left untouched.
-        if not platform_contact_enabled():
+        if not platform_contact_enabled(self._source_trw_dir):
             return {"sent": 0, "failed": 0, "remaining": 0, "skipped_reason": "platform_contact_disabled"}
 
         if not self._platform_urls:
@@ -214,6 +228,10 @@ class BatchSender:
         url = f"{base_url.rstrip('/')}/v1/telemetry"
 
         for attempt in range(self._max_retries):
+            if not platform_contact_enabled(
+                self._source_trw_dir
+            ):  # every request asks: the switch may flip mid-flush (B71-106)
+                return False  # the batch stays queued
             try:
                 success = self._http_post(url, batch)
                 if success:
@@ -248,7 +266,7 @@ class BatchSender:
 
         headers: dict[str, str] = {
             "Content-Type": "application/json",
-            **platform_auth_headers(url, self._platform_api_key),
+            **platform_auth_headers(url, self._platform_api_key, source_trw_dir=self._source_trw_dir),
         }
 
         try:
@@ -259,11 +277,10 @@ class BatchSender:
             return False
 
     def _rewrite_queue(self, remaining: list[dict[str, object]]) -> None:
-        """Rewrite the JSONL queue with only remaining (unsent) events."""
-        if not remaining:
-            self._input_path.write_text("", encoding="utf-8")
-            return
+        """Rewrite the JSONL queue with only remaining (unsent) events, in one atomic publish.
 
-        self._input_path.write_text("", encoding="utf-8")
-        for record in remaining:
-            self._writer.append_jsonl(self._input_path, record)
+        The same lines ``append_jsonl`` would write, published beside the queue through ``safe_fs`` so a
+        symlink planted at the queue file raises ``UnsafeWriteError`` instead of being truncated through.
+        """
+        lines = "".join(json.dumps(record, default=json_serializer) + "\n" for record in remaining)
+        write_checkout_file(self._input_path.parent, self._input_path, lines)

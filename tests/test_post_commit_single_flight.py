@@ -90,6 +90,8 @@ def test_a_second_run_defers_while_a_live_owner_holds_the_lock(repo: Path, monke
         "a deferred run must not overwrite the running owner's receipt"
     )
     assert _lock(repo).exists(), "the live owner's lock survives a deferred arrival"
+    invocation = json.loads((repo / pc.INVOCATION_REL_PATH).read_text(encoding="utf-8"))
+    assert invocation["lock_state"] == "deferred", "a deferred run still proves the hook fired"
 
 
 def test_the_lock_is_released_even_when_a_pass_raises(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,7 +113,9 @@ def test_lock_and_marker_live_under_trw_runtime(repo: Path, monkeypatch: pytest.
     before = {p for p in (repo / ".trw").rglob("*") if p.is_file()}
     pc.run_post_commit(repo)
     after = {p for p in (repo / ".trw").rglob("*") if p.is_file()}
-    assert after - before == {repo / pc.RECEIPT_REL_PATH}, "only the receipt persists after a clean run"
+    assert after - before == {repo / pc.RECEIPT_REL_PATH, repo / pc.INVOCATION_REL_PATH}, (
+        "only the receipts persist after a clean run"
+    )
 
 
 def test_the_lock_follows_the_resolved_store_not_the_repository(
@@ -362,7 +366,7 @@ def test_a_bounded_stop_skips_the_follow_up(repo: Path, monkeypatch: pytest.Monk
 
     def _slow(_repo: Path, _env: Any, _receipt: pc.PostCommitReceipt) -> None:
         passes.append(1)
-        pc._mark_pending(_pending(repo), "later")
+        pc._mark_pending(repo / ".trw", "later")
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             time.sleep(0.01)

@@ -62,7 +62,8 @@ _trw_json_scalar() {
             d = substr(s, j + 1, 1)
             if (d == "") exit 2
             if (d == "u") { out = out " "; j += 6; continue }
-            if (d == "n" || d == "t" || d == "r" || d == "b" || d == "f") out = out " "
+            if (d == "n" || d == "r") out = out "\n"
+            else if (d == "t" || d == "b" || d == "f") out = out " "
             else out = out d
             j += 2
             continue

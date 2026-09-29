@@ -28,7 +28,6 @@ from trw_mcp.telemetry.event_base import (
     SurfaceRegistered,
     ThrashingEvent,
     ToolCallEvent,
-    emit_h1_observe_mode_warning,
 )
 
 ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
@@ -171,36 +170,6 @@ def test_h1_observe_mode_warning_is_observer_subclass() -> None:
 def test_h1_observe_mode_warning_event_type() -> None:
     ev = H1ObserveModeWarning(session_id="s1")
     assert ev.event_type == "h1_observe_mode_warning"
-
-
-def test_emit_h1_observe_mode_warning_factory_populates_required_payload() -> None:
-    ev = emit_h1_observe_mode_warning(
-        session_id="s1",
-        run_id="r42",
-        emitter_name="ceremony",
-        fallback_reason="h1_substrate_not_live",
-        buffered_event_count_since_start=7,
-    )
-    assert isinstance(ev, H1ObserveModeWarning)
-    assert ev.session_id == "s1"
-    assert ev.run_id == "r42"
-    # FR-9 AC-1 required payload keys
-    assert ev.payload["emitter_name"] == "ceremony"
-    assert ev.payload["fallback_reason"] == "h1_substrate_not_live"
-    assert ev.payload["buffered_event_count_since_start"] == 7
-    assert ev.payload["activation_gate_blocked_reason"] == "h1_substrate_not_live"
-
-
-def test_emit_h1_observe_mode_warning_frozen() -> None:
-    ev = emit_h1_observe_mode_warning(
-        session_id="s1",
-        run_id=None,
-        emitter_name="ceremony",
-        fallback_reason="missing_consumer",
-        buffered_event_count_since_start=0,
-    )
-    with pytest.raises(ValidationError):
-        ev.session_id = "nope"
 
 
 # ---- PRD-HPO-MEAS-001 FR-13: EVENT_TYPE_REGISTRY + DefaultResolutionError ---

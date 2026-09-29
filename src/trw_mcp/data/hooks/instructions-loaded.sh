@@ -27,6 +27,18 @@ _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 _file_path=$(printf '%s' "$_payload" | _json_get --strings .file_path .path) || _file_path=""
 _load_reason=$(printf '%s' "$_payload" | _json_get --strings .load_reason .reason) || _load_reason=""
 
+# PRD-CORE-320 FR04: real-path marker. ONLY this branch -- a real JSON parser
+# (jq or python3) was on PATH, so the fields above are a real parse, not the
+# "" a jq-less, python3-less host silently falls back to -- writes
+# hook_real_path. A degraded run never reaches this line. Session-scoped
+# (not this run's events.jsonl, which this hook has no run identity to find):
+# the FR08 deliver step reads .trw/context/session-events.jsonl for exactly
+# this marker.
+if _trw_has_json_parser; then
+  append_event "$_project_root/.trw/context/session-events.jsonl" "hook_real_path" \
+    "\"hook_real_path\":\"instructions-loaded\""
+fi
+
 # Ensure telemetry directory exists
 _telemetry_dir="$_project_root/.trw/telemetry"
 [ -d "$_telemetry_dir" ] || mkdir -p "$_telemetry_dir" 2>/dev/null || exit 0

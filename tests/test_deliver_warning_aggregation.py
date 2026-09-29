@@ -193,3 +193,16 @@ class TestDeliverWarningAggregation:
         assert warned["warnings_present"] != clean["warnings_present"]
         assert warned["warning_count"] > clean["warning_count"]
         assert warned["warnings"] != clean["warnings"]
+
+
+@pytest.mark.parametrize("key", ["requirement_drift_warning", "integration_isolated_warning"])
+def test_drift_and_integration_warnings_are_counted(key: str) -> None:
+    """PRD-CORE-321 S2 / PRD-CORE-320: both advisory keys the deliver gates set reach warning_count."""
+    from trw_mcp.tools.ceremony import _aggregate_advisory_warnings
+
+    results: dict[str, object] = {key: "advisory text"}
+    _aggregate_advisory_warnings(results)  # type: ignore[arg-type]
+
+    assert results["warnings"] == [key]
+    assert results["warning_count"] == 1
+    assert results["warnings_present"] is True

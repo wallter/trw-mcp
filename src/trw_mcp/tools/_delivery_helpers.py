@@ -31,11 +31,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config import (
     get_config as get_config,  # re-exported: _delivery_review_gate + tests resolve get_config through this facade
 )
-from trw_mcp.models.typed_dicts import (
-    ComplianceArtifactsDict,
-    DeliveryGatesDict,
-    FinalizeRunResult,
-)
+from trw_mcp.models.typed_dicts import ComplianceArtifactsDict, DeliveryGatesDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # PRD-CORE-184-FR03: task-type-aware deliver gate mode lives in a focused
@@ -104,16 +100,9 @@ logger = structlog.get_logger(__name__)
 
 # ── Deliver helpers ──────────────────────────────────────────────────────
 
-# Threshold for review-scope block gate (R-01): file_modified count above
-# which delivery is blocked when no review was run.
-REVIEW_SCOPE_FILE_THRESHOLD = 5
-
-# Multiplier for complexity drift detection (R-02/R-05): actual files must
-# exceed planned_files * this factor AND exceed REVIEW_SCOPE_FILE_THRESHOLD.
-COMPLEXITY_DRIFT_MULTIPLIER = 2
-
-
 from trw_mcp.tools._delivery_event_checks import (
+    COMPLEXITY_DRIFT_MULTIPLIER as COMPLEXITY_DRIFT_MULTIPLIER,
+    REVIEW_SCOPE_FILE_THRESHOLD as REVIEW_SCOPE_FILE_THRESHOLD,
     _check_complexity_drift as _check_complexity_drift,
     _count_file_modified as _count_file_modified,
     _count_file_modified_current_session as _count_file_modified_current_session,
@@ -508,11 +497,6 @@ def check_delivery_gates(
         # contradiction and updates or retracts the learning itself.
 
     return result
-
-
-def finalize_run(*_args: object, **_kwargs: object) -> FinalizeRunResult:
-    """Post-delivery finalization — currently a no-op placeholder."""
-    return {}
 
 
 def copy_compliance_artifacts(

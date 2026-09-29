@@ -55,27 +55,18 @@ from trw_mcp.formation._join import create as _create
 from trw_mcp.formation._join import join as _join
 from trw_mcp.formation._join import mark_member_delivered as _mark_member_delivered
 from trw_mcp.formation._join import revise as _revise
-from trw_mcp.formation._manifest import (
-    TERMINAL_STATUSES as TERMINAL_STATUSES,
-)
+from trw_mcp.formation._manifest import TERMINAL_STATUSES as TERMINAL_STATUSES
 from trw_mcp.formation._manifest import AdmissionRefused as AdmissionRefused
-from trw_mcp.formation._manifest import (
-    FormationError as FormationError,
-)
-from trw_mcp.formation._manifest import (
-    FormationManifest as FormationManifest,
-)
-from trw_mcp.formation._manifest import (
-    FormationMember as FormationMember,
-)
-from trw_mcp.formation._manifest import (
-    FormationMemberStatus as FormationMemberStatus,
-)
+from trw_mcp.formation._manifest import FormationError as FormationError
+from trw_mcp.formation._manifest import FormationManifest as FormationManifest
+from trw_mcp.formation._manifest import FormationMember as FormationMember
+from trw_mcp.formation._manifest import FormationMemberStatus as FormationMemberStatus
 from trw_mcp.formation._merge_queue import MergeItem as MergeItem
 from trw_mcp.formation._merge_queue import MergeQueueError as MergeQueueError
 from trw_mcp.formation._merge_queue import enqueue as merge_enqueue
 from trw_mcp.formation._merge_queue import list_items as merge_list
 from trw_mcp.formation._merge_queue import run_one as merge_run_one
+from trw_mcp.formation._orchestrator import add_orchestrator as _add_orchestrator
 from trw_mcp.formation._ownership import Ownership as Ownership
 from trw_mcp.formation._ownership import declaration_covers as declaration_covers
 from trw_mcp.formation._ownership import owner_of as owner_of_manifest
@@ -96,12 +87,8 @@ from trw_mcp.formation._stall import clear_call as clear_call
 from trw_mcp.formation._stall import stall_scan as stall_scan
 from trw_mcp.formation._stall import start_call as start_call
 from trw_mcp.formation._status import MemberRow as MemberRow
-from trw_mcp.formation._store import (
-    MANIFEST_FILENAME as MANIFEST_FILENAME,
-)
-from trw_mcp.formation._store import (
-    FormationContext as FormationContext,
-)
+from trw_mcp.formation._store import MANIFEST_FILENAME as MANIFEST_FILENAME
+from trw_mcp.formation._store import FormationContext as FormationContext
 from trw_mcp.formation._store import canonical_path as canonical_path
 from trw_mcp.formation._store import manifest_path_for_run as manifest_path_for_run
 from trw_mcp.formation._store import own_slot_if_caller as own_slot_if_caller
@@ -144,6 +131,7 @@ __all__ = [
     "StallFinding",
     "WorktreeRecord",
     "ack_pause",
+    "add_orchestrator",
     "add_slots",
     "announce_candidate",
     "authority_trw_dir",
@@ -206,6 +194,8 @@ class FormationSettings:
     status_member_limit: int
     lock_timeout_seconds: float
     pin_ttl_hours: int
+    activity_stall_seconds: int = 1800
+    handoff_ttl_seconds: int = 86400
 
 
 def settings() -> FormationSettings:
@@ -230,6 +220,8 @@ def settings() -> FormationSettings:
         status_member_limit=int(getattr(cfg, "formation_status_member_limit", 16)),
         lock_timeout_seconds=float(getattr(cfg, "formation_manifest_lock_timeout_seconds", 10.0)),
         pin_ttl_hours=int(getattr(cfg, "pin_ttl_hours", 24)),
+        activity_stall_seconds=int(getattr(cfg, "formation_activity_stall_seconds", 1800)),
+        handoff_ttl_seconds=int(getattr(cfg, "comms_message_ttl_seconds", 86400)),
     )
 
 
@@ -290,13 +282,21 @@ def create(
     *,
     trw_dir: Path | None = None,
     prds_dir: Path | None = None,
+    orchestrator_member_id: str | None = None,
+    orchestrator_pin_key: str | None = None,
 ) -> FormationManifest:
-    """Allocate a formation under *orchestrator_run_path* (FR03)."""
+    """Allocate a formation under *orchestrator_run_path* (FR03).
+
+    A truthy *orchestrator_member_id* also registers the orchestrator as an
+    addressable member bound to *orchestrator_pin_key* (PRD-CORE-340-FR18).
+    """
     return _create(
         trw_dir=trw_dir or _trw_dir(),
         orchestrator_run_path=orchestrator_run_path,
         payload=dict(payload),
         prds_dir=prds_dir if prds_dir is not None else _default_prds_dir(),
+        orchestrator_member_id=orchestrator_member_id,
+        orchestrator_pin_key=orchestrator_pin_key,
     )
 
 
@@ -364,6 +364,25 @@ def add_slots(
         formation_id=formation_id,
         caller_run_path=caller_run_path,
         members=[dict(m) for m in members],
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
+def add_orchestrator(
+    formation_id: str,
+    caller_run_path: Path | None,
+    member_id: str,
+    *,
+    pin_key: str | None,
+    trw_dir: Path | None = None,
+) -> FormationManifest:
+    """Register the orchestrator as an addressable member of an existing formation (PRD-CORE-340-FR18)."""
+    return _add_orchestrator(
+        trw_dir=trw_dir or _trw_dir(),
+        formation_id=formation_id,
+        caller_run_path=caller_run_path,
+        member_id=member_id,
+        pin_key=pin_key,
         lock_timeout_seconds=settings().lock_timeout_seconds,
     )
 

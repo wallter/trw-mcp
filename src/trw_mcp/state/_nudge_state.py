@@ -18,7 +18,6 @@ from trw_mcp.state._ceremony_progress_state import _parse_nudge_history as _pars
 from trw_mcp.state._ceremony_progress_state import _state_path as _state_path
 from trw_mcp.state._ceremony_progress_state import _step_complete as _step_complete
 from trw_mcp.state._ceremony_progress_state import clear_nudge_history as clear_nudge_history
-from trw_mcp.state._ceremony_progress_state import increment_files_modified as increment_files_modified
 from trw_mcp.state._ceremony_progress_state import increment_learnings as increment_learnings
 from trw_mcp.state._ceremony_progress_state import increment_nudge_count as increment_nudge_count
 from trw_mcp.state._ceremony_progress_state import increment_tool_call_counter as increment_tool_call_counter

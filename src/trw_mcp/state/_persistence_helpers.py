@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import re
 from collections.abc import Generator
 from datetime import date, datetime
 from pathlib import Path
@@ -25,6 +26,8 @@ from typing import cast
 
 from pydantic import BaseModel
 from ruamel.yaml import YAML
+from ruamel.yaml.constructor import DuplicateKeyError, SafeConstructor
+from ruamel.yaml.error import MarkedYAMLError
 
 from trw_mcp._locking import _lock_ex, _lock_un
 
@@ -67,6 +70,55 @@ def _safe_yaml() -> YAML:
     return YAML(typ="safe")
 
 
+class _IdenticalDuplicatesConstructor(SafeConstructor):
+    """Safe constructor that tolerates a repeated key ONLY when its scalar value is identical, and records it.
+
+    A conflicting repeat still raises ``DuplicateKeyError`` (which value wins would be a guess). Nothing
+    is written by this loader; the write paths keep the strict round-trip loader and so refuse a file
+    that repeats a key.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.tolerated: list[tuple[str, int]] = []
+
+    def check_mapping_key(self, node: object, key_node: object, mapping: object, key: object, value: object) -> bool:
+        # Scalars only: ruamel builds nested collections lazily, so two repeated collections still look
+        # equal (both empty) here even when their contents differ.
+        if key in mapping and isinstance(value, str | int | float | bool | None) and mapping[key] == value:  # type: ignore[operator, index]
+            self.tolerated.append((str(key), key_node.start_mark.line + 1))  # type: ignore[attr-defined]
+            return False
+        return bool(super().check_mapping_key(node, key_node, mapping, key, value))
+
+
+def _config_yaml() -> YAML:
+    """Safe loader for config layers: identical duplicate keys tolerated (see the constructor above)."""
+    yml = YAML(typ="safe")
+    yml.Constructor = _IdenticalDuplicatesConstructor
+    return yml
+
+
+_DUPLICATE_KEY = re.compile(r'found duplicate key "(.*?)" with value')
+
+
+def yaml_error_text(exc: BaseException) -> str:
+    """Why a YAML read failed, naming the error and its line, never the values on it.
+
+    ruamel's own text for a repeated key quotes both values and its snippet quotes source lines; a config
+    layer can hold a credential, so a parse error names the error kind, the line and (for a repeated key)
+    the key, and stops there.
+    """
+    if isinstance(exc, MarkedYAMLError):
+        mark = exc.problem_mark or exc.context_mark
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        if isinstance(exc, DuplicateKeyError):
+            found = _DUPLICATE_KEY.search(exc.problem or "")
+            key = f" {found.group(1)!r}" if found else ""
+            return f"duplicate key{key} with a different value{where} (values not shown)"
+        return f"{type(exc).__name__}: {exc.problem or 'invalid YAML'}{where}"
+    return str(exc)
+
+
 def _roundtrip_yaml() -> YAML:
     """Round-trip YAML for write operations that preserve formatting.
 
@@ -82,14 +134,6 @@ def _roundtrip_yaml() -> YAML:
     yml.default_flow_style = False
     yml.preserve_quotes = True
     return yml
-
-
-def _new_yaml() -> YAML:
-    """Deprecated alias kept for any call sites not yet migrated.
-
-    New code should use _safe_yaml() for reads and _roundtrip_yaml() for writes.
-    """
-    return _roundtrip_yaml()
 
 
 def json_serializer(obj: object) -> str:
@@ -122,29 +166,6 @@ def model_to_dict(model: BaseModel) -> dict[str, object]:
         Plain dictionary with JSON-compatible values.
     """
     return cast("dict[str, object]", json.loads(model.model_dump_json()))
-
-
-@contextlib.contextmanager
-def suppress_internal_events() -> Generator[None, None, None]:
-    """Context manager that suppresses internal event types in FileEventLogger.
-
-    PRD-FIX-053-FR06: Set inside internal persistence operations so that any
-    FileEventLogger.log_event() calls triggered by those paths skip writing
-    INTERNAL_EVENT_TYPES to session-events.jsonl.
-
-    Uses contextvars so the flag is thread-safe and call-stack scoped —
-    it resets automatically when the with-block exits.
-
-    Example::
-
-        with suppress_internal_events():
-            writer.write_yaml(path, data)  # no yaml_written event emitted
-    """
-    token = _suppress_internal_events.set(True)
-    try:
-        yield
-    finally:
-        _suppress_internal_events.reset(token)
 
 
 def _resolve_hpo_event_context(

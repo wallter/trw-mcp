@@ -4,7 +4,6 @@ effort: medium
 description: "Read-only review of changed code and tests for correctness, security, performance, maintainability, integration, and requirement compliance. Use when pre-delivery or pre-merge findings must be prioritized, evidence-linked, and actionable."
 model: frontier
 maxTurns: 50
-memory: project
 tools:
   - Read
   - Glob

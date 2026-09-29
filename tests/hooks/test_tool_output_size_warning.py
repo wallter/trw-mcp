@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import path_without
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
     _HOOKS,
@@ -39,8 +40,12 @@ from tests.hooks._degenerate_result_harness import (
 )
 
 _SIZE_ADVISORY_TEXT = (
-    "This tool output is large (over the configured size threshold) — "
-    "prefer narrower queries or summarise before reusing it."
+    "[TRW] This tool output is large (over the configured size threshold); "
+    "a narrower query or a summary would be easier to reuse."
+)
+
+_SHAPE_ADVISORY_TEXT = (
+    "[TRW] This result does not distinguish 'absent' from 'could not look' — worth confirming either way."
 )
 
 
@@ -100,20 +105,20 @@ def test_payload_over_the_read_cap_still_advises_once(tmp_path: Path) -> None:
     assert _advisories(result) == [_SIZE_ADVISORY_TEXT], f"{result.stdout!r} {result.stderr!r}"
 
 
-@pytest.mark.skipif(shutil.which("jq") is not None, reason="requires jq to be ABSENT from PATH")
 @pytest_skip_no_sh
-def test_jq_absent_exits_zero_with_no_advisory(tmp_path: Path) -> None:
-    """NFR02: absent jq is silence for the size rule too, not a second parser."""
+def test_without_jq_python3_carries_the_size_rule(tmp_path: Path) -> None:
+    """PRD-FIX-156-FR04: python3 is the second parser, so a jq-less host still gets the
+    size advisory; only a host with neither parser is silent (the test below)."""
     root = _project(tmp_path, "no-jq")
-    result = _run(root, _payload(response="x" * 9000))
+    result = _run(root, _payload(response="x" * 9000), env={"PATH": path_without(tmp_path, {"jq"})})
     assert result.returncode == 0
-    assert _advisories(result) == []
+    assert _advisories(result) == [_SIZE_ADVISORY_TEXT]
 
 
 @pytest_skip_no_sh
 @pytest_skip_no_jq
-def test_jq_absent_from_path_exits_zero_with_no_advisory(tmp_path: Path) -> None:
-    """Same assertion, forced via a jq-less PATH rather than relying on the host.
+def test_no_json_parser_exits_zero_with_no_advisory(tmp_path: Path) -> None:
+    """NFR02: with neither jq nor python3 on PATH the size rule is silent.
 
     Mirrors the ``no-jq`` case in ``test_degenerate_result_nfrs.py::
     test_fail_open_matrix`` — a bare PATH carrying only the POSIX tools the
@@ -197,7 +202,7 @@ def test_shape_and_size_advisories_combine_into_one_line(tmp_path: Path) -> None
     advisories = _advisories(result)
     assert len(advisories) == 1, f"expected exactly one combined advisory, got {advisories!r}"
     combined = advisories[0]
-    assert "could not look" in combined, "the shape advisory is missing from the combined line"
+    assert _SHAPE_ADVISORY_TEXT in combined, "the shape advisory is missing from the combined line"
     assert _SIZE_ADVISORY_TEXT in combined, "the size advisory is missing from the combined line"
 
 

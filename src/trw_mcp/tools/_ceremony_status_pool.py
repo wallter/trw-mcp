@@ -30,6 +30,30 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _pinned_task_profile_weights(cfg: TRWConfig) -> tuple[int, int, int, int] | None:
+    """PRD-CORE-335 FR04: the pinned run's task_profile tuple (tier 2), or None.
+
+    Skipped when a project override is set (tier 1 wins; no run.yaml read).
+    Pin-only (no mtime scan); fail-open to tier 3.
+    """
+    if cfg.nudge_pool_weights is not None:
+        return None
+    try:
+        from trw_mcp.models.task_profile import run_task_profile_pool_weights
+        from trw_mcp.state._call_context import build_call_context
+        from trw_mcp.state._paths import get_pinned_run
+        from trw_mcp.state.persistence import FileStateReader
+
+        # No FastMCP ctx on this path: resolve the pin key from env/client session/process.
+        run_path = get_pinned_run(context=build_call_context(None))
+        if run_path is None or not run_path.exists():
+            return None
+        return run_task_profile_pool_weights(FileStateReader().read_yaml(run_path / "meta" / "run.yaml"))
+    except Exception:  # trw-fail-silent-allow: fail-open -- an unreadable run falls back to the profile
+        logger.debug("task_profile_pool_weights_unavailable", exc_info=True)
+        return None
+
+
 def select_pool(
     state: CeremonyState,
     cfg: TRWConfig,
@@ -44,7 +68,7 @@ def select_pool(
     from trw_mcp.state._ceremony_nudge_selectors import nudge_may_recall
     from trw_mcp.state.ceremony_nudge import _select_nudge_pool
 
-    weights = cfg.client_profile.nudge_pool_weights
+    weights = cfg.effective_nudge_pool_weights(_pinned_task_profile_weights(cfg))
     learnings_allowed = nudge_may_recall(context)
     if not learnings_allowed:
         weights = weights.model_copy(update={"learnings": 0})

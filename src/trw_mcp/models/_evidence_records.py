@@ -187,6 +187,17 @@ class BuildReceipt(BaseModel):
         ids = [r.command_id for r in self.command_results]
         if len(set(ids)) != len(ids):
             raise ValueError("build receipt has duplicate command_id results")
+        # PRD-CORE-320-FR06: a wired claim with no commit can't be checked —
+        # the call chain is verified on the same tree the receipt's
+        # content_binding covers, so an unbound wired claim is refused rather
+        # than persisted unverifiable. The sole production constructor
+        # (``record_build_receipt`` in tools/_evidence_writers.py) already
+        # stamps ``clean_git_sha(project_root)`` and wraps this construction
+        # in a broad except-Exception that degrades to "receipt not written"
+        # (missing evidence) rather than crashing, so raising here is safe:
+        # it can't corrupt a legitimate path, only refuse an unbindable one.
+        if self.git_sha is None and any(r.integration == "wired" for r in self.command_results):
+            raise ValueError("a wired integration claim needs a git_sha")
         return self
 
     def covers_required(self, required_command_ids: tuple[str, ...]) -> bool:
@@ -234,6 +245,11 @@ class VerificationReceipt(BaseModel):
     mapping_digest: str = Field(description="Digest of the normalized VerificationMapping snapshot.")
     method: str
     executor_origin: str = "reporter_asserted"
+    # Software-factory slice 1: the commit under verification (``subject_sha``,
+    # named by the receiver) and the clean HEAD the server observed when the
+    # check was recorded (``git_sha``; None on a dirty or non-git tree).
+    subject_sha: str | None = None
+    git_sha: str | None = None
     completed_at: str
     content_binding: ContentBinding
     evidence_artifact_path: str = ""
@@ -250,6 +266,13 @@ class VerificationReceipt(BaseModel):
     def _bound_text(cls, value: str) -> str:
         return _require_bounded_text(value, "verification text")
 
+    @field_validator("subject_sha", "git_sha")
+    @classmethod
+    def _valid_sha(cls, value: str | None) -> str | None:
+        if value is not None and re.fullmatch(r"[0-9a-f]{40,64}", value) is None:
+            raise ValueError("sha must be a lowercase Git object ID")
+        return value
+
     def matches_mapping(self, current_mapping_digest: str) -> bool:
         """True iff the receipt still names the current mapping revision (FR06).
 
@@ -257,18 +280,3 @@ class VerificationReceipt(BaseModel):
         reports it against the old ``mapping_digest`` instead.
         """
         return self.mapping_digest == current_mapping_digest
-
-
-class ReceiptTombstone(BaseModel):
-    """Collection tombstone for a garbage-collected receipt (FR09).
-
-    Retained ≥1 year and for the lifetime of any project reference. A tombstoned
-    ID SHALL never be reused.
-    """
-
-    model_config = ConfigDict(strict=True, frozen=True)
-
-    receipt_type: str
-    receipt_id: str
-    canonical_digest: str
-    collected_at: str

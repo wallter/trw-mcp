@@ -20,7 +20,7 @@ from trw_mcp.bootstrap._opencode import generate_opencode_config
 from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
 from trw_mcp.channels.copilot._vscode_mcp import generate_vscode_mcp_config
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("no_memory_daemon")]
 
 
 #: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose

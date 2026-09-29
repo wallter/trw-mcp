@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from trw_mcp._pinned_read import read_at
+from trw_mcp._checkout_access import PinnedReadCapacityExceeded, read_at
 from trw_mcp.tools._delivery_journal_schema import _SCHEMA as _SCHEMA
 from trw_mcp.tools._delivery_models import (
     OperationRecord,
@@ -52,6 +52,14 @@ _HEADER_LEN = 20
 
 class LegacyDeliveryJournalMigrationRequired(RuntimeError):
     """A read-only status call found a pre-rollback-journal database."""
+
+
+class DeliveryJournalReadCapacityExceeded(RuntimeError):
+    """The journal's header could not be checked because the process-wide pinned-fd cache is full.
+
+    Neither "legacy WAL" nor "not legacy": with no verdict on the header, opening ``mode=ro`` would hand a legacy
+    WAL file to SQLite and report the resulting failure as a corrupt store. Retry after the cache has room.
+    """
 
 
 class CorruptDeliveryJournalSchema(RuntimeError):
@@ -181,6 +189,10 @@ class JournalStore:
         try:
             # Never open/close here: the close would drop a live writer's locks (C15).
             header = read_at(self.db_path, _HEADER_LEN)
+        except PinnedReadCapacityExceeded as exc:
+            # The cache is full, so the header was NOT read: that is not a "not legacy" verdict (the mode=ro open that
+            # follows would then meet a legacy WAL file and be reported as a corrupt store).
+            raise DeliveryJournalReadCapacityExceeded(str(self.db_path)) from exc
         except OSError:  # trw-fail-silent-allow: an unreadable header is not a legacy-WAL verdict; the mode=ro open that follows surfaces the real error
             return False
         return header.startswith(_SQLITE_MAGIC) and 2 in header[18:20]

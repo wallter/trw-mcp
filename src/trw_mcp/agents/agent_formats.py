@@ -53,7 +53,6 @@ BUNDLED_AGENT_KEYS: frozenset[str] = frozenset(
         "model",
         "effort",
         "maxTurns",
-        "memory",
         "tools",
         "disallowedTools",
     }
@@ -229,7 +228,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         client_id="cursor-ide",
         destination_dir=".cursor/agents",
         key_map={"name": "name", "description": "description", "model": "model"},
-        dropped_keys=frozenset({"effort", "maxTurns", "memory", "tools", "disallowedTools"}),
+        dropped_keys=frozenset({"effort", "maxTurns", "tools", "disallowedTools"}),
         derived_keys=("readonly",),
     ),
     # Source: opencode.ai/v2/docs/agents (fetched 2026-09-03) — the documented
@@ -248,7 +247,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         client_id="opencode",
         destination_dir=".opencode/agents",
         key_map={"description": "description", "maxTurns": "steps"},
-        dropped_keys=frozenset({"name", "effort", "memory", "model", "tools", "disallowedTools"}),
+        dropped_keys=frozenset({"name", "effort", "model", "tools", "disallowedTools"}),
         constant_keys={"mode": "subagent"},
         derived_keys=("permissions",),
     ),
@@ -263,7 +262,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         filename_suffix=".toml",
         serialization="toml",
         key_map={"name": "name", "description": "description", "effort": "model_reasoning_effort"},
-        dropped_keys=frozenset({"maxTurns", "memory", "model", "tools", "disallowedTools"}),
+        dropped_keys=frozenset({"maxTurns", "model", "tools", "disallowedTools"}),
         derived_keys=("sandbox_mode",),
         body_field="developer_instructions",
     ),
@@ -289,7 +288,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         destination_dir=".github/agents",
         filename_suffix=".agent.md",
         key_map={"name": "name", "description": "description", "tools": "tools"},
-        dropped_keys=frozenset({"effort", "maxTurns", "memory", "model", "disallowedTools"}),
+        dropped_keys=frozenset({"effort", "maxTurns", "model", "disallowedTools"}),
         host_tool_aliases={
             "Bash": "execute",
             "Read": "read",
@@ -317,7 +316,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         client_id="antigravity-cli",
         destination_dir=".agents/agents",
         key_map={"name": "name", "description": "description", "model": "model"},
-        dropped_keys=frozenset({"effort", "maxTurns", "memory", "tools", "disallowedTools"}),
+        dropped_keys=frozenset({"effort", "maxTurns", "tools", "disallowedTools"}),
     ),
     # Not a format — an absence, recorded as one. cursor-cli's bootstrap writes
     # the repo-root AGENTS.md and nothing else, and Cursor's CLI reference says
@@ -346,7 +345,7 @@ _REGISTRY: dict[str, AgentFormat] = {
         client_id="grok",
         destination_dir=".grok/agents",
         key_map={"name": "name", "description": "description"},
-        dropped_keys=frozenset({"effort", "maxTurns", "memory", "model", "tools", "disallowedTools"}),
+        dropped_keys=frozenset({"effort", "maxTurns", "model", "tools", "disallowedTools"}),
     ),
 }
 

@@ -17,7 +17,6 @@ from trw_mcp.state.claude_md._static_sections import (
     render_closing_reminder,
     render_imperative_opener,
     render_memory_harmonization,
-    render_shared_learnings,
 )
 from trw_mcp.state.claude_md.sections._feedback import render_feedback_reporting
 
@@ -49,7 +48,6 @@ def render_profile_section(
         "imperative_opener": render_imperative_opener(),
         "ceremony_quick_ref": render_ceremony_quick_ref(),
         "memory_harmonization": render_memory_harmonization(),
-        "shared_learnings": render_shared_learnings(),
         "feedback_reporting": render_feedback_reporting(config.client_profile),
         "closing_reminder": render_closing_reminder(),
     }
@@ -58,7 +56,7 @@ def render_profile_section(
     # the limit is still oversize even when the target does not exist yet.
     lines = max(section.count("\n"), merged_line_count(target, section))
     oversized = _enforce_size_gate(
-        file_label="CLAUDE.md",
+        file_label="AGENTS.md",
         lines=lines,
         limit=config.max_auto_lines,
         mode=_resolve_size_gate_mode(config, project_root),

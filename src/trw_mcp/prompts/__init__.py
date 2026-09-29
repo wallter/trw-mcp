@@ -5,18 +5,10 @@ Submodules:
 - ``messaging``: Centralized AI-facing message registry, value-oriented framing (PRD-INFRA-012).
 """
 
-from trw_mcp.prompts.messaging import (
-    get_message,
-    get_message_lines,
-    get_message_or_default,
-    render_message,
-    render_tool_name,
-)
+from trw_mcp.prompts.messaging import get_message, get_message_or_default, render_tool_name
 
 __all__ = [
     "get_message",
-    "get_message_lines",
     "get_message_or_default",
-    "render_message",
     "render_tool_name",
 ]

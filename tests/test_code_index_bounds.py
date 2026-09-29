@@ -13,6 +13,7 @@ import hashlib
 import itertools
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -22,8 +23,15 @@ from pathlib import Path
 
 import pytest
 
+from tests._timing import assert_budget
 from trw_mcp.code_index import discovery as discovery_module
-from trw_mcp.code_index.bounds import MAX_INDEXED_FILE_BYTES, CodeIndexBounds, Deadline, IndexBoundExceeded
+from trw_mcp.code_index.bounds import (
+    MAX_INDEXED_FILE_BYTES,
+    STORE_LENGTH_LIMIT,
+    CodeIndexBounds,
+    Deadline,
+    IndexBoundExceeded,
+)
 from trw_mcp.code_index.discovery import discover_indexable_files
 from trw_mcp.code_index.search import lexical_search, symbol_search
 from trw_mcp.code_index.store import CHUNK_COLUMNS, default_store_path
@@ -674,25 +682,132 @@ def test_an_unchanged_file_with_many_large_prior_rows_is_not_loaded(tmp_path: Pa
     assert result.chunk_stats.indexed_files == 1
 
 
-def test_crafted_rows_that_never_match_cannot_outrun_the_deadline(tmp_path: Path) -> None:
-    """Rows the LIKE filter rejects never reach Python, so only the progress handler sees them (rc7 sol review)."""
+_CRAFTED_ROWS = 10
+_NON_MATCHING_TERMS = " ".join(f"zz{index}" for index in range(64))  # terms whose first letter never occurs
+
+
+def _plant_crafted_rows(repo: Path) -> None:
+    """Ten STORE_LENGTH_LIMIT-sized rows the LIKE filter rejects, so they never reach Python."""
+    _write(repo / "a.py")
+    update_code_index(repo)
+    with sqlite3.connect(default_store_path(repo)) as conn:
+        row = conn.execute(f"SELECT {', '.join(CHUNK_COLUMNS)} FROM chunks").fetchone()
+        conn.executemany(
+            f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) VALUES ({', '.join('?' for _ in CHUNK_COLUMNS)})",
+            [(*row[:-1], "a" * 3_900_000)] * _CRAFTED_ROWS,
+        )
+
+
+def _like_regex(pattern: str, escape: str | None) -> re.Pattern[str]:
+    """SQLite LIKE as a regex: ``%`` any run, ``_`` one char, ASCII case-insensitive, whole-value match."""
+    parts: list[str] = []
+    chars = iter(pattern)
+    for char in chars:
+        if escape is not None and char == escape:
+            parts.append(re.escape(next(chars, "")))
+        else:
+            parts.append({"%": ".*", "_": "."}.get(char, re.escape(char)))
+    return re.compile("".join(parts), re.IGNORECASE | re.DOTALL)
+
+
+def _bytes_like_scans(monkeypatch: pytest.MonkeyPatch, repo: Path, query: str = _NON_MATCHING_TERMS) -> list[int]:
+    """Run *query* with ``like()`` replaced by an equivalent that records each scanned value's bytes.
+
+    The count is the work FR05 bounds -- the bytes one LIKE call reads -- measured deterministically: it
+    does not depend on how loaded the host is, unlike the wall-clock deadline this replaces. The deadline is
+    set far out on purpose, so a slow host can never turn the count into a timeout.
+    """
+    from trw_mcp.code_index import search as search_module
+
+    scanned: list[int] = []
+
+    def like(pattern: str, value: object, escape: str | None = None) -> bool:
+        text = "" if value is None else str(value)
+        scanned.append(len(text.encode("utf-8")))
+        return _like_regex(pattern, escape).fullmatch(text) is not None
+
+    real_open_store = search_module.open_store
+
+    def counting_open_store(root: Path, deadline: object) -> tuple[sqlite3.Connection, object]:
+        conn, info = real_open_store(root, deadline)  # type: ignore[arg-type]
+        conn.create_function("like", 2, like)
+        conn.create_function("like", 3, like)
+        return conn, info
+
+    monkeypatch.setattr(search_module, "open_store", counting_open_store)
+    response = lexical_search(repo, query=query, bounds=CodeIndexBounds(query_timeout_seconds=300.0))
+    assert response.status == "ok"
+    assert response.bound == ""
+    return scanned
+
+
+def test_crafted_rows_that_never_match_scan_only_their_bounded_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-316 FR05, the discriminating consequence (the per-row budget itself is measured in
+    ``test_one_adversarial_rows_like_scan_stays_under_its_measured_budget``): rows the LIKE filter rejects
+    never reach Python, so only the scan cost is at stake, and FR05 bounds each LIKE call to
+    ``like_scan_max_bytes`` leading bytes. Counted in bytes, not seconds: the former 50 ms deadline assertion
+    failed on any CPU-saturated host (the release check's xdist lanes; L-8JHX) while the code was correct.
+    """
+    _plant_crafted_rows(tmp_path)
+
+    scanned = _bytes_like_scans(monkeypatch, tmp_path)
+
+    per_call = CodeIndexBounds().like_scan_max_bytes
+    assert scanned, "the counting like() never ran: the measurement would be vacuous"
+    assert max(scanned) <= per_call
+    assert sum(scanned) <= len(scanned) * per_call
+
+
+def test_the_byte_count_discriminates_the_unbounded_pre_fr05_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The measurement above must be able to fail: with the pre-FR05 clause (each column LIKE-scanned whole),
+    one term already reads each crafted row's full 3.9 MB text (one term keeps the unbounded scan cheap)."""
+    from trw_mcp.code_index import search as search_module
+
+    _plant_crafted_rows(tmp_path)
+    columns = search_module._LIKE_SCANNED_COLUMNS
+    unbounded = "(" + " OR ".join(f"{column} LIKE ? ESCAPE '\\'" for column in columns) + ")"
+    monkeypatch.setattr(search_module, "_bounded_like_clause", lambda max_bytes: unbounded)
+
+    scanned = _bytes_like_scans(monkeypatch, tmp_path, query="zz0")
+
+    assert max(scanned) == 3_900_000
+    assert sum(scanned) > len(scanned) * CodeIndexBounds().like_scan_max_bytes
+
+
+@pytest.mark.requires_local_timing
+def test_crafted_rows_that_never_match_finish_well_inside_a_tight_deadline(tmp_path: Path) -> None:
+    """Wall-clock backstop for the byte bound above (PRD-QUAL-141: a host budget lives only in a marked test)."""
+    _plant_crafted_rows(tmp_path)
+
+    started = time.monotonic()
+    # The default deadline, not a tight one: a query cut off by its deadline returns early and its short elapsed
+    # time would pass the budget vacuously. The query's status is gated by the byte-count test above.
+    lexical_search(tmp_path, query=_NON_MATCHING_TERMS)
+    assert_budget("crafted rows lexical query", time.monotonic() - started, 0.4, "s")  # pre-FR05: ~0.7 s
+
+
+def test_a_deadline_still_fires_when_enough_crafted_rows_genuinely_cross_it(tmp_path: Path) -> None:
+    """Regression guard for the OTHER direction: FR05 bounds one row's own cost, but the deadline (and its
+    mid-scan progress-handler enforcement) must still fire once enough such rows accumulate past a tight
+    budget -- bounding per-row cost must never turn into "the deadline can no longer be reached at all".
+    """
     _write(tmp_path / "a.py")
     update_code_index(tmp_path)
     with sqlite3.connect(default_store_path(tmp_path)) as conn:
         row = conn.execute(f"SELECT {', '.join(CHUNK_COLUMNS)} FROM chunks").fetchone()
         conn.executemany(
             f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) VALUES ({', '.join('?' for _ in CHUNK_COLUMNS)})",
-            [(*row[:-1], "a" * 3_900_000)] * 10,
+            [(*row[:-1], f"row-{i}-" + "a" * 500) for i in range(3_000)],
         )
-    # Terms whose first letter never occurs keep each row's LIKEs cheap (~65 ms), so this pins the handler's interval;
-    # one row's own scan is bounded by the length limit, not by the deadline.
     query = " ".join(f"zz{index}" for index in range(64))
 
-    started = time.monotonic()
-    response = lexical_search(tmp_path, query=query, bounds=CodeIndexBounds(query_timeout_seconds=0.05))
+    response = lexical_search(tmp_path, query=query, bounds=CodeIndexBounds(query_timeout_seconds=0.01))
 
     assert response.bound == "code_index_bounds.query_timeout_seconds"
-    assert time.monotonic() - started < 0.4  # ten such rows ran blind for ~0.7 s at the old 10,000-step interval
 
 
 @pytest.mark.parametrize("value", ["CAST('evil' AS BLOB)", "hex(zeroblob(1024))"])
@@ -1019,3 +1134,118 @@ def test_a_listing_that_fails_midway_is_skipped_as_unreadable(tmp_path: Path, mo
         with pytest.raises(IndexBoundExceeded) as caught:
             discover_indexable_files(tmp_path, bounds=CodeIndexBounds(build_max_entries=2))
         assert caught.value.bound == "code_index_bounds.build_max_entries"
+
+
+@pytest.mark.requires_local_timing
+def test_one_adversarial_rows_like_scan_stays_under_its_measured_budget(tmp_path: Path) -> None:
+    """PRD-CORE-316 FR05/NFR03: one row's LIKE-scan cost is bounded, and the bound is a measured number.
+
+    Craft the exact backlog scenario (one STORE_LENGTH_LIMIT-sized row, 64 non-matching terms)
+    against a real published store's connection, and measure the identical WHERE-clause structure
+    both unbounded (the pre-Slice-D shape) and substr-bounded (``search._bounded_like_clause``, the
+    shape lexical_search/symbol_search now build). A no-op bound (one that does not shrink the
+    columns' effective scan length) would fail the ratio; this measures the REAL production helper,
+    not a hand-rolled copy, so a future change to the bounding shape is caught here too.
+    """
+    from trw_mcp.code_index import search as search_module
+
+    _write(tmp_path / "a.py")
+    update_code_index(tmp_path)
+    store_path = default_store_path(tmp_path)
+    with sqlite3.connect(store_path) as conn:
+        row = conn.execute(f"SELECT {', '.join(CHUNK_COLUMNS)} FROM chunks").fetchone()
+        conn.executemany(
+            f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) VALUES ({', '.join('?' for _ in CHUNK_COLUMNS)})",
+            [(*row[:-1], "a" * (STORE_LENGTH_LIMIT - 100_000))],
+        )
+
+    terms = [f"zz{index}" for index in range(64)]
+    like_columns = ("symbol_name", "signature", "docstring_summary", "text", "path")
+
+    def unbounded_where() -> tuple[str, list[object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        for term in terms:
+            clauses.append("(" + " OR ".join(f"{column} LIKE ? ESCAPE '\\'" for column in like_columns) + ")")
+            params.extend([f"%{term}%"] * 5)
+        return " OR ".join(clauses), params
+
+    def bounded_where(max_bytes: int) -> tuple[str, list[object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        for term in terms:
+            clauses.append(search_module._bounded_like_clause(max_bytes))
+            params.extend([f"%{term}%"] * 5)
+        return " OR ".join(clauses), params
+
+    def measured_min_ms(where: str, params: list[object], reps: int = 9) -> float:
+        conn = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
+        try:
+            times = []
+            for _ in range(reps):
+                started = time.monotonic()
+                conn.execute(f"SELECT 1 FROM chunks WHERE {where}", params).fetchall()
+                times.append((time.monotonic() - started) * 1000)
+            return min(times)
+        finally:
+            conn.close()
+
+    where, params = unbounded_where()
+    unbounded_ms = measured_min_ms(where, params)
+
+    where, params = bounded_where(CodeIndexBounds().like_scan_max_bytes)
+    bounded_ms = measured_min_ms(where, params)
+
+    assert_budget("adversarial_like_scan_ratio", bounded_ms, 0.25 * unbounded_ms, "ms")
+    assert_budget("adversarial_like_scan_absolute", bounded_ms, 100.0, "ms")
+
+
+def test_bounded_like_clause_is_byte_exact_not_character_counted(tmp_path: Path) -> None:
+    """PRD-CORE-316 FR05 fix (core-316-sD round 1 review): substr on TEXT counts characters, not
+    bytes, so a naive substr(column, 1, N) could admit up to 4x N bytes of multi-byte UTF-8 content
+    before FR05's bound applies -- undercutting the exact scenario FR05 exists to bound. The fix
+    casts to BLOB first, so the admitted byte count matches the advertised bound exactly regardless
+    of encoding.
+
+    Content: 5 "filler" characters (4 bytes each = 20 bytes, exactly the bound) followed by 15
+    "marker" characters the query searches for. A byte-exact bound admits only the filler and never
+    finds the marker; a character-counted bound (the pre-fix bug) admits all 20 CHARACTERS -- the
+    filler AND the marker, since the whole string is only 20 characters long -- and falsely matches.
+    """
+    from trw_mcp.code_index import search as search_module
+
+    _write(tmp_path / "a.py")
+    update_code_index(tmp_path)
+    filler = "\U0001f600" * 5  # 5 chars, 20 bytes -- exactly fills the 20-byte bound
+    marker = "\U0001f603" * 15  # a DIFFERENT 4-byte character, placed entirely past the bound
+    content = filler + marker  # 20 characters total, 80 bytes total
+    pattern = ["%\U0001f603%"] * 5  # the marker: must be found only if the bound leaks past byte 20
+
+    with sqlite3.connect(default_store_path(tmp_path)) as conn:
+        row = conn.execute(f"SELECT {', '.join(CHUNK_COLUMNS)} FROM chunks").fetchone()
+        conn.executemany(
+            f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) VALUES ({', '.join('?' for _ in CHUNK_COLUMNS)})",
+            [(*row[:-1], content)],
+        )
+        byte_exact_clause = search_module._bounded_like_clause(20)
+        found_byte_exact = conn.execute(f"SELECT 1 FROM chunks WHERE {byte_exact_clause}", pattern).fetchall()
+
+        # The pre-fix shape (substr on TEXT, no CAST): reproduces the bug directly, proving this
+        # test is discriminating -- it must find the marker, since 20 characters is the WHOLE string.
+        character_counted_clause = (
+            "("
+            + " OR ".join(
+                f"substr({column}, 1, 20) LIKE ? ESCAPE '\\'"
+                for column in ("symbol_name", "signature", "docstring_summary", "text", "path")
+            )
+            + ")"
+        )
+        found_character_counted = conn.execute(
+            f"SELECT 1 FROM chunks WHERE {character_counted_clause}", pattern
+        ).fetchall()
+
+    assert found_byte_exact == [], "a byte-exact 20-byte bound must never reach the marker past byte 20"
+    assert found_character_counted == [(1,)], (
+        "the pre-fix character-counted shape must still find the marker (20 chars = the whole "
+        "string) -- if this assertion fails, the scenario itself stopped discriminating"
+    )

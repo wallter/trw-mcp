@@ -23,7 +23,6 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.models.run import RunStatus
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
     ReflectResultDict,
@@ -61,6 +60,7 @@ def _read_pre_compact_recovery() -> tuple[str, str]:
         marker = read_pre_compact_marker()
     except Exception:  # justified: fail-open, recovery readback must not block session start
         logger.debug("pre_compact_recovery_read_failed", exc_info=True)
+        # trw-fail-silent-allow: recovery-readback failure already logged above.
         return "", ""
     if marker is None:
         return "", ""
@@ -173,14 +173,6 @@ def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
     return hint
 
 
-def _mark_run_complete(run_dir: Path) -> None:
-    """Mark a run as complete by updating status in run.yaml."""
-    try:
-        update_run_yaml(run_dir, lambda data: data.update(status=RunStatus.COMPLETE.value))
-    except Exception:  # justified: fail-open, marking complete is best-effort
-        logger.warning("mark_run_complete_failed", exc_info=True, run_dir=str(run_dir))
-
-
 def _persist_surface_snapshot_pointer(run_dir: Path, snapshot_id: str) -> None:
     """Persist the run's surface snapshot pointer into ``run.yaml`` (FR-2)."""
     try:
@@ -203,7 +195,7 @@ def _persist_surface_snapshot_pointer(run_dir: Path, snapshot_id: str) -> None:
 def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     """Execute reflection logic — extract learnings from events.
 
-    Simplified version of the full trw_reflect tool, focused on
+    Simplified version of the reflection the retired reflect tool ran, focused on
     mechanical extraction for delivery ceremony.
     """
     from trw_mcp.state._helpers import read_jsonl_resilient

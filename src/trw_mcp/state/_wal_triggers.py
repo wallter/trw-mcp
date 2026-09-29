@@ -46,6 +46,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
@@ -221,11 +222,15 @@ def record_reset_checkpoint(db_path: Path, *, now: float | None = None) -> bool:
 
 
 def _write_marker(marker: Path, *, now: float | None = None) -> bool:
-    """Write one timestamp marker. ``True`` when it is on disk, ``False`` on OSError."""
+    """Write one timestamp marker beside the store. ``True`` when it is on disk, ``False`` on OSError.
+
+    Anchored on the store directory (PRD-CORE-337 FR08): a symlink planted at the marker raises
+    ``UnsafeWriteError`` instead of being followed.
+    """
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(f"{time.time() if now is None else now:.3f}\n", encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(marker.parent, marker, f"{time.time() if now is None else now:.3f}\n")
+    except OSError as exc:  # trw-fail-silent-allow: the documented contract -- the WARNING is the record and False tells the caller to report a PARTIAL checkpoint; a symlink refusal is not an OSError and propagates
         logger.warning("wal_checkpoint_marker_write_failed", path=str(marker), error=type(exc).__name__)
         return False
     return True

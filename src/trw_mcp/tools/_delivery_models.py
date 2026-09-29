@@ -42,9 +42,6 @@ TERMINAL_OPERATION_STATES: frozenset[OperationState] = frozenset(
     }
 )
 
-#: Positive terminal state — the only one that asserts aggregate success.
-POSITIVE_TERMINAL_STATE: OperationState = OperationState.SUCCEEDED
-
 
 class StepState(str, Enum):
     """Exactly the five legal step states (FR02). Skip/attach/queue are separate."""

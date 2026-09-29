@@ -12,9 +12,9 @@ from tests.comms.conftest import call_peers, enable_comms, joined_member
 from trw_mcp.comms._store import DATABASE_FILENAME
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.surface_packs import FLAG_GATED_PACKS, KERNEL_TOOLS, PACK_TOOLS
+from trw_mcp.models.tool_summaries import TOOL_SUMMARIES
 from trw_mcp.server._surface_manifest_registry import _TOOL_OWNER
 from trw_mcp.server._tools import raw_registered_tool_names
-from trw_mcp.state.claude_md._tool_manifest import TOOL_DESCRIPTIONS
 
 
 def test_default_on_outside_a_formation_creates_no_comms_state(
@@ -171,7 +171,7 @@ def _parity_gaps() -> dict[str, set[str]]:
         "not_registered": comms - registered,
         "not_in_any_pack": comms - packed,
         "no_owner": comms - set(_TOOL_OWNER),
-        "no_description": comms - set(TOOL_DESCRIPTIONS),
+        "no_description": comms - set(TOOL_SUMMARIES),
         "registrar_pack_mismatch": registered ^ packed,
     }
 
@@ -203,7 +203,7 @@ def test_a_missing_tool_description_fails_the_parity_oracle(monkeypatch: pytest.
     the `no_description` key could be permanently empty for the wrong reason —
     a typo in the key, a set built from the wrong source — and look healthy.
     """
-    monkeypatch.delitem(TOOL_DESCRIPTIONS, missing)
+    monkeypatch.delitem(TOOL_SUMMARIES, missing)
 
     assert _parity_gaps()["no_description"] == {missing}
 

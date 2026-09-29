@@ -43,9 +43,7 @@ def test_session_start_returns_resolved_profile(tmp_path: Path) -> None:
     assert "resolved_profile" in result, f"trw_session_start must stamp resolved_profile; keys: {sorted(result)}"
     assert "profile_layers_applied" in result
     assert "profile_snapshot_id" in result
-    assert "session_override_hash" in result
     assert result["profile_snapshot_id"].startswith("surf_")
-    assert result["session_override_hash"].startswith("sess_")
     # The profile-resolution step is timed in the step-latency telemetry.
     assert "profile_resolve" in result.get("step_durations_ms", {})
 

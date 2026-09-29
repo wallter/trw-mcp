@@ -18,7 +18,9 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
     # memory_decay_cutoff_days / memory_decay_batch_size retired in batch 23b:
     # PRD-CORE-280 slice e3 moved decay onto a daemon RPC (``maintain()``) that
     # takes no per-call parameters, so trw-mcp has had no way to reach either
-    # knob since e3 landed. See config-retired-keys.json.
+    # knob since e3 landed. See config-retired-keys.json. PRD-CORE-331 FR10
+    # (B71-135h) replaced them with daemon-side MemoryConfig.decay_cutoff_days
+    # / decay_batch_size (env MEMORY_DECAY_CUTOFF_DAYS / MEMORY_DECAY_BATCH_SIZE).
     "protection_tier_prune_discount": ConfigAdmission(
         field_name="protection_tier_prune_discount",
         owner="PRD-CORE-244-FR10 (protection_tier must protect on every destructive path)",
@@ -116,17 +118,6 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
         docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
         test_pointer="trw-mcp/tests/test_core268_recall_evidence.py",
         budget_decision="admitted",
-    ),
-    "recall_verification_budget_ms": ConfigAdmission(
-        field_name="recall_verification_budget_ms",
-        owner="PRD-CORE-268-FR02 (retires PRD-CORE-267 inline verification)",
-        consumer="None: compatibility parsing only; no runtime verification consumer",
-        default_rationale="Keep old configuration files readable; this value no longer changes execution.",
-        interaction_analysis="Neither recall nor maintain-verify receives a runtime deadline from this input.",
-        deprecation_plan="Remove after explicit client-configuration migration; do not advertise a live budget.",
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
-        test_pointer="trw-mcp/tests/test_recall_verification_budget.py",
-        budget_decision="legacy-admitted",
     ),
     # PRD-CORE-280 FR01: which store serves this checkout.
     "project_namespace": ConfigAdmission(

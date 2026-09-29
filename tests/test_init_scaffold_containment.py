@@ -28,6 +28,8 @@ import structlog
 
 from trw_mcp.bootstrap import init_project
 
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes", "no_memory_daemon")
+
 
 @pytest.fixture(autouse=True)
 def _restore_structlog_config() -> object:
@@ -85,7 +87,7 @@ def test_claude_code_init_still_receives_its_full_scaffold(tmp_path: Path) -> No
     assert (tmp_path / ".claude" / "settings.json").is_file()
     assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "claude-code lost its bundled hooks"
     assert list((tmp_path / ".claude" / "skills").iterdir()), "claude-code lost its bundled skills"
-    assert (tmp_path / "CLAUDE.md").is_file(), "claude-code lost its root instruction file"
+    assert (tmp_path / "AGENTS.md").is_file(), "claude-code lost its root instruction file"
     assert recorded_target_platforms(tmp_path) == ["claude-code"]
 
 
@@ -139,42 +141,7 @@ def test_bare_init_with_a_preexisting_codex_marker_keeps_the_default_scaffold(
     assert (tmp_path / ".claude" / "settings.json").is_file(), "auto-detected codex-only dropped the default scaffold"
     assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "auto-detected codex-only dropped the bundled hooks"
     assert list((tmp_path / ".claude" / "skills").iterdir()), "auto-detected codex-only dropped the bundled skills"
-    assert (tmp_path / "CLAUDE.md").is_file(), "auto-detected codex-only dropped the root instruction file"
-
-
-def test_orphan_strip_failure_is_a_recorded_error_not_a_silent_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """CORE262-14: a genuine strip-write failure must not report a clean install.
-
-    ``_strip_orphaned_block`` used to catch ``OSError`` and return ``False`` --
-    indistinguishable from its own far more common "nothing to strip" no-op --
-    so ``_generate_root_files`` (which never inspected that return value) could
-    report a clean install while the foreign TRW block stayed in CLAUDE.md.
-    The fix routes the write through ``FileStateWriter``, which raises
-    ``StateError`` instead; this proves the caller now surfaces it. Reverting
-    either half (the ``FileStateWriter`` write or the ``except StateError``
-    catch in ``_generate_root_files``) turns this red: the first by letting
-    the induced failure vanish into a swallowed ``False``, the second by
-    letting the ``StateError`` escape uncaught instead of landing in
-    ``result["errors"]``.
-    """
-    from trw_mcp.exceptions import StateError
-    from trw_mcp.state.persistence import FileStateWriter
-
-    # A claude-code install first, so CLAUDE.md exists with a real TRW block
-    # for the subsequent codex-only run to find "orphaned" and try to strip.
-    init_single_client_project(tmp_path, "claude-code")
-    assert "trw:start" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-
-    def _raise(self: FileStateWriter, path: Path, content: str) -> None:
-        raise StateError("induced write failure", path=str(path))
-
-    monkeypatch.setattr(FileStateWriter, "write_text", _raise)
-
-    result = init_project(tmp_path, ide="codex")
-
-    assert any("CLAUDE.md" in err and "induced write failure" in err for err in result["errors"]), result["errors"]
+    assert (tmp_path / "AGENTS.md").is_file(), "auto-detected codex-only dropped the root instruction file"
 
 
 def test_codex_init_scaffolds_codex_surfaces(tmp_path: Path) -> None:

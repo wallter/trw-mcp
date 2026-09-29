@@ -6,7 +6,6 @@ Extracted from ceremony.py for single-responsibility.
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -15,7 +14,7 @@ import structlog
 from fastmcp import Context, FastMCP
 
 from trw_mcp.models.config import get_config
-from trw_mcp.models.typed_dicts import CheckpointResultDict, PreCompactResultDict
+from trw_mcp.models.typed_dicts import PreCompactResultDict
 from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._helpers import read_jsonl_resilient
@@ -33,65 +32,6 @@ logger = structlog.get_logger(__name__)
 
 
 # --- Auto-checkpoint state (PRD-CORE-053, Item 3 of PRD-FIX-030) ---
-
-
-@dataclasses.dataclass(slots=True)
-class _CheckpointState:
-    """Mutable state for auto-checkpoint counter. Single-process only."""
-
-    counter: int = 0
-
-
-_checkpoint_state = _CheckpointState()
-
-
-def _reset_tool_call_counter() -> None:
-    """Reset the tool call counter (for testing)."""
-    _checkpoint_state.counter = 0
-
-
-# The ceremony-obligation list lives in _checkpoint_obligations (imported at the
-# top of this module). It carried three flat consequence strings that no code
-# consulted: build "required before delivery" is false for every non-coding task
-# type under the shipped block_coding default, review "recommended" is false the
-# other way under review_gate_mode=block, and deliver "required" is enforced
-# nowhere. Each is now resolved through the same predicate the deliver path uses.
-
-
-def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
-    """Increment tool call counter; create checkpoint at configured intervals.
-
-    Returns checkpoint info dict if triggered, None otherwise.
-    Best-effort: exceptions are swallowed.
-    """
-    try:
-        cfg = get_config()
-        if not cfg.auto_checkpoint_enabled:
-            return None
-        interval = cfg.auto_checkpoint_tool_interval
-        if interval <= 0:
-            return None
-
-        _checkpoint_state.counter += 1
-        if _checkpoint_state.counter % interval != 0:
-            return None
-
-        # PRD-FIX-085 FR01: pin-only is correct here -- auto-checkpoint
-        # requires a pinned run; without one, the function is a no-op.
-        run_dir = find_active_run()  # compat: legacy pin-only no-arg is intentional (PRD-FIX-085)
-        if run_dir is None:
-            return None
-
-        count = _checkpoint_state.counter
-        msg = f"auto-checkpoint after {count} tool calls"
-        logger.info("auto_checkpoint_triggered", tool_call_count=count, threshold=interval)
-        _do_checkpoint(run_dir, msg)
-        logger.debug("checkpoint_created", tool_calls=count, run_dir=str(run_dir))
-        return {"auto_checkpoint": True, "tool_calls": count}
-    except Exception as _cp_exc:  # justified: fail-open, auto-checkpoint must not disrupt tool flow
-        logger.warning("checkpoint_failed", run_id="", error=str(_cp_exc))
-        logger.debug("auto_checkpoint_failed", exc_info=True)
-        return None
 
 
 def _do_checkpoint(run_dir: Path, message: str) -> None:

@@ -11,15 +11,11 @@ from trw_mcp.models.config import TRWConfig
 def _run_agents_md_sync(
     tmp_path: Path,
     ceremony_mode: str = "full",
-    agents_md_learning_injection: bool = False,
-    agents_md_learning_max: int = 5,
-    agents_md_learning_min_impact: float = 0.7,
-    mock_learnings: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Run execute_claude_md_sync with mocked infra targeting AGENTS.md.
 
     Driven through ``cursor-cli`` rather than ``opencode``. PRD-CORE-084 is about
-    AGENTS.md ceremony-mode rendering and learning injection, not about any
+    AGENTS.md ceremony-mode rendering, not about any
     particular client — and as of PRD-CORE-240-FR04 opencode no longer receives
     the shared AGENTS.md (it owns ``.opencode/INSTRUCTIONS.md``, referenced from
     ``opencode.json``).
@@ -44,15 +40,10 @@ def _run_agents_md_sync(
     config = TRWConfig(
         trw_dir=str(trw_dir),
         ceremony_mode=ceremony_mode,
-        agents_md_learning_injection=agents_md_learning_injection,
-        agents_md_learning_max=agents_md_learning_max,
-        agents_md_learning_min_impact=agents_md_learning_min_impact,
     )
     reader = FileStateReader()
     llm = MagicMock()
     llm.available = False
-
-    recall_return = mock_learnings if mock_learnings is not None else []
 
     with (
         patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
@@ -61,7 +52,7 @@ def _run_agents_md_sync(
         patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
         patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
         patch("trw_mcp.state.analytics.update_analytics_sync"),
-        patch("trw_mcp.state.claude_md._sync.recall_learnings", return_value=recall_return),
+        patch("trw_mcp.state.claude_md._sync.recall_learnings", return_value=[]),
     ):
         return execute_claude_md_sync(
             scope="root",

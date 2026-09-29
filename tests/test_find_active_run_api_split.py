@@ -133,8 +133,7 @@ def test_no_callers_of_find_active_run_without_context() -> None:
         text=True,
         timeout=10,
     )
-    if result.returncode not in (0, 1):
-        pytest.skip(f"grep failed: {result.stderr}")
+    assert result.returncode in (0, 1), f"grep failed: {result.stderr}"  # a failed scan must not pass as clean
 
     offenders: list[str] = []
     for line in result.stdout.splitlines():

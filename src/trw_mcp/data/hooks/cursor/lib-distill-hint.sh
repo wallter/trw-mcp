@@ -12,7 +12,8 @@
 # bashisms.
 #
 # Provides:
-#   _get_python_path()           — resolves venv Python path
+#   _get_python_path <dir>       — resolves the interpreter hooks start (PRD-FIX-155)
+#   _read_json_field()           — reads a payload field (jq, else python)
 #   _read_trw_config_field()     — reads a top-level scalar from .trw/config.yaml
 #   _read_trw_nested_config_field() — reads a one-level-nested scalar
 #   _get_cc03_enabled()          — checks the shared cc03_hook_enabled gate (opt-in)
@@ -41,21 +42,137 @@ _resolve_project_dir() {
 # ---------------------------------------------------------------------------
 
 _get_python_path() {
-    # Reads .trw/channels/cc03-python.txt first (set at init-project time;
-    # shared with CC-03 so the venv path is resolved once per repo).
-    _python_path_file="$(_resolve_project_dir)/.trw/channels/cc03-python.txt"
-    if [ -f "$_python_path_file" ]; then
-        _py=$(cat "$_python_path_file" 2>/dev/null)
-        if [ -n "$_py" ] && [ -x "$_py" ]; then
-            printf '%s' "$_py"
-            return 0
+    # Usage: _get_python_path <project_dir>
+    # PRD-FIX-155: the one interpreter resolution order, byte-identical in every
+    # bundled hook that starts Python (a test pins the copies). First hit wins:
+    #   1. <project_dir>/.trw/channels/cc03-python.txt, which init-project and
+    #      update-project fill with the interpreter that runs trw-mcp
+    #   2. the interpreter in the shebang of `command -v trw-mcp`
+    #   3. <project_dir>/.venv/bin/python
+    #   4. worktree fallback: in a linked git worktree, .trw is per-worktree and
+    #      untracked (steps 1 and 3 above never see it), so fall back to the
+    #      MAIN worktree's pointer, then its .venv, resolved via
+    #      `git rev-parse --git-common-dir` (one cheap call, only reached
+    #      here; a git error or non-worktree checkout just falls through)
+    #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
+        _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
+        [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
+        _trw_py=${_trw_py#\#!}
+        _trw_py=${_trw_py%% *}
+        case "${_trw_py##*/}" in python*) ;; *) _trw_py="" ;; esac
+        [ -x "$_trw_py" ] || _trw_py="$1/.venv/bin/python"
+    fi
+    if [ ! -x "$_trw_py" ]; then
+        _trw_common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _trw_common=""
+        if [ -n "$_trw_common" ]; then
+            _trw_main=$(dirname "$_trw_common")
+            _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
         fi
     fi
-    # Fall back to python3 in PATH
-    if command -v python3 >/dev/null 2>&1; then
+    if [ -x "$_trw_py" ]; then
+        printf '%s' "$_trw_py"
+    elif command -v python3 >/dev/null 2>&1; then
         printf 'python3'
-        return 0
+    else
+        return 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# JSON field reader (PRD-FIX-156-FR04, B71-22)
+#
+# Prints the first of the dotted paths ($@, e.g. .tool_input.file_path) whose
+# value in the JSON on stdin is neither null nor false, when that value is a
+# string: jq's `(.a // .b // empty) | strings`. jq when present, else python3
+# from PATH, so a jq-less host still gets its hint. Deliberately NOT
+# _get_python_path: that honours a checkout-written cc03-python.txt, and parsing
+# a payload must not run a program the checkout chose.
+# With neither, or on malformed JSON, it prints nothing and returns 1; the
+# caller keeps its allow / print-nothing exit. This bundle does not ship
+# lib-trw.sh, whose _json_get is the same reader for the other hooks.
+# ---------------------------------------------------------------------------
+
+_read_json_field() {
+    if command -v jq >/dev/null 2>&1; then
+        _rjf_filter=""
+        for _rjf_path in "$@"; do
+            _rjf_filter="${_rjf_filter}${_rjf_filter:+ // }${_rjf_path}"
+        done
+        jq -r "(${_rjf_filter} // empty) | strings" 2>/dev/null
+        return
+    fi
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -I -c '
+import json, sys
+try:
+    node = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+doc = node
+for path in sys.argv[1:]:
+    node = doc
+    for key in path.lstrip(".").split("."):
+        node = node.get(key) if isinstance(node, dict) else None
+    if node is not None and node is not False:
+        break
+if isinstance(node, str):
+    sys.stdout.write(node + "\n")
+' "$@" 2>/dev/null
+}
+
+_worktree_pythonpath() {
+    # Usage: _worktree_pythonpath <project_dir>
+    # A linked worktree shares the main checkout's .venv, whose editable install
+    # imports the MAIN checkout's source, so a hint hook started from a worktree
+    # ran main's trw_mcp instead of the code under test. Prints a PYTHONPATH that
+    # puts the worktree's own source trees first (each top-level <dir>/src, else a
+    # <dir> holding a pyproject.toml); empty when <project_dir> is not a linked
+    # worktree (its .git is a file) or carries none of them.
+    [ -f "$1/.git" ] || return 0
+    _wt_pp=""
+    for _wt_dir in "$1"/*/; do
+        _wt_dir=${_wt_dir%/}
+        if [ -d "$_wt_dir/src" ]; then
+            _wt_pp="${_wt_pp:+$_wt_pp:}$_wt_dir/src"
+        elif [ -f "$_wt_dir/pyproject.toml" ]; then
+            _wt_pp="${_wt_pp:+$_wt_pp:}$_wt_dir"
+        fi
+    done
+    printf '%s' "$_wt_pp"
+    return 0
+}
+
+_path_inside_repo() {
+    # Usage: _path_inside_repo <file_path> <project_dir>
+    # Returns 0 when the file's RESOLVED physical location is under <project_dir>'s, 1 when it is
+    # outside. Pure sh (no interpreter start; ~ms), so a hook can skip a target no sidecar can know
+    # (a scratch file under /tmp) before paying for Python. The file need not exist yet (a new file
+    # resolves through its deepest existing directory); symlinks are followed both on the file and
+    # on every directory, so a link cannot smuggle an outside file in or an inside one out. An
+    # unresolvable project dir returns 0: when in doubt, keep hinting.
+    _pir_root=$(cd "$2" 2>/dev/null && pwd -P) || return 0
+    _pir_p=$1
+    case "$_pir_p" in /*) ;; *) _pir_p="$_pir_root/$_pir_p" ;; esac  # a relative path is relative to the project
+    _pir_n=0
+    while [ -L "$_pir_p" ] && [ "$_pir_n" -lt 8 ]; do
+        _pir_t=$(readlink "$_pir_p" 2>/dev/null) || break
+        case "$_pir_t" in /*) _pir_p=$_pir_t ;; *) _pir_p="${_pir_p%/*}/$_pir_t" ;; esac
+        _pir_n=$((_pir_n + 1))
+    done
+    _pir_tail=""
+    _pir_d=$_pir_p
+    while [ ! -d "$_pir_d" ]; do
+        _pir_tail="/${_pir_d##*/}$_pir_tail"
+        _pir_d=${_pir_d%/*}
+        [ -n "$_pir_d" ] || _pir_d=/
+    done
+    _pir_real=$(cd "$_pir_d" 2>/dev/null && pwd -P) || return 0
+    case "$_pir_real$_pir_tail/" in
+        "$_pir_root"/*) return 0 ;;
+    esac
     return 1
 }
 

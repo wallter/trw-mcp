@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from trw_mcp.comms._pins import member_pin_entry
+from trw_mcp.comms._schema import SCHEMA_VERSION
 
 
 @dataclass(frozen=True)
@@ -164,8 +165,8 @@ def pending_hint(
         return None
     try:
         version = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
-        if version is None or version[0] != "4":
-            return None  # a v3 mailbox gets no hint and is never touched (FR16)
+        if version is None or version[0] != str(SCHEMA_VERSION):
+            return None  # an older mailbox gets no hint and is never touched (FR16)
         count, newest = pending_counts(conn, derive_group_id(root, manifest_path), member_id)
     except sqlite3.Error:
         # trw-fail-silent-allow: a locked or damaged mailbox gives no hint; nothing is written

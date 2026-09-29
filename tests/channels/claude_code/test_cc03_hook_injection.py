@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
+from tests.channels.claude_code._distill_hint_support import run_distill_hint_hook
 
 
 def _prepare_project(tmp_path: Path) -> None:
@@ -65,17 +65,9 @@ def _run(payload_file_path: str, tmp_path: Path) -> subprocess.CompletedProcess[
             "tool_input": {"file_path": payload_file_path},
         }
     )
-    return subprocess.run(
-        ["sh", str(deploy_distill_hint(tmp_path))],
-        input=payload,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "TRW_PROJECT_DIR": str(tmp_path),
-        },
-    )
+    # L-CUAX: run_distill_hint_hook pins cwd/HOME to tmp_path so the hook can
+    # never resolve the enclosing checkout instead of this throwaway project.
+    return run_distill_hint_hook(payload, tmp_path, timeout=30)
 
 
 def test_the_hook_actually_launches_a_python_subprocess(tmp_path: Path) -> None:

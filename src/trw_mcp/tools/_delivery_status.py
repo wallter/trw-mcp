@@ -6,6 +6,9 @@ creates the database, refreshes a lease, sweeps retention, or appends an audit
 event, and never exposes the capability hash/salt, full request digest, absolute
 paths, or raw exception traces (FR05 acceptance). ``trw_status(delivery=...)``
 reaches it through ``tools/delivery_ops.py::delivery_status``.
+
+``pack_operation_projection`` is the second, clock-free projection: every operation
+of one run for the evidence pack (PRD-CORE-323 FR04), with no now-derived field.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import sqlite3
 from trw_mcp.tools._delivery_effect_registry import DELIVERY_EFFECT_REGISTRY
 from trw_mcp.tools._delivery_journal_store import (
     CorruptDeliveryJournalSchema,
+    DeliveryJournalReadCapacityExceeded,
     JournalStore,
     LegacyDeliveryJournalMigrationRequired,
 )
@@ -51,7 +55,8 @@ def build_status_projection(
     """Return a stable read-only projection for ``delivery_id`` (FR05).
 
     Distinct stable results: ``not_found_store`` (no database, nothing created),
-    ``legacy_wal_migration_required`` (read-only upgrade preflight),
+    ``legacy_wal_migration_required`` (read-only upgrade preflight), ``read_capacity_exceeded`` (the header
+    could not be checked because the pinned-fd cache is full; retry, it is no verdict on the store),
     ``unsupported_schema``, ``corrupt_store`` (unreadable meta), ``invalid_id``,
     ``tombstone``, ``not_found_id``, and ``ok``. A missing store never creates a
     directory/file.
@@ -73,6 +78,8 @@ def build_status_projection(
             "result": "legacy_wal_migration_required",
             "schema_version": DeliveryLimits.SCHEMA_VERSION,
         }
+    except DeliveryJournalReadCapacityExceeded:
+        return {"result": "read_capacity_exceeded", "schema_version": DeliveryLimits.SCHEMA_VERSION}
     try:
         try:
             store_schema_version = store.read_schema_version(conn)
@@ -184,3 +191,98 @@ def _project_operation(
         "steps_succeeded": steps_succeeded,
         "recovery_eligible": not lease_current and op.state not in TERMINAL_OPERATION_STATES,
     }
+
+
+def _pack_step(step: StepRecord) -> dict[str, object]:
+    # proof_digest is sha256(proof_ref) over the UNREDACTED text; publishing it would let a
+    # reader brute-force a short redacted value (PRD-CORE-323 FR06), so it is never emitted.
+    return {
+        "effect_id": step.effect_id,
+        "state": step.state.value,
+        "disposition": step.disposition.value,
+        "attempt": step.attempt,
+        "proof_ref": step.proof_ref,
+        "finding_code": step.finding_code,
+        "updated_utc_ms": step.updated_utc_ms,
+    }
+
+
+def pack_operation_projection(
+    store: JournalStore, run_identity: str, *, max_operations: int, since_utc_ms: int | None
+) -> dict[str, object]:
+    """Clock-free, run-scoped journal projection for the evidence pack (PRD-CORE-323 FR04).
+
+    Runtime caller: ``evidence_pack._verdict.verdict_section`` (``trw-mcp run
+    evidence-pack`` -> ``run_run`` -> ``build_pack`` -> ``verdict_section`` -> here).
+
+    Opens ``mode=ro`` through :meth:`JournalStore.connect_ro`, so a missing database is
+    never created. Reads no clock and never calls ``validate_delivery_id``, so there is
+    no ``lease_current``, no ``recovery_eligible`` and no ``expired_id`` path; emits no
+    lease owner, capability hash/salt, request digest or absolute path. ``result`` is
+    ``ok`` or one named unreadable state: ``no_journal``, ``journal_migration_required``,
+    ``unsupported_schema``, ``corrupt_store``. The ``max_operations`` cap is applied to
+    the run's operation listing before any step row is read. ``tombstones_since_run_start``
+    counts tombstones whose (operation) creation time is at or after ``since_utc_ms``
+    (every tombstone when it is ``None``); tombstones carry no run identity.
+
+    Soundness scope: proves which operations with exactly this ``run_identity`` and which
+    tombstones the journal holds at export, with their recorded fields. It cannot see a
+    compacted operation's run, nor gate outcomes the journal never stored.
+    """
+    try:
+        conn = store.connect_ro()
+    except FileNotFoundError:
+        return {"result": "no_journal"}
+    except LegacyDeliveryJournalMigrationRequired:
+        return {"result": "journal_migration_required"}
+    except DeliveryJournalReadCapacityExceeded:
+        return {"result": "read_capacity_exceeded"}
+    except sqlite3.Error:  # trw-fail-silent-allow: an unopenable store is reported as corrupt_store, never a crash
+        return {"result": "corrupt_store"}
+    try:
+        try:
+            version = store.read_schema_version(conn)
+        except CorruptDeliveryJournalSchema:
+            return {"result": "corrupt_store"}
+        if version != DeliveryLimits.SCHEMA_VERSION:
+            return {"result": "unsupported_schema", "store_schema_version": version}
+        try:
+            matching = sorted(
+                (op for op in store.iter_operations(conn) if op.run_identity == run_identity),
+                key=lambda op: (op.created_utc_ms, op.operation_id),
+            )
+            kept = matching[:max_operations]
+            operations = [
+                {
+                    "operation_id": op.operation_id,
+                    "state": op.state.value,
+                    "revision": op.revision,
+                    "created_utc_ms": op.created_utc_ms,
+                    "updated_utc_ms": op.updated_utc_ms,
+                    "terminal_utc_ms": op.terminal_utc_ms,
+                    "steps": [_pack_step(step) for step in store.get_steps(conn, op.operation_id)],
+                }
+                for op in kept
+            ]
+            tombstones = sum(
+                1
+                for tombstone in store.iter_tombstones(conn)
+                if since_utc_ms is None or tombstone.created_utc_ms >= since_utc_ms
+            )
+        except (
+            sqlite3.Error,
+            ValueError,
+            LookupError,
+            TypeError,
+        ):  # trw-fail-silent-allow: a row missing a column (IndexError/KeyError) or of the
+            # wrong type (TypeError from int(None) etc.) is unreadable, not a crash: corrupt_store
+            return {"result": "corrupt_store"}
+        return {
+            "result": "ok",
+            "operations": operations,
+            "total": len(matching),
+            "kept": len(kept),
+            "tombstones_since_run_start": tombstones,
+        }
+    finally:
+        conn.close()

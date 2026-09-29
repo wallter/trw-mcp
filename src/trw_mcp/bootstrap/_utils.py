@@ -31,7 +31,6 @@ else:  # pragma: no cover - Python <3.11 fallback
 # directly.  These re-exports ensure those import paths still resolve.
 # ---------------------------------------------------------------------------
 from ._config_templates import _default_config as _default_config
-from ._config_templates import _minimal_claude_md as _minimal_claude_md
 from ._config_templates import _minimal_review_md as _minimal_review_md
 from ._file_ops import ProgressCallback as ProgressCallback
 from ._file_ops import _copy_file as _copy_file
@@ -41,7 +40,6 @@ from ._file_ops import _new_result as _new_result
 from ._file_ops import _record_write as _record_write
 from ._file_ops import _result_action_key as _result_action_key
 from ._file_ops import _write_if_missing as _write_if_missing
-from ._mcp_json import _generate_mcp_json as _generate_mcp_json
 from ._mcp_json import _merge_mcp_json as _merge_mcp_json
 from ._mcp_json import _pip_install_package as _pip_install_package
 
@@ -61,6 +59,8 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 
 #: Where a project-local venv puts the trw-mcp console script, relative to the project root.
 _PROJECT_VENV_LAUNCHERS: tuple[str, ...] = (".venv/bin/trw-mcp", ".venv/Scripts/trw-mcp.exe")
+#: The project venv's interpreter, for a venv that imports trw-mcp but has no console script.
+_PROJECT_VENV_PYTHONS: tuple[str, ...] = (".venv/bin/python", ".venv/Scripts/python.exe")
 
 
 def resolve_trw_mcp_launcher(target_dir: Path | None = None, *, root_prefix: str = "") -> tuple[str, list[str]]:
@@ -73,7 +73,10 @@ def resolve_trw_mcp_launcher(target_dir: Path | None = None, *, root_prefix: str
        an older global install that happens to be first on PATH (observed: grok and
        agy sessions in this repo ran a stale PyPI trw-mcp 3.1.0 from PATH);
     2. ``trw-mcp`` on PATH;
-    3. a portable ``python3 -m trw_mcp.server``.
+    3. the PROJECT venv's interpreter, ``.venv/bin/python -m trw_mcp.server``, when
+       *target_dir* has one (a dev checkout whose console script is missing: a bare
+       ``python3`` there resolves to whatever PATH holds, which rarely imports trw_mcp);
+    4. a portable ``python3 -m trw_mcp.server``.
 
     The project path is RELATIVE to the project root and carries *root_prefix*,
     for clients that do not start servers in the project root but expand a
@@ -81,13 +84,37 @@ def resolve_trw_mcp_launcher(target_dir: Path | None = None, *, root_prefix: str
     machine-absolute path (PRD-SEC-006, audit installer-client-12): these configs
     are committed and shared.
     """
+    # With ``shared_mcp.enabled`` in the project's config, every client gets the stdio proxy
+    # to the shared server instead (``trw_mcp.shared_server``), found in the same order.
+    shared = target_dir is not None and _shared_mcp_enabled(target_dir)
+    script, module = ("trw-mcp-proxy", "trw_mcp.shared_server") if shared else ("trw-mcp", "trw_mcp.server")
     if target_dir is not None:
         for rel in _PROJECT_VENV_LAUNCHERS:
+            rel = rel.replace("/trw-mcp", f"/{script}")
             if (target_dir / rel).is_file():
                 return f"{root_prefix}{rel}", []
-    if shutil.which("trw-mcp"):
-        return "trw-mcp", []
-    return "python3", ["-m", "trw_mcp.server"]
+    if shutil.which(script):
+        return script, []
+    if target_dir is not None:
+        for rel in _PROJECT_VENV_PYTHONS:
+            if (target_dir / rel).is_file():
+                return f"{root_prefix}{rel}", ["-m", module]
+    return "python3", ["-m", module]
+
+
+def _shared_mcp_enabled(target_dir: Path) -> bool:
+    """Whether *target_dir*'s ``.trw/config.yaml`` opts into the shared server (unreadable: no)."""
+    from ruamel.yaml import YAML
+    from ruamel.yaml.error import YAMLError
+
+    path = target_dir / ".trw" / "config.yaml"
+    try:
+        data = YAML(typ="safe").load(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, YAMLError):  # trw-fail-silent-allow: logged; an unreadable opt-in keeps the stdio launcher
+        logger.warning("shared_mcp_config_unreadable", path=str(path))
+        return False
+    section = data.get("shared_mcp") if isinstance(data, dict) else None
+    return isinstance(section, dict) and section.get("enabled") is True
 
 
 def _trw_mcp_server_entry(target_dir: Path | None = None) -> dict[str, object]:
@@ -156,6 +183,13 @@ def _write_version_yaml(
         from ._framework_generation import framework_generation_current
 
         if framework_generation_current(target_dir, expected, registry.digest):
+            return
+        from trw_mcp.framework_integrity import newer_deployed_generation
+
+        newer = newer_deployed_generation(target_dir, framework_source=framework_source, aaref_source=aaref_source)
+        if newer is not None:
+            logger.warning("framework_deploy_skipped_stale_package", target=str(target_dir))
+            result["warnings"].append(f"Framework deploy skipped: {newer.nudge}")
             return
         repair_framework_runtime(
             target_dir,
@@ -333,11 +367,7 @@ def _verify_installation(
 def _check_instruction_markers(target_dir: Path, result: dict[str, list[str]]) -> None:
     """Warn when a resolved client's managed-block instruction file lacks TRW markers.
 
-    This used to hard-code ``CLAUDE.md`` regardless of the project's client
-    profile, so a codex-only project (write_targets: ``agents_md=True``,
-    ``claude_md=False``) was checked against a file it never writes and its
-    real carrier (``AGENTS.md``) was never inspected — a false "markers
-    missing" warning that also masked a real one. Resolve the client(s) the
+    Resolve the client(s) the
     project actually recorded/detected (same authority
     ``bootstrap/_template_claude_md.py`` uses for its own write decision) and
     check every *managed-block* surface those clients declare. Per-client
@@ -485,29 +515,6 @@ def detect_ide(target_dir: Path) -> list[str]:
     return detected
 
 
-def detect_installed_clis() -> list[str]:
-    """Detect which AI coding CLI binaries are installed on PATH.
-
-    Returns a list of IDE identifiers for CLIs found via shutil.which().
-    """
-    detected: list[str] = []
-    if shutil.which("claude"):
-        detected.append("claude-code")
-    if shutil.which("cursor-agent"):
-        detected.append("cursor-cli")
-    if shutil.which("cursor"):
-        detected.append("cursor-ide")
-    if shutil.which("opencode"):
-        detected.append("opencode")
-    if shutil.which("codex"):
-        detected.append("codex")
-    if shutil.which("github-copilot") or shutil.which("copilot"):
-        detected.append("copilot")
-    if shutil.which("antigravity-cli"):
-        detected.append("antigravity-cli")
-    return detected
-
-
 def is_git_repo(target_dir: Path) -> bool:
     """Return True if *target_dir* looks like a git repository root.
 
@@ -623,9 +630,9 @@ def resolve_client_write_targets(target_dir: Path, ide_override: str | None = No
     function.
     """
     if not ide_override:
-        from ._template_claude_md import _recorded_plus_newly_adopted
+        from ._template_claude_md import _recorded_targets
 
-        recorded = _recorded_plus_newly_adopted(target_dir)
+        recorded = _recorded_targets(target_dir)
         if recorded:
             return list(recorded)
     return resolve_ide_targets(target_dir, ide_override=ide_override)
@@ -634,3 +641,9 @@ def resolve_client_write_targets(target_dir: Path, ide_override: str | None = No
 # ---------------------------------------------------------------------------
 # client instruction file content generators
 # ---------------------------------------------------------------------------
+
+
+def printable(text: str) -> str:
+    """*text* unchanged when printable, else with control characters escaped (``\\x1b``, ``\\n``) so a file name
+    can never drive the user's terminal when echoed in a warning or listing."""
+    return text if text.isprintable() else text.encode("unicode_escape").decode("ascii")

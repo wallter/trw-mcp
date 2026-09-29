@@ -70,8 +70,8 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     # record. Present only when the entry's validity window is closed.
     superseded: bool
     invalidated_by: str | None
-    # PRD-CORE-280 FR05: present only on a store-backed export (trw-mcp export
-    # --scope learnings), never on the recall-layer shape this TypedDict also serves.
+    # PRD-CORE-280 FR05 / PRD-CORE-326-FR02: set on a store-backed export, and on
+    # the recall-layer shape whenever the row's namespace is not ``default``.
     namespace: str
     origin_project: str
     remote_id: str | None

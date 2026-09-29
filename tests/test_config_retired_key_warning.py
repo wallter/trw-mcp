@@ -347,6 +347,53 @@ _REMOVED_SINCE_5_0 = {
 }
 
 
+#: PRD-CORE-313-FR06 (trw-mcp 8.0.0): fields with no production reader, eight of
+#: them orphaned by FR01's dead-symbol deletions (their only readers were deleted).
+PRD_CORE_313_RETIRED = (
+    "auto_checkpoint_enabled",
+    "auto_checkpoint_tool_interval",
+    "impact_decay_half_life_days",
+    "recall_receipt_max_entries",
+    "recall_verification_budget_ms",
+    "strict_input_criteria",
+    "trust_locked",
+    "trust_security_tags",
+    "trust_walk_sample_rate",
+)
+
+
+@pytest.mark.parametrize("key", PRD_CORE_313_RETIRED)
+def test_prd_core_313_retired_fields_are_gone_and_warn_as_retired(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """A leftover value warns (by name, never value); it does not fail and does not reach config."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._field_admission import LEGACY_ADMITTED_FIELDS
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    assert key not in TRWConfig.model_fields, f"{key} is still a live field"
+    assert key not in LEGACY_ADMITTED_FIELDS, f"{key} still claims an admission budget"
+    for sub in ("build", "memory", "trust"):
+        assert key not in type(getattr(TRWConfig(), sub)).model_fields, f"{key} survives on config.{sub}"
+    assert retired_config_keys().get(key) == ""
+    assert warn_unrecognised_config_keys({key: "leftover-value"}, set(TRWConfig.model_fields)) == [key]
+    err = capsys.readouterr().err
+    assert key in err and "retired" in err
+    assert "leftover-value" not in err
+    assert key not in TRWConfig(**{key: "leftover-value"}).model_dump()
+
+
+def test_a_surviving_neighbour_of_the_core_313_retirements_is_not_reported(capsys: pytest.CaptureFixture[str]) -> None:
+    """Boundary: the trust/auto-checkpoint siblings that still have readers stay live and silent."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    live = {"auto_checkpoint_pre_compact": True, "trust_crawl_boundary": 50, "trust_walk_boundary": 200}
+    for key in live:
+        assert key in TRWConfig.model_fields
+        assert key not in retired_config_keys()
+    assert warn_unrecognised_config_keys(live, set(TRWConfig.model_fields)) == []
+    assert capsys.readouterr().err == ""
+
+
 @pytest.mark.parametrize("key", sorted(_REMOVED_SINCE_5_0))
 def test_keys_removed_since_5_0_warn_as_retired_not_as_a_typo(key: str, capsys: pytest.CaptureFixture[str]) -> None:
     """A removed key must be reported as retired, with its replacement if any."""

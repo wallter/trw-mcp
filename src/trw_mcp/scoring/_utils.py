@@ -5,20 +5,14 @@ Internal module — all public names are re-exported from ``trw_mcp.scoring``.
 
 from __future__ import annotations
 
-import math
-
 import structlog
 from trw_memory.lifecycle.scoring import (
-    _clamp01 as _clamp01,
-)
-from trw_memory.lifecycle.scoring import (
-    _ensure_utc as _ensure_utc,
-)
-from trw_memory.lifecycle.scoring import (
-    apply_time_decay as apply_time_decay,
-)
-from trw_memory.lifecycle.scoring import (
-    compute_utility_score as compute_utility_score,
+    _TIER_HIGH_CEILING,
+    _TIER_MEDIUM_CEILING,
+    _clamp01,
+    _ensure_utc,
+    apply_time_decay,
+    compute_utility_score,
 )
 
 from trw_mcp.models.config import TRWConfig, get_config
@@ -28,18 +22,7 @@ from trw_mcp.state._paths import resolve_trw_dir as resolve_trw_dir
 logger = structlog.get_logger(__name__)
 
 
-# --- Scoring constants ---
-
-_LN2: float = math.log(2)  # ~0.693 -- Ebbinghaus decay exponent
-_IMPACT_DECAY_FLOOR: float = 0.1  # Minimum impact after exponential decay
-
-# Tier boundary thresholds for enforce_tier_distribution
-_TIER_HIGH_CEILING: float = 0.89  # Top of high tier (demotion target)
-_TIER_MEDIUM_CEILING: float = 0.69  # Top of medium tier (demotion target)
-
 __all__ = [
-    "_IMPACT_DECAY_FLOOR",
-    "_LN2",
     "_TIER_HIGH_CEILING",
     "_TIER_MEDIUM_CEILING",
     "TRWConfig",

@@ -29,7 +29,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s = 600
         self.dispatch_default_read_only = True
-        self.dispatch_role_client: dict[str, str] = {}
         self.dispatch_default_effort: str | None = None
         for key, value in overrides.items():
             setattr(self, key, value)
@@ -116,8 +115,8 @@ def test_the_result_records_requested_versus_applied_effort() -> None:
     codex = _resolve(client="codex", role="adversarial-audit")
 
     assert policy_record(claude)["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
-    # codex documents no effort flag: the intent is recorded, and nothing was applied
-    assert policy_record(codex)["effort"] == {"requested": "medium", "applied": None, "source": "table"}
+    # codex takes effort as a config override, so the requested level is applied
+    assert policy_record(codex)["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
     assert policy_record(codex)["model"] == {"requested": None, "applied": None, "source": "unsupported"}
 
 

@@ -11,9 +11,13 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from trw_mcp.models.requirements import ValidationResultV2
 from trw_mcp.models.typed_dicts import ValidateResultDict
 from trw_mcp.tools._prd_validate_payload import build_validate_payload, compact_validate_payload
+
+pytestmark = pytest.mark.unit
 
 
 def _full_payload() -> ValidateResultDict:

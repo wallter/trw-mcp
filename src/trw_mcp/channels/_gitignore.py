@@ -18,6 +18,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
+
 log = structlog.get_logger(__name__)
 
 __all__ = [
@@ -25,7 +27,6 @@ __all__ = [
     "GITIGNORE_END",
     "add_gitignore_entry",
     "list_gitignore_entries",
-    "remove_gitignore_entry",
 ]
 
 GITIGNORE_BEGIN = "# TRW:MDC:BEGIN"
@@ -68,10 +69,13 @@ def _read_content(gitignore_path: Path) -> str:
         return ""
 
 
-def _write_content(gitignore_path: Path, content: str) -> None:
-    """Write *content* to *gitignore_path*, creating parent dirs as needed."""
-    gitignore_path.parent.mkdir(parents=True, exist_ok=True)
-    gitignore_path.write_text(content, encoding="utf-8")
+def _write_content(repo_root: Path, content: str) -> None:
+    """Replace ``<repo_root>/.gitignore`` with *content*, creating *repo_root* when absent.
+
+    Written through ``write_checkout_file``: a ``.gitignore`` that is a symlink is refused, not followed.
+    """
+    repo_root.mkdir(parents=True, exist_ok=True)
+    write_checkout_file(repo_root, repo_root / ".gitignore", content)
 
 
 def _rebuild(lines: list[str]) -> str:
@@ -126,7 +130,7 @@ def add_gitignore_entry(repo_root: Path, entry: str) -> bool:
             return False
         # Insert before the END sentinel
         lines.insert(end_idx, entry)
-        _write_content(gitignore_path, _rebuild(lines))
+        _write_content(repo_root, _rebuild(lines))
         log.debug(
             "gitignore_entry_added",
             repo_root=str(repo_root),
@@ -142,51 +146,12 @@ def add_gitignore_entry(repo_root: Path, entry: str) -> bool:
     lines.append(GITIGNORE_BEGIN)
     lines.append(entry)
     lines.append(GITIGNORE_END)
-    _write_content(gitignore_path, _rebuild(lines))
+    _write_content(repo_root, _rebuild(lines))
     log.debug(
         "gitignore_section_created",
         repo_root=str(repo_root),
         entry=entry,
         outcome="section_created",
-    )
-    return True
-
-
-def remove_gitignore_entry(repo_root: Path, entry: str) -> bool:
-    """Remove *entry* from the managed section.
-
-    The managed section itself is preserved even when empty (until
-    ``channel-doctor clean`` removes it explicitly).  Content outside the
-    managed section is byte-identical.
-
-    Args:
-        repo_root: Repository root directory.
-        entry: Line to remove.
-
-    Returns:
-        True if the entry was removed; False if it was not present.
-    """
-    gitignore_path = repo_root / ".gitignore"
-    content = _read_content(gitignore_path)
-    lines = content.splitlines()
-
-    section = _get_managed_section(content)
-    if section is None:
-        return False
-
-    begin_idx, end_idx = section
-    interior = lines[begin_idx + 1 : end_idx]
-    if entry not in interior:
-        return False
-
-    interior.remove(entry)
-    new_lines = lines[: begin_idx + 1] + interior + lines[end_idx:]
-    _write_content(gitignore_path, _rebuild(new_lines))
-    log.debug(
-        "gitignore_entry_removed",
-        repo_root=str(repo_root),
-        entry=entry,
-        outcome="removed",
     )
     return True
 

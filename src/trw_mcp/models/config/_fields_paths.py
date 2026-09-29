@@ -73,16 +73,14 @@ class _PathsFields:
     # -- Platform & update channel --
 
     platform_telemetry_enabled: bool = False
-    update_channel: str = "latest"
     platform_url: str = ""
     platform_urls: list[str] = Field(default_factory=list)
     platform_api_key: SecretStr = SecretStr("")
-    # W38 (7.0.0 security P1): one kill switch for BOTH the session-start
-    # update check and the team-sync pull loop. See
+    # W38 (7.0.0 security P1): one kill switch for automatic platform contact
+    # (the team-sync pull loop and telemetry). See
     # trw_mcp.state._platform_trust.platform_contact_enabled.
     platform_contact_enabled: bool = True
     installation_id: str = ""
-    auto_upgrade: bool = False
 
     # -- Knowledge topology (CORE-021) --
 
@@ -93,7 +91,8 @@ class _PathsFields:
     # F5 suggestion 2: opportunistic time-boxed knowledge-graph backfill on
     # deliver. Builds edges for un-graphed entries within the deadline budget
     # (WAL gives the singleton reader/writer isolation), then leaves the rest
-    # for the next deliver or a forced ``trw_knowledge_sync(force=True)``.
+    # for the next deliver (there is no standalone manual trigger; sync only
+    # runs from inside ``trw_deliver`` via ``execute_knowledge_sync``).
     deliver_graph_backfill_enabled: bool = True
     deliver_graph_backfill_deadline_seconds: float = Field(default=2.0, ge=0.0)
 

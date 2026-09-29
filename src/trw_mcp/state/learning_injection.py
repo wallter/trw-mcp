@@ -116,12 +116,19 @@ def recall_learnings(
     tags: list[str] | None = None,
     min_impact: float = 0.0,
     max_results: int = 25,
+    anchor_file: str | None = None,
+    single_page: bool = False,
+    rerank: bool = True,
 ) -> list[dict[str, object]]:
     """Resolve ``trw_dir`` for the live learning collector and recall.
 
     This is the one intentional file-level DRY shim permitted by PRD-FIX-085
     FR05: it adds directory resolution, not parameter drift. The collector
     intentionally uses the adapter's unfiltered default.
+
+    ``single_page`` (HINT-RECALL-BUDGET): passed straight through to bound the
+    pre-edit hint's own recall to one page per namespace; every other caller
+    leaves the default ``False``.
     """
     trw_dir = _resolve_trw_dir()
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall
@@ -132,4 +139,7 @@ def recall_learnings(
         tags=tags,
         min_impact=min_impact,
         max_results=max_results,
+        anchor_file=anchor_file,
+        single_page=single_page,
+        rerank=rerank,
     )

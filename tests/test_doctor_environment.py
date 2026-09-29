@@ -70,6 +70,7 @@ def test_rows_are_registered_in_the_doctor_catalogue() -> None:
         "retrieval",
         "stray_servers",
         "claude_code_version",
+        "hook_python",
     ]
     assert [name for name in names if name in ordered] == ordered
 
@@ -117,7 +118,9 @@ def test_claude_code_version_row(
     claude.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
 
-    got, message = claude_code_version_row(timeout_s=1)
+    # A loaded host takes over a second just to start `sh` (2 of 3 failing xdist runs at load ~15 hit the
+    # probe timeout), so only the case that asserts the timeout keeps the short budget.
+    got, message = claude_code_version_row(timeout_s=1 if "sleep" in script else 30)
 
     assert got == status, message
     assert all(needle in message for needle in needles), message

@@ -9,29 +9,7 @@ from unittest.mock import patch
 from tests._analytics_yaml_paths_support import _setup_trw, _write_entry
 from trw_mcp.state.analytics import (
     auto_prune_excess_entries,
-    mark_promoted,
 )
-from trw_mcp.state.persistence import FileStateReader
-
-
-class TestMarkPromotedSqliteException:
-    """Test mark_promoted when SQLite fails."""
-
-    def test_sqlite_exception_falls_through_to_yaml(self, tmp_path: Path) -> None:
-        """Lines 764-765: SQLite exception is caught, YAML update still happens."""
-        trw_dir = _setup_trw(tmp_path)
-        entries_dir = trw_dir / "learnings" / "entries"
-
-        _write_entry(entries_dir, "promote-me", summary="promote target")
-
-        with patch(
-            "trw_mcp.state._store_selection.selected_store",
-            side_effect=RuntimeError("store broken"),
-        ):
-            mark_promoted(trw_dir, "promote-me")
-
-        data = FileStateReader().read_yaml(entries_dir / "promote-me.yaml")
-        assert data.get("promoted_to_claude_md") is True
 
 
 class TestAutoPruneYamlPath:

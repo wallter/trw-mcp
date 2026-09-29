@@ -74,7 +74,7 @@ def send_once(
             # FR12: a displaced sender is refused; a current one renews by sending.
             touch(conn, snapshot.binding, now, lease_ttl_seconds=config.comms_lease_ttl_seconds)
             if scope is None:
-                assert recipient_member_id is not None  # noqa: S101 - narrowed by the check above
+                assert recipient_member_id is not None  # noqa: S101  # trw:intentional narrowed by the XOR admission check above (scope is None) == (recipient_member_id is None)
                 envelope = Envelope(recipient_member_id, request_key, body, kind, delivery_class)
                 ttl = config.comms_message_ttl_seconds
                 admitted = admit(conn, snapshot, envelope, now, ttl_seconds=ttl)

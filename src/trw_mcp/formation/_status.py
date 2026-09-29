@@ -33,6 +33,7 @@ import structlog
 import yaml
 
 from trw_mcp.formation._manifest import TERMINAL_STATUSES, FormationManifest
+from trw_mcp.formation._orchestrator import is_orchestrator_slot
 
 logger = structlog.get_logger(__name__)
 
@@ -172,12 +173,13 @@ def non_terminal_members(manifest: FormationManifest) -> list[tuple[str, str]]:
 
     A ``delivered`` member whose run carries no delivery record is INCLUDED, as
     FR11 requires: the self-report is a claim, and a claim with no evidence
-    behind it is exactly what the gate exists to catch.
+    behind it is exactly what the gate exists to catch. The orchestrator's own
+    member (bound to the run that owns the manifest) is never waited on.
     """
     pending: list[tuple[str, str]] = []
     for member in manifest.members:
-        if not member.run_path:
-            continue
+        if not member.run_path or is_orchestrator_slot(manifest, member):
+            continue  # PRD-CORE-340-FR18: the lead is not child work; it cannot wait on itself
         status = str(member.status)
         if status not in TERMINAL_STATUSES:
             pending.append((member.member_id, status))
@@ -209,7 +211,9 @@ def _last_checkpoint(run_path: Path | None) -> tuple[str, str]:
         return "", ""
     try:
         lines = [ln for ln in path.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
-    except OSError:
+    except OSError as exc:
+        logger.debug("formation_checkpoints_unreadable", path=str(path), reason=str(exc))
+        # trw-fail-silent-allow: unreadable-checkpoints failure now logged with path+reason above.
         return "", ""
     for line in reversed(lines):
         try:

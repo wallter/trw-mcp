@@ -144,6 +144,27 @@ def test_integrator_pin_can_run_but_other_member_cannot(
     assert formation.merge_run_one(integrator, repo=fixture.project_root, target="integration").state == "merged"
 
 
+def test_inherited_git_dir_cannot_redirect_the_queue(
+    queue_scene: tuple[FormationFixture, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B71-26 D5: a caller's exported repository variable never points the queue at another repo."""
+    fixture, _ = queue_scene
+    item = _approved(fixture, _receipt(fixture))
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    _git(decoy, "init", "-q")
+    previous = _git(fixture.project_root, "rev-parse", "integration")
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    merged = formation.merge_run_one(_lead(fixture), repo=fixture.project_root, target="integration")
+    monkeypatch.delenv("GIT_DIR")
+    assert merged.state == "merged"
+    assert _git(fixture.project_root, "rev-list", "--parents", "-n", "1", "integration").split()[1:] == [
+        previous,
+        item.sha,
+    ]
+    assert not _git(decoy, "for-each-ref"), "nothing was written into the decoy repository"
+
+
 @pytest.mark.parametrize(
     ("failure", "reason"),
     [

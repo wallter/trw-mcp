@@ -51,7 +51,7 @@ def _client_effort(spec: ClientSpec, req: DispatchRequest) -> str | None:
     TRW's effort adapter applies, and never upward, so a request is not silently
     made more expensive than it asked for.
     """
-    if req.effort is None or spec.effort_flag is None:
+    if req.effort is None or not (spec.effort_flag or spec.effort_config_key):
         return None
     if req.model and "haiku" in req.model.lower():
         return None
@@ -143,6 +143,8 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     effort = _client_effort(spec, req)
     if effort is not None and spec.effort_flag is not None:
         argv += [spec.effort_flag, effort]
+    elif effort is not None and spec.effort_config_key is not None:
+        argv += ["-c", f'{spec.effort_config_key}="{effort}"']
     if spec.max_turns_flag is not None and req.max_turns is not None:
         argv += [spec.max_turns_flag, str(req.max_turns)]
     if spec.cwd_flag is not None and req.cwd is not None:

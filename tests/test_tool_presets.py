@@ -19,6 +19,8 @@ import pytest
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 
+pytestmark = pytest.mark.unit
+
 
 def _registered_production_tools() -> set[str]:
     """Return the full set of tool names registered on a FRESH production server.

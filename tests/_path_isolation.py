@@ -46,6 +46,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import trw_mcp.state._paths as _real_paths
+from trw_mcp.state._project_root_binding import install_target
 
 # Captured at import of this module — before any fixture rebinding — so the
 # sweep can recognise a genuine resolver by identity rather than by name.
@@ -68,7 +69,7 @@ def _quarantine_root() -> Path:
     if _quarantine is None:
         _quarantine = Path(tempfile.mkdtemp(prefix="trw-test-quarantine-"))
         # Never otherwise removed (learning L-d6WS: this directory, plus
-        # trw_mcp.state.auto_upgrade's trw-upgrade-* scratch dirs, leaked
+        # the retired self-updater's trw-upgrade-* scratch dirs, leaked
         # thousands of mkdtemp dirs into $TMPDIR across full-suite runs,
         # about 1 GB/day under swarm test activity). One quarantine dir is
         # created at most once per test PROCESS, so an atexit hook is the
@@ -105,7 +106,15 @@ def resolve_project_root() -> Path:
     test-set ``TRW_PROJECT_ROOT`` is still confined to whatever directory
     the test created (almost always under ``tmp_path``), so honoring it
     does not reopen the real-repo leak this module exists to close.
+
+    The same holds for the target an enclosing ``init_project`` /
+    ``update_project`` binds (``state._project_root_binding``, B71-118), which
+    the genuine function consults before the env var: a test names that target
+    itself, so honoring it keeps installs resolving their own project here too.
     """
+    bound = install_target()
+    if bound is not None:
+        return bound
     env_root = os.environ.get("TRW_PROJECT_ROOT")
     if env_root:
         return Path(env_root).resolve()
@@ -113,8 +122,13 @@ def resolve_project_root() -> Path:
 
 
 def resolve_trw_dir() -> Path:
-    """Isolated stand-in for ``trw_mcp.state._paths.resolve_trw_dir``."""
-    return current_root() / ".trw"
+    """Isolated stand-in for ``trw_mcp.state._paths.resolve_trw_dir``.
+
+    Inside an install it is the bound target's ``.trw`` (as the genuine resolver
+    gives); otherwise the fixture root's, whatever ``TRW_PROJECT_ROOT`` says.
+    """
+    bound = install_target()
+    return (bound if bound is not None else current_root()) / ".trw"
 
 
 # (attribute name, genuine resolver, isolated stand-in)

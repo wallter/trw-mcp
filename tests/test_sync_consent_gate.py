@@ -20,8 +20,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests._contact_support import payload_trw_dir
 from tests._test_sync_client_support import _acquired_lock, _make_config
 from trw_mcp.sync._team_merge_result import TeamMergeResult
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 def _make_entry(entry_id: str, sync_seq: int = 1) -> Any:
@@ -85,6 +89,7 @@ async def test_push_learnings_zero_post_when_sharing_disabled() -> None:
         api_key="k",
         client_id="sync-test",
         learning_sharing_enabled=False,
+        source_trw_dir=payload_trw_dir(),
     )
     with patch("httpx.AsyncClient", spy.client_factory()):
         result = await pusher.push_learnings([_make_entry("L-1"), _make_entry("L-2")])
@@ -99,7 +104,9 @@ async def test_push_learnings_default_is_fail_closed() -> None:
     from trw_mcp.sync.push import SyncPusher
 
     spy = _TransportSpy()
-    pusher = SyncPusher(backend_url="http://backend.test", api_key="k", client_id="sync-test")
+    pusher = SyncPusher(
+        backend_url="http://backend.test", api_key="k", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
     with patch("httpx.AsyncClient", spy.client_factory()):
         result = await pusher.push_learnings([_make_entry("L-1")])
 
@@ -117,6 +124,7 @@ async def test_push_outcomes_zero_post_when_telemetry_disabled() -> None:
         api_key="k",
         client_id="sync-test",
         platform_telemetry_enabled=False,
+        source_trw_dir=payload_trw_dir(),
     )
     with patch("httpx.AsyncClient", spy.client_factory()):
         result = await pusher.push_outcomes([{"session_id": "s1", "learning_ids": ["L-1"]}])
@@ -135,6 +143,7 @@ async def test_push_learnings_posts_when_sharing_enabled() -> None:
         api_key="k",
         client_id="sync-test",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     with patch("httpx.AsyncClient", spy.client_factory()):
         result = await pusher.push_learnings([_make_entry("L-1")])

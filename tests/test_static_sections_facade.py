@@ -27,7 +27,6 @@ _REQUIRED_PUBLIC_SYMBOLS = frozenset(
         "render_ceremony_table",
         "render_closing_reminder",
         "render_codex_instructions",
-        "render_codex_trw_section",
         "render_delegation_protocol",
         "render_framework_reference",
         "render_imperative_opener",
@@ -35,8 +34,9 @@ _REQUIRED_PUBLIC_SYMBOLS = frozenset(
         "render_minimal_protocol",
         "render_opencode_instructions",
         "render_phase_descriptions",
-        "render_rationalization_watchlist",
-        "render_shared_learnings",
+        # render_rationalization_watchlist was deleted outright as a dead
+        # symbol in 83754efb3 (PRD-CORE-313 FR01+FR06, 8.0 removals); no
+        # longer exists anywhere in src.
     }
 )
 
@@ -47,9 +47,7 @@ _REQUIRED_PUBLIC_SYMBOLS = frozenset(
 _PATCHABLE_DEPENDENCIES = frozenset(
     {
         "FileStateReader",
-        "MemoryConfig",
         "get_config",
-        "list_org_shared_entries",
         "resolve_project_root",
         "time",
         "yaml",

@@ -82,7 +82,6 @@ def test_opencode_ready_delivers_reviewed_execution_plan(tmp_path: Path) -> None
     for phrase in (
         "author-independent helper/human",
         "no inline author self-review fallback",
-        "Legacy output: configured separate plan",
         "{prd_path}#execution-plan",
         "read-only handoff",
         "full-validation receipt",

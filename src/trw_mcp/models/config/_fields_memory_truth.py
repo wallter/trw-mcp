@@ -23,7 +23,10 @@ class _MemoryTruthFields:
     # way to reach those knobs since e3 landed, so
     # ``memory_decay_cutoff_days`` / ``memory_decay_batch_size`` were retired
     # here (batch 23b) rather than left admitted-but-unread; see
-    # ``config-retired-keys.json``.
+    # ``config-retired-keys.json``. PRD-CORE-331 FR10 (B71-135h) gave the
+    # daemon side its own ``MemoryConfig.decay_cutoff_days`` /
+    # ``decay_batch_size`` (env ``MEMORY_DECAY_CUTOFF_DAYS`` /
+    # ``MEMORY_DECAY_BATCH_SIZE``) -- these are the working replacement.
     # -- Automatic-removal protection (PRD-CORE-244 FR10) --
     # ``protection_tier`` was advertised by trw_learn, validated, stamped and
     # updatable, and every DESTRUCTIVE path ignored it: a learning marked

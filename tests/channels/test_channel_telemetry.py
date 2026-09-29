@@ -6,7 +6,6 @@ PRD-DIST-2400 FR08, FR09, FR10, FR11.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -15,13 +14,10 @@ from trw_mcp.channels._telemetry import (
     CHANNEL_EVENT_SCHEMA_VERSION,
     CHANNEL_EVENT_V1_REQUIRED,
     MAX_EVENTS_BYTES,
-    MAX_EVENTS_LINES,
-    PRUNE_LINES_ON_CAP,
     RECORD_ID_PATH_KEYED_RE,
     RECORD_ID_SLUG_KEYED_RE,
     VALID_EVENT_TYPES,
     append_channel_event,
-    prune_channel_events,
     validate_event_type,
     validate_record_id,
 )
@@ -93,14 +89,6 @@ def test_valid_event_types_contains_system_recovery_event() -> None:
 
 def test_max_events_bytes() -> None:
     assert MAX_EVENTS_BYTES == 10 * 1024 * 1024
-
-
-def test_max_events_lines() -> None:
-    assert MAX_EVENTS_LINES == 50_000
-
-
-def test_prune_lines_on_cap() -> None:
-    assert PRUNE_LINES_ON_CAP == 25_000
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +256,7 @@ def test_append_channel_event_fail_open_on_oserror(tmp_path: Path, monkeypatch: 
     def _boom(*_a: object, **_kw: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("builtins.open", _boom)
+    monkeypatch.setattr("trw_mcp.channels._telemetry.append_checkout_file", _boom)
     # Must not raise
     append_channel_event(
         channel_id="ch",
@@ -285,7 +273,7 @@ def test_append_channel_event_fail_open_on_permission_error(tmp_path: Path, monk
     def _boom(*_a: object, **_kw: object) -> None:
         raise PermissionError("not allowed")
 
-    monkeypatch.setattr("builtins.open", _boom)
+    monkeypatch.setattr("trw_mcp.channels._telemetry.append_checkout_file", _boom)
     # Must not raise
     append_channel_event(
         channel_id="ch",
@@ -477,66 +465,6 @@ def test_telemetry_rotation_overwrites_existing_backup(tmp_path: Path) -> None:
     # The old ".2" backup must NOT be created
     backup2 = log_path.with_suffix(".jsonl.2")
     assert not backup2.exists()
-
-
-# ---------------------------------------------------------------------------
-# Line cap + prune (FR09)
-# ---------------------------------------------------------------------------
-
-
-def test_telemetry_line_cap_prune(tmp_path: Path) -> None:
-    log_path = tmp_path / "channel-events.jsonl"
-
-    # Write MAX_EVENTS_LINES + 1 minimal lines
-    line = json.dumps({"k": "v"}) + "\n"
-    lines = line * (MAX_EVENTS_LINES + 1)
-    log_path.write_text(lines, encoding="utf-8")
-
-    pruned = prune_channel_events(log_path, max_lines=MAX_EVENTS_LINES)
-
-    assert pruned == MAX_EVENTS_LINES + 1 - (MAX_EVENTS_LINES - PRUNE_LINES_ON_CAP)
-    remaining = log_path.read_text().splitlines()
-    assert len(remaining) == MAX_EVENTS_LINES - PRUNE_LINES_ON_CAP
-
-
-def test_prune_channel_events_no_op_under_limit(tmp_path: Path) -> None:
-    log_path = tmp_path / "events.jsonl"
-    log_path.write_text("line1\nline2\n", encoding="utf-8")
-    pruned = prune_channel_events(log_path, max_lines=100)
-    assert pruned == 0
-    assert log_path.read_text() == "line1\nline2\n"
-
-
-def test_prune_channel_events_missing_file(tmp_path: Path) -> None:
-    result = prune_channel_events(tmp_path / "nonexistent.jsonl")
-    assert result == 0
-
-
-def test_prune_channel_events_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    log_path = tmp_path / "events.jsonl"
-    log_path.write_text("line\n" * 60_000, encoding="utf-8")
-
-    def _boom(*_a: object, **_kw: object) -> None:
-        raise PermissionError("no write")
-
-    monkeypatch.setattr(os, "rename", _boom)
-    # Should not raise
-    result = prune_channel_events(log_path, max_lines=50_000)
-    # Returns 0 on failure
-    assert result == 0
-
-
-def test_prune_keeps_most_recent_lines(tmp_path: Path) -> None:
-    """After prune, the last lines should be the newest ones."""
-    log_path = tmp_path / "events.jsonl"
-    lines = [f'{{"index": {i}}}\n' for i in range(MAX_EVENTS_LINES + 100)]
-    log_path.write_text("".join(lines), encoding="utf-8")
-
-    prune_channel_events(log_path, max_lines=MAX_EVENTS_LINES)
-    remaining = log_path.read_text().splitlines()
-    # Last line should be from the end (most recent)
-    last_event = json.loads(remaining[-1])
-    assert last_event["index"] == MAX_EVENTS_LINES + 99
 
 
 # ---------------------------------------------------------------------------

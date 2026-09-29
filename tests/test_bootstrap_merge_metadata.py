@@ -11,6 +11,8 @@ from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 class TestMcpJsonMerge:
     """Test that .mcp.json merge preserves user servers and ensures trw entry."""
@@ -292,13 +294,13 @@ class TestDefaultConfig:
     """Test _default_config() matches TRWConfig defaults."""
 
     def test_default_config_matches_trwconfig(self) -> None:
-        """_default_config() claude_md_max_lines matches TRWConfig default."""
+        """_default_config() runs_root matches TRWConfig default."""
         from trw_mcp.bootstrap import _default_config
         from trw_mcp.models.config import TRWConfig
 
         config_text = _default_config()
         default_model = TRWConfig()
-        assert f"claude_md_max_lines: {default_model.claude_md_max_lines}" in config_text
+        assert f"runs_root: {default_model.runs_root}" in config_text
 
     def test_default_config_includes_runs_root(self) -> None:
         """_default_config() includes runs_root with the default value."""

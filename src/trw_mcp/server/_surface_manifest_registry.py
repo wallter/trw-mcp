@@ -279,7 +279,9 @@ class SurfaceReductionException(BaseModel):
     reduction_plan_ref: str
 
 
-#: One distinct exception per missed metric (PRD-CORE-218 NFR04). Baselines are
+#: One distinct exception per missed metric (PRD-CORE-218 NFR04); the ``skills``
+#: exception was retired 2026-09-28 when the sprint skills were removed and the
+#: target was met. Baselines are
 #: the PRD §5 committed receipt (45 tools / 29 skills / 436 fields); ``measured``
 #: is the census at approval. Expiry is the PRD target completion — after it the
 #: miss blocks completion (the NFR04 test enforces "unexpired").
@@ -290,21 +292,6 @@ class SurfaceReductionException(BaseModel):
 #: because of new *unbounded* growth, so a fresh 90-day exception is the honest
 #: record rather than a retroactive one. Owner + review cadence unchanged.
 SURFACE_REDUCTION_EXCEPTIONS: dict[str, SurfaceReductionException] = {
-    "skills": SurfaceReductionException(
-        metric="skills",
-        baseline=29,
-        target=23,
-        measured=26,
-        owner="framework-consolidation",
-        rationale=(
-            "Renewed 2026-09-03: duplicate-skill consolidation (FR07) flags "
-            "near-duplicates but does not auto-merge; retiring the flagged "
-            "skills to reach <=23 is a reversible lifecycle transition still "
-            "scheduled behind the same FR07 wave as the tools metric."
-        ),
-        expiry_iso="2026-12-02",
-        reduction_plan_ref="docs/requirements-aare-f/prds/PRD-CORE-218.md#8-rollout-plan",
-    ),
     "config_fields": SurfaceReductionException(
         metric="config_fields",
         baseline=436,

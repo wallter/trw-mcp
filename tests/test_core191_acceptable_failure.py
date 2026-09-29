@@ -34,7 +34,6 @@ from tests.conftest import get_tools_sync
 from trw_mcp.tools.ceremony import register_ceremony_tools
 
 _FUTURE = (datetime.now(timezone.utc) + timedelta(days=30)).date().isoformat()
-_TODAY = datetime.now(timezone.utc).date().isoformat()
 _YESTERDAY = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
 
 
@@ -234,13 +233,25 @@ class TestExpiry:
         assert "expired" in error.lower()
         assert _YESTERDAY in error
 
-    def test_same_day_passes(self) -> None:
+    @pytest.mark.parametrize(
+        "frozen_now",
+        [
+            datetime(2026, 9, 28, 23, 59, 59, tzinfo=timezone.utc),
+            datetime(2026, 9, 29, 0, 0, 1, tzinfo=timezone.utc),
+        ],
+        ids=["just-before-midnight-utc", "just-after-midnight-utc"],
+    )
+    def test_same_day_passes(self, frozen_now: datetime) -> None:
+        """The clock is frozen: reading it at import made this fail whenever the suite crossed 00:00 UTC."""
         from trw_mcp.tools._acceptable_failure_validation import parse_acceptable_failure
 
-        record, error = parse_acceptable_failure(_record_json(_TODAY))
+        today = frozen_now.date().isoformat()
+        with patch("trw_mcp.tools._acceptable_failure_validation.datetime") as mock_dt:
+            mock_dt.now.return_value = frozen_now
+            record, error = parse_acceptable_failure(_record_json(today))
         assert error is None
         assert record is not None
-        assert record.expiry_iso == _TODAY
+        assert record.expiry_iso == today
 
 
 # ── FR05: error message has example ────────────────────────────────────────

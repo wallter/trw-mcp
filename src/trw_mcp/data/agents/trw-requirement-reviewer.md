@@ -8,7 +8,6 @@ description: >
 model: frontier
 effort: medium
 maxTurns: 20
-memory: project
 tools:
   - Read
   - Grep

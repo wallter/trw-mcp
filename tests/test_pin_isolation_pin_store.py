@@ -14,6 +14,14 @@ import pytest
 from structlog.testing import capture_logs
 
 
+def save_pin_store(store):
+    """Test-local: the removed writer took both pin-store locks around the live atomic write."""
+    from trw_mcp.state import _pin_store
+
+    with _pin_store._pin_store_threading_lock, _pin_store._pin_store_file_lock():
+        _pin_store._write_pin_store_locked(store)
+
+
 def _pin_in_process(trw_dir: str, run_path: str, pin_key: str, barrier: Any) -> None:
     from trw_mcp.state import _paths
     from trw_mcp.state._pin_store import upsert_pin_entry
@@ -121,7 +129,7 @@ def test_load_pin_store_root_not_dict_fallback() -> None:
 
 def test_save_pin_store_writes_pretty_json() -> None:
     """save_pin_store round-trips and emits pretty-printed (indent=2) JSON."""
-    from trw_mcp.state._pin_store import load_pin_store, pin_store_path, save_pin_store
+    from trw_mcp.state._pin_store import load_pin_store, pin_store_path
 
     store = {
         "session-a": {
@@ -145,7 +153,7 @@ def test_save_pin_store_writes_pretty_json() -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
 def test_save_pin_store_mode_0600(tmp_path: Path) -> None:
     """pins.json is chmod 0600 after atomic write (NFR03)."""
-    from trw_mcp.state._pin_store import pin_store_path, save_pin_store
+    from trw_mcp.state._pin_store import pin_store_path
 
     save_pin_store(
         {
@@ -166,7 +174,7 @@ def test_save_pin_store_mode_0600(tmp_path: Path) -> None:
 def test_save_pin_store_invalidates_cache_immediately(tmp_path: Path) -> None:
     """Cache is reset to None immediately after os.replace completes."""
     import trw_mcp.state._pin_store as ps_mod
-    from trw_mcp.state._pin_store import load_pin_store, save_pin_store
+    from trw_mcp.state._pin_store import load_pin_store
 
     load_pin_store()
     save_pin_store(
@@ -187,7 +195,7 @@ def test_save_pin_store_invalidates_cache_immediately(tmp_path: Path) -> None:
 
 def test_save_pin_store_atomic_leaves_no_tmp_on_success(tmp_path: Path) -> None:
     """After a successful save, no ``pins.json.tmp`` remains."""
-    from trw_mcp.state._pin_store import pin_store_path, save_pin_store
+    from trw_mcp.state._pin_store import pin_store_path
 
     save_pin_store(
         {
@@ -208,7 +216,7 @@ def test_save_pin_store_atomic_leaves_no_tmp_on_success(tmp_path: Path) -> None:
 def test_save_pin_store_atomic_cleans_up_tmp_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If os.replace raises, the tmp file is cleaned up and no orphan remains."""
     import trw_mcp.state._pin_store as ps_mod
-    from trw_mcp.state._pin_store import pin_store_path, save_pin_store
+    from trw_mcp.state._pin_store import pin_store_path
 
     real_replace = os.replace
 

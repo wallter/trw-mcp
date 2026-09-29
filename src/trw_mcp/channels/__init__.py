@@ -15,21 +15,13 @@ from trw_mcp.channels._distill_telemetry import (
     emit_tool_call,
     resolve_client_profile,
 )
-from trw_mcp.channels._gitignore import (
-    GITIGNORE_BEGIN,
-    GITIGNORE_END,
-    add_gitignore_entry,
-    list_gitignore_entries,
-    remove_gitignore_entry,
-)
+from trw_mcp.channels._gitignore import GITIGNORE_BEGIN, GITIGNORE_END, add_gitignore_entry, list_gitignore_entries
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 from trw_mcp.channels._manifest_loader import (
     ChannelManifest,
     ManifestMissingError,
     ManifestValidationError,
-    MarkerCollisionError,
     auto_recreate_empty,
-    check_marker_collisions,
     load,
     write,
 )
@@ -49,16 +41,7 @@ from trw_mcp.channels._manifest_models import (
     ProvenanceConfig,
     WriteStrategy,
 )
-from trw_mcp.channels._marker_replace import (
-    extract_segment_interior,
-    replace_distill_segment,
-)
-from trw_mcp.channels._provenance import (
-    now_utc_iso8601,
-    parse_provenance_comment,
-    render_provenance_comment,
-    render_provenance_frontmatter,
-)
+from trw_mcp.channels._provenance import now_utc_iso8601
 from trw_mcp.channels._state import (
     ChannelState,
     read_state,
@@ -70,7 +53,6 @@ from trw_mcp.channels._telemetry import (
     CHANNEL_EVENT_V1_REQUIRED,
     VALID_EVENT_TYPES,
     append_channel_event,
-    prune_channel_events,
     validate_record_id,
 )
 
@@ -97,26 +79,17 @@ __all__ = [
     "HumanEditDetection",
     "ManifestMissingError",
     "ManifestValidationError",
-    "MarkerCollisionError",
     "MarkersConfig",
     "ProvenanceConfig",
     "WriteStrategy",
     "add_gitignore_entry",
     "append_channel_event",
     "auto_recreate_empty",
-    "check_marker_collisions",
     "emit_tool_call",
-    "extract_segment_interior",
     "list_gitignore_entries",
     "load",
     "now_utc_iso8601",
-    "parse_provenance_comment",
-    "prune_channel_events",
     "read_state",
-    "remove_gitignore_entry",
-    "render_provenance_comment",
-    "render_provenance_frontmatter",
-    "replace_distill_segment",
     "resolve_client_profile",
     "state_path_for",
     "validate_record_id",

@@ -62,10 +62,12 @@ def test_resolution_refuses_with_exit_2_and_derives_the_posture_list() -> None:
     from trw_mcp.dispatch._resolve import DispatchResolutionError, _resolve_posture
 
     with pytest.raises(DispatchResolutionError) as refused:
-        _resolve_posture("isolated-review", client="agy", read_only=True)
+        _resolve_posture("isolated-review", client="agy", read_only=True, require=True)
     assert refused.value.exit_code == 2 and "unknown dispatch posture" not in str(refused.value)
+    posture, note = _resolve_posture("isolated-review", client="agy", read_only=True, require=False)
+    assert posture == "default" and "not enforced" in note, "best effort unless required (DISPATCH-SIMPLIFY)"
     with pytest.raises(DispatchResolutionError, match="isolated-review"):
-        _resolve_posture("bogus", client="agy", read_only=True)
+        _resolve_posture("bogus", client="agy", read_only=True, require=False)
 
 
 @pytest.mark.parametrize("client", SUPPORTED_CLIENTS)

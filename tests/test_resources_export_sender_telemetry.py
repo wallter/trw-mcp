@@ -4,9 +4,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
-from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
+from tests._httpx_mock_support import _mock_httpx_client, _mock_httpx_response
 from tests._resources_export_sender_support import _make_sender, _write_events
+
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 class TestHttpPost:

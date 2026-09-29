@@ -99,8 +99,7 @@ def test_session_start_total_is_at_least_sum_of_named_steps(
     # (compact-by-default folds it into health_summary — PRD-IMPROVE-MCP-04).
     result: dict[str, Any] = fn(ctx=None, query="*", verbose=True)
     durations = result["step_durations_ms"]
-    if "total" not in durations:
-        pytest.skip("total not recorded (partial failure path)")
+    assert "total" in durations, f"session_start recorded no total: {sorted(durations)}"
 
     total = float(durations["total"])
     named_sum = sum(

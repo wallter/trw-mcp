@@ -89,7 +89,7 @@ def test_no_pin_returns_not_recorded_instead_of_raising(isolated_project: Path) 
     """FR02: the no-run branch returns a result dict; no exception propagates."""
     from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 
-    result = execute_checkpoint(None, "progress", None, None, context=_ctx("fr02-no-pin"))
+    result = execute_checkpoint(None, "progress", None, context=_ctx("fr02-no-pin"))
 
     assert result["recorded"] is False
     assert "run_path=" in str(result["remedy"])
@@ -100,7 +100,7 @@ def test_not_recorded_never_reports_success(isolated_project: Path) -> None:
     """NFR04: no success token anywhere in the payload, and the flag is explicit."""
     from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 
-    result = execute_checkpoint(None, "progress", None, None, context=_ctx("fr02-truthful"))
+    result = execute_checkpoint(None, "progress", None, context=_ctx("fr02-truthful"))
 
     assert "recorded" in result, "the not-recorded marker must be explicit, not inferred"
     assert result["recorded"] is False
@@ -114,7 +114,7 @@ def test_no_run_call_writes_nothing_under_the_project_root(isolated_project: Pat
 
     before = _snapshot(isolated_project)
 
-    execute_checkpoint(None, "progress", None, None, context=_ctx("fr02-nowrite"))
+    execute_checkpoint(None, "progress", None, context=_ctx("fr02-nowrite"))
 
     after = _snapshot(isolated_project)
     assert after == before, f"softened path wrote: {set(after) ^ set(before) or 'modified files'}"
@@ -127,7 +127,7 @@ def test_success_path_marks_recorded_true(isolated_project: Path) -> None:
 
     run_dir = _seed_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
 
-    result = execute_checkpoint(str(run_dir), "did a thing", None, None, context=_ctx("fr02-ok"))
+    result = execute_checkpoint(str(run_dir), "did a thing", None, context=_ctx("fr02-ok"))
 
     assert result["recorded"] is True
     assert result["status"] == "checkpoint_created"
@@ -139,7 +139,7 @@ def test_supplied_run_path_records_into_that_run(isolated_project: Path) -> None
 
     run_dir = _seed_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
 
-    execute_checkpoint(str(run_dir), "delegated progress", None, None, context=_ctx("fr02-supplied"))
+    execute_checkpoint(str(run_dir), "delegated progress", None, context=_ctx("fr02-supplied"))
 
     checkpoints = run_dir / "meta" / "checkpoints.jsonl"
     events = run_dir / "meta" / "events.jsonl"
@@ -157,7 +157,7 @@ def test_pinned_run_receives_the_checkpoint_without_run_path(isolated_project: P
     ctx = _ctx("fr02-pinned")
     pin_active_run(run_dir, context=ctx)
 
-    result = execute_checkpoint(None, "inherited progress", None, None, context=ctx)
+    result = execute_checkpoint(None, "inherited progress", None, context=ctx)
 
     assert result["recorded"] is True
     assert (run_dir / "meta" / "checkpoints.jsonl").exists()
@@ -178,7 +178,6 @@ def test_missing_supplied_run_path_still_raises(isolated_project: Path) -> None:
             str(isolated_project / "nope" / "missing-run"),
             "progress",
             None,
-            None,
             context=_ctx("fr02-missing"),
         )
 
@@ -189,7 +188,7 @@ def test_non_ctx_caller_still_uses_the_mtime_fallback(isolated_project: Path) ->
 
     run_dir = _seed_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
 
-    result = execute_checkpoint(None, "legacy progress", None, None, context=None)
+    result = execute_checkpoint(None, "legacy progress", None, context=None)
 
     assert result["recorded"] is True
     assert result["status"] == "checkpoint_created"
@@ -265,7 +264,7 @@ def test_blank_message_returns_not_recorded_with_a_remedy(isolated_project: Path
 
     run_dir = _seed_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
 
-    result = execute_checkpoint(str(run_dir), blank, None, None, context=_ctx("empty-msg"))
+    result = execute_checkpoint(str(run_dir), blank, None, context=_ctx("empty-msg"))
 
     assert result["recorded"] is False
     assert result["reason"] == "empty_message"
@@ -285,7 +284,7 @@ def test_blank_message_writes_nothing_even_with_a_valid_run(isolated_project: Pa
     run_dir = _seed_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
     before = _snapshot(isolated_project)
 
-    execute_checkpoint(str(run_dir), "  ", None, None, context=_ctx("empty-msg-nowrite"))
+    execute_checkpoint(str(run_dir), "  ", None, context=_ctx("empty-msg-nowrite"))
 
     assert _snapshot(isolated_project) == before
     assert not (run_dir / "meta" / "checkpoints.jsonl").exists()
@@ -305,7 +304,6 @@ def test_blank_message_refused_before_run_resolution_so_a_bad_path_cannot_raise(
     result = execute_checkpoint(
         str(isolated_project / "nope" / "missing-run"),
         "",
-        None,
         None,
         context=_ctx("empty-msg-order"),
     )

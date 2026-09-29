@@ -7,10 +7,11 @@ FR16: opencode.json Smart Merge (PRD-CORE-074)
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.channels.opencode._shared_lock import ChannelLockSkip, agents_md_lock
 from trw_mcp.models.typed_dicts._opencode import (
     OpencodeServerEntry,
@@ -19,16 +20,10 @@ from trw_mcp.models.typed_dicts._opencode import (
 
 from ._file_ops import _new_result, has_marker, replace_marker_region
 from ._opencode_instructions import (
-    detect_model_family as detect_model_family,
-)
-from ._opencode_instructions import (
     generate_codex_instructions as generate_codex_instructions,
 )
 from ._opencode_instructions import (
     generate_opencode_instructions as generate_opencode_instructions,
-)
-from ._opencode_jsonc import (
-    _parse_jsonc as _parse_jsonc,
 )
 from ._opencode_jsonc import (
     _read_existing_opencode_config as _read_existing_opencode_config,
@@ -51,8 +46,6 @@ _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
 _OPENCODE_DATA_DIR = _DATA_DIR / "opencode"
 _OPENCODE_COMMANDS_DIR = _OPENCODE_DATA_DIR / "commands"
-_OPENCODE_SKILLS_DIR = _OPENCODE_DATA_DIR / "skills"
-_OPENCODE_SKILLS_INVENTORY = _OPENCODE_DATA_DIR / "skills_inventory.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +138,18 @@ def _write_rendered(
         if existed and not force and dest.read_bytes() == incoming:
             result["preserved"].append(rel_path)
             return
-        dest.write_bytes(incoming)
+        write_checkout_file(_checkout_root(dest, rel_path), dest, incoming)
         result["updated" if existed else "created"].append(rel_path)
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {dest}: {exc}")
+
+
+def _checkout_root(dest: Path, rel_path: str) -> Path:
+    """The project root *dest* was built from (``root / rel_path == dest``): the root the safe write walks from."""
+    root = dest.parents[len(PurePath(rel_path).parts) - 1]
+    if root / rel_path != dest:
+        raise ValueError(f"{dest} does not end with {rel_path!r}")
+    return root
 
 
 def _copy_markdown_dir(
@@ -220,9 +221,11 @@ def install_opencode_skills(
     inventory = load_opencode_skill_inventory(base_dir)
     dest_root = target_dir / ".opencode" / "skills"
     canonical_root = base_dir.parent / "skills"
-    retire_disabled_skills(dest_root, canonical_root, result, ".opencode/skills", client="opencode")
+    retire_disabled_skills(
+        dest_root, canonical_root, result, ".opencode/skills", client="opencode", project_root=target_dir
+    )
     for skill_name, cfg in sorted(inventory.items()):
-        if cfg.get("disposition") == "exclude" or not skill_enabled(skill_name):
+        if cfg.get("disposition") == "exclude" or not skill_enabled(skill_name, target_dir):
             continue
         if not (canonical_root / skill_name).is_dir():
             result["errors"].append(f"Missing canonical skill for OpenCode: {skill_name}")
@@ -280,9 +283,9 @@ def generate_opencode_config(
 
         merged = merge_opencode_json(existing, trw_entry)
         try:
-            config_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+            write_checkout_file(target_dir, config_path, json.dumps(merged, indent=2) + "\n")
             result["updated"].append(config_path.name)
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to write {config_path.name}: {exc}")
     else:
         # Fresh install: write full template with .opencode/INSTRUCTIONS.md
@@ -294,9 +297,9 @@ def generate_opencode_config(
             "mcp": {"trw": trw_entry},
         }
         try:
-            config_path.write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
+            write_checkout_file(target_dir, config_path, json.dumps(template, indent=2) + "\n")
             result["created"].append(config_path.name)
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to write {config_path.name}: {exc}")
 
     logger.debug(
@@ -352,7 +355,6 @@ def _guarded_agents_write(
 
 def generate_agents_md(
     target_dir: Path,
-    trw_section: str,
     *,
     force: bool = False,
     client_id: str = "",
@@ -367,9 +369,11 @@ def generate_agents_md(
     four call sites so a fifth caller cannot reintroduce the write by omission;
     the profile is the authority, not a literal in this module.
 
-    Uses same <!-- trw:start --> / <!-- trw:end --> markers as CLAUDE.md.
-    If file exists, replaces only the section between markers.
-    If not, creates new file with the section.
+    PRD-CORE-341: the shared body (``render_instructions_body``, one renderer for every
+    writer) goes to ``.trw/INSTRUCTIONS.md``; AGENTS.md
+    gets only the two-line link between the ``<!-- trw:start -->`` /
+    ``<!-- trw:end -->`` markers (replacing the section when present, appending
+    it otherwise). A user-authored instructions file stops both writes.
 
     Acquires the shared ``.trw/channels/agents-md.lock`` (OC-B1 / PRD-DIST-2403 FR05)
     so that this ceremony writer and the distill segment writer cannot race.
@@ -393,7 +397,16 @@ def generate_agents_md(
     try:
         agents_md_path = target_dir / "AGENTS.md"
 
-        new_block = f"{_TRW_HEADER}\n{_TRW_START_MARKER}\n{trw_section}\n{_TRW_END_MARKER}\n"
+        from trw_mcp.state.claude_md._instructions_link import agents_link_section, write_instructions_file
+
+        instructions = write_instructions_file(target_dir)
+        if instructions.refusal is not None:
+            result["errors"].append(
+                f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
+                f"{instructions.refusal['detail']}"
+            )
+            return result
+        new_block = agents_link_section()
 
         if agents_md_path.exists() and not force:
             content = agents_md_path.read_text(encoding="utf-8")

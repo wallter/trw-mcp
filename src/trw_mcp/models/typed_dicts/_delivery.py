@@ -73,21 +73,22 @@ class TierSweepStepResult(TypedDict):
 class MemoryDecayStepResult(TypedDict):
     """Return shape of ``_step_memory_decay()`` (PRD-CORE-244 FR09).
 
-    ``processed`` is the number of rows whose importance was actually lowered and
-    ``remaining`` the qualifying rows the batch size deferred to the next
-    delivery — reported separately so a bounded pass is never mistaken for a
-    completed one.
+    ``processed`` is the number of rows whose importance was actually lowered.
+    ``more`` says whether the batch size deferred any qualifying rows to the
+    next delivery — reported separately so a bounded pass is never mistaken
+    for a completed one. It replaces a ``remaining``/``remaining_capped``
+    count that required an O(namespace) ``COUNT(*)`` query for information
+    ``more`` already carries as a byproduct of the pass's own cursor
+    (PRD-CORE-331 FR10 B71-135a; see UPGRADE-NOTES-8.0.0.md).
     """
 
     status: str
     reason: str
     processed: int
-    remaining: int
+    more: bool
     #: The daemon's consolidation pass as ``memory_maintain`` reported it (status, clusters_found,
     #: entries_consolidated); consolidation runs there, under this project's policy (PRD-CORE-302 FR03).
     consolidation: dict[str, object]
-    #: ``remaining`` is a lower bound: the store counts qualifying rows only up to a cap (rc9).
-    remaining_capped: NotRequired[bool]
 
 
 class ProgressionItem(TypedDict):

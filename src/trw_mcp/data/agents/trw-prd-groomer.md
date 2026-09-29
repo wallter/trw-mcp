@@ -6,7 +6,6 @@ description: >
   PRD authoring and grooming specialist. Use when a PRD must be created, grounded in repository evidence, reviewed for
   testable requirements, or advanced to a full, valid, risk-scaled approved result. Not for implementation.
 maxTurns: 100
-memory: project
 tools:
   - Read
   - Grep

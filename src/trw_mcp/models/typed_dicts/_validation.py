@@ -144,6 +144,11 @@ class ValidateResultDict(TypedDict, total=False):
     # wiring_test/seam coverage. Always present (possibly empty); block-mode
     # failures additionally appear in `failures` with rule WIRING_GATE_FAIL.
     wiring_gate_warnings: list[str]
+    # PRD-QUAL-148-FR03: the PRD-level wiring answer, separate from `verdict`.
+    # `partial` = every public FR is wired or seam-covered and at least one
+    # rests ONLY on a seam (each such FR carries a `wiring_gate_partial:`
+    # finding naming the seam). `not_evaluated` = the gate was skipped.
+    wiring_verdict: str
     # PRD-FIX-112: cooperative budget guard + fast mode. ``validation_partial`` is
     # True when fast mode was requested OR the ``prd_validate_budget_seconds``
     # wall-clock budget was exceeded mid-run, in which case ``checks_skipped``

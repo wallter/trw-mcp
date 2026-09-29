@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -18,7 +17,6 @@ from trw_mcp.state.doc_variants import (
     parse_variant_name,
     variant_dir,
     variant_name,
-    variant_status,
     write_variant,
 )
 
@@ -134,25 +132,6 @@ def _write(root: Path, base: Path, **kw: object) -> Path:
     args: dict[str, object] = {"kind": "review", "producer": "peer", "body": "findings", "ok": True}
     args.update(kw)
     return write_variant(base, root, **args)  # type: ignore[arg-type]
-
-
-def test_status_is_decided_by_base_sha256_not_mtime(tmp_path: Path) -> None:
-    base = tmp_path / "design.md"
-    base.write_text("v1\n")
-    variant = _write(tmp_path, base)
-    assert variant_status(variant) == "fresh"
-    os.utime(base, (1, 1))  # mtime moves, bytes do not
-    assert variant_status(variant) == "fresh"
-    base.write_text("v2\n")
-    assert variant_status(variant) == "stale"
-    base.unlink()
-    assert variant_status(variant) == "orphaned"
-    hand = tmp_path / "other.review.md"
-    hand.write_text("no frontmatter\n")
-    assert variant_status(hand) == "unrecorded"
-    broken = tmp_path / "other.audit.md"
-    broken.write_text("---\nvariant: [unclosed\n---\n")
-    assert variant_status(broken) == "unrecorded"
 
 
 def test_list_variants_orders_by_kind_producer_round(tmp_path: Path) -> None:

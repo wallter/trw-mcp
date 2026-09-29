@@ -67,7 +67,7 @@ def test_pinless_caller_never_writes_into_another_sessions_run(
     victim_run = _seed_run(isolated_project, "victim-task", "20260101T000000Z-aaaa1111")
     pin_active_run(victim_run, context=_ctx("victim-session"))
 
-    result = execute_checkpoint(None, "stolen?", None, None, context=_ctx("attacker-session"))
+    result = execute_checkpoint(None, "stolen?", None, context=_ctx("attacker-session"))
 
     assert result["recorded"] is False
     assert not (victim_run / "meta" / "checkpoints.jsonl").exists()
@@ -83,7 +83,7 @@ def test_pinless_caller_does_not_fall_back_to_the_mtime_scan(
 
     stranger = _seed_run(isolated_project, "stranger-task", "20260102T000000Z-bbbb2222")
 
-    result = execute_checkpoint(None, "no scan please", None, None, context=_ctx("fresh-session"))
+    result = execute_checkpoint(None, "no scan please", None, context=_ctx("fresh-session"))
 
     assert result["recorded"] is False
     assert not (stranger / "meta" / "checkpoints.jsonl").exists()
@@ -99,7 +99,7 @@ def test_not_recorded_outcome_is_logged_for_the_monitoring_signal(
     """The failure goes quiet in the response — it must stay loud in the logs."""
     from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 
-    execute_checkpoint(None, "quiet", None, None, context=_ctx("observed-session"))
+    execute_checkpoint(None, "quiet", None, context=_ctx("observed-session"))
 
     events = [e for e in captured_structlog if e.get("event") == "checkpoint_not_recorded"]
     assert events, f"no checkpoint_not_recorded event; logs were {captured_structlog!r}"

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.channels._gitignore import add_gitignore_entry
 from trw_mcp.channels._manifest_loader import ManifestValidationError
@@ -168,9 +169,7 @@ def install_opencode_distill_channels(
         results["explorer_agent"] = "skipped_unentitled"
 
     # 5. Write client-profile.env (FR19)
-    env_path = repo_root / _CLIENT_PROFILE_ENV_PATH
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text(_CLIENT_PROFILE_ENV_CONTENT, encoding="utf-8")
+    write_checkout_file(repo_root, repo_root / _CLIENT_PROFILE_ENV_PATH, _CLIENT_PROFILE_ENV_CONTENT)
     results["client_profile_env"] = "written"
 
     # 6. Bootstrap channel manifest (FR27 / FR30)

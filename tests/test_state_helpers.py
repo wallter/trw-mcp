@@ -14,7 +14,6 @@ from trw_mcp.state._helpers import (
     read_jsonl_tail,
     safe_float,
     safe_int,
-    safe_str,
 )
 from trw_mcp.state._paths import iter_run_dirs
 
@@ -68,25 +67,6 @@ class TestSafeFloat:
 
     def test_invalid_string_returns_default(self) -> None:
         assert safe_float({"x": "abc"}, "x") == 0.0
-
-
-class TestSafeStr:
-    """Tests for safe_str()."""
-
-    def test_string_value(self) -> None:
-        assert safe_str({"x": "hello"}, "x") == "hello"
-
-    def test_int_value(self) -> None:
-        assert safe_str({"x": 42}, "x") == "42"
-
-    def test_none_value(self) -> None:
-        assert safe_str({"x": None}, "x") == ""
-
-    def test_missing_key(self) -> None:
-        assert safe_str({}, "x") == ""
-
-    def test_missing_key_custom_default(self) -> None:
-        assert safe_str({}, "x", default="fallback") == "fallback"
 
 
 class TestIterYamlEntryFiles:

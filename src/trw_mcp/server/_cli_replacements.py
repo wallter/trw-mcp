@@ -4,8 +4,13 @@ PRD-CORE-300 moves rarely used MCP tools to ``trw-mcp <subcommand>`` CLI verbs
 (S1-S6: ``delivery recover``, ``probe run|budget``, ``meta-tune propose|rollback``,
 ``telemetry ...``, ``code index|risk``, ``prd create|diff``, ``run adopt``,
 ``instructions sync``, ``profile explain``). This module is the ONE registry
-every later slice adds to, and the ONE guard every state-changing entry inherits
-by being listed here rather than by re-implementing the refusal itself.
+every later slice adds to for the ``--json``/unknown-subcommand/``replaces``
+contract; ``enforce_state_changing_guard`` (called on EVERY ``trw-mcp <verb>``
+dispatch, not only these) now denies by default under a bounded lane and
+checks ``_cli_reviewer_policy`` for the read-only allowlist, so a
+``CLI_REPLACEMENTS`` entry's ``state_changing`` field is descriptive metadata
+here, not itself the guard's source of truth (PRD-CORE-305-FR05, sol
+round-1).
 
 ``CliReplacement.replaces`` is the sole place — besides a negative test — where a
 removed tool's name may reappear in source: it exists so an operator reading the
@@ -204,14 +209,6 @@ def render_cli_replacements_pointer() -> str:
     return f"Some tools moved to the CLI: `trw-mcp --help` (families: {', '.join(families)})."
 
 
-def find_cli_replacement(command_path: str) -> CliReplacement | None:
-    """Return the registry entry whose ``command`` equals *command_path*, if any."""
-    for entry in CLI_REPLACEMENTS:
-        if entry.command == command_path:
-            return entry
-    return None
-
-
 def invoked_command_path(cmd: str, args: object) -> str:
     """Reconstruct the full verb path actually invoked, e.g. ``"local deliver"``.
 
@@ -234,35 +231,57 @@ def invoked_command_path(cmd: str, args: object) -> str:
 
 
 def enforce_state_changing_guard(cmd: str, args: object) -> None:
-    """Refuse a state-changing CLI-replacement command in a reviewer/dispatched-child process.
+    """Deny-by-default: refuse any CLI verb a bounded lane's policy hasn't cleared.
 
-    Applied ONCE, at CLI dispatch (``_cli.py::main``), ahead of every handler —
-    a future registry entry inherits the refusal just by being listed with
-    ``state_changing=True``; it never needs its own check. Exits the process
-    (never raises) so it composes with the existing ``SUBCOMMAND_HANDLERS``
-    dispatch, which does not otherwise expect a return value here.
+    Applied ONCE, at CLI dispatch (``_cli.py::main``), ahead of every
+    ``SUBCOMMAND_HANDLERS`` entry -- ``serve``/no-subcommand never reaches this
+    function at all (see the call site), so booting the MCP server itself is
+    never gated here; only one-shot ``trw-mcp <verb...>`` invocations are.
+
+    PRD-CORE-305-FR05, sol round-1 P0: the prior design ALLOWED any command
+    not explicitly named ``state_changing`` in ``CLI_REPLACEMENTS`` or
+    ``LOCAL_STATE_CHANGING_COMMANDS`` -- an allowlist of BAD verbs. That left
+    ``learn-drain``, ``memory migrate --apply``, ``sync pull --full``, and
+    ``gc --no-dry-run`` reachable and unclassified under a reviewer or
+    dispatched-child lane, because none of the four had ever been enrolled in
+    either table. This now calls ``_cli_reviewer_policy.is_reviewer_safe``, an
+    allowlist of GOOD (read-only) verbs: a command is permitted only when its
+    exact path, and its actually parsed args, are named there. Everything
+    else -- including a verb written tomorrow -- is refused until reviewed.
     """
-    entry = find_cli_replacement(invoked_command_path(cmd, args))
-    if entry is None or not entry.state_changing:
+    bounded_lane_active = _bounded_lane_active()
+    if bounded_lane_active is None:
         return
 
+    from trw_mcp.server._cli_reviewer_policy import is_reviewer_safe
+
+    command_path = invoked_command_path(cmd, args)
+    if is_reviewer_safe(command_path, args):
+        return
+
+    logger.warning("cli_command_refused_bounded_lane", command=command_path, reason=bounded_lane_active)
+    print(
+        f"Refused: '{command_path}' is not on the reviewer/dispatched-child read-only allowlist; "
+        f"{bounded_lane_active} forbids it.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def _bounded_lane_active() -> str | None:
+    """The active bounded-lane marker's name, or ``None`` outside any lane.
+
+    Checked in a fixed order so the printed reason names whichever marker a
+    caller can actually see and unset; a process can carry both.
+    """
     from trw_mcp.dispatch._child_marker import dispatched_child_active
     from trw_mcp.state._surface_role import reviewer_role_active
 
     if reviewer_role_active():
-        logger.warning("cli_replacement_refused_reviewer_role", command=entry.command)
-        print(
-            f"Refused: '{entry.command}' is state-changing; TRW_SURFACE_ROLE=reviewer forbids it.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        return "TRW_SURFACE_ROLE=reviewer"
     if dispatched_child_active():
-        logger.warning("cli_replacement_refused_dispatched_child", command=entry.command)
-        print(
-            f"Refused: '{entry.command}' is state-changing; TRW_DISPATCH_CHILD forbids it in a dispatched child.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        return "TRW_DISPATCH_CHILD"
+    return None
 
 
 __all__ = [
@@ -270,7 +289,6 @@ __all__ = [
     "CliReplacement",
     "cli_replacement_families",
     "enforce_state_changing_guard",
-    "find_cli_replacement",
     "invoked_command_path",
     "render_cli_replacements_pointer",
 ]

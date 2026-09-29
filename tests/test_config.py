@@ -23,10 +23,6 @@ class TestPlatformConfigDefaults:
         config = TRWConfig()
         assert config.platform_telemetry_enabled is False
 
-    def test_update_channel_default(self) -> None:
-        config = TRWConfig()
-        assert config.update_channel == "latest"
-
     def test_platform_url_default(self) -> None:
         config = TRWConfig()
         assert config.platform_url == ""
@@ -43,11 +39,6 @@ class TestPlatformConfigEnvOverrides:
         monkeypatch.setenv("TRW_PLATFORM_TELEMETRY_ENABLED", "true")
         config = TRWConfig()
         assert config.platform_telemetry_enabled is True
-
-    def test_update_channel_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TRW_UPDATE_CHANNEL", "lts")
-        config = TRWConfig()
-        assert config.update_channel == "lts"
 
     def test_platform_url_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PLATFORM_URL", "https://api.trwframework.com")
@@ -72,7 +63,6 @@ class TestPlatformConfigYamlRoundTrip:
         config = TRWConfig()
         data = config.model_dump()
         assert "platform_telemetry_enabled" in data
-        assert "update_channel" in data
         assert "platform_url" in data
         assert "installation_id" in data
 
@@ -80,34 +70,29 @@ class TestPlatformConfigYamlRoundTrip:
         config = TRWConfig()
         data = config.model_dump()
         assert data["platform_telemetry_enabled"] is False
-        assert data["update_channel"] == "latest"
         assert data["platform_url"] == ""
         assert data["installation_id"] == ""
 
     def test_model_dump_with_overrides(self) -> None:
         config = TRWConfig(
             platform_telemetry_enabled=True,
-            update_channel="lts",
             platform_url="https://api.trwframework.com",
             installation_id="anon-xyz789",
         )
         data = config.model_dump()
         assert data["platform_telemetry_enabled"] is True
-        assert data["update_channel"] == "lts"
         assert data["platform_url"] == "https://api.trwframework.com"
         assert data["installation_id"] == "anon-xyz789"
 
     def test_round_trip_via_model_construct(self) -> None:
         config = TRWConfig(
             platform_telemetry_enabled=True,
-            update_channel="lts",
             platform_url="https://api.trwframework.com",
             installation_id="anon-abc456",
         )
         dumped = config.model_dump()
         restored = TRWConfig(**dumped)
         assert restored.platform_telemetry_enabled is True
-        assert restored.update_channel == "lts"
         assert restored.platform_url == "https://api.trwframework.com"
         assert restored.installation_id == "anon-abc456"
 

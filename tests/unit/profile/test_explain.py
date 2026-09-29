@@ -5,6 +5,8 @@ from __future__ import annotations
 import statistics
 import time
 
+import pytest
+
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 from trw_mcp.profile import (
@@ -13,6 +15,8 @@ from trw_mcp.profile import (
     build_explanation,
     compose,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _layer(name: str, **overrides: object) -> ProfileLayer:
@@ -32,7 +36,6 @@ def test_profile_explain_contract_payload_shape() -> None:
         "fields",
         "layers_applied",
         "surface_snapshot_id",
-        "session_override_hash",
         "resolved_profile",
         # PRD-FIX-141-FR06: what this profile was resolved FROM. session_start
         # emits the identical block, so two reports of one session can be
@@ -41,7 +44,6 @@ def test_profile_explain_contract_payload_shape() -> None:
     }
     assert set(payload["profile_resolution_basis"]) == {  # type: ignore[arg-type]
         "run_dir",
-        "session_layer_present",
         "layers_applied",
         "ceremony_tier",
     }

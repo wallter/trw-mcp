@@ -17,6 +17,7 @@ if any bound file changed afterward, and a stale receipt is not positive evidenc
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
@@ -71,6 +72,68 @@ def _verification_receipt_is_positive(receipt: VerificationReceipt, project_root
     )
 
 
+#: Receipt kinds the trust gate can count. Review receipts and acceptable-failure
+#: records are never eligible (module docstring), so the classifier says so by name.
+TRUST_ELIGIBLE_KINDS: tuple[str, ...] = ("build", "verification")
+
+#: Reasons that mean the persisted bytes could not be read as a receipt (plus plan).
+UNPARSABLE_REASONS: frozenset[str] = frozenset({"receipt_unparsable", "plan_unreadable"})
+
+#: The gate's per-kind warning event names, unchanged from before the extraction.
+_UNPARSABLE_EVENTS: dict[str, str] = {
+    "build": "trust_build_receipt_unparsable",
+    "verification": "trust_verification_receipt_unparsable",
+}
+
+
+@dataclass(frozen=True)
+class ReceiptClassification:
+    """One persisted receipt's standing under the trust gate's predicate, evaluated now.
+
+    ``reason`` is one of ``positive``, ``not_positive``, ``receipt_unparsable``,
+    ``plan_unreadable`` (build only) or ``kind_not_trust_eligible``. ``receipt`` is
+    the parsed model when the bytes parsed, else ``None``.
+    """
+
+    receipt_type: str
+    positive: bool
+    reason: str
+    receipt: BuildReceipt | VerificationReceipt | None = None
+
+
+def classify_receipt(run_path: Path, receipt_type: str, raw: bytes, project_root: Path) -> ReceiptClassification:
+    """Classify one receipt's raw bytes with the trust gate's per-receipt predicate.
+
+    Runtime callers: :func:`collect_positive_trust_evidence` (the trust gate's loop)
+    and ``trw_mcp.evidence_pack._evidence.evidence_section`` (PRD-CORE-323 FR03,
+    ``positivity_at_export``), so the gate and the pack share one predicate.
+    Soundness scope: the verdict is evaluated against the tree at call time; it
+    says nothing about whether the receipt was positive when it was written or
+    when ``trw_deliver`` read it. Fail-toward-no-evidence: every parse failure is
+    non-positive and named, never raised.
+    """
+    if receipt_type not in TRUST_ELIGIBLE_KINDS:
+        return ReceiptClassification(receipt_type, False, "kind_not_trust_eligible")
+    if receipt_type == "build":
+        try:
+            build = BuildReceipt.model_validate_json(raw)
+        except Exception:  # justified: a malformed persisted receipt is non-positive, never a crash
+            return ReceiptClassification(receipt_type, False, "receipt_unparsable")
+        try:
+            plan_path = run_path / "meta" / "plans" / "validation" / f"{build.plan_id}.json"
+            plan = RequiredValidationPlan.model_validate_json(plan_path.read_bytes())
+        except Exception:  # justified: an unreadable plan leaves the receipt non-positive, never a crash
+            return ReceiptClassification(receipt_type, False, "plan_unreadable", build)
+        positive = _build_receipt_is_positive(build, plan, project_root)
+        return ReceiptClassification(receipt_type, positive, "positive" if positive else "not_positive", build)
+    try:
+        verification = VerificationReceipt.model_validate_json(raw)
+    except Exception:  # justified: a malformed persisted receipt is non-positive, never a crash
+        return ReceiptClassification(receipt_type, False, "receipt_unparsable")
+    positive = _verification_receipt_is_positive(verification, project_root)
+    return ReceiptClassification(receipt_type, positive, "positive" if positive else "not_positive", verification)
+
+
 def collect_positive_trust_evidence(
     run_path: Path,
     project_root: Path,
@@ -79,40 +142,26 @@ def collect_positive_trust_evidence(
 
     Fail-toward-no-evidence: an unreadable/malformed/stale receipt is skipped, never
     counted. The canonical digest is the SHA-256 of the persisted canonical bytes so
-    the receipt-set digest binds the exact evidence consumed.
+    the receipt-set digest binds the exact evidence consumed. Each receipt is judged
+    by :func:`classify_receipt`, the predicate the evidence pack also reports.
     """
     from trw_mcp.state._evidence_persistence import list_receipt_ids, read_receipt_bytes
 
     positive_kinds: set[str] = set()
     contributing: list[tuple[str, str]] = []
 
-    for receipt_id in list_receipt_ids(run_path, "build"):
-        raw = read_receipt_bytes(run_path, "build", receipt_id)
-        if raw is None:
-            continue
-        try:
-            build = BuildReceipt.model_validate_json(raw)
-            plan_path = run_path / "meta" / "plans" / "validation" / f"{build.plan_id}.json"
-            plan = RequiredValidationPlan.model_validate_json(plan_path.read_bytes())
-        except Exception:  # justified: a malformed persisted receipt is non-positive, never a crash
-            logger.warning("trust_build_receipt_unparsable", receipt_id=receipt_id)
-            continue
-        if _build_receipt_is_positive(build, plan, project_root):
-            positive_kinds.add("build")
-            contributing.append((build.receipt_id, hashlib.sha256(raw).hexdigest()))
-
-    for receipt_id in list_receipt_ids(run_path, "verification"):
-        raw = read_receipt_bytes(run_path, "verification", receipt_id)
-        if raw is None:
-            continue
-        try:
-            verification = VerificationReceipt.model_validate_json(raw)
-        except Exception:  # justified: a malformed persisted receipt is non-positive, never a crash
-            logger.warning("trust_verification_receipt_unparsable", receipt_id=receipt_id)
-            continue
-        if _verification_receipt_is_positive(verification, project_root):
-            positive_kinds.add("verification")
-            contributing.append((verification.receipt_id, hashlib.sha256(raw).hexdigest()))
+    for receipt_type in TRUST_ELIGIBLE_KINDS:
+        for receipt_id in list_receipt_ids(run_path, receipt_type):
+            raw = read_receipt_bytes(run_path, receipt_type, receipt_id)
+            if raw is None:
+                continue
+            verdict = classify_receipt(run_path, receipt_type, raw, project_root)
+            if verdict.reason in UNPARSABLE_REASONS:
+                logger.warning(_UNPARSABLE_EVENTS[receipt_type], receipt_id=receipt_id)
+                continue
+            if verdict.positive and verdict.receipt is not None:
+                positive_kinds.add(receipt_type)
+                contributing.append((verdict.receipt.receipt_id, hashlib.sha256(raw).hexdigest()))
 
     return positive_kinds, contributing
 

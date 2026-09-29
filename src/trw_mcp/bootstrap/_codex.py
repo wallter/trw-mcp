@@ -20,6 +20,7 @@ else:  # pragma: no cover - Python <3.11 fallback
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._codex_hooks import (
     _codex_hooks_payload,
     _is_trw_hook_group,
@@ -64,15 +65,9 @@ from trw_mcp.models.typed_dicts._codex import CodexMcpToolConfigEntry
 from ._file_ops import _new_result, _record_write
 
 logger = structlog.get_logger(__name__)
-
-_CODEX_AGENTS_DIR = ".codex/agents"
 _CODEX_CONFIG_PATH = ".codex/config.toml"
-_CODEX_HOOKS_PATH = ".codex/hooks.json"
 _CODEX_SKILLS_DIR = ".agents/skills"
 _READINESS_PHASES = frozenset({"trw-prd-groom", "trw-prd-review", "trw-exec-plan"})
-_TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
-_TRW_PROJECT_DOC = "AGENTS.md"
-_LEGACY_PROJECT_DOC = "CLAUDE.md"
 _TRW_TOOL_PREFIX = "trw_"
 
 #: TRW tools granted ``approval_mode = "approve"`` in the generated config
@@ -388,9 +383,7 @@ def generate_codex_config(
 ) -> BootstrapFileResult:
     """Generate or smart-merge `.codex/config.toml`."""
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
-    codex_dir = target_dir / ".codex"
-    codex_dir.mkdir(parents=True, exist_ok=True)
-    config_path = codex_dir / "config.toml"
+    config_path = target_dir / ".codex" / "config.toml"
     existed = config_path.exists()
 
     if existed and not force:
@@ -399,16 +392,16 @@ def generate_codex_config(
             existing = _parse_codex_toml(raw)
             merged = merge_codex_config(existing, target_dir=target_dir)
             text = render_config_text(merged, user_region=split_managed_block(raw), result=result)
-            config_path.write_text(text, encoding="utf-8")
+            write_checkout_file(target_dir, config_path, text)
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=True)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
+        except (OSError, UnsafeWriteError, tomllib.TOMLDecodeError) as exc:
             result["errors"].append(f"Failed to read/merge {config_path}: {exc}")
     else:
         try:
             merged = merge_codex_config({}, target_dir=target_dir)
-            config_path.write_text(render_config_text(merged, user_region="", result=result), encoding="utf-8")
+            write_checkout_file(target_dir, config_path, render_config_text(merged, user_region="", result=result))
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=existed)
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")
 
     return result
@@ -456,9 +449,14 @@ def install_codex_skills(
 
     canonical = canonical_skills_dir()
     retire_disabled_skills(
-        dest_root, canonical, cast("dict[str, list[str]]", result), _CODEX_SKILLS_DIR, client="codex"
+        dest_root,
+        canonical,
+        cast("dict[str, list[str]]", result),
+        _CODEX_SKILLS_DIR,
+        client="codex",
+        project_root=target_dir,
     )
-    names = [*skill_names("codex"), *(name for name in CONDITIONAL_SKILLS if skill_enabled(name))]
+    names = [*skill_names("codex"), *(name for name in CONDITIONAL_SKILLS if skill_enabled(name, target_dir))]
     for skill_dir in (canonical / name for name in names):
         if not skill_dir.is_dir():
             continue
@@ -490,9 +488,9 @@ def install_codex_skills(
                     if dest.read_bytes() == incoming:
                         result["preserved"].append(rel_path)
                         continue
-                dest.write_bytes(incoming)
+                write_checkout_file(target_dir, dest, incoming)
                 _record_write(cast("dict[str, list[str]]", result), rel_path, existed=existed)
-            except OSError as exc:
+            except (OSError, UnsafeWriteError) as exc:
                 result["errors"].append(f"Failed to write {dest}: {exc}")
 
     return result

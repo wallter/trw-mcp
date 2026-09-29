@@ -410,7 +410,6 @@ def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
             assemble_status_result(
                 {"run_id": run.name, "task": run.name, "phase": "implement"},
                 [],
-                {},
                 run,
                 FileStateReader(),
                 run / "meta",

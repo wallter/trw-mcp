@@ -57,7 +57,7 @@ def test_smart_merge_cursor_json_fresh_write(tmp_path: Path) -> None:
     target = tmp_path / ".cursor" / "hooks.json"
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
 
-    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+    result = smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
     data = json.loads(target.read_text(encoding="utf-8"))
 
     assert data["version"] == 1
@@ -80,7 +80,7 @@ def test_smart_merge_cursor_json_preserves_user_hooks(tmp_path: Path) -> None:
     target.write_text(json.dumps(existing), encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh", "description": "TRW"}]})
-    smart_merge_cursor_json(target, trw_entries, "trw-")
+    smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
 
     data = json.loads(target.read_text(encoding="utf-8"))
     stop_handlers = data["hooks"]["stop"]
@@ -104,7 +104,7 @@ def test_smart_merge_cursor_json_replaces_prior_trw_entries(tmp_path: Path) -> N
     target.write_text(json.dumps(existing), encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-new-stop.sh", "description": "new TRW"}]})
-    smart_merge_cursor_json(target, trw_entries, "trw-")
+    smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
 
     data = json.loads(target.read_text(encoding="utf-8"))
     stop_commands = [h["command"] for h in data["hooks"]["stop"]]
@@ -122,7 +122,7 @@ def test_smart_merge_cursor_json_malformed_overwrites(tmp_path: Path) -> None:
     target.write_text("{{ not valid json !!!", encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
-    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+    result = smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
 
     data = json.loads(target.read_text(encoding="utf-8"))
     assert "hooks" in data
@@ -146,7 +146,7 @@ def test_smart_merge_cursor_json_non_utf8_overwrites(tmp_path: Path) -> None:
     target.write_bytes(b"\xff\xfe{invalid}")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
-    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+    result = smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
 
     data = json.loads(target.read_text(encoding="utf-8"))
     assert "hooks" in data
@@ -169,7 +169,7 @@ def test_smart_merge_cursor_json_non_object_root_overwrites(tmp_path: Path) -> N
     target.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 
     trw_entries = _make_hooks_json({"stop": [{"command": "trw-stop.sh"}]})
-    result = smart_merge_cursor_json(target, trw_entries, "trw-")
+    result = smart_merge_cursor_json(target, trw_entries, "trw-", root=tmp_path)
 
     data = json.loads(target.read_text(encoding="utf-8"))
     assert isinstance(data, dict)
@@ -185,7 +185,7 @@ def test_smart_merge_cursor_json_creates_parent_dirs(tmp_path: Path) -> None:
     target = tmp_path / ".cursor" / "deep" / "nested" / "config.json"
     trw_entries: dict[str, Any] = {"key": "value"}
 
-    smart_merge_cursor_json(target, trw_entries, "")
+    smart_merge_cursor_json(target, trw_entries, "", root=tmp_path)
 
     assert target.is_file()
     data = json.loads(target.read_text(encoding="utf-8"))

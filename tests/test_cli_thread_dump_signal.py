@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._stdio_harness import pinned_server_env
+
 _NO_SIGUSR1 = pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="platform has no SIGUSR1")
 
 
@@ -36,7 +38,12 @@ def test_a_command_other_than_serve_leaves_no_thread_dump_file_or_line(tmp_path:
     root, env = _project(tmp_path)
 
     done = subprocess.run(
-        [sys.executable, "-m", "trw_mcp.server", *argv], cwd=root, env=env, capture_output=True, text=True, timeout=120
+        [sys.executable, "-m", "trw_mcp.server", *argv],
+        cwd=root,
+        env=pinned_server_env(env),
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
     assert _dumps(root) == [], done.stderr
@@ -51,7 +58,7 @@ def test_serve_writes_a_dump_only_when_signalled_and_keeps_serving(tmp_path: Pat
     server = subprocess.Popen(
         [sys.executable, "-m", "trw_mcp.server", "serve"],
         cwd=root,
-        env=env,
+        env=pinned_server_env(env),
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,

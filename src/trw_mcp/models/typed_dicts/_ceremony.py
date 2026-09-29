@@ -15,7 +15,6 @@ class AutoMaintenanceDict(TypedDict, total=False):
     """
 
     update_advisory: str
-    auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     # Learn write-ahead-journal recovery: only present when a prior interrupted
     # session left accepted-but-unstored learnings to replay (omit-when-empty).
@@ -178,6 +177,7 @@ class ReviewMdResultDict(_ReviewMdResultRequired, total=False):
     """Optional error details returned by ``generate_review_md()``."""
 
     error: str
+    learnings_skipped: str
 
 
 class InstructionPointerSkipDict(TypedDict):
@@ -210,6 +210,8 @@ InstructionRefusalReason = Literal[
     "backup_failed",
     "backup_path_escape",
     "write_failed",
+    # PRD-CORE-341-FR07: .trw/INSTRUCTIONS.md exists without TRW's header.
+    "user_authored",
 ]
 
 
@@ -260,7 +262,6 @@ class _ClaudeMdSyncResultRequired(TypedDict):
     path: str
     scope: str
     status: Literal["synced", "unchanged", "success", "dry_run", "refused"]
-    learnings_promoted: int
     patterns_included: int
     total_lines: int
     llm_used: bool
@@ -299,6 +300,10 @@ class ClaudeMdSyncResultDict(_ClaudeMdSyncResultRequired, total=False):
     # was refused rather than performed — a policy refusal, distinguishable from
     # an I/O failure without string-matching a message.
     refusals: list[InstructionWriteRefusalDict]
+    # PRD-FIX-118/R8: operator-facing warnings from the hook-env refresh (e.g. a
+    # profile's hooks are installed but the project's resolved hooks_enabled is
+    # false). Present only when non-empty.
+    warnings: list[str]
 
 
 class CeremonyScoreResult(TypedDict):
@@ -345,72 +350,6 @@ class EscalationResult(TypedDict):
     threshold: float
 
 
-class TierCeremonyScoreResult(TypedDict):
-    """Return shape of ``compute_tier_ceremony_score()``."""
-
-    score: int
-    tier: str
-    matched_events: int
-    expected_events: int
-    has_recall: bool
-    has_init: bool
-    checkpoint_count: int
-    has_learn: bool
-    has_build_check: bool
-    has_deliver: bool
-    has_review: bool
-
-
-class ReductionProposalDict(TypedDict):
-    """Shape of a ceremony reduction proposal from ``generate_reduction_proposal()``."""
-
-    proposal_id: str
-    task_class: str
-    from_tier: str
-    to_tier: str
-    sample_count: int
-    avg_ceremony_score: float
-    avg_outcome_quality: float
-    generated_at: str
-    status: str
-
-
-class CeremonyClassStatusDict(TypedDict):
-    """Per-task-class status returned by ``_get_class_status()``."""
-
-    task_class: str
-    current_tier: str
-    session_count: int
-    avg_ceremony_score: float | None
-    avg_outcome_quality: float | None
-    proposals: list[ReductionProposalDict]
-    auto_escalation: EscalationResult | None
-    warnings: list[str]
-
-
-class CeremonyStatusResult(TypedDict):
-    """Return shape of ``get_ceremony_status()`` and ``trw_ceremony_status``."""
-
-    task_classes: list[CeremonyClassStatusDict]
-
-
-class CeremonyApproveResult(TypedDict):
-    """Return shape of ``approve_proposal()`` and ``trw_ceremony_approve``."""
-
-    status: str
-    change_id: str
-    task_class: str
-    new_tier: str
-
-
-class CeremonyRevertResult(TypedDict):
-    """Return shape of ``revert_change()`` and ``trw_ceremony_revert``."""
-
-    status: str
-    task_class: str
-    restored_tier: str
-
-
 class SessionRecallExtrasDict(TypedDict, total=False):
     """Extra metadata fields returned alongside learnings by ``perform_session_recalls()``.
 
@@ -424,14 +363,6 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     learnings_omitted: int
     # PRD-FIX-141-FR05: the project store's inventory. Omitted, never zeroed, when unread.
     store_count: int
-
-
-class FinalizeRunResult(TypedDict, total=False):
-    """Return shape of ``finalize_run()``.
-
-    Currently always returns ``{}`` — placeholder for future run-close fields
-    such as ``run_id``, ``closed_at``, ``archived_path``.
-    """
 
 
 class TrwHeartbeatResultDict(TypedDict, total=False):

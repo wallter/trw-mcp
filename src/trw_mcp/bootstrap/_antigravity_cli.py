@@ -12,6 +12,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
+
 from ._file_ops import (
     _new_result,
     _record_write,
@@ -58,11 +60,6 @@ def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
 # Path constants
 # ---------------------------------------------------------------------------
 
-#: The directory TRW used to write subagents to. Antigravity documents
-#: ``.agents/agents`` (the same ``.agents`` tree its workspace rules use), so
-#: the bundled specialists now land there via the shared agent installer. This
-#: constant survives only so ``update-project`` can sweep the relocated stubs.
-_LEGACY_ANTIGRAVITY_AGENTS_DIR = ".antigravitycli/agents"
 _ANTIGRAVITY_MD_PATH = "ANTIGRAVITY.md"
 
 #: The workspace-rules folder Antigravity documents. `.agent/rules` (singular)
@@ -220,9 +217,9 @@ def generate_antigravity_mcp_config(
     Only touches ``mcpServers.trw`` — preserves all other settings and
     servers. Hardened (via the shared :func:`read_settings_for_merge` seam)
     against pre-existing files written by the Antigravity CLI itself or other
-    tooling: non-UTF-8 bytes, malformed JSON, or a non-object top level fall
-    back to a fresh document rather than crashing or corrupting the file
-    silently. The previous file is preserved alongside as a ``.bak`` sibling.
+    tooling: non-UTF-8 bytes, malformed JSON, or a non-object top level never
+    crash it. This file is machine-global, so such a file is NEVER replaced: a
+    warning names it and nothing is backed up or written.
 
     Every write appends an explicit ``warnings`` entry naming the file as
     GLOBAL and cross-project — this is state outside the project tree, and a
@@ -232,14 +229,21 @@ def generate_antigravity_mcp_config(
     settings_path = _antigravity_global_mcp_config_path()
     existed = settings_path.exists()
 
-    existing = read_settings_for_merge(settings_path, rel_path=_ANTIGRAVITY_GLOBAL_MCP_DISPLAY, result=result)
+    existing = read_settings_for_merge(
+        settings_path, rel_path=_ANTIGRAVITY_GLOBAL_MCP_DISPLAY, result=result, recover=False
+    )
     if existing is None:
-        # Unrecoverable read error (e.g. permission denied) — already recorded.
+        # Unreadable, or unparseable and shared by every project: recorded, and never replaced.
         return result
 
-    mcp_servers = existing.get("mcpServers")
+    mcp_servers = existing.get("mcpServers", {})
     if not isinstance(mcp_servers, dict):
-        mcp_servers = {}
+        # Shared by every project, and TRW cannot tell what the user meant by it: keep it as it is, like an unparseable file.
+        result.setdefault("warnings", []).append(
+            f"{_ANTIGRAVITY_GLOBAL_MCP_DISPLAY}: 'mcpServers' is not an object; left untouched "
+            "(fix or remove it, then re-run to add the 'trw' entry)"
+        )
+        return result
 
     cmd, args = _resolve_trw_mcp_command()
     # No "trust" key: agy's own schema (vendor doc + `agy mcp add` output) is
@@ -272,7 +276,8 @@ def generate_antigravity_mcp_config(
 
     try:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(new_text, encoding="utf-8")
+        # A user-level file outside any checkout: its own directory is the root, so the leaf is checked.
+        write_checkout_file(settings_path.parent, settings_path, new_text)
         _record_write(result, _ANTIGRAVITY_GLOBAL_MCP_DISPLAY, existed=existed)
         result.setdefault("warnings", []).append(
             f"Antigravity CLI only loads MCP servers from the GLOBAL "

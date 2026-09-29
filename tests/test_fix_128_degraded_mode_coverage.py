@@ -54,7 +54,9 @@ from tests.test_core_247_degraded_mode_hooks import (
 
 _ROOT = Path(__file__).resolve().parent.parent
 
-if not (_ROOT.parent / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,

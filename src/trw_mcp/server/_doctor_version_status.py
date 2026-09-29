@@ -17,7 +17,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-__all__ = ["version_status_row"]
+__all__ = ["stale_editable_metadata", "version_status_row"]
+
+
+def stale_editable_metadata() -> list[str]:
+    """Each package whose installed dist-info names another version than the source it runs (B71-111).
+
+    An editable install records its version when installed; a later bump in the source leaves that
+    record stale (canon TB-22: metadata 6.0.0/3.0.0 under a 7.0/4.0 source). Both packages now resolve
+    their own version from the source, so this is a warning about pip/uv's view, not a runtime fault.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    import trw_memory
+
+    import trw_mcp
+
+    stale: list[str] = []
+    for dist, source in (("trw-mcp", trw_mcp.__version__), ("trw-memory", trw_memory.__version__)):
+        try:
+            recorded = version(dist)
+        except PackageNotFoundError:  # trw-fail-silent-allow: not installed, so it has no metadata to be stale
+            continue
+        if recorded != source:
+            stale.append(f"{dist}: metadata {recorded}, source {source}")
+    return stale
 
 
 def version_status_row(project_root: Path) -> tuple[Literal["PASS", "WARN"], str]:
@@ -25,6 +49,12 @@ def version_status_row(project_root: Path) -> tuple[Literal["PASS", "WARN"], str
     from trw_mcp.server._subcommands_release import collect_version_status
 
     status = collect_version_status(project_root)
+    if status["compatible"] and (stale := stale_editable_metadata()):
+        return (
+            "WARN",
+            f"stale editable-install metadata ({'; '.join(stale)}). TRW reads the source version, but pip and "
+            "uv still see the old one; reinstall with `uv pip install -e trw-memory -e trw-mcp`.",
+        )
     if status["compatible"]:
         return "PASS", "version-status reports compatible=true."
     mismatches = ", ".join(status["mismatches"]) or "unspecified"

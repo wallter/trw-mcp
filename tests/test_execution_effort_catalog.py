@@ -10,9 +10,7 @@ from __future__ import annotations
 import pytest
 
 from trw_mcp.models.config import (
-    ANTHROPIC_MODEL_CATALOG_VERSION,
     lookup_model_effort_capabilities,
-    resolve_effort_adapter,
 )
 
 
@@ -30,6 +28,8 @@ class TestCatalogLookup:
             "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-sonnet-5",
+            "claude-sonnet-5-5",
+            "anthropic.claude-sonnet-5-5",
         ],
     )
     def test_frontier_and_balanced_models_declare_xhigh_and_max(self, model_id: str) -> None:
@@ -117,141 +117,20 @@ class TestCatalogLookup:
         assert lookup_model_effort_capabilities("claude-opus-4-5@20251101") == frozenset({"low", "medium", "high"})
 
 
-class TestAdapterWithActiveModel:
-    """PRD-CORE-209-FR02/FR03: resolve_effort_adapter consumes the catalog."""
-
-    def test_xhigh_maps_on_declared_model(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="claude-opus-4-8",
-        )
-        assert decision.status == "mapped"
-        assert decision.harness_value == "xhigh"
-        assert ANTHROPIC_MODEL_CATALOG_VERSION in decision.adapter_id
-
-    def test_xhigh_maps_on_opus_5(self) -> None:
-        # The end-to-end consequence of the catalog gap: before Opus 5 was
-        # listed, this decision came back `clamped`/`high` under the safe base.
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="claude-opus-5",
-        )
-        assert decision.status == "mapped"
-        assert decision.harness_value == "xhigh"
-
-    def test_sonnet_4_5_is_unsupported_never_clamped(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="medium",
-            active_model="claude-sonnet-4-5",
-        )
-        assert decision.status == "unsupported"
-        assert decision.harness_value is None
-
-    def test_max_maps_on_fable(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="max",
-            active_model="claude-fable-5",
-        )
-        assert decision.status == "mapped"
-        assert decision.harness_value == "max"
-
-    def test_xhigh_clamps_on_previous_generation_model(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="claude-opus-4-6",
-        )
-        assert decision.status == "clamped"
-        # Ties break DOWNWARD: xhigh is equidistant from high and max, and
-        # the adapter must never escalate above the recommendation.
-        assert decision.harness_value == "high"
-
-    def test_max_maps_on_previous_generation_model(self) -> None:
-        # Adversarial-audit F3 coverage: `max` predates `xhigh` — the 4.6
-        # generation officially supports max but not xhigh (effort doc,
-        # 2026-07-09). This is deliberate catalog content, not a typo.
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="max",
-            active_model="claude-sonnet-4-6",
-        )
-        assert decision.status == "mapped"
-        assert decision.harness_value == "max"
-
-    def test_xhigh_on_opus_4_5_clamps_to_high(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="claude-opus-4-5",
-        )
-        assert decision.status == "clamped"
-        assert decision.harness_value == "high"
-
-    def test_haiku_is_unsupported_never_clamped(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="medium",
-            active_model="claude-haiku-4-5",
-        )
-        assert decision.status == "unsupported"
-        assert decision.harness_value is None
-
-    def test_unknown_model_falls_back_to_safe_base(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="some-unrecognized-model",
-        )
-        assert decision.status == "clamped"
-        assert decision.harness_value == "high"
-        assert decision.adapter_id == "claude-code-safe-2026-07-10"
-
-    def test_explicit_supported_efforts_outranks_catalog(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-            active_model="claude-opus-4-8",
-            supported_efforts=frozenset({"low", "medium", "high"}),
-        )
-        assert decision.status == "clamped"
-        assert decision.harness_value == "high"
-        assert decision.adapter_id == "claude-code:explicit"
-
-    def test_inherit_is_unchanged_by_active_model(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="inherit",
-            active_model="claude-opus-4-8",
-        )
-        assert decision.status == "inherited"
-        assert decision.harness_value is None
-
-    def test_catalog_applies_to_any_client_running_the_model(self) -> None:
-        # The catalog is a model table, not a claude-code special case.
-        decision = resolve_effort_adapter(
-            client_id="codex",
-            recommended_effort="xhigh",
-            active_model="claude-sonnet-5",
-        )
-        assert decision.status == "mapped"
-        assert decision.harness_value == "xhigh"
-
-    def test_no_active_model_preserves_legacy_behavior(self) -> None:
-        decision = resolve_effort_adapter(
-            client_id="claude-code",
-            recommended_effort="xhigh",
-        )
-        assert decision.status == "clamped"
-        assert decision.harness_value == "high"
-        assert decision.adapter_id == "claude-code-safe-2026-07-10"
-
-
 def test_opus_5_5_is_declared_explicitly_not_inherited() -> None:
     """Point releases are declared deliberately; see the trw:intentional block."""
     from trw_mcp.models.config._model_capabilities import _ANTHROPIC_EFFORT_CAPABILITIES, match_model_family
 
     assert match_model_family("claude-opus-5-5", _ANTHROPIC_EFFORT_CAPABILITIES) == "claude-opus-5-5"
+
+
+def test_sonnet_5_5_has_its_own_row() -> None:
+    """Sonnet 5.5 declares the full low..max ladder like Sonnet 5, but as its own row."""
+    assert lookup_model_effort_capabilities("claude-sonnet-5-5") == frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def test_sonnet_5_5_is_declared_explicitly_not_inherited() -> None:
+    """Point releases are declared deliberately; see the trw:intentional block."""
+    from trw_mcp.models.config._model_capabilities import _ANTHROPIC_EFFORT_CAPABILITIES, match_model_family
+
+    assert match_model_family("claude-sonnet-5-5", _ANTHROPIC_EFFORT_CAPABILITIES) == "claude-sonnet-5-5"

@@ -77,7 +77,6 @@ class _Cfg:
     """Minimal dispatch config: every client enabled, read-only baseline."""
 
     dispatch_default_client = "codex"
-    dispatch_role_client: dict[str, str] = {}
     dispatch_enabled_clients = ["claude", "codex", "agy", "opencode", "cursor-cli", "copilot", "grok"]
     dispatch_default_models: dict[str, str] = {}
     dispatch_default_timeout_s = 60
@@ -224,8 +223,12 @@ def test_claude_reviewer_mcp_config_names_trws_own_server_and_the_role() -> None
 
 def test_claude_reviewer_argv_has_no_write_or_tool_preauthorisation_token() -> None:
     argv = _claude_reviewer_argv()
+    # --permission-mode is allowed only as "plan" (read-only); every other token is barred.
+    if "--permission-mode" in argv:
+        assert argv[argv.index("--permission-mode") + 1] == "plan"
     for token in _WRITE_ENABLING_TOKENS:
-        assert token not in argv
+        if token != "--permission-mode":
+            assert token not in argv
 
 
 def test_claude_reviewer_argv_restricts_the_built_in_tool_set_to_read_only() -> None:
@@ -239,8 +242,10 @@ def test_claude_reviewer_argv_restricts_the_built_in_tool_set_to_read_only() -> 
         assert name not in argv[argv.index("--tools") + 1].split(",")
 
 
-def test_claude_default_posture_emits_no_tools_restriction() -> None:
-    assert "--tools" not in build_command(_req("claude"))
+def test_claude_default_posture_writable_emits_no_tools_restriction() -> None:
+    # Read-only default-posture children get Read,Grep,Glob via read_only_argv;
+    # only a writable dispatch keeps the full built-in tool set.
+    assert "--tools" not in build_command(_req("claude", read_only=False))
 
 
 def test_claude_default_posture_still_emits_the_empty_server_map() -> None:
@@ -326,6 +331,7 @@ def test_resolution_refuses_a_client_that_cannot_carry_the_posture(client: str) 
             isolate=True,
             use_pty=False,
             posture="reviewer",
+            require_posture=True,  # best effort otherwise (DISPATCH-SIMPLIFY)
             dispatch_cfg=_Cfg(),
         )
     assert exc.value.exit_code == 2
@@ -577,6 +583,23 @@ def test_run_job_failure_result_never_claims_enforcement(tmp_path: Path) -> None
     assert _run_job.main([str(req_path), str(result_path), str(tmp_path / "pid.json")]) == 1
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert payload["posture_enforced"] is False
+    assert payload["read_only_enforced"] is False, "no child ran, so nothing was confined (B71-26 D6)"
+
+
+def test_run_job_crash_after_a_valid_request_never_claims_read_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B71-26 D6: the job path's catch-all result is an early failure like the runner's own."""
+
+    def crash(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("boom before any child")
+
+    monkeypatch.setattr(_run_job, "dispatch", crash)
+    req_path, result_path = tmp_path / "req.json", tmp_path / "result.json"
+    req_path.write_text(_req("codex", timeout_s=60).model_dump_json(), encoding="utf-8")
+    assert _run_job.main([str(req_path), str(result_path), str(tmp_path / "pid.json")]) == 1
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert (payload["read_only_enforced"], payload["posture_enforced"]) == (False, False)
 
 
 def test_background_job_env_carries_the_role(monkeypatch: pytest.MonkeyPatch) -> None:

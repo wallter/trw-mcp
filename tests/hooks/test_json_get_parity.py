@@ -230,3 +230,78 @@ def test_json_object_jq_and_shell_paths_parse_to_equal_objects(tmp_path: Path) -
         jq_result = _run_object(args, os.environ["PATH"])
         shell_result = _run_object(args, path_no_jq)
         assert json.loads(jq_result.stdout) == json.loads(shell_result.stdout) == expected
+
+
+# --------------------------------------------------------------------------- #
+# _json_string_leaves (PRD-FIX-156-FR04): the degenerate-result hook's render of
+# tool_response, jq `[.. | strings] | join("\n")`, with the same python3 fallback.
+# Lone surrogates are out of scope: jq rejects or replaces them, python3 prints "?".
+# --------------------------------------------------------------------------- #
+
+#: (id, stdin, expected stdout, exit class)
+_LEAVES_CASES: list[tuple[str, str, str, str]] = [
+    ("string-renders-itself", '{"tool_response":"out"}', "out\n", _OK),
+    (
+        "leaves-in-document-order",
+        '{"tool_response":{"stdout":"a","n":1,"l":["b",{"c":"d"},null,true],"e":""}}',
+        "a\nb\nd\n\n",
+        _OK,
+    ),
+    ("missing-field-is-empty", '{"tool_name":"Read"}', "\n", _OK),
+    ("null-field-is-empty", '{"tool_response":null}', "\n", _OK),
+    ("false-field-is-empty", '{"tool_response":false}', "\n", _OK),
+    ("number-field-has-no-leaves", '{"tool_response":0}', "\n", _OK),
+    ("escapes", '{"tool_response":"q\\"b\\n\\u00e9"}', 'q"b\né\n', _OK),
+    ("top-level-array-is-an-error", '[{"tool_response":"x"}]', "", _ERR),
+    ("top-level-null-is-an-error", "null", "", _ERR),
+    ("two-documents-is-an-error", '{"tool_response":"x"} {}', "", _ERR),
+    ("invalid-json-is-an-error", '{"tool_response":', "", _ERR),
+    ("empty-input-is-an-error", "", "", _ERR),
+    ("whitespace-input-is-an-error", "  \n", "", _ERR),
+]
+
+
+def _run_leaves(stdin: str, path: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["sh", "-c", '. "$TRW_LIB"; _json_string_leaves tool_response'],
+        input=stdin.encode("utf-8"),
+        capture_output=True,
+        env={"PATH": path, "TRW_LIB": str(_LIB), "HOME": os.environ.get("HOME", "/tmp")},
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stdin", "expected", "exit_class"), [c[1:] for c in _LEAVES_CASES], ids=[c[0] for c in _LEAVES_CASES]
+)
+def test_string_leaves_python3_fallback(python_only_path: str, stdin: str, expected: str, exit_class: str) -> None:
+    _assert_case(_run_leaves(stdin, python_only_path), expected, exit_class)
+
+
+@pytest.mark.skipif(not HAS_JQ, reason="compares against jq itself; the python3 half above runs everywhere")
+@pytest.mark.parametrize(
+    ("stdin", "expected", "exit_class"), [c[1:] for c in _LEAVES_CASES], ids=[c[0] for c in _LEAVES_CASES]
+)
+def test_string_leaves_jq(stdin: str, expected: str, exit_class: str) -> None:
+    _assert_case(_run_leaves(stdin, os.environ["PATH"]), expected, exit_class)
+
+
+def test_string_leaves_with_no_parser_returns_1(tmp_path: Path) -> None:
+    result = _run_leaves('{"tool_response":"x"}', path_without(tmp_path, {"jq", "python3"}))
+
+    assert (result.stdout, result.returncode) == (b"", 1)
+
+
+def test_string_leaves_replaces_invalid_utf8_like_jq(python_only_path: str) -> None:
+    """jq renders an invalid byte as U+FFFD and still classifies; the fallback must too."""
+    stdin = b'{"tool_response":"cut [truncated]\xff"}'
+    paths = [python_only_path] + ([os.environ["PATH"]] if HAS_JQ else [])
+    for path in paths:
+        result = subprocess.run(
+            ["sh", "-c", '. "$TRW_LIB"; _json_string_leaves tool_response'],
+            input=stdin,
+            capture_output=True,
+            env={"PATH": path, "TRW_LIB": str(_LIB), "HOME": os.environ.get("HOME", "/tmp")},
+            check=False,
+        )
+        assert (result.returncode, result.stdout.decode("utf-8")) == (0, "cut [truncated]\ufffd\n")

@@ -9,6 +9,9 @@ import pytest
 
 from trw_mcp.clients.llm import LLMClient, _resolve_model
 
+pytestmark = pytest.mark.unit
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -133,8 +136,8 @@ class TestModelAliasResolution:
         assert _resolve_model("haiku") == "claude-haiku-4-5-20251001"
 
     def test_sonnet_alias(self) -> None:
-        # Bumped 4-6 -> 5 (2026-07-26).
-        assert _resolve_model("sonnet") == "claude-sonnet-5"
+        # Bumped 4-6 -> 5 (2026-07-26); bumped again to 5.5 (2026-09-28).
+        assert _resolve_model("sonnet") == "claude-sonnet-5-5"
 
     def test_opus_alias(self) -> None:
         # PRD-QUAL-072 FR01 bumped 4-6 -> 4-7 (2026-04-23); bumped again to
@@ -237,6 +240,20 @@ class TestAsk:
         assert await _make_client(ac).ask("test") == "the answer"
 
     @pytest.mark.asyncio
+    async def test_ask_skips_leading_thinking_blocks_on_sonnet_5_5(self) -> None:
+        """Sonnet 5.5 responses can also lead with thinking blocks; same by-type selection applies."""
+        ac = MagicMock()
+        mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
+        mock_response.content = [
+            MagicMock(type="thinking", thinking="", signature="sig"),
+            MagicMock(type="text", text="the "),
+            MagicMock(type="text", text="answer"),
+        ]
+        ac.messages.create = AsyncMock(return_value=mock_response)
+        assert await _make_client(ac).ask("test", model="sonnet") == "the answer"
+
+    @pytest.mark.asyncio
     async def test_ask_returns_none_when_only_thinking(self) -> None:
         """A response carrying no text block yields None, never a thinking block's repr."""
         ac = MagicMock()
@@ -275,11 +292,11 @@ class TestCapabilityAliasCurrency:
         assert _MODEL_MAP["opus"] == "claude-opus-5-5"
         assert _MODEL_MAP["frontier"] == "claude-opus-5-5"
 
-    def test_balanced_aliases_resolve_to_sonnet_5(self) -> None:
+    def test_balanced_aliases_resolve_to_sonnet_5_5(self) -> None:
         from trw_mcp.clients.llm import _MODEL_MAP
 
-        assert _MODEL_MAP["sonnet"] == "claude-sonnet-5"
-        assert _MODEL_MAP["balanced"] == "claude-sonnet-5"
+        assert _MODEL_MAP["sonnet"] == "claude-sonnet-5-5"
+        assert _MODEL_MAP["balanced"] == "claude-sonnet-5-5"
 
     def test_fast_aliases_unchanged(self) -> None:
         """Haiku is deliberately NOT bumped — 4.5 is the current Haiku."""
@@ -293,6 +310,7 @@ class TestCapabilityAliasCurrency:
         assert _resolve_model("claude-opus-4-6") == "claude-opus-4-6"
         assert _resolve_model("claude-opus-4-7") == "claude-opus-4-7"
         assert _resolve_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
+        assert _resolve_model("claude-sonnet-5") == "claude-sonnet-5"
 
     def test_unknown_model_id_passes_through(self) -> None:
         """FR09: arbitrary model strings pass through untouched."""

@@ -71,7 +71,7 @@ trw_assess(
 
 - Not in your tool list: your client may defer MCP tools, so search for `trw_assess` by name. If it is still absent,
   the pack is off; it needs `assess_enabled: true` in `.trw/config.yaml` (there is no per-call grant).
-- `post_compaction_recovery_required`: call `trw_session_start`, then retry once.
+- `post_compaction_recovery_required`: call `trw_session_start` (not in your tool list: reconnect the trw MCP server), then retry once.
 - `invalid_request`: fix the shape (each question is `{type, instructions, criteria}`); do not resend it unchanged.
 - `disabled`, a transient failure, or no access at all (restricted sub-agents and reviewer lanes often lack it):
   decide as you normally would and write "trw_assess unavailable" in your report, so the lead can score it. Never

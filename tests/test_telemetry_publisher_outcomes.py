@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._test_telemetry_publisher_support import _make_config, _make_learning, _write_learning
 from trw_mcp.telemetry.publisher import publish_learnings
+
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 class TestPublishSuccess:
@@ -107,7 +112,7 @@ class TestPublishAnonymization:
 
         captured_payloads: list[dict[str, object]] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             captured_payloads.append(payload)
             return True
 
@@ -137,7 +142,7 @@ class TestPublishParallelFanout:
 
         attempted_urls: list[str] = []
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             attempted_urls.append(url)
             return True
 
@@ -163,7 +168,7 @@ class TestPublishParallelFanout:
         entries_dir = trw_dir / "learnings" / "entries"
         _write_learning(entries_dir, "learning.yaml", _make_learning(impact=0.9))
 
-        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "", **_kw: object) -> bool:
             return "live" in url
 
         with (

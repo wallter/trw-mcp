@@ -1,4 +1,4 @@
-"""Orchestration TypedDicts — trw_init, trw_checkpoint, trw_status, wave progress."""
+"""Orchestration TypedDicts — trw_init, trw_checkpoint, trw_status."""
 
 from __future__ import annotations
 
@@ -9,26 +9,12 @@ from typing_extensions import NotRequired, TypedDict
 # ---------------------------------------------------------------------------
 
 
-class TrwInitConfigDataDict(TypedDict, total=False):
-    """Shape of ``config_data`` written to ``.trw/config.yaml`` during ``trw_init``.
-
-    Always-present keys: ``framework_version``, ``telemetry``,
-    ``parallelism_max``, ``timebox_hours``.  Extra keys may be merged in from
-    ``config_overrides``, hence ``total=False``.
-    """
-
-    framework_version: str
-    telemetry: bool
-    parallelism_max: int
-    timebox_hours: float
-
-
 class CheckpointEventDataDict(TypedDict, total=False):
     """Shape of the ``event_data`` dict logged by ``trw_checkpoint`` to events.jsonl."""
 
     message: str
     shard_id: str
-    wave_id: str
+    slice_done: str
 
 
 class CheckpointRecordDict(TypedDict, total=False):
@@ -38,23 +24,10 @@ class CheckpointRecordDict(TypedDict, total=False):
     message: str
     state: dict[str, object]
     shard_id: str
-    wave_id: str
-
-
-class DeployFrameworksVersionDataDict(TypedDict):
-    """Shape of ``version_data`` written to ``frameworks/VERSION.yaml`` by ``_deploy_frameworks``.
-
-    PRD-INFRA-192 FR12: no ``trw_mcp_version`` field — package versions
-    are recorded in ``.trw/managed-artifacts.yaml`` ``packages`` instead.
-    """
-
-    framework_version: str
-    aaref_version: str
-    deployed_at: str
 
 
 # ---------------------------------------------------------------------------
-# trw_status / wave progress / reversion metrics
+# trw_status / reversion metrics
 # ---------------------------------------------------------------------------
 
 
@@ -89,34 +62,6 @@ class StatusReversionMetricsDict(TypedDict):
     by_trigger: NotRequired[dict[str, int]]
     classification: str
     latest: NotRequired[StatusReversionLatestDict | None]
-
-
-class WaveShardCountsDict(TypedDict):
-    """Shard status counts within a single ``WaveDetailDict``."""
-
-    total: int
-    complete: int
-    active: int
-    pending: int
-    failed: int
-    partial: int
-
-
-class WaveDetailDict(TypedDict):
-    """One wave detail entry within ``WaveProgressDict``."""
-
-    wave: int
-    status: str
-    shards: WaveShardCountsDict
-
-
-class WaveProgressDict(TypedDict):
-    """Return shape of ``_compute_wave_progress()`` in orchestration.py."""
-
-    total_waves: int
-    completed_waves: int
-    active_wave: int | None
-    wave_details: list[WaveDetailDict]
 
 
 class DeliverGateScanDict(TypedDict):
@@ -161,13 +106,17 @@ class TrwStatusDict(TypedDict, total=False):
     recall_policy: str
     event_count: int
     reflection: StatusReflectionDict
+    # PRD-CORE-329-FR02/NFR01: the oldest pending decision, or an
+    # ``{"status": "unreadable"}`` block (FR05). Omitted entirely (never
+    # null/empty) when nothing is pending and the queue reads cleanly.
+    blocked_decision: dict[str, object]
+    blocked_decisions_pending: int
     phase_durations: dict[str, object]
-    waves: list[dict[str, object]]
-    wave_progress: WaveProgressDict
-    wave_status: dict[str, object]
     reversions: StatusReversionMetricsDict
     last_activity_ts: str
     hours_since_activity: float
+    # PRD-CORE-338-FR05: present only for a tracked run (NFR02).
+    time: dict[str, object]
     version_warning: str
     stale_count: int
     stale_runs_advisory: str
@@ -183,3 +132,15 @@ class TrwStatusDict(TypedDict, total=False):
     # ``formation_error`` instead, which is the distinction NFR02 requires.
     formation: dict[str, object]
     formation_error: str
+    # PRD-CORE-311-FR08: the SAME sync-push read `trw-mcp doctor`'s
+    # `sync_health` row uses, surfaced here ONLY when degraded -- omitted
+    # entirely on a healthy (or NOT_MEASURED) read, per the response
+    # token-budget rule (no field on every call for a signal that carries no
+    # action). See `_orchestration_status_assembly.py::_apply_sync_push_field`.
+    sync_push: dict[str, object]
+    # PRD-CORE-305-FR06 (B80-37): names this response's minority "project"
+    # keys (a value that looks past the current run -- a multi-run scan, the
+    # deployed framework version, project config + session ceremony state,
+    # a sibling-run formation board); every other present key is run-scoped
+    # per its "note". See _orchestration_status_assembly.py::field_scope_label.
+    field_scope: dict[str, object]

@@ -324,7 +324,7 @@ class TestMemoryDecayStep:
         from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
 
         consolidation = {"status": "ok", "scope": "namespace", "clusters_found": 1, "entries_consolidated": 3}
-        passes = {"decay": {"status": "ok", "processed": 2, "remaining": 1}, "consolidation": consolidation}
+        passes = {"decay": {"status": "ok", "processed": 2, "more": True}, "consolidation": consolidation}
         monkeypatch.setattr(
             fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "ok", "passes": passes}
         )
@@ -336,7 +336,7 @@ class TestMemoryDecayStep:
             "status": "success",
             "reason": "",
             "processed": 2,
-            "remaining": 1,
+            "more": True,
             "consolidation": consolidation,
         }
 
@@ -394,7 +394,7 @@ def test_a_failed_maintenance_pass_is_an_error_even_when_decay_succeeds(
     """The daemon's maintain runs several passes; any failed one surfaces, by name."""
     from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
 
-    passes = {"decay": {"status": "ok", "processed": 2, "remaining": 0}, "consolidation": {"status": "error"}}
+    passes = {"decay": {"status": "ok", "processed": 2, "more": False}, "consolidation": {"status": "error"}}
     monkeypatch.setattr(
         fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "error", "passes": passes}
     )
@@ -432,18 +432,21 @@ def test_a_bounded_or_busy_maintain_is_reported_as_such(
     assert (result["status"], result["reason"]) == expected
 
 
-def test_a_capped_decay_count_is_reported_as_a_lower_bound(
+def test_a_bounded_decay_pass_reports_more_instead_of_a_remaining_count(
     tmp_path: Path, fake_memory_store: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """rc9: the store counts qualifying rows only up to a cap; the step says so rather than reporting
-    the capped number as exact."""
+    """PRD-CORE-331 FR10 (B71-135a): the store no longer counts qualifying rows with an
+    O(namespace) ``COUNT(*)``; the step surfaces the pass's own ``more`` continuation signal
+    instead of a ``remaining``/``remaining_capped`` count."""
     from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
 
-    decay = {"status": "ok", "processed": 1000, "remaining": 9000, "remaining_capped": True}
+    decay = {"status": "ok", "processed": 1000, "more": True}
     monkeypatch.setattr(
         fake_memory_store, "maintain", lambda _namespace, _policy: {"status": "ok", "passes": {"decay": decay}}
     )
 
     result = _step_memory_decay(tmp_path / ".trw")
 
-    assert (result["remaining"], result.get("remaining_capped")) == (9000, True)
+    assert result["more"] is True
+    assert "remaining" not in result
+    assert "remaining_capped" not in result

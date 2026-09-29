@@ -26,8 +26,6 @@ from pathlib import Path
 __all__ = [
     "run_channel_doctor",
 ]
-
-_DEFAULT_MANIFEST_PATH = Path(".trw/channels/manifest.yaml")
 _DEFAULT_CHANNELS_DIR = Path(".trw/channels")
 _DEFAULT_MAX_AGE_HOURS = 24
 _LOCK_SUFFIX = ".lock"
@@ -219,6 +217,7 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
     if channels_dir.exists():
         for candidate in list(channels_dir.rglob(f"*{_LOCK_SUFFIX}")):
             should_remove = False
+            aged_mtime: float | None = None  # set when only staleness condemned the lock
             # Remove if for disabled/deprecated channel.
             resolved = candidate.resolve()
             if resolved in disabled_lock_paths:
@@ -226,8 +225,8 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
             # Remove if orphaned (not in manifest) AND older than max_age.
             elif resolved not in active_lock_paths:
                 try:
-                    age = now - candidate.stat().st_mtime
-                    if age > max_age_secs:
+                    aged_mtime = candidate.stat().st_mtime
+                    if now - aged_mtime > max_age_secs:
                         should_remove = True
                 except OSError:
                     should_remove = True  # unreadable → treat as orphan
@@ -237,6 +236,8 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
                     removed.append(candidate)
                 else:
                     try:
+                        if should_remove and aged_mtime is not None and candidate.stat().st_mtime != aged_mtime:
+                            continue  # a channel touched the lock after we judged it stale: it is live
                         candidate.unlink()
                         removed.append(candidate)
                     except OSError as exc:

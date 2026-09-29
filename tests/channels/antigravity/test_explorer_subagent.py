@@ -159,22 +159,6 @@ def test_idempotent_skip_on_same_sha(tmp_path: Path) -> None:
     assert result2.status == "skipped_same_sha"
 
 
-# ---------------------------------------------------------------------------
-# FR10: no mutation tools in tools list
-# ---------------------------------------------------------------------------
-
-
-def test_no_mutation_tools(tmp_path: Path) -> None:
-    """FR10: write_file, edit_file, trw_deliver must not appear in tools list."""
-    from trw_mcp.channels.antigravity._explorer_subagent import (
-        _AGENT_TOOLS,
-        _MUTATION_TOOLS,
-    )
-
-    for mut in _MUTATION_TOOLS:
-        assert mut not in _AGENT_TOOLS, f"Mutation tool {mut!r} found in _AGENT_TOOLS"
-
-
 def test_no_mutation_tools_in_generated_file(tmp_path: Path) -> None:
     """FR10: generated agent file must not name write_file, edit_file, trw_deliver.
 

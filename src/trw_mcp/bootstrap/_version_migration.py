@@ -9,7 +9,6 @@ Handles:
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import structlog
@@ -48,8 +47,13 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         # existing install regardless of which name it carries.
         "simplify": None,
         "trw-simplify": None,
-        "sprint-finish": "trw-sprint-finish",
-        "sprint-init": "trw-sprint-init",
+        # Retired 2026-09-28 (operator direction): sprint tooling deprecated.
+        # Both names map DIRECTLY to None so update-project removes the
+        # materialized copy from any existing install.
+        "sprint-finish": None,
+        "sprint-init": None,
+        "trw-sprint-finish": None,
+        "trw-sprint-init": None,
         # Retired 2026-09-12 (operator direction). The agent-team planning
         # COMMAND surface was experimental for six months and is superseded by
         # native client workflow features; the underlying support (formation
@@ -297,7 +301,7 @@ from trw_mcp.bootstrap._version_migration_predecessors import (
 from trw_mcp.bootstrap._version_migration_predecessors import (
     _migrate_prefix_predecessors as _migrate_prefix_predecessors,
 )
-from trw_mcp.bootstrap._version_migration_predecessors import preserve_unowned
+from trw_mcp.bootstrap._version_migration_predecessors import preserve_unowned, remove_proven
 
 # ---------------------------------------------------------------------------
 # Stale artifact removal
@@ -349,13 +353,7 @@ def _remove_stale_set(
             continue
         if preserve_unowned(stale, manifest_hashes, project_root, result):
             continue
-        try:
-            if is_dir_artifact:
-                shutil.rmtree(stale)
-            else:
-                stale.unlink()
-        except OSError:
-            logger.debug(log_event, path=str(stale), exc_info=True)
+        remove_proven(stale, manifest_hashes, project_root, result)
 
 
 def _remove_stale_artifacts(

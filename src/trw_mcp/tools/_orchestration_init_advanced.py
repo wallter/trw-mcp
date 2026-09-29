@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from trw_mcp.exceptions import StateError
 
@@ -56,23 +56,18 @@ __all__ = ["ADVANCED_KEYS", "InitAdvanced", "parse_init_advanced"]
 class InitAdvanced(BaseModel):
     """Validated projection of the ``advanced`` bag onto typed ``trw_init`` inputs.
 
-    Defaults reproduce the pre-collapse flat defaults exactly: ``task_root`` and
-    ``planning_mode`` stay ``None`` (each has its own downstream fallback, and
-    ``None`` is meaningfully distinct from ``""`` for ``task_root``, which falls
-    back to ``config.task_root``), ``wave_manifest`` stays ``None`` (its
-    presence, not its emptiness, triggers wave-plan creation), and ``protected``
-    stays ``False``.
+    Defaults reproduce the pre-collapse flat defaults exactly: ``task_root``
+    stays ``None`` (``None`` is meaningfully distinct from ``""``: it falls
+    back to ``config.task_root``) and ``protected`` stays ``False``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     config_overrides: dict[str, str] | None = None
     task_root: str | None = None
-    wave_manifest: list[dict[str, object]] | None = None
     complexity_signals: dict[str, object] | None = None
     artifacts: list[str] = Field(default_factory=list)
     protected: bool = False
-    planning_mode: str | None = None
     # PRD-CORE-265-FR03/FR04. Two keys, not two tools: a tool DEFINITION is paid
     # in every session's system prompt of every client, and the formation surface
     # is reachable from the CLI for callers that cannot use MCP at all. ``dict``
@@ -80,6 +75,22 @@ class InitAdvanced(BaseModel):
     # the shape is validated by ``trw_mcp.formation``, which owns it.
     formation: dict[str, object] | None = None
     join_formation: dict[str, str] | None = None
+    # PRD-CORE-338-FR03: the run's target completion instant. A naive time is
+    # refused rather than assumed UTC: guessing the zone is the clock drift
+    # this field exists to remove.
+    target_utc: str | None = None
+
+    @field_validator("target_utc")
+    @classmethod
+    def _target_needs_offset(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from trw_mcp.state.timekeeping import iso, parse_ts
+
+        parsed = parse_ts(value)
+        if parsed is None:
+            raise ValueError("must be ISO-8601 with an explicit offset, e.g. 2026-09-26T18:00:00Z")
+        return iso(parsed)
 
 
 #: Accepted ``advanced`` keys, byte-identical to the ``trw_init`` parameters

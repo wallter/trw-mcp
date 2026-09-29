@@ -20,6 +20,7 @@ import re as _re
 from pathlib import Path
 
 import structlog
+from trw_memory.models.memory import MemoryType
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
@@ -54,6 +55,7 @@ _YAML_SYNC_KEYS: tuple[str, ...] = (
     "nudge_line",
     "expires",
     "confidence",
+    "evidence_level",
     "task_type",
     "domain",
     "phase_affinity",
@@ -74,13 +76,17 @@ logger = structlog.get_logger(__name__)
 # branches, so it escapes ``store_learning`` to the MCP caller as an unhandled
 # exception -- violating the stable ``LearnResultDict`` return-shape contract.
 # The update mode already guarded these; the create mode did not. These sets
-# mirror the enum members in ``trw_memory.models.memory``.
-_VALID_LEARN_TYPES: frozenset[str] = frozenset({"incident", "pattern", "convention", "hypothesis", "workaround"})
+# mirror the enum members in ``trw_memory.models.memory`` (the type set is read off it: PRD-CORE-334 FR01).
+_VALID_LEARN_TYPES: frozenset[str] = frozenset(kind.value for kind in MemoryType)
 _VALID_LEARN_CONFIDENCES: frozenset[str] = frozenset({"unverified", "low", "medium", "high", "verified"})
 _VALID_LEARN_TIERS: frozenset[str] = frozenset({"critical", "high", "normal", "low", "protected", "permanent"})
+# PRD-CORE-312-FR01: mirrors trw_memory.models.memory.EvidenceLevel.
+_VALID_LEARN_EVIDENCE_LEVELS: frozenset[str] = frozenset({"observed", "verified", "inferred", "unknown"})
 
 
-def _validate_learn_enums(*, type: str, confidence: str, protection_tier: str) -> LearnResultDict | None:
+def _validate_learn_enums(
+    *, type: str, confidence: str, protection_tier: str, evidence_level: str = "unknown"
+) -> LearnResultDict | None:
     """Return a rejection ``LearnResultDict`` for an invalid enum arg, else None.
 
     core185-ENUM-UNGUARDED-3. Keeps the tool's contract stable: an out-of-range
@@ -105,6 +111,14 @@ def _validate_learn_enums(*, type: str, confidence: str, protection_tier: str) -
             "status": "rejected",
             "reason": "invalid_protection_tier",
             "message": (f"Invalid protection_tier '{protection_tier}'. Must be one of: {sorted(_VALID_LEARN_TIERS)}"),
+        }
+    if evidence_level not in _VALID_LEARN_EVIDENCE_LEVELS:
+        return {
+            "status": "rejected",
+            "reason": "invalid_evidence_level",
+            "message": (
+                f"Invalid evidence_level '{evidence_level}'. Must be one of: {sorted(_VALID_LEARN_EVIDENCE_LEVELS)}"
+            ),
         }
     return None
 

@@ -18,6 +18,9 @@ from trw_mcp.tools._task_type_detection import (
     detect_task_type,
 )
 
+pytestmark = pytest.mark.unit
+
+
 # ── FR01: taxonomy ──────────────────────────────────────────────────────────
 
 

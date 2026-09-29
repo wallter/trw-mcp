@@ -300,13 +300,27 @@ class TestCopilotHookCommandShellValidity:
             )
 
     def test_command_is_simple_invocation_no_inline_shell(self) -> None:
-        """Generated command is a clean /bin/sh invocation — no nested quoting."""
+        """Generated command is a clean /bin/sh invocation — no nested quoting.
+
+        PRD-FIX-118/R8 sol round 2 P1: TRW_HOOK_CLIENT is exported ahead of the
+        invocation so lib-trw.sh (sourced by the shared .claude/hooks script the
+        adapter execs) reads copilot's OWN hook-env.d/<key>.sh rather than
+        deriving "claude" from the shared path -- see
+        _build_hook_adapter_command's docstring. The expected key is derived
+        with the SAME resolver the production code uses (``_hook_env_key``),
+        not a hardcoded "copilot" literal -- that literal previously diverged
+        from the writer's actual key ("github", copilot's config dir).
+        """
+        from trw_mcp.bootstrap._hook_env import _hook_env_key
+        from trw_mcp.models.config._profiles import resolve_client_profile
+
+        expected_key = _hook_env_key(resolve_client_profile("copilot"))
         for event_name in _COPILOT_HOOK_MAP:
             cmd = _build_hook_adapter_command(event_name, "/tmp/fake-hook.sh", "/tmp/adapter.sh")
-            # Command must be exactly: /bin/sh "<adapter>" "<hook>" "<event>"
-            assert cmd == f'/bin/sh "/tmp/adapter.sh" "/tmp/fake-hook.sh" "{event_name}"', (
-                f"Unexpected command shape for {event_name}: {cmd!r}"
-            )
+            # Command must be exactly: TRW_HOOK_CLIENT=<key> /bin/sh "<adapter>" "<hook>" "<event>"
+            assert cmd == (
+                f'TRW_HOOK_CLIENT={expected_key} /bin/sh "/tmp/adapter.sh" "/tmp/fake-hook.sh" "{event_name}"'
+            ), f"Unexpected command shape for {event_name}: {cmd!r}"
 
     def test_adapter_script_passes_bash_n(self) -> None:
         """The bundled trw-copilot-adapter.sh script is shell-syntax-valid."""

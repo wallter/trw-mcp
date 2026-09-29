@@ -85,6 +85,10 @@ class SessionStartResultDict(TypedDict, total=False):
     """Return shape of ``trw_session_start`` MCP tool."""
 
     timestamp: str
+    # PRD-CORE-329-FR03: positioned ahead of ``learnings`` by insertion order
+    # (set before ``run_steps`` runs). Omitted when nothing is pending (NFR01).
+    blocked_decision: dict[str, object]
+    blocked_decisions_pending: int
     learnings: list[dict[str, object]]
     learnings_count: int
     query: str
@@ -141,7 +145,6 @@ class SessionStartResultDict(TypedDict, total=False):
     pipeline_health_advisory: str
     # Auto-maintenance results merged in from AutoMaintenanceDict
     update_advisory: str
-    auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
@@ -156,18 +159,16 @@ class SessionStartResultDict(TypedDict, total=False):
     # PRD-HPO-PROF-001 FR-4: Resolved hierarchical profile for the session.
     # ``resolved_profile`` is the effective (merged) surface; ``profile_snapshot_id``
     # is the PERSISTENT-surface content hash (distinct from the MEAS-001
-    # artifact-registry ``surface_snapshot_id`` above); ``session_override_hash``
-    # is the session-layer delta hash (FR-13). All omitted when the profile
+    # artifact-registry ``surface_snapshot_id`` above). All omitted when the profile
     # system is disabled or resolution fails open.
     resolved_profile: dict[str, object]
     # PRD-FIX-141-FR06: what the profile above was resolved FROM (run dir,
-    # whether the Scout's session layer existed yet, layers applied, tier).
+    # layers applied, tier).
     # trw_status(detail="surface") emits the identical block, so two reports of the same
     # session are reconcilable instead of contradictory.
     profile_resolution_basis: dict[str, object]
     profile_layers_applied: list[str]
     profile_snapshot_id: str
-    session_override_hash: str
     # PRD-HPO-PROF-001 FR-12 (audit F-02): when a persistent profile layer
     # (org/domain/task-type) is malformed/schema-invalid, the resolver fails
     # CLOSED rather than silently degrading to defaults — but session start
@@ -279,6 +280,8 @@ class BuildCheckResultDict(TypedDict, total=False):
     step_durations_ms: dict[str, float]
     failure_attribution: FailureAttributionDict
     summary: str
+    # PRD-CORE-320 FR03: command_id -> "wired" / "wired, revert-proven: <proof>" / "isolated".
+    integration_claims: dict[str, str]
 
 
 class LearnResultDict(TypedDict, total=False):
@@ -314,34 +317,70 @@ class LearnResultDict(TypedDict, total=False):
     validity_window_nudge: str
 
 
-class CheckpointResultDict(TypedDict, total=False):
-    """Return shape of ``trw_checkpoint`` MCP tool and ``_maybe_auto_checkpoint``."""
+class CapabilityIntegrationRow(TypedDict):
+    """PRD-CORE-320-FR08: one declared-chain verdict surfaced on ``trw_deliver``.
 
-    timestamp: str
-    status: str
-    message: str
-    ceremony_status: str
-    # auto-checkpoint path (returned by _maybe_auto_checkpoint in checkpoint.py)
-    auto_checkpoint: bool
-    tool_calls: int
-    # wave-aware checkpoint path (returned by trw_checkpoint in orchestration.py)
-    wave_id: str
+    One row per FR/NFR id in a scoped PRD's traceability ``Call chain`` column.
+    ``call_sites`` names each verified hop's ``path:line``, in chain order (empty
+    when nothing verified). ``first_unverified_hop`` and ``reason`` are set only
+    when ``integration != "wired"``.
+    """
+
+    fr: str
+    integration: Literal["wired", "isolated"]
+    call_sites: list[str]
+    first_unverified_hop: str
+    reason: str
 
 
-class KnowledgeSyncResultDict(TypedDict, total=False):
-    """Return shape of ``trw_knowledge_sync`` MCP tool."""
+class RequirementDriftFinding(TypedDict):
+    """PRD-CORE-321: one drift finding, requirement-level or (``requirement_id`` = the PRD id) PRD-level.
 
-    threshold_met: bool
-    entry_count: int
-    threshold: int
-    topics_generated: int
-    entries_clustered: int
-    output_dir: str
-    dry_run: bool
-    clusters: list[str]
-    errors: list[str]
-    elapsed_seconds: float
-    graph_backfill: dict[str, int]
+    ``changed_fields`` is non-empty only for ``changed``. ``recorded`` and
+    ``record_reason`` carry the FR04 amendment match: when recorded,
+    ``record_reason`` is the row's Reason; otherwise the named failure
+    (``amendment_incomplete``, ``amendment_predates_approval``,
+    ``amendment_expired``) or ``None`` when no row names the id or the kind is
+    never recordable (``evidence_not_checkable``, ``shallow_clone``).
+    """
+
+    requirement_id: str
+    kind: Literal[
+        "changed",
+        "dropped",
+        "orphaned",
+        "evidence_not_checkable",
+        "baseline_reapproved",
+        "status_regressed",
+        "shallow_clone",
+    ]
+    changed_fields: list[str]
+    reason: str
+    recorded: bool
+    record_reason: str | None
+
+
+class RequirementDriftEntry(TypedDict):
+    """PRD-CORE-321 NFR02: the one entry every id in a run's PRD scope union receives.
+
+    ``reason`` names why a baseline is ``baseline_unresolvable`` (an FR01 reason or
+    ``prd_not_found``) or ``not_evaluated`` (the exception class), else ``None``.
+    """
+
+    baseline_status: Literal["resolved", "baseline_unresolvable", "not_evaluated", "not_applicable"]
+    reason: str | None
+    baseline_sha: str | None
+    approval_date: str | None
+    effective_mode: Literal["warn", "block"]
+    orphan_check: Literal["applied", "not_applicable"]
+    findings: list[RequirementDriftFinding]
+
+
+class RequirementDriftReport(TypedDict):
+    """PRD-CORE-321: ``trw_deliver``'s ``requirement_drift`` value, always this one shape."""
+
+    scope: Literal["declared", "not_declared"]
+    prds: dict[str, RequirementDriftEntry]
 
 
 class DeliverResultDict(TypedDict, total=False):
@@ -366,6 +405,26 @@ class DeliverResultDict(TypedDict, total=False):
     review_scope_block: str
     integration_review_block: str
     integration_review_warning: str
+    # PRD-CORE-320-FR01: advisory naming a capability whose BuildCommandResult
+    # reported ``integration=isolated`` — never a bare pass for that capability
+    # in the deliver summary text. Populated by trw_deliver (slice 2); this key
+    # is additive so an older payload without it still validates (NFR03).
+    integration_isolated_warning: str
+    # PRD-CORE-320-FR08: one row per FR/NFR id declared in a scoped PRD's
+    # traceability "Call chain" column, each verdict from verify_chain(). Absent
+    # when no scoped PRD declares any chain (never an empty list masquerading as
+    # "checked and found nothing").
+    capability_integration: list[CapabilityIntegrationRow]
+    # PRD-CORE-321 FR02/FR03/NFR02: computed once per deliver, before any gate can
+    # return, so it is present even when an earlier gate blocks. Always a
+    # RequirementDriftReport ({"scope": "not_declared", "prds": {}} for an empty
+    # scope), never a bare string. FR05: ``requirement_drift_block`` is the
+    # STRUCTURED hard block naming every block-eligible item of a block-mode PRD
+    # (present only when it STANDS: a valid PRD-CORE-191 record leaves it absent);
+    # ``requirement_drift_warning`` names every other block-eligible item.
+    requirement_drift: RequirementDriftReport
+    requirement_drift_warning: str
+    requirement_drift_block: str
     untracked_warning: str
     build_gate_warning: str
     build_gate_block: str

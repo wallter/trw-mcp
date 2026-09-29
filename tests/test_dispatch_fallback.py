@@ -301,7 +301,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s = 60
         self.dispatch_default_read_only = True
-        self.dispatch_role_client: dict[str, str] = {}
         self.dispatch_fallback_clients: list[str] = []
         self.__dict__.update(overrides)
 

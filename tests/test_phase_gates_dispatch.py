@@ -7,7 +7,7 @@ from pathlib import Path
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.state.validation.phase_gates import check_phase_exit, check_phase_input
+from trw_mcp.state.validation.phase_gates import check_phase_exit
 
 from ._phase_gates_support import _make_run_dir
 
@@ -49,41 +49,3 @@ class TestCheckPhaseExitDispatch:
         result = check_phase_exit(Phase.RESEARCH, run_dir, TRWConfig())
         rules = [f.rule for f in result.failures]
         assert "synthesis_exists" in rules
-
-
-class TestCheckPhaseInputDispatch:
-    """Verify check_phase_input dispatches correctly to all per-phase checkers."""
-
-    def test_implement_input(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True))
-        rules = [f.rule for f in result.failures]
-        assert "manifest_exists" in rules
-
-    def test_validate_input(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.VALIDATE, run_dir, TRWConfig(strict_input_criteria=True))
-        rules = [f.rule for f in result.failures]
-        assert "implementation_complete" in rules
-
-    def test_review_input_no_events(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.REVIEW, run_dir, TRWConfig(strict_input_criteria=True))
-        rules = [f.rule for f in result.failures]
-        assert "validate_passed" not in rules
-
-    def test_strict_vs_non_strict_severity(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """strict_input_criteria=True uses error severity; False uses warning."""
-        run_dir = _make_run_dir(tmp_path, writer)
-        strict_result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True))
-        non_strict_result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=False))
-        strict_severities = {f.rule: f.severity for f in strict_result.failures}
-        non_strict_severities = {f.rule: f.severity for f in non_strict_result.failures}
-        assert strict_severities["manifest_exists"] == "error"
-        assert non_strict_severities["manifest_exists"] == "warning"
-
-    def test_research_input_passes(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.RESEARCH, run_dir, TRWConfig())
-        error_failures = [f for f in result.failures if f.severity == "error"]
-        assert len(error_failures) == 0

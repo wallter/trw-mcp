@@ -9,7 +9,6 @@ import pytest
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 from trw_mcp.meta_tune.boot_checks import (
-    audit_defaults,
     resolve_kill_switch_path,
     validate_defaults,
 )
@@ -32,36 +31,6 @@ def _enabled_config(tmp_path: Path) -> TRWConfig:
             eval_gaming_fixture_path=str(fixture_root / "dgm_attacks"),
         )
     )
-
-
-def test_audit_defaults_returns_report_structure(tmp_path: Path) -> None:
-    repo_root = tmp_path / "repo"
-    (repo_root / ".trw").mkdir(parents=True)
-    (repo_root / ".trw" / "config.yaml").write_text("meta_tune:\n  enabled: false\n")
-    corpus = repo_root / "fixtures" / "corpora" / "v1"
-    corpus.mkdir(parents=True)
-    (corpus / "task.txt").write_text("ok")
-    fixtures = repo_root / "fixtures" / "dgm_attacks"
-    fixtures.mkdir(parents=True)
-    for i in range(5):
-        (fixtures / f"{i}.yaml").write_text("name: attack\n")
-
-    cfg = TRWConfig(
-        meta_tune=MetaTuneConfig(
-            enabled=True,
-            kill_switch_path=".trw/config.yaml",
-            audit_log_path=".trw/meta_tune/meta_tune_audit.jsonl",
-            corpus_path="fixtures/corpora",
-            eval_gaming_fixture_path="fixtures/dgm_attacks",
-        )
-    )
-    report = audit_defaults(cfg, repo_root=repo_root)
-    assert "kill_switch_path" in report
-    assert report["kill_switch_path"]["parent_writable"] is True
-    assert "audit_log_path" in report
-    assert "corpus_path" in report
-    assert "eval_gaming_fixture_path" in report
-    assert "sandbox" in report
 
 
 def test_validate_defaults_passes_when_safe_defaults_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

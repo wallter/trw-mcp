@@ -8,7 +8,7 @@ Covers:
 - FR05: Category enum validation
 - FR06: Impact bounds validation (trw_learn, trw_learn_update)
 - FR07: SecretStr for platform_api_key
-- FR08: Mandatory checksum for download_release_artifact
+- FR08: (retired in 8.0.0 with the self-updater it covered)
 - FR09: Min-impact bounds on recall
 """
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from pydantic import SecretStr
@@ -258,88 +258,10 @@ class TestSecretStrApiKey:
         config2 = TRWConfig(platform_api_key="non-empty")
         assert config2.platform_api_key.get_secret_value()
 
-    @pytest.mark.skip(
-        reason=(
-            "Conflicts with an intentional, load-bearing invariant: the tracked dev "
-            ".trw/config.yaml platform_api_key is INTENTIONALLY pinned & git-tracked "
-            "(it is the dev-account key resolving backend_api_key for the feedback-submission channel "
-            "and every backend call; clearing it breaks every backend call). See "
-            "feedback_platform_api_key_pinned.md. This test inspects the REAL dev config "
-            "(repo_root/.trw/config.yaml), not a shipped template/baseline, so its premise "
-            "is invalid for this repo. FLAGGED for operator: if a key-free baseline guard is "
-            "still wanted, it should target a separate shipped template config, not the dev file."
-        )
-    )
-    def test_tracked_trw_config_does_not_contain_platform_api_key(self) -> None:
-        """Repository baseline config must not carry a live platform API key."""
-        repo_root = Path(__file__).resolve().parents[2]
-        config_path = repo_root / ".trw" / "config.yaml"
-
-        key_lines = [
-            line
-            for line in config_path.read_text(encoding="utf-8").splitlines()
-            if line.lstrip().startswith("platform_api_key:")
-        ]
-
-        for line in key_lines:
-            raw_value = line.split(":", 1)[1].strip()
-            normalized_value = raw_value.strip("\"'")
-            assert normalized_value == "", (
-                "Tracked .trw/config.yaml must not contain a platform API key; "
-                "clear the baseline config and rotate any key previously committed."
-            )
-
 
 # ---------------------------------------------------------------------------
 # FR08: Mandatory checksum
 # ---------------------------------------------------------------------------
-
-
-class TestMandatoryChecksum:
-    """Validate download_release_artifact requires checksum."""
-
-    def test_none_checksum_raises_value_error(self) -> None:
-        from trw_mcp.state.auto_upgrade import download_release_artifact
-
-        # The function has a try/except that catches all exceptions,
-        # but ValueError from the checksum check should happen before download.
-        # We mock the download to isolate the checksum check.
-        with patch("trw_mcp.state.auto_upgrade.httpx.Client") as mock_client_cls:
-            mock_resp = MagicMock()
-            mock_resp.content = b"fake archive content"
-            mock_resp.raise_for_status = MagicMock()
-            mock_client = MagicMock()
-            mock_client.__enter__.return_value = mock_client
-            mock_client.__exit__.return_value = False
-            mock_client.get.return_value = mock_resp
-            mock_client_cls.return_value = mock_client
-
-            # download_release_artifact wraps in broad except -> returns None
-            result = download_release_artifact(
-                "http://example.com/release.tar.gz",
-                expected_checksum=None,
-            )
-            # With the mandatory checksum, None checksum causes ValueError
-            # which is caught by the broad except -> returns None
-            assert result is None
-
-    def test_with_checksum_proceeds(self, tmp_path: Path) -> None:
-        """When checksum is provided, verification proceeds normally."""
-        from trw_mcp.state.auto_upgrade import download_release_artifact
-
-        # The function will fail on actual download, but the point is it
-        # doesn't raise ValueError when checksum is provided
-        with patch("trw_mcp.state.auto_upgrade.httpx.Client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.__enter__.return_value = mock_client
-            mock_client.__exit__.return_value = False
-            mock_client.get.side_effect = ConnectionError("no network")
-            mock_client_cls.return_value = mock_client
-            result = download_release_artifact(
-                "http://example.com/release.tar.gz",
-                expected_checksum="abc123",
-            )
-            assert result is None  # Fails on download, not on missing checksum
 
 
 # ---------------------------------------------------------------------------

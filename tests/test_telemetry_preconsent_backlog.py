@@ -15,7 +15,13 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from tests._contact_support import payload_trw_dir
 from trw_mcp.telemetry.sender import BatchSender, stamp_consent
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 def _make_sender(tmp_path: Path) -> tuple[Any, Path]:
@@ -27,6 +33,7 @@ def _make_sender(tmp_path: Path) -> tuple[Any, Path]:
         max_retries=1,
         backoff_base=0.0,
         platform_telemetry_enabled=True,  # opted IN now
+        source_trw_dir=payload_trw_dir(),
     )
     return sender, input_path
 

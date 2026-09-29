@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._stdio_harness import pinned_server_env
 from tests._structlog_capture import captured_structlog as captured_structlog
 
 #: Generous: a cold start measured 1.25 s median, and CI is slower than a laptop.
@@ -37,7 +38,9 @@ def _cold_start_stderr(tmp_path: Path) -> tuple[list[dict[str, object]], str]:
     """Spawn a real trw-mcp, complete a handshake, and return its boot_phase events."""
     env = dict(os.environ)
     env["TRW_LOG_JSON"] = "1"
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    # trw_mcp imports trw_memory.safe_fs: the child needs the candidate trw_memory too, not an installed one.
+    repo = Path(__file__).resolve().parents[2]
+    env["PYTHONPATH"] = os.pathsep.join([str(repo / "trw-mcp" / "src"), str(repo / "trw-memory" / "src")])
     proc = subprocess.Popen(
         # --log-json is a top-level flag, BEFORE the subcommand; argparse rejects
         # it after "serve". JSON is what makes the stderr stream parseable here.
@@ -46,7 +49,7 @@ def _cold_start_stderr(tmp_path: Path) -> tuple[list[dict[str, object]], str]:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env=env,
+        env=pinned_server_env(env),
     )
     try:
         assert proc.stdin is not None and proc.stdout is not None

@@ -30,8 +30,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from trw_memory.testing.daemon_reaper import reap_daemons_under
 
-from tests._daemon_reaper import reap_daemons_under
 from tests._stdio_benchmark_support import build_temp_project
 from tests._stdio_harness import stdio_import_skip_reason
 from trw_mcp.dispatch import DispatchResult
@@ -49,7 +49,6 @@ class _StubDispatchConfig:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s: int = 600
         self.dispatch_default_read_only: bool = True
-        self.dispatch_role_client: dict[str, str] = {}
         self.dispatch_child_trw_access: bool = False
         for key, value in overrides.items():
             setattr(self, key, value)
@@ -104,18 +103,17 @@ def _install(monkeypatch: pytest.MonkeyPatch, dispatch_cfg: _StubDispatchConfig 
     return captured
 
 
-# --- 1. Behavioral: posture derivation from --role, override with a warning ---
+# --- 1. Behavioral: a role never derives a posture (DISPATCH-SIMPLIFY); --posture is explicit ---
 
 
 @pytest.mark.parametrize("role", sorted(ROLE_TABLE))
-def test_review_role_without_explicit_posture_derives_reviewer(monkeypatch: pytest.MonkeyPatch, role: str) -> None:
-    """Every ROLE_TABLE entry today is a review/audit role: omitting --posture
-    must never leave one of them running unbounded (fail-closed)."""
+def test_a_role_without_explicit_posture_stays_default(monkeypatch: pytest.MonkeyPatch, role: str) -> None:
+    """A role is a prompt preset only: it never turns a dispatch into a reviewer, so it never refuses a client."""
     captured = _install(monkeypatch)
     with pytest.raises(SystemExit) as exc:
         run_dispatch(_ns(role=role))
     assert exc.value.code == 0
-    assert getattr(captured["req"], "posture") == "reviewer"
+    assert getattr(captured["req"], "posture") == "default"
 
 
 def test_no_role_without_explicit_posture_stays_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,18 +128,6 @@ def test_explicit_posture_reviewer_with_no_role_is_honored(monkeypatch: pytest.M
     with pytest.raises(SystemExit):
         run_dispatch(_ns(role=None, posture="reviewer"))
     assert getattr(captured["req"], "posture") == "reviewer"
-
-
-def test_explicit_posture_default_overrides_review_role_with_warning(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    captured = _install(monkeypatch)
-    with pytest.raises(SystemExit):
-        run_dispatch(_ns(role="adversarial-audit", posture="default"))
-    assert getattr(captured["req"], "posture") == "default"
-    err = capsys.readouterr().err
-    assert "UNBOUNDED" in err
-    assert "adversarial-audit" in err
 
 
 def test_explicit_posture_reviewer_on_review_role_prints_no_override_warning(
@@ -175,7 +161,6 @@ def test_posture_flag_rejects_unknown_value() -> None:
 
 class _CmdCfg:
     dispatch_default_client = "codex"
-    dispatch_role_client: dict[str, str] = {}
     dispatch_enabled_clients = ["codex"]
     dispatch_default_models: dict[str, str] = {}
     dispatch_default_timeout_s = 60
@@ -288,7 +273,7 @@ print(json.dumps({{"type": "result", "subtype": "success", "is_error": False,
 def test_cli_reviewer_dispatch_child_is_denied_a_write_tool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     reason = stdio_import_skip_reason()
     if reason is not None:  # pragma: no cover - environment guard
-        pytest.skip(reason)
+        pytest.skip(reason)  # skip-category: optional-dependency
     project, user_dir = build_temp_project(tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -309,6 +294,7 @@ def test_cli_reviewer_dispatch_child_is_denied_a_write_tool(monkeypatch: pytest.
                 _ns(
                     client="claude",
                     role="adversarial-audit",
+                    posture="reviewer",  # explicit: a role no longer derives it (DISPATCH-SIMPLIFY)
                     cwd=str(project),
                     timeout=120,
                     output_file=str(out_file),

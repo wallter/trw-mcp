@@ -64,6 +64,7 @@ def test_cursor_without_sandbox_flag_refuses_read_only_dispatch(
     assert result.ok is False
     assert result.silence_reason == "sandbox_unsupported"
     assert "--sandbox" in result.raw_stderr and "upgrade" in result.raw_stderr
+    assert "`cursor-agent update`" in result.raw_stderr, "the refusal names the command that fixes it"
     assert not ran.exists(), "the client must never run without its sandbox"
 
 
@@ -146,7 +147,8 @@ def test_copilot_shim_without_cli_is_not_ok(tmp_path: Path, monkeypatch: pytest.
 
     assert result.ok is False
     assert result.silence_reason == "client_unsupported"
-    assert "install or upgrade the copilot CLI" in result.raw_stderr
+    assert "npm install -g @github/copilot" in result.raw_stderr, "the refusal names the install"
+    assert "VS Code" in result.raw_stderr, "and says why a `copilot` on PATH is not the CLI"
 
 
 def test_codex_usage_limit_is_quota_exhausted() -> None:

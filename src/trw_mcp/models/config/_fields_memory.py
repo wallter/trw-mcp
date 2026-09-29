@@ -11,7 +11,6 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_LEARNING_MAX_ENTRIES,
     DEFAULT_RECALL_INTERNAL_FIELDS,
     DEFAULT_RECALL_MAX_RESULTS,
-    DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
 )
 
 
@@ -26,7 +25,6 @@ class _MemoryFields:
     # (PRD-QUAL-139-FR05): no consumer under the corrected scan, no originating PRD, and only
     # default pins in tests. Both keys are listed in trw_mcp/data/config-retired-keys.json.
     learning_repeated_op_threshold: int = 3
-    recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
     recall_internal_fields: frozenset[str] = DEFAULT_RECALL_INTERNAL_FIELDS
 
@@ -81,6 +79,8 @@ class _MemoryFields:
     # -- Learning recall control (S7, PRD-CORE-125) --
 
     learning_recall_enabled: bool = True
+    # PRD-CORE-326-FR05: trw_recall stubs carry source/scope/superseded_by when they carry signal.
+    recall_provenance_inline: bool = True
     session_start_recall_enabled: bool | None = None
 
     # -- Chain-mode recency bypass (L-fovv fix, 2026-04-21, iter-18 follow-up) --

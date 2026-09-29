@@ -1,24 +1,34 @@
 """Device authorization flow for TRW CLI (RFC 8628).
 
-Provides ``device_auth_login``, ``device_auth_logout``, ``device_auth_status``,
-using ONLY Python stdlib (no requests/httpx).
+Provides ``device_auth_login``, ``device_auth_logout``, ``device_auth_status``.
 
-Matches the installer UI patterns from ``install-trw.template.py``.
+Matches the installer UI patterns from ``install-trw.template.py`` (which
+stays stdlib-only per its single-file distribution constraint; this package
+module is not so constrained and uses ``httpx``, already a direct dependency
+-- PRD-SEC-021 FR04).
 """
 
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import sys
 import threading
 import time
 import webbrowser
+from email.message import Message
 from pathlib import Path
-from typing import TextIO
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
+import httpx
+from trw_memory.exceptions import UnsafeWriteError
+
+from trw_mcp._outbound_http import (
+    DisallowedDestinationError,
+    outbound_http_client,
+    require_https_or_loopback,
+)
 from trw_mcp.models.config._credentials import (
     credentials_path_for,
     read_key_from_file,
@@ -52,33 +62,35 @@ BOLD = "\033[1m" if _USE_COLOR else ""
 DIM = "\033[2m" if _USE_COLOR else ""
 NC = "\033[0m" if _USE_COLOR else ""
 
-# ── TTY input helper (matches installer _open_tty) ───────────────────
 
-
-def _open_tty() -> TextIO | None:
-    """Open /dev/tty for reading, or None if unavailable."""
-    with contextlib.suppress(OSError):
-        return open("/dev/tty")
-    return None
-
-
-# ── HTTP helpers (stdlib only) ────────────────────────────────────────
+# ── HTTP helpers ───────────────────────────────────────────────────────
 
 
 def _post_json(url: str, payload: dict[str, object], timeout: int = 10) -> dict[str, object]:
     """POST JSON to *url* and return parsed response.
 
     Raises ``HTTPError`` on HTTP errors and ``URLError`` on network errors.
+
+    Destination policy (PRD-SEC-021 FR04): *url* is the operator-supplied
+    ``api_url`` (CLI/config); the RFC 8628 device-auth flow attaches no
+    bearer here, but ``follow_redirects=False`` still applies for consistency
+    and to fail loudly on an unexpected redirect rather than silently follow
+    it. https-or-loopback is enforced by the shared
+    ``_outbound_http.require_https_or_loopback`` (FR05).
     """
-    body = json.dumps(payload).encode("utf-8")
-    req = Request(  # noqa: S310 — URL comes from operator-supplied api_url
-        url,
-        data=body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urlopen(req, timeout=timeout) as resp:  # noqa: S310
-        return dict(json.loads(resp.read().decode("utf-8")))
+    require_https_or_loopback(url)
+    body = json.dumps(payload)
+    try:
+        with outbound_http_client(timeout=timeout) as client:
+            resp = client.post(url, content=body, headers={"Content-Type": "application/json"})
+    except httpx.HTTPError as exc:
+        raise URLError(str(exc)) from exc
+    if not (200 <= resp.status_code < 300):
+        hdrs = Message()
+        for key, value in resp.headers.items():
+            hdrs[key] = value
+        raise HTTPError(url, resp.status_code, resp.reason_phrase, hdrs, io.BytesIO(resp.content))
+    return dict(resp.json())
 
 
 # ── Device auth flow (RFC 8628) ──────────────────────────────────────
@@ -98,7 +110,7 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
     3. Poll ``{api_url}/v1/auth/device/token`` until authorized or expired.
 
     Returns the token response dict on success, or ``None`` on failure.
-    Only uses Python stdlib (``urllib.request``, ``webbrowser``).
+    Uses ``httpx`` (PRD-SEC-021 FR04) and stdlib ``webbrowser``.
     """
     api_url = api_url.rstrip("/")
 
@@ -111,6 +123,16 @@ def device_auth_login(api_url: str, interactive: bool = True) -> dict[str, objec
     except (HTTPError, URLError, OSError) as exc:
         if interactive:
             print(f"\n  {RED}Error:{NC} Could not reach {api_url}", file=sys.stderr)
+            print(f"  {DIM}{exc}{NC}", file=sys.stderr)
+        return None
+    except DisallowedDestinationError as exc:  # trw-fail-silent-allow: user-facing CLI error printed below, mirrors the sibling handler above (return None is the documented device_auth_login failure contract, not a swallow)
+        # The shared https-or-loopback policy (PRD-SEC-021 FR05) refused *api_url*
+        # before any request was attempted. This is a distinct error boundary from
+        # the network-failure case above -- it means the URL itself is disallowed,
+        # not that the (allowed) URL was unreachable -- but it gets the same clean,
+        # non-tracebacking, no-credential-echoing user-facing treatment.
+        if interactive:
+            print(f"\n  {RED}Error:{NC} Refusing to contact {api_url}", file=sys.stderr)
             print(f"  {DIM}{exc}{NC}", file=sys.stderr)
         return None
 
@@ -343,7 +365,14 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
     if api_key and isinstance(api_key, str):
         config_path.parent.mkdir(parents=True, exist_ok=True)
         credentials_path = credentials_path_for(config_path)
-        write_credentials_key(credentials_path, api_key)
+        try:
+            write_credentials_key(credentials_path, api_key)
+        except UnsafeWriteError as exc:
+            # PRD-CORE-337-FR09: a symlinked leaf or parent component refuses the
+            # write rather than following it. Surface a clean, typed CLI error --
+            # never a raw traceback -- naming the refused path and reason.
+            print(f"\n  {RED}Error:{NC} refusing to write credentials at {exc.path} ({exc.reason}).")
+            return 1
         # Also save org_name and user_email for `auth status`
         org_name = str(result.get("org_name", ""))
         user_email = str(result.get("user_email", ""))

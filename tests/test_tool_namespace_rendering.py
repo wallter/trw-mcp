@@ -19,12 +19,15 @@ from ruamel.yaml import YAML
 from tests._client_registry import ACTIVE_CLIENT_IDS
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._profiles import resolve_client_profile
-from trw_mcp.prompts.messaging import (
-    _expand_tool_placeholders,
-    get_message,
-    render_message,
-    render_tool_name,
-)
+from trw_mcp.prompts.messaging import _expand_tool_placeholders, get_message, render_tool_name
+
+
+def render_message(key, profile, **kwargs):
+    """Test-local: the removed wrapper was ``get_message(key, profile=profile)``."""
+    from trw_mcp.prompts.messaging import get_message
+
+    return get_message(key, profile=profile, **kwargs)
+
 
 _AGENTS_DIR = Path(__file__).parent.parent / "src/trw_mcp/data/agents"
 _MESSAGES_YAML = Path(__file__).parent.parent / "src/trw_mcp/data/messages/messages.yaml"

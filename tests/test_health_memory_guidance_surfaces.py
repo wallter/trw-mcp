@@ -83,6 +83,8 @@ def test_memory_audit_discloses_retrieval_side_effects_and_partial_evidence() ->
         assert "Never run wildcard `max_results=0`" in content, relative
         assert "SAMPLED/PARTIAL" in content and "UNKNOWN" in content, relative
         assert "distinct domain count" not in content, relative
+        # PRD-DIST-2481 deleted `trw-distill maintain`; no surface may point at it.
+        assert "trw-distill maintain" not in content, relative
 
 
 def test_memory_optimization_uses_confirmed_tool_mutations_not_instruction_sync() -> None:
@@ -98,9 +100,8 @@ def test_memory_optimization_uses_confirmed_tool_mutations_not_instruction_sync(
         assert "Do not run it for that purpose" in content, relative
         assert "entries-per-domain formula" in content, relative
         assert "ALWAYS run `trw-mcp instructions sync`" not in content, relative
-        assert "Use it for planning only" in content, relative
-        assert "Do not invoke `trw-distill maintain optimize --apply`" in content, relative
-        assert "applying an immutable reviewed receipt" in content, relative
+        # PRD-DIST-2481 deleted `trw-distill maintain`; no surface may point at it.
+        assert "trw-distill maintain" not in content, relative
 
 
 def test_learn_reflection_uses_targeted_deduplication() -> None:

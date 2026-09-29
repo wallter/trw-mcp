@@ -30,7 +30,10 @@ from pathlib import Path
 
 import pytest
 
-from tests._intent_contract_hooks import isolate_fixture_pytest_plugins
+from tests._intent_contract_hooks import (
+    hook_pythonpath,
+    isolate_fixture_pytest_plugins,
+)
 from trw_mcp.security.intent_contract.break_glass import mint_token
 from trw_mcp.security.intent_contract.enrollment import write_enrollment
 from trw_mcp.security.intent_contract.ledger import verify_override_ledger
@@ -97,7 +100,7 @@ def _run_hook(project: Path, hook: str, file_path: str) -> subprocess.CompletedP
     returncodes here mean ALLOW and BLOCK.
     """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = hook_pythonpath()
     env.setdefault("TRW_PYTHON", sys.executable)
     # Assert the enforcement decision, not latency. The shipped budgets fail
     # CLOSED on timeout by design, and importing trw_mcp costs ~0.44s idle — so

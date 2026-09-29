@@ -9,6 +9,7 @@ import pytest
 from packaging.specifiers import SpecifierSet
 
 import trw_mcp
+from tests._layout import MONOREPO_ROOT, requires_monorepo
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 UV_LOCK = Path(__file__).resolve().parents[1] / "uv.lock"
@@ -178,6 +179,28 @@ def test_pyproject_declares_core_runtime_direct_dependencies() -> None:
     }.issubset(_dependency_names(dependencies))
 
 
+def test_pyproject_declares_311_runtime_floor() -> None:
+    """The manifest floor matches what code_index._require_runtime already enforces (PRD-INFRA-200 FR04).
+
+    Python 3.10 reaches end of life 2026-10; trw_mcp.code_index.store._require_runtime already
+    fails closed below 3.11 at runtime, so requires-python must catch up to that floor.
+    """
+    pyproject = _pyproject()
+    project = pyproject["project"]
+    assert isinstance(project, dict)
+    assert project["requires-python"] == ">=3.11"
+    classifiers = project["classifiers"]
+    assert isinstance(classifiers, list)
+    assert "Programming Language :: Python :: 3.10" not in classifiers
+    assert "Programming Language :: Python :: 3.11" in classifiers
+
+    dependencies = project["dependencies"]
+    assert isinstance(dependencies, list)
+    assert not any("python_version < '3.11'" in dep for dep in dependencies), (
+        "tomli's <3.11 marker is now always false and should be an unconditional dependency"
+    )
+
+
 def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
     """Deptry should scan the src-layout package without optional-import noise."""
     pyproject = _pyproject()
@@ -269,3 +292,25 @@ def test_the_lock_tests_wait_for_the_published_dependency() -> None:
     (no ``--with-local``) keeps them and fails the cut if they fail."""
     for test in (test_uv_lock_version_matches_pyproject, test_uv_lock_dependency_specifiers_match_pyproject):
         assert "requires_published_lock" in {mark.name for mark in getattr(test, "pytestmark", [])}
+
+
+@requires_monorepo
+def test_trw_memory_floor_is_never_behind_trw_memory() -> None:
+    """The trw-memory pin names trw-memory's own major or the next one, never an older one.
+
+    Before the cut the floor may lead (it names the unreleased major that exports what trw-mcp
+    imports); after release_cut_prep.py bumps trw-memory, a floor left on the previous major
+    would pin every install to a trw-memory that lacks those symbols.
+    """
+    assert MONOREPO_ROOT is not None
+    pin = re.search(r'"trw-memory>=(\d+)\.\d+\.\d+,<(\d+)\.0\.0"', PYPROJECT.read_text(encoding="utf-8"))
+    assert pin is not None, "no 'trw-memory>=X.Y.Z,<A.0.0' pin in trw-mcp/pyproject.toml"
+    floor_major, upper_major = int(pin.group(1)), int(pin.group(2))
+    memory = re.search(
+        r'^version = "(\d+)\.',
+        (MONOREPO_ROOT / "trw-memory" / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert memory is not None
+    assert floor_major >= int(memory.group(1)), "the trw-memory floor is behind trw-memory's own major"
+    assert upper_major == floor_major + 1, "the trw-memory pin must admit exactly one major"

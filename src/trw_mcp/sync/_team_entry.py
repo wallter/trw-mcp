@@ -52,8 +52,9 @@ def team_learning_to_entry(
     Returns ``None`` for a payload that cannot be read: a malformed remote item
     must fail open for itself without aborting the whole merge.
     """
+    from trw_memory.models._type_coercion import coerce_memory_type_lenient
     from trw_memory.models.entry_factory import new_entry
-    from trw_memory.models.memory import MemoryStatus, MemoryType
+    from trw_memory.models.memory import MemoryStatus
 
     from trw_mcp.sync.pull import _resolve_sync_source
 
@@ -67,6 +68,10 @@ def team_learning_to_entry(
         # source=company_sync in metadata; team learnings carry no source tag.
         # Preserve the distinction locally while merging via the same path.
         sync_source = _resolve_sync_source(metadata)
+        # PRD-CORE-334 FR05: a type this build does not know (a newer client's) is kept as PATTERN, not dropped.
+        kind, type_raw = coerce_memory_type_lenient(raw_learning.get("type"))
+        if type_raw is not None:
+            metadata["type_raw"] = type_raw
 
         entry = new_entry(
             entry_id=local_id,
@@ -79,7 +84,7 @@ def team_learning_to_entry(
                 "tags": [str(tag) for tag in raw_learning.get("tags", []) if isinstance(tag, str)],
                 "importance": puller._coerce_importance(raw_learning.get("impact")),
                 "status": MemoryStatus(str(raw_learning.get("status", "active"))),
-                "type": MemoryType(str(raw_learning.get("type", "pattern"))),
+                "type": kind,
                 "source": sync_source,
                 "source_identity": sync_source,
                 "client_profile": sync_source,

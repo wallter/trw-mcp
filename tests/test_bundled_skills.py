@@ -48,12 +48,6 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-audit" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-    def test_sprint_finish_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Bundled sprint-finish skill stays byte-for-byte aligned with root source."""
-        assert (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8") == (
-            root_skills_dir / "trw-sprint-finish" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-
     def test_reflect_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled trw-reflect skill stays byte-for-byte aligned with root source."""
         assert (skills_dir / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8") == (
@@ -79,7 +73,6 @@ class TestSkillDefinitions:
             "bundled_exec_plan": skills_dir / "trw-exec-plan" / "SKILL.md",
             "bundled_self_review": skills_dir / "trw-self-review" / "SKILL.md",
             "bundled_audit": skills_dir / "trw-audit" / "SKILL.md",
-            "bundled_sprint_finish": skills_dir / "trw-sprint-finish" / "SKILL.md",
         }
         # codex/copilot no longer fork these skills on disk (PRD-CORE-291-FR04)
         # -- they render the canonical body -- so their variant text is derived.
@@ -87,7 +80,6 @@ class TestSkillDefinitions:
         variant_texts["codex_exec_plan"] = render_skill_md(variant_texts["bundled_exec_plan"], "codex")
         variant_texts["codex_audit"] = render_skill_md(variant_texts["bundled_audit"], "codex")
         variant_texts["copilot_audit"] = render_skill_md(variant_texts["bundled_audit"], "copilot")
-        variant_texts["codex_sprint_finish"] = render_skill_md(variant_texts["bundled_sprint_finish"], "codex")
 
         if include_root:
             root_skills_dir = request.getfixturevalue("root_skills_dir")
@@ -95,7 +87,6 @@ class TestSkillDefinitions:
                 ("root_exec_plan", "trw-exec-plan/SKILL.md"),
                 ("root_self_review", "trw-self-review/SKILL.md"),
                 ("root_audit", "trw-audit/SKILL.md"),
-                ("root_sprint_finish", "trw-sprint-finish/SKILL.md"),
             ):
                 variant_texts[name] = (root_skills_dir / rel).read_text(encoding="utf-8")
         required_snippets = {
@@ -112,10 +103,6 @@ class TestSkillDefinitions:
                 "prior_learning_verification:",
                 "Do **not** audit the implementer's self-report",
             ],
-            "sprint_finish": [
-                "Call `trw_deliver()` as the last TRW action",
-                "delivery result and residual risks",
-            ],
         }
 
         for variant_name, content in variant_texts.items():
@@ -124,8 +111,6 @@ class TestSkillDefinitions:
                 if "exec_plan" in variant_name
                 else "self_review"
                 if "self_review" in variant_name
-                else "sprint_finish"
-                if "sprint_finish" in variant_name
                 else "audit"
             )
             for snippet in required_snippets[skill_kind]:

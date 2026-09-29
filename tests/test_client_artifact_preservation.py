@@ -26,6 +26,8 @@ import pytest
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

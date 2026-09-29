@@ -16,14 +16,9 @@ from pathlib import Path
 
 from trw_mcp.bootstrap._git_hooks import _resolve_hooks_dir
 from trw_mcp.bootstrap._safe_remove import path_refusal, safe_remove
+from trw_mcp.bootstrap._utils import printable
 from trw_mcp.server._subcommands_uninstall_config import (
     _remove_managed_block_file as _remove_managed_block_file,
-)
-from trw_mcp.server._subcommands_uninstall_config import (
-    _strip_managed_blocks as _strip_managed_blocks,
-)
-from trw_mcp.server._subcommands_uninstall_config import (
-    _strip_trw_from_merged_config as _strip_trw_from_merged_config,
 )
 from trw_mcp.server._uninstall_corpus import (
     keep_memory_in_dir as _keep_memory_in_dir,
@@ -32,8 +27,22 @@ from trw_mcp.server._uninstall_corpus import (
     print_corpus_warning as _print_corpus_warning,
 )
 from trw_mcp.server._uninstall_corpus import (
+    print_untracked_trw_entries as _print_untracked_trw_entries,
+)
+from trw_mcp.server._uninstall_corpus import (
+    remove_trw_dir as _remove_trw_dir,
+)
+from trw_mcp.server._uninstall_corpus import (
     trw_corpus_blast_radius as _trw_corpus_blast_radius,
 )
+from trw_mcp.server._uninstall_global import GlobalConfigs
+from trw_mcp.server._uninstall_report import (
+    display,
+    print_symlink_guidance,
+    refusal_text,
+    report_kept_trw,
+)
+from trw_mcp.server._uninstall_trash_report import _move_matched_captures_to_os_trash
 
 
 def _surfaces_declared_by_others(recorded: list[str], removed: str) -> set[str]:
@@ -51,8 +60,8 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     Registry-driven (PRD-SEC-006 FR07): the set of surfaces is derived from the
     client-profile registry manifest (active profiles plus the retired ``aider``,
     whose uninstall support is kept — plus framework core), so
-    every profile is cleaned, not just claude-code. Shared files (CLAUDE.md,
-    AGENTS.md, ANTIGRAVITY.md, settings.json, copilot-instructions) have only their
+    every profile is cleaned, not just claude-code. Shared files
+    (AGENTS.md, ANTIGRAVITY.md, settings.json, copilot-instructions) have only their
     TRW-managed marker block removed; only artifacts TRW created are touched.
     It never removes ``~/.trw``: that is the memory daemon's one store, holding
     every checkout's namespace. ``--delete-memory`` forgets only this checkout's
@@ -147,6 +156,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     plain_paths: list[Path] = []
     managed_paths: list[Path] = []
     merged_config_paths: list[tuple[Path, Path, str]] = []
+    global_configs = GlobalConfigs(getattr(args, "global_config", False))
     covered_dispositions: list[KeyDisposition] = []
     covered_surface_roots: list[Path] = []
     uncovered_dispositions: list[SurfaceDisposition] = []
@@ -182,6 +192,8 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         # `_safe_remove.path_refusal`.
         path = base / surface.relpath
         if not path.exists() or surface.relpath in still_declared:
+            continue
+        if global_configs.defers(surface, path):
             continue
         if surface.merged_config:
             # PRD-INFRA-192 FR09 P0: the guard's root must be the same anchor
@@ -232,6 +244,8 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         if configured_hook.is_file() and configured_hook not in managed_paths:
             managed_paths.append(configured_hook)
 
+    global_configs.report_left(target, dry_run=dry_run)
+
     from trw_mcp.server import _uninstall_memory
 
     # Resolved before anything is shown or removed: the grant lives in .trw/runtime.
@@ -269,34 +283,38 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         note = ""
         if p == project_trw and keep_memory and has_corpus:
             note = " — memory/ + learnings/ PRESERVED (--keep-memory)"
-        print(f"    {kind}  {_display(p, target)}{size}{note}")
+        print(f"    {kind}  {display(p, target)}{size}{note}")
     for p in managed_paths:
-        print(f"    block {_display(p, target)} (TRW-managed section)")
-    for p, _root, _shape in merged_config_paths:
-        print(f"    entry {_display(p, target)} (TRW entries only)")
+        print(f"    block {display(p, target)} (TRW-managed section)")
+    for p, root, shape in merged_config_paths:
+        print(global_configs.entry_line(p, root, shape, target, dry_run=dry_run))
     if memory:
         print(f"    rows  {memory.namespace} in the shared store {_uninstall_memory.shared_store()}")
     for d in covered_dispositions:
         detail = f" ({d.detail})" if d.detail else ""
-        print(f"    {d.action:<16} {_display(d.path, target)}{detail}")
+        print(f"    {d.action:<16} {display(d.path, target)}{detail}")
     for u in uncovered_dispositions:
         detail = f" ({u.detail})" if u.detail else ""
-        print(f"    {u.action:<16} {_display(u.path, target)}{detail}")
+        print(f"    {u.action:<16} {display(u.path, target)}{detail}")
     if remove_ide:
         print(f"    entry target_platforms: drop {remove_ide!r} in .trw/config.yaml")
 
     # Destructive blast-radius warning: removing project .trw without
     # --keep-memory permanently deletes memory.db + every learning. TRW's whole
     # value is durable learnings, so name the blast radius + nudge export-first.
+    if project_trw in plain_paths and not remove_ide:
+        _print_untracked_trw_entries(project_trw)
     corpus_at_risk = has_corpus and not keep_memory
     if corpus_at_risk:
-        _print_corpus_warning(project_trw, learning_count, target, _display)
+        _print_corpus_warning(project_trw, learning_count, target, display)
 
     if dry_run:
-        for p in managed_paths:
-            _remove_managed_block_file(p, target, dry_run=True)
-        for p, root, shape in merged_config_paths:
-            _strip_trw_from_merged_config(p, root, dry_run=True, shape=shape)
+        refusals = global_configs.refusals(
+            managed_paths, merged_config_paths, covered_dispositions, uncovered_dispositions, target
+        )
+        if refusals:
+            print("\n  --dry-run: .trw and the manifest would be kept, because an item would be refused.")
+            print_symlink_guidance(refusals, target)
         print("\n  --dry-run: no files removed.")
         return
 
@@ -312,6 +330,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
 
     removed = 0
     errors = 0
+    refused: list[Path] = []
     if memory:
         try:
             deleted = _uninstall_memory.delete_checkout_memory(memory)
@@ -322,28 +341,40 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         removed += 1
         print(f"  Deleted: {deleted} row(s) of {memory.namespace} from the shared store")
     removed_manifest_keys: set[str] = set()
+    trw_left: list[str] = []
     if covered_dispositions:
-        removed_manifest_keys, covered_errors = apply_removal(
-            covered_dispositions, {"preserved": [], "errors": []}, target
-        )
+        apply_result: dict[str, list[str]] = {"preserved": [], "errors": []}
+        removed_manifest_keys, covered_errors = apply_removal(covered_dispositions, apply_result, target)
+        for message in apply_result["errors"]:
+            print(f"  Error: {printable(message)}")
+        for message in apply_result["preserved"]:
+            print(f"  Preserved: {printable(message)}")
+        _move_matched_captures_to_os_trash(apply_result, target, display)
         for d in covered_dispositions:
             if d.action == "remove" and d.key in removed_manifest_keys:
                 removed += 1
-                print(f"  Removed: {_display(d.path, target)}")
+                print(f"  Removed: {display(d.path, target)}")
             elif d.action == "preserved-edited":
-                print(f"  Preserved (edited): {_display(d.path, target)}")
+                print(f"  Preserved (edited): {display(d.path, target)}")
             elif d.action == "kept-shared-owner":
-                print(f"  Kept: {_display(d.path, target)} ({d.detail})")
+                print(f"  Kept: {display(d.path, target)} ({d.detail})")
             elif d.action == "rejected-unsafe":
-                print(f"  Error: {_display(d.path, target)} ({d.detail})")
+                print(f"  Error: {display(d.path, target)} ({d.detail})")
                 errors += 1
+                refused.append(d.path)
         errors += covered_errors
+        trw_left = list(apply_result.get("trw_left", []))
         for root in covered_surface_roots:
             prune_empty_dirs(root)
 
     for u in uncovered_dispositions:
+        if u.action == "refused":
+            errors += 1
+            refused.append(u.path)
+            print(f"  Error: {display(u.path, target)} ({u.detail})")
+            continue
         if u.action != "remove":
-            print(f"  Kept: {_display(u.path, target)} ({u.detail})")
+            print(f"  Kept: {display(u.path, target)} ({u.detail})")
             continue
         # Re-check safety immediately before deleting (TOCTOU defense, same as
         # `apply_removal`) even though `plan_uncovered_surface` already refused
@@ -351,68 +382,84 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         failure = safe_remove(u.path, target)
         if failure:
             errors += 1
-            print(f"  Error removing {_display(u.path, target)}: {failure}")
+            refused.append(u.path)
+            print(f"  Error removing {display(u.path, target)}: {failure}")
         else:
             removed += 1
-            print(f"  Removed: {_display(u.path, target)}")
-
-    for p in plain_paths:
-        refusal = path_refusal(p, target)
-        if refusal:
-            errors += 1
-            print(f"  Error removing {_display(p, target)}: {refusal}")
-            continue
-        # --keep-memory: preserve the learning corpus inside project .trw while
-        # removing all other session/config state under it.
-        if p == project_trw and keep_memory and has_corpus:
-            kept_removed, kept_errors = _keep_memory_in_dir(p, target, _display)
-            removed += kept_removed
-            errors += kept_errors
-            print(f"  Kept: {_display(p, target)}/memory + learnings (--keep-memory)")
-            continue
-        failure = safe_remove(p, target)
-        if failure:
-            errors += 1
-            print(f"  Error removing {_display(p, target)}: {failure}")
-        else:
-            removed += 1
-            print(f"  Removed: {_display(p, target)}")
+            print(f"  Removed: {display(u.path, target)}")
 
     for p in managed_paths:
         try:
             status = _remove_managed_block_file(p, target, dry_run=False)
         except OSError as exc:
             errors += 1
-            print(f"  Error updating {_display(p, target)}: {exc}")
+            print(f"  Error updating {display(p, target)}: {exc}")
             continue
         if status == "removed":
             removed += 1
-            print(f"  Removed: {_display(p, target)} (TRW-only file)")
+            print(f"  Removed: {display(p, target)} (TRW-only file)")
         elif status == "stripped":
             removed += 1
-            print(f"  Cleaned: {_display(p, target)} (removed TRW section)")
+            print(f"  Cleaned: {display(p, target)} (removed TRW section)")
         elif status == "refused":
             errors += 1
-            print(f"  Error updating {_display(p, target)}: refused (symlink)")
+            refused.append(p)
+            print(f"  Error updating {display(p, target)}: {refusal_text(p, target)}")
 
     for p, root, shape in merged_config_paths:
         try:
-            status = _strip_trw_from_merged_config(p, root, dry_run=False, shape=shape)
+            status = global_configs.strip(p, root, shape)
         except OSError as exc:
             errors += 1
-            print(f"  Error updating {_display(p, target)}: {exc}")
+            print(f"  Error updating {display(p, target)}: {exc}")
             continue
         if status == "removed":
             removed += 1
-            print(f"  Removed: {_display(p, target)} (TRW-only file)")
+            print(f"  Removed: {display(p, target)} (TRW-only file)")
         elif status == "stripped":
             removed += 1
-            print(f"  Cleaned: {_display(p, target)} (removed TRW entries)")
+            print(f"  Cleaned: {display(p, target)} (removed TRW entries)")
         elif status == "skipped":
-            print(f"  Preserved: {_display(p, target)} (unparseable; left untouched)")
+            print(f"  Preserved: {display(p, target)} (unparseable; left untouched)")
+        elif status in (None, "changed") and p in global_configs.paths:
+            errors += global_configs.report_kept(p, status, target)
         elif status == "refused":
             errors += 1
-            print(f"  Error updating {_display(p, target)}: refused (symlink)")
+            refused.append(p)
+            print(f"  Error updating {display(p, target)}: {refusal_text(p, root)}")
+
+    # ``.trw`` holds the install manifest, the only thing that can later prove which files under a refused
+    # (symlinked) parent are TRW's. It goes last, and stays whenever anything above was refused or failed, so
+    # a re-run after the user fixes the link can still classify the residue.
+    if errors or refused or trw_left:
+        errors += report_kept_trw(plain_paths, refused, trw_left, target)
+    else:
+        for p in plain_paths:
+            refusal = path_refusal(p, target)
+            if refusal:
+                errors += 1
+                print(f"  Error removing {display(p, target)}: {refusal}")
+                continue
+            # --keep-memory: preserve the learning corpus inside project .trw while
+            # removing all other session/config state under it.
+            if p == project_trw and keep_memory and has_corpus:
+                kept_removed, kept_errors = _keep_memory_in_dir(p, target, display)
+                removed += kept_removed
+                errors += kept_errors
+                print(f"  Kept: {display(p, target)}/memory + learnings (--keep-memory)")
+                continue
+            if p == project_trw and p.is_dir() and not p.is_symlink():
+                trw_removed, trw_errors = _remove_trw_dir(p, target, display)
+                removed += trw_removed
+                errors += trw_errors
+                continue
+            failure = safe_remove(p, target)
+            if failure:
+                errors += 1
+                print(f"  Error removing {display(p, target)}: {failure}")
+            else:
+                removed += 1
+                print(f"  Removed: {display(p, target)}")
 
     if remove_ide:
         from trw_mcp.bootstrap._ide_targets_finalize import _remove_config_target_platform
@@ -426,9 +473,9 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         scratch: dict[str, list[str]] = {"updated": [], "warnings": []}
         _remove_config_target_platform(target, remove_ide, scratch)
         for warning in scratch.get("warnings", []):
-            print(f"  Warning: {warning}")
+            print(f"  Warning: {printable(warning)}")
         if scratch.get("updated"):
-            print(f"  Updated: {_display(Path(scratch['updated'][0]), target)} (dropped {remove_ide!r})")
+            print(f"  Updated: {display(Path(scratch['updated'][0]), target)} (dropped {remove_ide!r})")
 
     print(f"\n  Done. Removed {removed} item(s).")
     if remove_ide:
@@ -444,14 +491,6 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         # scripted callers (`trw-mcp uninstall --yes && ...`).
         print(f"  {errors} item(s) could not be removed — see errors above.", file=sys.stderr)
         raise SystemExit(1)
-
-
-def _display(path: Path, target: Path) -> str:
-    """Render *path* relative to *target* when possible, else absolute."""
-    try:
-        return str(path.relative_to(target))
-    except ValueError:
-        return str(path)
 
 
 def _run_auth(args: argparse.Namespace) -> None:

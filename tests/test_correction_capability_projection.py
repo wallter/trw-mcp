@@ -36,6 +36,18 @@ def _assert_correction_available(text: str) -> None:
     assert "trw_learn_update" not in gated
 
 
+def _assert_correction_named(text: str) -> None:
+    """A generated carrier names the correction path, never the removed tool.
+
+    PRD-CORE-301-FR13 moved the capability listing out of generated carriers
+    (it is served by ``trw_status(detail="surface")``), so a carrier proves the
+    correction path by its memory rule: ``trw_learn`` with ``learning_id``.
+    """
+    assert "`trw_learn()`" in text
+    assert "learning_id=..." in text
+    assert "trw_learn_update" not in text
+
+
 @pytest.mark.parametrize("client_id", SUPPORTED_IDES)
 def test_correction_available_in_native_projection(client_id: str) -> None:
     appendix = build_client_integration_appendix(client_id)
@@ -55,7 +67,7 @@ def test_codex_sync_generator_emits_correction_without_other_project_writes(tmp_
     generator(tmp_path, False)
     instructions = tmp_path / ".codex" / "INSTRUCTIONS.md"
     first = instructions.read_bytes()
-    _assert_correction_available(first.decode())
+    _assert_correction_named(first.decode())
     generator(tmp_path, False)
     assert instructions.read_bytes() == first
     assert agents.read_bytes() == before
@@ -66,18 +78,24 @@ def test_codex_sync_generator_emits_correction_without_other_project_writes(tmp_
 
 
 def test_agents_sync_preserves_user_prose_and_projects_correction(tmp_path: Path) -> None:
+    """AGENTS.md keeps the user's prose and links the instructions file, which names the correction path."""
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.claude_md._agents_md import _sync_agents_md_if_needed
+    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH, LINK_BODY
 
     agents = tmp_path / "AGENTS.md"
+    instructions = tmp_path / INSTRUCTIONS_RELPATH
     prefix = "# Project instructions\n\nUser-owned preamble.\n"
     agents.write_text(prefix, encoding="utf-8")
-    config = TRWConfig(trw_dir=str(tmp_path / ".trw"), agents_md_learning_injection=False)
-    args = (True, config, tmp_path, tmp_path / ".trw", "codex")
-    written, path, verdict = _sync_agents_md_if_needed(*args)
-    assert written and path == str(agents) and verdict is not None
+    config = TRWConfig(trw_dir=str(tmp_path / ".trw"))
+    args = (True, config, tmp_path, "codex")
+    written, path, verdicts = _sync_agents_md_if_needed(*args)
+    assert written and path == str(agents) and verdicts
     first = agents.read_bytes()
+    first_instructions = instructions.read_bytes()
     assert first.decode().startswith(prefix)
-    _assert_correction_available(first.decode())
+    assert LINK_BODY in first.decode()
+    _assert_correction_named(first_instructions.decode())
     _sync_agents_md_if_needed(*args)
     assert agents.read_bytes() == first
+    assert instructions.read_bytes() == first_instructions

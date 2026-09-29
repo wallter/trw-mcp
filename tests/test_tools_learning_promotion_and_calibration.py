@@ -31,8 +31,8 @@ class TestClaudeMdSyncQValuePromotion:
         )
 
         sync_result = instructions_sync_fn(scope="root")
-        # CORE-093: learnings_promoted always 0
-        assert sync_result["learnings_promoted"] == 0
+        # PRD-CORE-341: sync reports no promotion count; no learning reaches an instruction file
+        assert "learnings_promoted" not in sync_result
 
 
 class TestTrwLearnDistributionWarning:

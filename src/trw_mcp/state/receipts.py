@@ -6,7 +6,6 @@ management from learning tool logic.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,9 +15,7 @@ from trw_mcp.models.config import get_config
 
 logger = structlog.get_logger(__name__)
 from trw_mcp.state.persistence import (
-    FileStateReader,
     FileStateWriter,
-    json_serializer,
 )
 
 
@@ -60,35 +57,3 @@ def log_recall_receipt(
         "match_count": len(matched_ids),
     }
     writer.append_jsonl(path, record)
-
-
-def prune_recall_receipts(trw_dir: Path) -> int:
-    """Prune recall receipt log to keep only the most recent entries.
-
-    Args:
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        Number of entries removed.
-    """
-    config = get_config()
-    reader = FileStateReader()
-    writer = FileStateWriter()
-
-    path = _receipt_path(trw_dir)
-    if not path.exists():
-        return 0
-
-    records = reader.read_jsonl(path)
-    limit = config.recall_receipt_max_entries
-
-    if len(records) <= limit:
-        return 0
-
-    removed = len(records) - limit
-
-    # Rewrite the file atomically (DEBT-028)
-    content = "".join(json.dumps(record, default=json_serializer) + "\n" for record in records[-limit:])
-    writer.write_text(path, content)
-
-    return removed

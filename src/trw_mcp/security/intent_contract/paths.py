@@ -19,7 +19,6 @@ __all__ = [
     "APPROVALS_PATH",
     "BREAK_GLASS_DIR",
     "CHECKPOINT_PATH",
-    "CONTRACTS_DIR",
     "ENROLLMENT_EVIDENCE_PATH",
     "ENROLLMENT_PATH",
     "LEDGER_PATH",
@@ -40,8 +39,6 @@ __all__ = [
 ]
 
 TargetClass = Literal["ok", "outside", "escaped"]
-
-CONTRACTS_DIR = ".trw/contracts"
 ENROLLMENT_PATH = ".trw/contracts/enrollment.yaml"
 
 #: Durable, FILESYSTEM-ONLY evidence that this project has been enrolled at some

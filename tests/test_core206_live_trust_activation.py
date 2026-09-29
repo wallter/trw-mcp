@@ -9,8 +9,9 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.trust import read_trust_registry, write_trust_registry
+from trw_mcp.tools._command_results import parse_build_command_results
 from trw_mcp.tools._deferred_steps_learning import _step_trust_increment
-from trw_mcp.tools._evidence_writers import parse_build_command_results, record_build_receipt
+from trw_mcp.tools._evidence_writers import record_build_receipt
 
 
 def test_default_enforce_path_consumes_one_real_plan_bound_outcome(

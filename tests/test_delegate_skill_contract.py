@@ -43,13 +43,17 @@ def test_delegate_prefers_background_mcp_and_preserves_safety() -> None:
         "reduced isolation must be explicit",
         "may still load project or user",
         "CLI as a fallback",
+        'client="codex,agy,grok:grok-4.7"',
+        'trw_dispatch(action="clients")',
+        "Never hand-roll `codex exec`",
     ):
         assert phrase in content
 
 
 def test_delegate_keeps_runtime_details_out_of_durable_policy() -> None:
     content = SKILL.read_text(encoding="utf-8")
-    assert "explicit selection,\nthen the selected role's mapping, then the configured default" in content
+    # dispatch_role_client was retired (e9bc085a3): precedence is now an explicit client, else the default.
+    assert "an explicit client, else the configured\ndefault" in content
     for stale_detail in (
         "gpt-",
         "/tmp/",

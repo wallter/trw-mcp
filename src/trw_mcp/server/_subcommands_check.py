@@ -34,7 +34,7 @@ def _check_instructions_core(target: Path) -> tuple[int, dict[str, list[str]]]:
     config = TRWConfig()
     exposed = resolve_exposed_tools(mode=config.tool_resolution_mode)
 
-    files_to_check = ["AGENTS.md", "CLAUDE.md"]
+    files_to_check = ["AGENTS.md"]
     all_mismatches: dict[str, list[str]] = {}
     files_scanned = 0
 
@@ -67,7 +67,7 @@ def _check_instructions_core(target: Path) -> tuple[int, dict[str, list[str]]]:
 def _run_check_instructions(args: argparse.Namespace) -> None:
     """Handle the ``check-instructions`` subcommand (PRD-CORE-135-FR02).
 
-    Scans instruction files (AGENTS.md, CLAUDE.md) for trw_* tool mentions
+    Scans instruction files (AGENTS.md) for trw_* tool mentions
     and compares against the effective tool exposure list from config.
     Exits with code 1 if mismatches found, 0 if clean.
     """

@@ -150,3 +150,36 @@ def fake_memory_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeMe
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, FAKE_NAMESPACE))
     return store
+
+
+@pytest.fixture
+def no_memory_daemon(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[DaemonPaths]]:
+    """Opt-in: a test that asserts on files, not memory, must not start a daemon.
+
+    ``init_project``/``update_project`` reach the daemon only as a side effect
+    (auto-maintenance's ``selected_store``, the instruction render counting
+    learnings, the post-commit hook worker), each costing ~1s and ~550 MiB. This
+    turns autostart off (``MEMORY_DAEMON_AUTOSTART``; ``os.environ``, so plain
+    subprocesses inherit it) and disables embeddings (``TRW_EMBEDDINGS_ENABLED``),
+    so those paths fail open. It also replaces the one spawn site with a recorder
+    that raises. Code that catches ``Exception`` (auto-maintenance does) can
+    swallow that raise, so the TEARDOWN asserts no spawn was attempted: a spawn
+    fails the test even when the raise was swallowed. Yields the attempted spawns
+    (empty when none). Never autouse: the daemon lifecycle tests need the real spawn.
+
+    A child process launched with a sanitized env (for example one built from
+    ``daemon_env_passthrough()``) does NOT inherit these variables; the test must
+    pass ``MEMORY_DAEMON_AUTOSTART=false`` to that child explicitly.
+    """
+    attempts: list[DaemonPaths] = []
+
+    def _refuse(paths: DaemonPaths) -> None:
+        attempts.append(paths)
+        raise AssertionError("no_memory_daemon: test spawned a daemon")
+
+    monkeypatch.setenv("MEMORY_DAEMON_AUTOSTART", "false")
+    monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _refuse)
+    reload_config()
+    yield attempts
+    assert attempts == [], "no_memory_daemon: test spawned a daemon"

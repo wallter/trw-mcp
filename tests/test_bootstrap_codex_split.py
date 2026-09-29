@@ -18,6 +18,8 @@ from trw_mcp.bootstrap._codex import (
     merge_codex_config,
 )
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 _CODEX_SKILL_KEYS = {"name", "description", "allowed-tools", "license", "metadata"}
 
 
@@ -517,11 +519,11 @@ class TestCodexInitScaffoldContainment:
         ``claude-code`` for a project whose ``target_platforms`` said ``codex``.
         Reverting either half of the fix turns this red.
 
-        Updated for PRD-INFRA-192 FR09 (C7): ``.claude/hooks`` is now
+        Updated for PRD-INFRA-192 FR09 (C7): the ``.claude/hooks`` directory is
         DELIBERATELY kept for an explicit codex-only install -- codex's own
-        hook commands run scripts from there (``bootstrap/_codex_hooks.py``),
-        so dropping it entirely was itself a bug (a codex project whose
-        hooks.json pointed at scripts that were never copied). Only the
+        hook commands run scripts from there (``bootstrap/_codex_hooks.py``)
+        once the project turns Codex hooks on. PRD-CORE-301 FR07: without that
+        flag no codex configuration runs them, so no script is copied. Only the
         claude-code-EXCLUSIVE surfaces (skills, agents, settings.json,
         .mcp.json) stay absent.
         """
@@ -534,14 +536,8 @@ class TestCodexInitScaffoldContainment:
 
         init_single_client_project(tmp_path, "codex")
 
-        scaffold = claude_scaffold_paths(tmp_path)
-        assert scaffold, "codex's shared .claude/hooks surface must still be created"
-        assert all(p == ".claude/hooks" or p.startswith(".claude/hooks/") for p in scaffold), (
-            f"a codex-only install scaffolded claude-code-exclusive surfaces: {scaffold}"
-        )
-        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "codex's hooks.json needs these scripts on disk"
-        assert not (tmp_path / ".claude" / "skills").exists()
-        assert not (tmp_path / ".claude" / "agents").exists()
+        # Codex hooks are off, so no .claude/hooks script runs; nothing else under .claude is codex's.
+        assert claude_scaffold_paths(tmp_path) == []
         assert not (tmp_path / ".claude" / "settings.json").exists()
         assert not (tmp_path / ".mcp.json").exists(), "a codex-only install must not create claude-code's .mcp.json"
         assert not (tmp_path / "CLAUDE.md").exists(), "a codex-only install scaffolded a root CLAUDE.md"

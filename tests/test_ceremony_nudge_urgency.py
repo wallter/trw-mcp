@@ -9,7 +9,6 @@ from trw_mcp.state.ceremony_nudge import (
     CeremonyState,
     _compute_urgency,
     _select_nudge_message,
-    compute_nudge,
     mark_checkpoint,
     read_ceremony_state,
     reset_nudge_count,
@@ -83,17 +82,6 @@ class TestProgressiveUrgency:
         assert "permanently" in result.lower() or "erases" in result.lower()
         assert "second" in result.lower()
 
-    def test_fr03_urgency_never_blocks(self, tmp_path: Path) -> None:
-        """Even at high urgency, nudge never raises and always returns a string."""
-        state = CeremonyState(
-            session_started=True,
-            files_modified_since_checkpoint=100,
-            nudge_counts={"checkpoint": 99},
-        )
-        result = compute_nudge(state, available_learnings=0)
-        assert isinstance(result, str)
-        assert len(result) > 0
-
     def test_core269_high_urgency_keeps_preservation_conditional(self, tmp_path: Path) -> None:
         """Urgency cannot turn preservation into a timed completion obligation."""
         state = CeremonyState(
@@ -153,22 +141,3 @@ class TestProgressiveUrgency:
         )
         result = _select_nudge_message("session_start", state, available_learnings=0)
         assert any(phrase in result.lower() for phrase in ("invisible", "future agent", "unattach"))
-
-    def test_fr03_token_limit_preserved_at_all_urgency_levels(self, tmp_path: Path) -> None:
-        """Token limit (400 chars) is respected at all urgency levels."""
-        nudge_count_sets = [
-            {},
-            {"checkpoint": 3},
-            {"checkpoint": 6},
-        ]
-        for nudge_counts in nudge_count_sets:
-            state = CeremonyState(
-                session_started=True,
-                files_modified_since_checkpoint=10,
-                nudge_counts=nudge_counts,
-                phase="implement",
-            )
-            result = compute_nudge(state, available_learnings=10)
-            assert len(result) <= 600, (
-                f"Nudge exceeds 600 chars at nudge_counts={nudge_counts}: {len(result)} chars\n{result!r}"
-            )

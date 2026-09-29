@@ -11,7 +11,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
+
+pytestmark = pytest.mark.unit
+
 
 # ---------------------------------------------------------------------------
 # detect_client_profile — env var signals

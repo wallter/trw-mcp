@@ -1,27 +1,9 @@
 """PRD-CORE-149-FR10: rendering sub-modules extracted from ``_renderer.py``.
 
 Public API lives on the ``ProtocolRenderer`` class in ``_renderer.py``; this
-sub-package holds supporting helpers and per-family opencode renderers.
+sub-package holds the Antigravity instruction renderer. The per-model-family
+opencode renderers were deleted by PRD-CORE-301-FR02: opencode now renders the
+shared claude-code block (``sections._tool_lifecycle.render_opencode_instructions``).
 """
 
 from __future__ import annotations
-
-from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-    render_opencode_claude as render_opencode_claude,
-)
-from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-    render_opencode_generic as render_opencode_generic,
-)
-from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-    render_opencode_gpt as render_opencode_gpt,
-)
-from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-    render_opencode_qwen as render_opencode_qwen,
-)
-
-__all__ = [
-    "render_opencode_claude",
-    "render_opencode_generic",
-    "render_opencode_gpt",
-    "render_opencode_qwen",
-]

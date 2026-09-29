@@ -5,7 +5,6 @@
 {{imperative_opener}}
 {{ceremony_quick_ref}}
 {{memory_harmonization}}
-{{shared_learnings}}
 {{feedback_reporting}}
 {{closing_reminder}}
 <!-- trw:end -->

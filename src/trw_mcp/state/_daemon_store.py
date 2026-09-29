@@ -17,6 +17,7 @@ import functools
 import json
 import os
 import threading
+import time
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -48,6 +49,7 @@ logger = structlog.get_logger(__name__)
 
 #: The daemon's ``memory_list_page`` bound (``trw_memory.tools.listing.LIST_PAGE_MAX``).
 _LIST_PAGE_MAX = 1000
+_Names = list[str] | None  # an optional name filter (tags, record types)
 #: The per-pass counts ``memory_reembed`` returns, summed across a run's passes.
 _REEMBED_COUNTS = ("examined", "reembedded", "already_current", "skipped", "warm_examined", "warm_reembedded")
 
@@ -164,18 +166,61 @@ def _daemon_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
         return _loop[1], _loop[2]
 
 
+#: Seconds one install (init/update, ``state._project_root_binding``) may spend waiting on the memory
+#: daemon, summed over all its calls (B71-118). An install's daemon reads -- the REVIEW.md / AGENTS.md
+#: learning recalls, store counts, the embedder check -- are optional enrichment, and the install runs
+#: them in its own thread inside its transaction, so a slow or stuck daemon must not hang it.
+INSTALL_DAEMON_BUDGET_S = 5.0
+
+
 def _run(coro: Coroutine[Any, Any, Any]) -> Any:
-    """Run *coro* on the daemon-call loop and wait; tool handlers may already own a running loop."""
+    """Run *coro* on the daemon-call loop and wait; tool handlers may already own a running loop.
+
+    Outside an install the wait is unbounded, as it always was. Inside one it draws on the install's
+    shared :data:`INSTALL_DAEMON_BUDGET_S`; running out raises :class:`StoreUnavailableError`, which
+    every install-path reader already degrades on, exactly as for an unreachable daemon.
+    """
     from trw_memory.exceptions import DaemonAuthError, DaemonRecordInvalidError, DaemonUnreachableError
+
+    from trw_mcp.state._project_root_binding import install_shared
 
     loop, thread = _daemon_loop()
     if threading.current_thread() is thread:
         coro.close()
         raise RuntimeError("a daemon call waited on the daemon-call loop from inside it")
+    shared = install_shared()
     try:
-        return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        if shared is None:
+            return asyncio.run_coroutine_threadsafe(coro, loop).result()
+        return _wait_within_install_budget(coro, loop, shared)
     except (DaemonUnreachableError, DaemonAuthError, DaemonRecordInvalidError) as exc:
         raise StoreUnavailableError(f"{exc} Run trw-mcp doctor.") from exc
+
+
+def _wait_within_install_budget(
+    coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop, shared: dict[str, Any]
+) -> Any:
+    """Wait on *coro* for what is left of the install's daemon budget, then give up on it."""
+    waited = float(shared.get("daemon_waited_s", 0.0))
+    remaining = INSTALL_DAEMON_BUDGET_S - waited
+    exhausted = StoreUnavailableError(
+        f"the memory daemon did not answer within the install's {INSTALL_DAEMON_BUDGET_S:g}s budget; "
+        "this install continues without recalled learnings. Run trw-mcp doctor."
+    )
+    if remaining <= 0:
+        coro.close()
+        raise exhausted
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    started = time.monotonic()
+    try:
+        return future.result(timeout=remaining)
+    except concurrent.futures.TimeoutError:
+        future.cancel()  # the request is abandoned on the daemon-call loop; nothing waits on it
+        shared["daemon_waited_s"] = INSTALL_DAEMON_BUDGET_S
+        logger.warning("install_daemon_budget_exhausted", budget_s=INSTALL_DAEMON_BUDGET_S)
+        raise exhausted from None
+    finally:
+        shared["daemon_waited_s"] = max(float(shared.get("daemon_waited_s", 0.0)), waited + time.monotonic() - started)
 
 
 class DaemonMemoryStore:
@@ -258,13 +303,13 @@ class DaemonMemoryStore:
         return coverage
 
     def list_entries(
-        self, namespace: str, *, status: str | None = None, tags: list[str] | None = None, limit: int
+        self, namespace: str, *, status: str | None = None, tags: _Names = None, limit: int, types: _Names = None
     ) -> list[MemoryEntry]:
         rows: list[MemoryEntry] = []
         after: dict[str, str] | None = None
         while len(rows) < limit:
             size = min(limit - len(rows), _LIST_PAGE_MAX)
-            page = _run(self._client.list_page(namespace, size, after, status=status, tags=tags))
+            page = _run(self._client.list_page(namespace, size, after, status=status, tags=tags, types=types))
             if page.get("status") != "ok":
                 raise ValueError(f"memory_list_page refused {namespace}: {page.get('error')}")
             rows.extend(_entry(row) for row in page["entries"])
@@ -286,8 +331,11 @@ class DaemonMemoryStore:
         found = _run(self._client.sync_find(namespace, remote_id, ids))
         return _entry(found["entry"]) if found.get("status") == "ok" else None
 
-    def apply_synced(self, namespace: str, entry: MemoryEntry, *, synced: bool = True) -> tuple[str, str]:
-        result = _run(self._client.sync_apply(namespace, entry.model_dump(mode="json"), synced=synced))
+    def apply_synced(
+        self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True
+    ) -> tuple[str, str]:
+        row = entry.model_dump(mode="json")
+        result = _run(self._client.sync_apply(namespace, row, if_revision=if_revision, synced=synced))
         return str(result["status"]), str(result.get("reason", ""))
 
     def recall(self, spec: RecallSpec) -> list[MemoryEntry]:
@@ -401,21 +449,26 @@ class DaemonMemoryStore:
         # the daemon's recall ceiling, which a local recall's DEFAULT_LIST_LIMIT scan also stops at.
         from trw_memory.retrieval.recall_policy import MAX_RECALL_LIMIT
 
-        status = spec.admission.mem_status
-        wanted = str(status.value) if status is not None else None
+        wanted = str(spec.admission.mem_status.value) if spec.admission.mem_status is not None else None
+        if spec.anchor_file is not None:  # PRD-CORE-332 FR05: checked before the wildcard branch
+            from trw_mcp.state._anchored_lookup import anchored_page
+
+            return anchored_page(self._client, _run, namespace, spec.anchor_file, min(limit, MAX_RECALL_LIMIT), wanted)
+        types = [spec.record_type] if spec.record_type else None  # PRD-CORE-334: filtered before the limit
         if spec.query.strip() in ("*", ""):
-            return self.list_entries(namespace, status=wanted, tags=spec.tags, limit=limit)
-        page = _run(
-            self._client.recall(
-                spec.query,
-                namespace,
-                limit=min(limit, MAX_RECALL_LIMIT),
-                tags=spec.tags,
-                status=wanted,
-                include_org_memories=False,
-                record_access=False,  # the page is over-fetched; record_surfaced counts what was shown
-            )
-        )
+            return self.list_entries(namespace, status=wanted, tags=spec.tags, limit=limit, types=types)
+        from trw_mcp.state._daemon_recall_page import recall_page
+
+        arguments = {
+            "limit": min(limit, MAX_RECALL_LIMIT),
+            "tags": spec.tags,
+            "status": wanted,
+            "include_org_memories": False,
+            "record_access": False,  # the page is over-fetched; record_surfaced counts what was shown
+            **({"types": types} if types else {}),  # sent only when set
+            **({} if spec.rerank else {"rerank": False}),  # likewise: an older daemon refuses it, retried without
+        }
+        page = recall_page(self._client, _run, spec.query, namespace, arguments)
         if "memories" not in page:
             raise ValueError(f"memory_recall refused {namespace}: {page.get('error')}")
         return [row for row in map(_entry, page["memories"]) if row.namespace == namespace]

@@ -23,18 +23,6 @@ class CursorMcpConfig(TypedDict, total=False):
     mcpServers: dict[str, CursorServerEntry]
 
 
-class CursorHookEntry(TypedDict, total=False):
-    """Single hook entry in the *legacy* list-style .cursor/hooks.json.
-
-    Used only by ``generate_cursor_hooks`` (the backward-compat legacy helper).
-    New code should use ``HookHandlerEntry`` and ``CursorHooksV1Config``.
-    """
-
-    event: str
-    command: str
-    description: str
-
-
 class HookHandlerEntry(TypedDict, total=False):
     """A single handler within a Cursor hooks.json v1 event list.
 
@@ -65,9 +53,3 @@ class CursorHooksV1Config(TypedDict, total=False):
 
     version: int
     hooks: dict[str, list[HookHandlerEntry]]
-
-
-class CursorHooksConfig(TypedDict, total=False):
-    """Shape of a parsed .cursor/hooks.json document (legacy list style)."""
-
-    hooks: list[CursorHookEntry]

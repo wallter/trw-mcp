@@ -77,9 +77,6 @@ def allowed_prd_categories() -> frozenset[str]:
     return BUILTIN_PRD_CATEGORIES | frozenset(str(c).upper() for c in extras)
 
 
-# Backward-compatible alias for existing callers; prefer allowed_prd_categories().
-ALLOWED_PRD_CATEGORIES: frozenset[str] = BUILTIN_PRD_CATEGORIES
-
 _VALID_FUNCTIONALITY_LEVELS: frozenset[str] = frozenset({"stub", "partial", "live"})
 
 # PRD-QUAL-097-FR01: canonical status vocabulary + alias map.

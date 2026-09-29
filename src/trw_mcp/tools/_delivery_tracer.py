@@ -13,8 +13,9 @@ touched, but reading back the ids the wiring itself wrote can only detect a
 DELETED ``step()`` call, never an ADDED unjournaled mutation — which is the
 failure a census gate exists to catch. The real input/output tracer, which
 observes durable writes at the ``FileStateWriter`` / ``FileEventLogger`` / SQLite
-seams and attributes each to an open boundary, lives in
-:mod:`trw_mcp.tools._delivery_io_tracer`.
+seams and attributes each to an open boundary, lives in the test
+tree at ``trw-mcp/tests/support/_delivery_io_tracer.py`` (PRD-CORE-313 FR02: it is
+test instrumentation and does not ship in the wheel).
 
 This module is data + pure query helpers only (no I/O beyond reading an already
 open store), so it can be imported by the wiring, the deferred batch, and the
@@ -90,7 +91,7 @@ def read_journaled_step_ids(coordinator: DeliveryCoordinator, operation_id: str)
 
     This is a read of the journal's OWN steps, not an observation of I/O: it can
     prove a declared boundary was reached, and nothing else. Use
-    :mod:`trw_mcp.tools._delivery_io_tracer` when the question is whether a durable
+    ``tests/support/_delivery_io_tracer.py`` when the question is whether a durable
     write happened OUTSIDE a boundary (PRD-FIX-127 FR05).
     """
     conn = coordinator.store.connect()

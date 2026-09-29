@@ -129,7 +129,9 @@ _PROFILES: dict[str, ClientProfile] = {
     "claude-code": ClientProfile(
         client_id="claude-code",
         display_name="Claude Code",
-        write_targets=WriteTargets(claude_md=True, instruction_path=".claude/INSTRUCTIONS.md"),
+        # The client reads AGENTS.md natively (v2.1.277+), so it shares the one
+        # AGENTS.md carrier with the other clients; TRW no longer writes CLAUDE.md.
+        write_targets=WriteTargets(agents_md=True, instruction_path="AGENTS.md"),
         ceremony_weights=CeremonyWeights(),  # defaults = claude-code
         nudge_pool_weights=NudgePoolWeights(),  # defaults: 40/30/20/10
         scoring_weights=ScoringDimensionWeights(),  # defaults = claude-code
@@ -200,12 +202,6 @@ _PROFILES: dict[str, ClientProfile] = {
         # editor" (`.cursor/rules`) and that "the CLI also reads AGENTS.md and
         # CLAUDE.md at the project root". TRW simply generated the rule file for
         # cursor-ide only. It now generates it for cursor-cli too.
-        #
-        # `claude_md` stays False deliberately, and it is NOT a claim that the CLI
-        # ignores CLAUDE.md -- it does read it. The flag governs whether TRW WRITES
-        # there, and a second copy of the protocol in a third file is what this
-        # work removes. Do not "correct" it to True on the strength of the reader
-        # list alone.
         #
         # `agents_md` stays TRUE, and this is the LAST client for which TRW writes
         # into a user-owned file. codex, copilot, opencode and antigravity-cli were
@@ -287,7 +283,6 @@ _PROFILES: dict[str, ClientProfile] = {
         # `applyTo: "**"` (which carries the full protocol). A third copy in a
         # file the USER owns buys nothing and is what this PRD removes.
         write_targets=WriteTargets(
-            claude_md=False,
             agents_md=False,
             copilot_instructions=True,
             instruction_path=".github/copilot-instructions.md",
@@ -308,7 +303,6 @@ _PROFILES: dict[str, ClientProfile] = {
         client_id="antigravity-cli",
         display_name="Antigravity CLI",
         write_targets=WriteTargets(
-            claude_md=False,
             # WITHDRAWN (PRD-CORE-240-FR04). Antigravity's documented
             # workspace-rule path is `.agents/rules/`, which TRW now writes
             # and which carries the full protocol. AGENTS.md is read too, but

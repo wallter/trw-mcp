@@ -620,7 +620,7 @@ _trw_guard_main() {
   _trw_recognize_slow_legs
 
   # Reading the payload needs the EXTERNAL `cat`, so `|| exit 0` was a second
-  # one-line total disarm from the same attacker-writable .trw/runtime/hook-env.sh:
+  # one-line total disarm from the same attacker-writable .trw/runtime/hook-env.d/*.sh:
   # `export PATH=/nonexistent` makes `cat` unresolvable, and the enrolled hook
   # exited 0 two lines before its own no-python fail-closed branch could fire
   # (verified 2026-07-25). Unenrolled stays fail-open, as everywhere else.

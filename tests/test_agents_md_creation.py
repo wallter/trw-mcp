@@ -66,8 +66,12 @@ class TestAgentsMdCreation:
 
     def test_agents_md_disabled_config(self, tmp_project: Path) -> None:
         """AGENTS.md is NOT created when agents_md_enabled=False."""
+        from trw_mcp.models.config import TRWConfig
+
+        # ``instructions_sync_fn`` resolves its own config, so the flag must be
+        # passed explicitly: the env patch only reaches ``tools.learning``.
         with _patched_learning_env(tmp_project, agents_md_enabled=False):
-            result = instructions_sync_fn(scope="root")
+            result = instructions_sync_fn(scope="root", _config=TRWConfig(agents_md_enabled=False))
 
         assert result["agents_md_synced"] is False
         assert result["agents_md_path"] is None

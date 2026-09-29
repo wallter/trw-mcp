@@ -21,25 +21,21 @@ cross-harness interop batch, feedback rows 18/21), each fixed in
 
 from __future__ import annotations
 
-import stat
 from pathlib import Path
 
 import pytest
 
+from tests._dispatch_host import write_stub as _write_stub
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._normalize import classify_silence, normalize_output
 from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchRequest
 
 
-def _write_stub(tmp_path: Path, name: str, body: str) -> Path:
-    stub = tmp_path / name
-    stub.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    return stub
-
-
 def _patch_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
+    # Deliberately does NOT call unconfined_off_darwin (unlike _dispatch_host.use_argv):
+    # this file pins AGY-SANDBOX host-confinement behavior itself, so most call sites
+    # need the real confinement path left intact.
     def _fixed(_req: DispatchRequest, *, confined: bool = False) -> list[str]:
         return argv
 
@@ -233,3 +229,42 @@ class TestDefect4SilentSubagentDeferral:
             timed_out=False,
         )
         assert silence_reason is None
+
+
+# --- AGY-HEADLESS-REVIEW (B): the read-only lane bounds agy's inherited trw server -------------
+
+
+def _requires_host_confinement() -> None:
+    from trw_mcp.dispatch._host_confinement import confinement_prefix
+
+    if not confinement_prefix():
+        pytest.skip("no write-denial wrapper on this platform")  # skip-category: platform
+
+
+@pytest.mark.parametrize(("read_only", "role"), [(True, "reviewer"), (False, "")])
+def test_a_read_only_agy_child_runs_its_inherited_trw_server_as_reviewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read_only: bool, role: str
+) -> None:
+    """agy 1.2.11 spawns its global `trw` MCP server with agy's own env; a read-only child is marked so that
+    server serves only the reviewer tools (measured: trw_learn listed before, absent after)."""
+    if read_only:
+        _requires_host_confinement()
+    stub = _write_stub(
+        tmp_path, "fake-agy", 'printf \'{"event":"result","result":{"response":"role=%s"}}\\n\' "$TRW_SURFACE_ROLE"\n'
+    )
+    _patch_argv(monkeypatch, [str(stub)])
+
+    result = dispatch(
+        DispatchRequest(
+            client="agy", prompt="x", read_only=read_only, allow_writes=not read_only, timeout_s=20, cwd=tmp_path
+        )
+    )
+
+    assert f"role={role}" in result.text, result.text
+
+
+def test_the_background_job_path_marks_the_same_read_only_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.dispatch._env import build_runner_env
+
+    assert build_runner_env("agy", source_env={}, read_only=True).get("TRW_SURFACE_ROLE") == "reviewer"
+    assert "TRW_SURFACE_ROLE" not in build_runner_env("agy", source_env={}, read_only=False)

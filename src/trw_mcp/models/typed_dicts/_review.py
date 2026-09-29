@@ -63,30 +63,6 @@ class ReviewFindingDict(TypedDict, total=False):
     evidence: str
 
 
-class ReviewModeResult(TypedDict, total=False):
-    """Return shape of ``handle_manual_mode()`` and ``handle_cross_model_mode()``.
-
-    All keys are present in practice; ``total=False`` allows incremental
-    construction in each handler.
-
-    Deprecated: prefer the mode-specific subtypes ``ManualReviewResult`` and
-    ``CrossModelReviewResult`` for new code.
-    """
-
-    review_id: str
-    verdict: str
-    total_findings: int
-    critical_count: int
-    warning_count: int
-    info_count: int
-    run_path: str | None
-    review_yaml: str
-    # cross_model-specific keys
-    mode: str
-    cross_model_skipped: bool
-    cross_model_provider: str
-
-
 class ManualReviewResult(ReviewResultBase, RejectedFindingsMixin, total=False):
     """Return shape of ``handle_manual_mode()``.
 

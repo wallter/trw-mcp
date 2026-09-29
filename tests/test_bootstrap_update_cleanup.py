@@ -6,9 +6,13 @@ import hashlib
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 #: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
 #: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
@@ -255,3 +259,29 @@ class TestContextCleanup:
 
         assert "cleaned" in result
         assert isinstance(result["cleaned"], list)
+
+
+@pytest.mark.parametrize(
+    ("records", "content", "authored"),
+    [
+        pytest.param({"exact": b"mine", "suffix": b"claude"}, b"mine", True, id="exact-match"),
+        pytest.param(
+            {"exact": b"installed", "suffix": b"user edit"}, b"user edit", False, id="exact-mismatch-beats-suffix-match"
+        ),
+        pytest.param({"suffix": b"codex render"}, b"codex render", True, id="no-exact-suffix-match"),
+        pytest.param({"suffix": b"claude"}, b"codex render", False, id="no-exact-no-match"),
+        pytest.param({}, b"codex render", False, id="no-record"),
+    ],
+)
+def test_trw_authored_exact_key_decides_suffix_only_as_fallback(
+    tmp_path: Path, records: dict[str, bytes], content: bytes, authored: bool
+) -> None:
+    """The exact manifest key alone decides; suffix records apply only when it is absent."""
+    from trw_mcp.bootstrap._version_migration_predecessors import _trw_authored
+
+    mirror = tmp_path / ".agents" / "skills" / "x" / "SKILL.md"
+    mirror.parent.mkdir(parents=True)
+    mirror.write_bytes(content)
+    keys = {"exact": ".agents/skills/x/SKILL.md", "suffix": "x/SKILL.md"}
+    hashes = {keys[name]: hashlib.sha256(data).hexdigest() for name, data in records.items()}
+    assert _trw_authored(mirror.parent, hashes, tmp_path) is authored

@@ -17,9 +17,15 @@ from trw_mcp.state.nudge_analysis import (
     compute_nudge_analysis,
     compute_nudge_timing,
     persist_nudge_analysis,
-    write_nudge_analysis,
 )
 from trw_mcp.state.surface_tracking import log_surface_event
+
+
+def write_nudge_analysis(trw_dir, *, session_id=None, **kwargs):
+    """Test-local: compute then persist, as the removed wrapper did."""
+    from trw_mcp.state.nudge_analysis import compute_nudge_analysis, persist_nudge_analysis
+
+    return persist_nudge_analysis(trw_dir, compute_nudge_analysis(trw_dir, session_id=session_id, **kwargs))
 
 
 def _trw_dir(tmp_path: Path) -> Path:

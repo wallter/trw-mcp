@@ -66,6 +66,10 @@ def execute_recall(
     # PRD-CORE-194 FR03: bi-temporal validity time-travel surface.
     as_of: str | None = None,
     include_superseded: bool = False,
+    # PRD-CORE-334 FR02: one MemoryType value; the store filters before its limit.
+    record_type: str | None = None,
+    # Decision context (trw_code search): False writes nothing, as under the reviewer role.
+    track: bool = True,
     # Injected deps (patched at trw_mcp.tools.learning.* in tests)
     _adapter_recall: Any = None,
     _rank_by_utility: Any = None,
@@ -81,6 +85,8 @@ def execute_recall(
         status: Optional status filter.
         max_results: Maximum learnings to rank (default from config, 0 = unlimited).
         topic: Optional topic slug from knowledge topology.
+        track: False skips every write below (access counts, exposure rows,
+            receipts, the ceremony counter), exactly as the reviewer role does.
         _adapter_recall: Injected recall function.
         _rank_by_utility: Injected ranking function.
     """
@@ -94,14 +100,22 @@ def execute_recall(
         recall_fn = lambda *_a, **_k: []  # noqa: E731
     rank_fn: Callable[..., list[dict[str, object]]] = _rank_by_utility or _default_rank
 
-    # PRD-SEC-015 round-2 audit (Row 3): trw_recall is an allowlisted reviewer
-    # tool but otherwise mutates access_count/recall_count in the shared
-    # learnings store, appends surface/recall-tracking records, and
-    # increments the ceremony tool-call counter. Resolved ONCE and threaded
-    # through every write site below rather than re-checked per site.
+    # PRD-SEC-015 round-2 audit (Row 3); PRD-CORE-305-FR05 sol round-3: recall
+    # is allowlisted (as an MCP reviewer tool AND as the ``local recall`` CLI
+    # verb) under EITHER bounded-lane marker, but otherwise mutates
+    # access_count/recall_count in the shared learnings store, appends
+    # surface/recall-tracking records, and increments the ceremony tool-call
+    # counter. Checking only ``reviewer_role_active()`` left a dispatched
+    # child (``TRW_DISPATCH_CHILD=1`` without ``TRW_SURFACE_ROLE=reviewer``)
+    # free to trigger every one of those writes through ``local recall`` --
+    # found by a census test that actually ran the verb under that marker.
+    # An untracked recall (``track=False``, the trw_code decision context,
+    # PRD-CORE-319) takes the same read-only branch. Resolved ONCE and
+    # threaded through every write site below rather than re-checked per site.
+    from trw_mcp.dispatch._child_marker import dispatched_child_active
     from trw_mcp.state._surface_role import reviewer_role_active
 
-    _reviewer = reviewer_role_active()
+    _read_only = not track or reviewer_role_active() or dispatched_child_active()
 
     # FIX-071: Default to active status to exclude obsolete/corrupted entries
     if status is None:
@@ -143,6 +157,8 @@ def execute_recall(
         recall_kwargs["as_of"] = as_of
     if include_superseded:
         recall_kwargs["include_superseded"] = include_superseded
+    if record_type is not None:
+        recall_kwargs["record_type"] = record_type
     from trw_mcp.state._memory_recall import pop_store_error
     from trw_mcp.state._recall_signals import recall_signal_scope
 
@@ -160,6 +176,8 @@ def execute_recall(
         remote_recall_status: dict[str, object] | None = None
         if recall_on and not is_wildcard:
             matching_learnings, remote_recall_status = _augment_with_remote(query, matching_learnings)
+        if record_type is not None:  # a shared row without a type is not known to match, so it is left out
+            matching_learnings = [row for row in matching_learnings if row.get("type") == record_type]
 
         # Qualify stored evidence before the one authoritative final ranking.
         ranked_learnings = _verify_assertions(
@@ -191,7 +209,7 @@ def execute_recall(
     if store_error:
         # An unopenable store is not an empty one: say so, or zero results read as "nothing learned".
         recall_result["store_unavailable"] = store_error
-    if not _reviewer:
+    if not _read_only:
         # Row 3: attaching the status line increments the ceremony tool-call counter.
         from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
@@ -199,14 +217,20 @@ def execute_recall(
 
     from trw_mcp.tools._recall_presenter import present
 
-    stubs = present(cast("dict[str, object]", recall_result), ranked_learnings, query_tokens=query_tokens)
+    stubs = present(
+        cast("dict[str, object]", recall_result),
+        ranked_learnings,
+        query_tokens=query_tokens,
+        provenance=config.recall_provenance_inline,
+        home_namespace=config.project_namespace,
+    )
     # Exposure means shown to the caller: only rows that made the budget.
     shown = ranked_learnings[: len(stubs)]
     # A wildcard listing is a bulk browse, not an intentional surfacing (PRD-CORE-103-FR01).
-    if not _reviewer and not is_wildcard:
+    if not _read_only and not is_wildcard:
         _log_recall_surface_events(trw_dir, shown, recall_context)
     surfaced_ids = [str(entry["id"]) for entry in shown if entry.get("id")]
-    if surfaced_ids and not _reviewer:
+    if surfaced_ids and not _read_only:
         from trw_mcp.state import memory_adapter
 
         # A shared (remote) row is not a local row: its id may collide with one
@@ -395,19 +419,23 @@ def _augment_with_remote(
     redaction posture and no gate at all, so unvetted peer text reached agent
     context directly.
     """
-    if not platform_contact_enabled():  # the operator's egress switch: the query text never leaves the box
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    # Census-named exception: the query is agent-typed, so its source is the caller's project,
+    # resolved ONCE -- the store the answers are admitted into. No .trw there: nothing is asked.
+    trw_dir = resolve_trw_dir()
+    if not platform_contact_enabled(trw_dir):  # the operator's egress switch: the query text never leaves the box
         return matching_learnings, None
     try:
         from trw_memory.models.config import MemoryConfig
         from trw_memory.sync import fetch_shared_memories
 
-        from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state._store_selection import selected_store
 
-        cfg = MemoryConfig()
+        cfg = MemoryConfig(project_root=str(trw_dir.parent))  # trw-memory's switch reads the same project
         # The checkout's store runs the admission gate, in-process or in the daemon
         # (PRD-CORE-280 FR01); a fetch it cannot gate raises and is reported below.
-        store, _ = selected_store(resolve_trw_dir())
+        store, _ = selected_store(trw_dir)
         remote = fetch_shared_memories(query, cfg, admit=store.admit_shared)
         status: dict[str, object] | None = None
         if remote.status not in {"ok", "disabled"}:

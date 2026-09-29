@@ -223,35 +223,3 @@ def read_evidence_mode(config: object) -> EvidenceMode | None:
     except ValueError:
         logger.warning("evidence_mode_unknown", mode=raw)
         return None
-
-
-def select_typed_review_state(
-    run_path: Path | None,
-) -> ReceiptValidationResult:
-    """FR03 artifact selection: distinguish typed_absent from typed_present.
-
-    Returns a ``LEGACY_UNBOUND`` (``typed_present=False``) result when NO typed
-    review receipt exists — the reader MAY then consult the legacy projection in
-    observe mode. When a typed receipt path exists but cannot be loaded/validated,
-    returns a non-positive ``typed_present=True`` result and the reader SHALL NOT
-    fall back to legacy.
-    """
-    from trw_mcp.state._evidence_persistence import list_receipt_ids, read_receipt_bytes
-
-    if run_path is None:
-        return _result(ReceiptState.LEGACY_UNBOUND, "no_run_pin", typed_present=False)
-    ids = list_receipt_ids(run_path, "review")
-    if not ids:
-        return _result(ReceiptState.LEGACY_UNBOUND, "typed_absent", typed_present=False)
-    latest = ids[-1]
-    raw = read_receipt_bytes(run_path, "review", latest)
-    if raw is None:
-        return _result(ReceiptState.INVALID, "typed_present_unreadable", receipt_id=latest)
-    try:
-        ReviewReceipt.model_validate_json(raw)
-    except Exception:  # justified: a present-but-malformed typed receipt is non-positive, never legacy fallback
-        return _result(ReceiptState.INVALID, "typed_present_malformed", receipt_id=latest)
-    # A structurally valid receipt exists; full current-content validation is the
-    # caller's responsibility (it must supply the server-resolved plan). Presence
-    # alone is reported so the reader never consults a legacy projection.
-    return _result(ReceiptState.VALID, "typed_present_loadable", receipt_id=latest)

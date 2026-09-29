@@ -17,7 +17,7 @@ import structlog
 
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.state._ceremony_state_model import PoolCooldown
-from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
+from trw_mcp.state._nudge_state import CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
 logger = structlog.get_logger(__name__)
@@ -74,36 +74,6 @@ def _resolve_client_id() -> str:
         return ""
 
 
-# Phase-to-applicable-steps mapping (FR04, PRD-CORE-084)
-#
-# PRD-CORE-120-FR04: Rationale for each phase's ceremony step selection.
-#
-# Each phase only nudges for ceremony steps that are actionable at that point.
-# Steps are cumulative -- later phases include all earlier steps plus new ones:
-#
-#   early:      session_start, checkpoint
-#               (only startup and progress-saving matter before real work begins)
-#   implement:  session_start, checkpoint
-#               (same as early -- build_check/review/deliver are premature during coding)
-#   validate:   session_start, checkpoint, build_check
-#               (build_check becomes actionable -- tests and type-checks should run now)
-#   review:     session_start, checkpoint, build_check, review
-#               (review becomes actionable -- independent verification of completed work)
-#   deliver:    all steps (session_start, checkpoint, build_check, review, deliver)
-#               (deliver becomes actionable -- persist learnings and close the session)
-#   done:       all steps
-#               (same as deliver -- any incomplete step should still be nudged)
-#
-_PHASE_APPLICABLE_STEPS: dict[str, tuple[str, ...]] = {
-    "early": ("session_start", "checkpoint"),
-    "implement": ("session_start", "checkpoint"),
-    "validate": ("session_start", "checkpoint", "build_check"),
-    "review": ("session_start", "checkpoint", "build_check", "review"),
-    "deliver": _STEPS,
-    "done": _STEPS,
-}
-
-
 # ---------------------------------------------------------------------------
 # Priority-based step selection
 # ---------------------------------------------------------------------------
@@ -138,26 +108,6 @@ def _highest_priority_pending_step(state: CeremonyState) -> str | None:
         return "deliver"
 
     return None
-
-
-# ---------------------------------------------------------------------------
-# FR04 (PRD-CORE-084): Next-two-steps projection
-# ---------------------------------------------------------------------------
-
-
-def _next_two_steps(state: CeremonyState) -> tuple[str | None, str | None]:
-    """Return the next two incomplete ceremony steps applicable to the current phase.
-
-    Returns (next, then) or (next, None) or (None, None).
-    """
-    applicable = _PHASE_APPLICABLE_STEPS.get(state.phase, _STEPS)
-    pending: list[str] = []
-    for step in applicable:
-        if not _step_complete(step, state) and len(pending) < 2:
-            pending.append(step)
-    nxt = pending[0] if len(pending) >= 1 else None
-    then = pending[1] if len(pending) >= 2 else None
-    return nxt, then
 
 
 # ---------------------------------------------------------------------------
@@ -270,49 +220,6 @@ def resolve_pool_cooldown(
     return True
 
 
-def apply_pool_cooldown(
-    state: CeremonyState,
-    pool: str,
-    cooldown_after: int,
-    cooldown_calls: int,
-) -> bool:
-    """Check if pool should enter cooldown, apply if so.
-
-    Returns True if cooldown was activated. Resets the ignore count
-    for the pool when cooldown is applied.
-
-    PRD-CORE-144 FR03: also stamps ``PoolCooldown.set_at`` with the
-    current UTC timestamp so the wall-clock cap can force-expire pools
-    that would otherwise stay cooled indefinitely.
-    """
-    cooldown = state.pool_cooldowns.get(pool)
-    ignores = cooldown.ignore_count if cooldown is not None else 0
-    if cooldown_after > 0 and ignores >= cooldown_after:
-        cooldown = state.pool_cooldowns[pool]  # a positive ignore count came from this record
-        import datetime as _dt
-
-        # PRD-CORE-146 FR04: nudge_density lever biases cooldown duration.
-        # "low" => longer cooldown (fewer nudges), "high" => shorter cooldown
-        # (more nudges). None / "medium" preserves legacy behavior.
-        effective_cooldown = cooldown_calls
-        try:
-            from trw_mcp.models.config import get_config
-
-            density = getattr(get_config(), "effective_nudge_density", None)
-            if density == "low":
-                effective_cooldown = int(cooldown_calls * 2)
-            elif density == "high":
-                effective_cooldown = max(1, int(cooldown_calls // 2))
-        except Exception:  # justified: fail-open — density is a bias, not a gate
-            logger.debug("nudge_density_resolve_failed", exc_info=True)
-
-        cooldown.until_counter = state.tool_call_counter + effective_cooldown
-        cooldown.set_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
-        cooldown.ignore_count = 0
-        return True
-    return False
-
-
 def _select_nudge_pool(
     state: CeremonyState,
     weights: NudgePoolWeights,
@@ -390,15 +297,3 @@ def _select_nudge_pool(
     )
 
     return selected
-
-
-def is_local_model(model_id: str) -> bool:
-    """Detect if a model ID indicates a local model.
-
-    Local model indicators:
-    - Starts with "ollama/"
-    - Starts with "local/"
-    - Contains "localhost"
-    """
-    model_lower = model_id.lower()
-    return model_lower.startswith(("ollama/", "local/")) or "localhost" in model_lower

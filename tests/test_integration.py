@@ -112,17 +112,17 @@ class TestFullWorkflow:
         recall_result = tools["trw_recall"].fn(query="testing")
         assert recall_result["total_matches"] >= 1
 
-        # Step 5: Sync to CLAUDE.md
+        # Step 5: Sync to AGENTS.md
         sync_result = instructions_sync_fn(scope="root")
         assert sync_result["status"] == "synced"
 
-        # Verify CLAUDE.md was created with auto-generated markers
-        claude_md = tmp_path / "CLAUDE.md"
-        assert claude_md.exists()
-        content = claude_md.read_text(encoding="utf-8")
+        # Verify AGENTS.md was created with auto-generated markers
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists()
+        content = agents_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         # PRD-CORE-061: learnings are now delivered via trw_session_start
-        # recall, not embedded in CLAUDE.md. Verify sync completed
+        # recall, not embedded in the instruction file. Verify sync completed
         # successfully without requiring learning content in the output.
 
     def test_init_checkpoint(self, tmp_path: Path) -> None:

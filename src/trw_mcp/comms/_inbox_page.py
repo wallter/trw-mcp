@@ -13,9 +13,17 @@ import sqlite3
 from typing import Any
 
 from trw_mcp.comms import _paging
-from trw_mcp.comms._envelope import AdmissionError, InboxAction, MessageState, canonical_bytes, receipt
+from trw_mcp.comms._envelope import (
+    HANDOFF_ACTIONS,
+    AdmissionError,
+    InboxAction,
+    MessageState,
+    canonical_bytes,
+    receipt,
+)
+from trw_mcp.comms._handoff import derive_handoff, handoff_inputs
 from trw_mcp.comms._identity import CallerBinding
-from trw_mcp.comms._messages import acknowledge, prepare_fetch, validate_ack
+from trw_mcp.comms._messages import accept, acknowledge, complete, prepare_fetch, report, validate_ack
 
 
 def _scope(binding: CallerBinding, action: InboxAction, incarnation: str | None) -> str:
@@ -86,10 +94,49 @@ def _project(
             item["redelivered"] = True
     else:
         item["state"] = row["state"]
-        item["milestones"] = dict(
-            conn.execute("SELECT fact,at FROM milestones WHERE message_id=?", (row["message_id"],))
-        )
+        # FR06: the raw facts stay; the handoff block is the FR01 derivation over them.
+        facts, pointers = handoff_inputs(conn, [row["message_id"]])
+        item["milestones"] = facts[row["message_id"]]
+        handoff = derive_handoff(row, item["milestones"], pointers.get(row["message_id"]))
+        if handoff is not None:
+            item["handoff"] = handoff
     return item
+
+
+#: The receipt key naming what each handoff action recorded.
+_RESULT_KEY = {"accept": "accepted_ids", "report": "reported_ids", "complete": "completed_ids"}
+
+
+def _handoff(
+    conn: sqlite3.Connection,
+    binding: CallerBinding,
+    action: InboxAction,
+    ids: list[str] | None,
+    next_read: str | None,
+    *,
+    now: float,
+    limit: int,
+    max_bytes: int,
+) -> dict[str, Any]:
+    """PRD-CORE-322 FR02-FR04 argument rules, then the one writer; the refusal rolls every write back.
+
+    Runtime caller: :func:`inbox_action` for ``trw_inbox`` accept, report and complete.
+    """
+    if not ids or len(ids) > limit or any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
+        raise AdmissionError("invalid_inbox_arguments")
+    normalized = list(dict.fromkeys(ids))
+    if (action == "report") != (next_read is not None) or (action == "report" and len(normalized) != 1):
+        raise AdmissionError("invalid_inbox_arguments")
+    result = {"status": "ok", "delivery": "pull_only", _RESULT_KEY[action]: normalized}
+    if not _paging.fits(result, max_bytes):
+        raise AdmissionError("response_too_small")
+    if action == "accept":
+        accept(conn, binding, normalized, now)
+    elif action == "report":
+        report(conn, binding, normalized[0], next_read, now)
+    else:
+        complete(conn, binding, normalized, now)
+    return result
 
 
 def inbox_action(
@@ -103,11 +150,16 @@ def inbox_action(
     now: float,
     limit: int,
     max_bytes: int,
+    next_read: str | None = None,
 ) -> dict[str, Any]:
     """Caller owns eligibility, receiver fencing and the operation transaction."""
+    if cursor is not None and action != "fetch" and action != "status":
+        raise AdmissionError("invalid_inbox_arguments")
+    if action in HANDOFF_ACTIONS:
+        return _handoff(conn, binding, action, ids, next_read, now=now, limit=limit, max_bytes=max_bytes)
+    if next_read is not None:
+        raise AdmissionError("invalid_inbox_arguments")
     if action == "ack":
-        if cursor is not None:
-            raise AdmissionError("invalid_inbox_arguments")
         if not ids or len(ids) > limit or any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
             raise AdmissionError("invalid_ack_ids")
         normalized = list(dict.fromkeys(ids))

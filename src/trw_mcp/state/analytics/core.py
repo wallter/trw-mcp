@@ -14,14 +14,10 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
-from trw_mcp.state._helpers import iter_yaml_entry_files, safe_float, safe_int
+from trw_mcp.state._helpers import iter_yaml_entry_files, safe_int
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
-
-# Explicit re-export aliases for mypy --strict (X as X pattern not possible
-# when renaming, so we use module-level assignment + __all__ listing).
-_safe_float = safe_float
 _safe_int = safe_int
 
 __all__ = [
@@ -35,7 +31,6 @@ __all__ = [
     "_entries_path",
     "_get_event_type",
     "_iter_entry_files",
-    "_safe_float",
     "_safe_int",
     "entry_filename",
     "find_entry_by_id",

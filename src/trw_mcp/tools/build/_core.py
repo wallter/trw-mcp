@@ -40,17 +40,24 @@ def cache_build_status(trw_dir: Path, status: BuildStatus) -> Path:
 
 
 def persist_build_progress_state(
-    trw_dir: Path, status: BuildStatus, *, scope: str, session_id: str | None = None
+    trw_dir: Path, status: BuildStatus, *, scope: str, session_id: str | None = None, session_only: bool = False
 ) -> None:
-    """Best-effort persistence of build outcome to ceremony progress state."""
+    """Best-effort persistence of build outcome to ceremony progress state.
+
+    ``session_only`` records just the caller's own per-session result (a build check for a run that is not
+    the caller's active run); the shared project-level fields are left alone.
+    """
     try:
-        from trw_mcp.state._ceremony_progress_state import mark_build_check
+        from trw_mcp.state._ceremony_progress_state import mark_build_check, mark_session_build_check
 
         static_checks_clean = status.static_checks_clean
         if static_checks_clean is None:
             static_checks_clean = status.mypy_clean
         passed = status.tests_passed and static_checks_clean
-        mark_build_check(trw_dir, passed, session_id=session_id)
+        if session_only:
+            mark_session_build_check(trw_dir, passed, session_id)
+        else:
+            mark_build_check(trw_dir, passed, session_id=session_id)
         logger.info(
             "build_check_state_persisted",
             passed=passed,

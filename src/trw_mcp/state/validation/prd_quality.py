@@ -29,17 +29,11 @@ from trw_mcp.models.requirements import (
 )
 from trw_mcp.state.validation import _prd_scoring_smells as _smells
 from trw_mcp.state.validation._prd_scoring_grounding import grounding_scope, with_grounding_scope
+from trw_mcp.state.validation._prd_arch_shift import architectural_shift_failures
 from trw_mcp.state.validation._prd_validation_findings import (
     finalize_verdict,
     has_blocking_failure,
     verification_command_failures,
-)
-
-# ---------------------------------------------------------------------------
-# Re-exports from _prd_scoring (metric computation)
-# ---------------------------------------------------------------------------
-from trw_mcp.state.validation._prd_scoring import (
-    _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
 )
 from trw_mcp.state.validation._prd_scoring import (
     _HEADING_RE as _HEADING_RE,
@@ -48,13 +42,7 @@ from trw_mcp.state.validation._prd_scoring import (
     _HIGH_WEIGHT_SECTIONS as _HIGH_WEIGHT_SECTIONS,
 )
 from trw_mcp.state.validation._prd_scoring import (
-    _KNOWN_TEST_PATTERNS as _KNOWN_TEST_PATTERNS,
-)
-from trw_mcp.state.validation._prd_scoring import (
     _PLACEHOLDER_RE as _PLACEHOLDER_RE,
-)
-from trw_mcp.state.validation._prd_scoring import (
-    _SECTION_WEIGHTS as _SECTION_WEIGHTS,
 )
 from trw_mcp.state.validation._prd_scoring import (
     _TEST_REF_RE as _TEST_REF_RE,
@@ -327,6 +315,7 @@ def validate_prd_quality_v2(
     verification_failures = [
         *verification_failures,
         *verification_command_failures(frontmatter, repo_root=Path(project_root) if project_root else None),
+        *architectural_shift_failures(frontmatter, content),  # PRD-INFRA-199-FR05
     ]
     is_valid = is_valid and not has_blocking_failure(verification_failures)
 

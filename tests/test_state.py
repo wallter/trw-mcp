@@ -10,12 +10,7 @@ import pytest
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import (
-    OutputContract,
     Phase,
-    ShardCard,
-    ShardStatus,
-    WaveEntry,
-    WaveStatus,
 )
 from trw_mcp.state.persistence import (
     FileEventLogger,
@@ -24,10 +19,8 @@ from trw_mcp.state.persistence import (
     model_to_dict,
 )
 from trw_mcp.state.validation import (
-    FileContractValidator,
     check_phase_exit,
     validate_prd_quality,
-    validate_wave_contracts,
 )
 
 
@@ -145,99 +138,6 @@ class TestModelToDict:
         assert d["status"] == "active"
         assert d["phase"] == "research"
         assert isinstance(d, dict)
-
-
-class TestFileContractValidator:
-    """Tests for FileContractValidator."""
-
-    def test_valid_contract(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        # Create output file with required keys
-        output_file = tmp_path / "scratch" / "shard-001" / "result.yaml"
-        writer.write_yaml(output_file, {"summary": "test", "findings": []})
-
-        contract = OutputContract(
-            file="scratch/shard-001/result.yaml",
-            schema_keys=["summary", "findings"],
-            required=True,
-        )
-        validator = FileContractValidator()
-        failures = validator.validate_contract(contract, tmp_path)
-        assert failures == []
-
-    def test_missing_file(self, tmp_path: Path) -> None:
-        contract = OutputContract(
-            file="missing.yaml",
-            schema_keys=["key"],
-            required=True,
-        )
-        validator = FileContractValidator()
-        failures = validator.validate_contract(contract, tmp_path)
-        assert len(failures) == 1
-        assert failures[0].rule == "file_exists"
-
-    def test_missing_key(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        output_file = tmp_path / "result.yaml"
-        writer.write_yaml(output_file, {"summary": "test"})  # Missing 'findings'
-
-        contract = OutputContract(
-            file="result.yaml",
-            schema_keys=["summary", "findings"],
-            required=True,
-        )
-        validator = FileContractValidator()
-        failures = validator.validate_contract(contract, tmp_path)
-        assert len(failures) == 1
-        assert "findings" in failures[0].message
-
-    def test_optional_missing_file(self, tmp_path: Path) -> None:
-        contract = OutputContract(
-            file="optional.yaml",
-            schema_keys=[],
-            required=False,
-        )
-        validator = FileContractValidator()
-        failures = validator.validate_contract(contract, tmp_path)
-        assert failures == []
-
-
-class TestValidateWaveContracts:
-    """Tests for validate_wave_contracts."""
-
-    def test_all_complete(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        writer.write_yaml(
-            tmp_path / "out.yaml",
-            {"summary": "done", "findings": []},
-        )
-        wave = WaveEntry(wave=1, shards=["shard-001"], status=WaveStatus.ACTIVE)
-        shards = [
-            ShardCard(
-                id="shard-001",
-                title="Test",
-                wave=1,
-                status=ShardStatus.COMPLETE,
-                output_contract=OutputContract(
-                    file="out.yaml",
-                    schema_keys=["summary", "findings"],
-                ),
-            ),
-        ]
-        failures = validate_wave_contracts(wave, shards, tmp_path)
-        assert failures == []
-
-    def test_failed_shard(self, tmp_path: Path) -> None:
-        wave = WaveEntry(wave=1, shards=["shard-001"], status=WaveStatus.ACTIVE)
-        shards = [
-            ShardCard(
-                id="shard-001",
-                title="Failed",
-                wave=1,
-                status=ShardStatus.FAILED,
-            ),
-        ]
-        failures = validate_wave_contracts(wave, shards, tmp_path)
-        assert len(failures) >= 1
-        # With use_enum_values, status is a string — validation checks for enum membership
-        assert any("not complete" in f.message or "shard-001" in f.message for f in failures)
 
 
 class TestCheckPhaseExit:

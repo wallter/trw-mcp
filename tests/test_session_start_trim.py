@@ -17,7 +17,6 @@ from tests._ceremony_helpers import payload_size_units
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.tools._session_start_trim import (
     _COMPACT_DROP_KEYS,
-    find_intentional_marker,
     trim_session_start_payload,
 )
 
@@ -37,7 +36,7 @@ def _make_results(n_learnings: int) -> SessionStartResultDict:
             "assertion_health": {"failing": 2, "total": 10, "passing": 8},
             "sync_health": {"status": "ok"},
             "step_durations_ms": {"recall": 12.3, "total": 42.0},
-            "pipeline_health_advisory": "graph empty — run trw_knowledge_sync",
+            "pipeline_health_advisory": "graph empty — re-deliver (trw_deliver) to trigger graph backfill",
         },
     )
 
@@ -125,72 +124,6 @@ class TestFailOpen:
         assert trimmed["compact"] is True
 
 
-class TestFindIntentionalMarker:
-    """FR2 — detect the marker on/above a line and extract the reason."""
-
-    def test_marker_above_line_python(self) -> None:
-        source = "\n".join(
-            [
-                "def score():",
-                "    # trw:intentional no-data is a fail by design",
-                "    return 0.0",
-            ]
-        )
-        # line 3 (1-indexed) is the return; marker is on line 2 (directly above).
-        reason = find_intentional_marker(source, 3)
-        assert reason == "no-data is a fail by design"
-
-    def test_marker_trailing_comment_same_line(self) -> None:
-        source = "    return 0.0  # trw:intentional fail-closed scorer\n"
-        reason = find_intentional_marker(source, 1)
-        assert reason == "fail-closed scorer"
-
-    def test_marker_js_double_slash(self) -> None:
-        source = "\n".join(
-            [
-                "// trw:intentional skip empty values",
-                "if (!value) return;",
-            ]
-        )
-        assert find_intentional_marker(source, 2) == "skip empty values"
-
-    def test_marker_case_insensitive_and_colon(self) -> None:
-        source = "# TRW:Intentional: truthfulness gate\nx = 1\n"
-        assert find_intentional_marker(source, 2) == "truthfulness gate"
-
-    def test_no_marker_returns_none(self) -> None:
-        source = "x = 1\ny = 2\n"
-        assert find_intentional_marker(source, 2) is None
-
-    def test_marker_too_far_above_not_matched(self) -> None:
-        source = "\n".join(
-            [
-                "# trw:intentional far away",
-                "a = 1",
-                "b = 2",
-            ]
-        )
-        # default lookback=1; marker is 2 lines above line 3 -> not matched.
-        assert find_intentional_marker(source, 3) is None
-
-    def test_marker_with_wider_lookback(self) -> None:
-        source = "\n".join(
-            [
-                "# trw:intentional far away",
-                "a = 1",
-                "b = 2",
-            ]
-        )
-        assert find_intentional_marker(source, 3, lookback=2) == "far away"
-
-    def test_marker_without_reason_returns_empty_string(self) -> None:
-        source = "x = 1  # trw:intentional\n"
-        assert find_intentional_marker(source, 1) == ""
-
-    def test_out_of_range_line_returns_none(self) -> None:
-        assert find_intentional_marker("a = 1\n", 99) is None
-
-
 class TestCompactDropKeys:
     """Identity/provenance stamps are dropped at the response boundary."""
 
@@ -205,7 +138,6 @@ class TestCompactDropKeys:
                 "success": True,
                 "surface_snapshot_id": "0" * 64,
                 "profile_snapshot_id": "surf_" + "a" * 64,
-                "session_override_hash": "sess_" + "b" * 64,
                 "profile_layers_applied": ["defaults"],
                 "first_session_emitted": False,
                 "resolved_profile": {"ceremony_tier": "STANDARD"},

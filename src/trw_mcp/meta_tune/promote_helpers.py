@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.meta_tune.audit import AuditAppendError, AuditIntegrityError, append_audit_entry
 from trw_mcp.meta_tune.errors import MetaTuneSafetyUnavailableError
 from trw_mcp.meta_tune.sandbox import SandboxResult
@@ -125,6 +126,21 @@ def append_audit_entry_or_raise(audit_log_path: Path, **kwargs: Any) -> None:
             dependency_id="audit_log",
             activation_gate_blocked_reason=str(exc),
         ) from exc
+
+
+def write_promotion_backup(state_dir: Path, edit_id: str, target: Path) -> Path:
+    """Back *target* up to ``state_dir/backups/<edit_id>.bak`` before it is replaced; return the backup path.
+
+    Rollback ``copy2``-s the backup onto the target, so the backup carries the target's bytes and mode (an
+    absent target backs up as empty). It is written beneath *state_dir*, so a symlink planted at the backup
+    raises ``UnsafeWriteError`` instead of being written through (PRD-CORE-337 FR08).
+    """
+    backup_path = state_dir / "backups" / f"{edit_id}.bak"
+    if target.exists():
+        write_checkout_file(state_dir, backup_path, target.read_bytes(), mode=target.stat().st_mode & 0o7777)
+    else:
+        write_checkout_file(state_dir, backup_path, b"")
+    return backup_path
 
 
 def persist_snapshot(

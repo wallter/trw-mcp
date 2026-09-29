@@ -98,7 +98,7 @@ def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
     }
     answer = store.maintain(namespace, consolidation)
     if answer.get("status") == "busy":  # another delivery's maintain of this namespace is running
-        return {"status": "skipped", "reason": "busy", "processed": 0, "remaining": 0, "consolidation": {}}
+        return {"status": "skipped", "reason": "busy", "processed": 0, "more": False, "consolidation": {}}
     passes = answer["passes"]
     decay = passes.get("decay", {})
     logger.info("memory_decay_pass_complete", namespace=namespace, passes=passes)
@@ -108,21 +108,19 @@ def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
     consolidated = dict(passes.get("consolidation", {}))
     if failed:
         reason = f"failed passes: {', '.join(failed)}"
-        return {"status": "error", "reason": reason, "processed": 0, "remaining": 0, "consolidation": consolidated}
+        return {"status": "error", "reason": reason, "processed": 0, "more": False, "consolidation": consolidated}
     if decay.get("status") != "ok":
         reason = str(decay.get("reason", ""))
-        return {"status": "skipped", "reason": reason, "processed": 0, "remaining": 0, "consolidation": consolidated}
+        return {"status": "skipped", "reason": reason, "processed": 0, "more": False, "consolidation": consolidated}
     # A bounded maintain verifies part of a large namespace; the next delivery's maintain continues it.
     verification = passes.get("verification", {})
     result: MemoryDecayStepResult = {
         "status": "success",
         "reason": "verification continues next delivery" if verification.get("complete") is False else "",
         "processed": int(decay.get("processed", 0)),
-        "remaining": int(decay.get("remaining", 0)),
+        "more": bool(decay.get("more", False)),
         "consolidation": consolidated,
     }
-    if decay.get("remaining_capped"):
-        result["remaining_capped"] = True  # ``remaining`` is a lower bound (rc9)
     return result
 
 

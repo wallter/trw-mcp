@@ -6,9 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
-from trw_mcp.tools._ceremony_helpers import check_delivery_gates, finalize_run
+from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.tools._ceremony_helpers import check_delivery_gates
 
 
 class TestCheckDeliveryGates:
@@ -333,30 +332,3 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "build_gate_warning" in result
-
-
-class TestFinalizeRun:
-    """Finalize run helper (currently no-op placeholder)."""
-
-    def test_returns_empty_dict(
-        self,
-        run_dir: Path,
-        trw_dir: Path,
-        config: TRWConfig,
-        reader: FileStateReader,
-        writer: FileStateWriter,
-        event_logger: FileEventLogger,
-    ) -> None:
-        result = finalize_run(run_dir, trw_dir, config, reader, writer, event_logger)
-        assert result == {}
-
-    def test_returns_empty_dict_with_no_run(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-        reader: FileStateReader,
-        writer: FileStateWriter,
-        event_logger: FileEventLogger,
-    ) -> None:
-        result = finalize_run(None, trw_dir, config, reader, writer, event_logger)
-        assert result == {}

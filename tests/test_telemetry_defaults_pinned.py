@@ -2,7 +2,7 @@
 
 A fresh ``TRWConfig()`` (no ``.trw/config.yaml`` and no ``TRW_*`` env overrides)
 must not enable any outbound data path: no platform telemetry, no server sync
-URLs, no auto-upgrade, no remote sync feature gates, and no OTEL export.
+URLs, no remote sync feature gates, and no OTEL export.
 
 This is a *library-level* guarantee — installing the package and importing the
 config model must never opt a user into sending data off-box. These tests fail
@@ -72,13 +72,6 @@ def test_sync_feature_gates_off_by_default() -> None:
 
 
 @pytest.mark.unit
-def test_auto_upgrade_off_by_default() -> None:
-    cfg = _fresh_config()
-    # No silent self-update / package fetch.
-    assert cfg.auto_upgrade is False
-
-
-@pytest.mark.unit
 def test_otel_export_off_by_default() -> None:
     cfg = _fresh_config()
     # OpenTelemetry export is an outbound path — must be opt-in.
@@ -94,14 +87,12 @@ def test_all_egress_flags_off_in_one_shot() -> None:
         "platform_telemetry_enabled": cfg.platform_telemetry_enabled,
         "team_sync_enabled": cfg.team_sync_enabled,
         "meta_tune_enabled": cfg.meta_tune_enabled,
-        "auto_upgrade": cfg.auto_upgrade,
         "otel_enabled": cfg.otel_enabled,
     }
     assert egress_off == {
         "platform_telemetry_enabled": False,
         "team_sync_enabled": False,
         "meta_tune_enabled": False,
-        "auto_upgrade": False,
         "otel_enabled": False,
     }, f"A network-egress default flipped on: {egress_off}"
     assert cfg.platform_urls == []

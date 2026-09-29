@@ -9,6 +9,8 @@ files and asserted by behaviour, never by reading the loader.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -227,3 +229,102 @@ def test_unset_surface_role_env_is_not_logged_as_unrecognized(monkeypatch: pytes
         assert _env_marks_reviewer() is False
 
     assert not [entry for entry in logs if entry["event"] == "surface_role_env_value_unrecognized"]
+
+
+# ── PRD-CORE-300-FR20 / NFR02: the reviewer set is re-derived, never left stale ──
+
+#: The effect every registered tool has when called, stated independently of
+#: ``REVIEWER_TOOLS`` so the set can be derived from it. The rule
+#: (PRD-SEC-015-FR01, PRD-CORE-300-NFR02): a reviewer may call only READ_REPORT
+#: tools, which write nothing -- no learnings, no run state, no gate verdict,
+#: no peer message and no child process. A tool is classified by its most
+#: invasive mode, because the reviewer bound admits whole tools, not modes.
+_READ_REPORT = "read_report"
+_EFFECT_CLASS: dict[str, str] = {
+    # Both write nothing under the reviewer role (test_reviewer_surface_purity.py
+    # runs each in a temp project and checks the tree); trw_code's hint mode
+    # records no exposure for a reviewer (PRD-CORE-300-FR12).
+    "trw_recall": _READ_REPORT,
+    "trw_code": _READ_REPORT,
+    # Learnings store and/or run state.
+    "trw_session_start": "writes_learnings_and_run_state",
+    "trw_learn": "writes_learnings",
+    "trw_checkpoint": "writes_run_state",
+    "trw_init": "writes_run_state",  # the only tool that creates a run
+    "trw_status": "writes_run_state",  # persisted ceremony counter; unpinned child resolves another agent's run
+    "trw_prd_validate": "writes_run_state",  # moves the active run to PLAN
+    "trw_assess": "writes_run_state",  # appends a decision event to the active run's events.jsonl
+    # Gate verdicts.
+    "trw_build_check": "writes_gate_verdict",
+    "trw_review": "writes_gate_verdict",  # also moves the run to REVIEW (tools/review.py)
+    "trw_deliver": "writes_gate_verdict",
+    # Peer coordination state.
+    "trw_send": "writes_peer_messages",
+    "trw_inbox": "writes_peer_messages",  # ack, enroll, heartbeat, announce, withdraw, ack_pause
+    # Recursion: a reviewer spawning reviewers.
+    "trw_dispatch": "spawns_processes",
+}
+
+#: Tools a reviewer can navigate code with and no shell (NFR02's second invariant).
+_CODE_NAVIGATION: frozenset[str] = frozenset({"trw_code"})
+
+
+def _derive_reviewer_set(effects: dict[str, str], registered: frozenset[str]) -> frozenset[str]:
+    """The reviewer set the rule gives for ``registered``.
+
+    Refuses when a registered tool has no stated effect, or a stated tool is no
+    longer registered: either means the registry changed and the derivation has
+    to be redone by a person, not defaulted.
+    """
+    unclassified = registered - set(effects)
+    stale = set(effects) - registered
+    if unclassified or stale:
+        raise AssertionError(
+            f"re-derive REVIEWER_TOOLS: unclassified {sorted(unclassified)}, no longer registered {sorted(stale)}"
+        )
+    return frozenset(name for name in registered if effects[name] == _READ_REPORT)
+
+
+def _registered() -> frozenset[str]:
+    from trw_mcp.server._tools import raw_registered_tool_names
+
+    return raw_registered_tool_names()
+
+
+def test_reviewer_tools_equal_the_set_derived_from_the_live_registry() -> None:
+    """FR20: REVIEWER_TOOLS is exactly the read-report subset of every registered tool."""
+    assert _derive_reviewer_set(_EFFECT_CLASS, _registered()) == REVIEWER_TOOLS
+
+
+def test_reviewer_tools_keep_the_nfr02_invariants() -> None:
+    """NFR02: a subset of the registered tools, holding a code-navigation tool."""
+    registered = _registered()
+    assert REVIEWER_TOOLS <= registered
+    assert REVIEWER_TOOLS & _CODE_NAVIGATION
+    assert _CODE_NAVIGATION <= registered
+
+
+@pytest.mark.parametrize(
+    ("registered_change", "message"),
+    [
+        (lambda live: live | {"trw_new_tool"}, "unclassified ['trw_new_tool']"),
+        (lambda live: live - {"trw_status"}, "no longer registered ['trw_status']"),
+    ],
+    ids=["tool-added", "tool-removed"],
+)
+def test_a_registry_change_forces_a_re_derivation(
+    registered_change: Callable[[frozenset[str]], frozenset[str]], message: str
+) -> None:
+    """Boundary: a tool added to or removed from the registry fails the derivation by name."""
+    changed = registered_change(_registered())
+    with pytest.raises(AssertionError, match=re.escape(message)):
+        _derive_reviewer_set(_EFFECT_CLASS, changed)
+
+
+def test_reclassifying_a_writer_as_read_report_changes_the_derived_set() -> None:
+    """Non-vacuity: the derivation reads the classification, so a writer marked
+    read-report would no longer equal REVIEWER_TOOLS."""
+    widened = {**_EFFECT_CLASS, "trw_status": _READ_REPORT}
+    derived = _derive_reviewer_set(widened, _registered())
+    assert derived == REVIEWER_TOOLS | {"trw_status"}
+    assert derived != REVIEWER_TOOLS

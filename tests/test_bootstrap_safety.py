@@ -14,8 +14,11 @@ from trw_mcp.bootstrap._update_transaction import _snapshot_transaction_paths
 from trw_mcp.models.config._client_profile import WriteTargets
 from trw_mcp.models.config._profiles import resolve_client_profile
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 _PROFILE_OUTPUT_CASES: tuple[tuple[str, frozenset[str], tuple[str, ...]], ...] = (
-    ("claude-code", frozenset({"claude_md"}), ("CLAUDE.md",)),
+    # TRW 8.0: claude-code shares the AGENTS.md carrier (Claude Code reads it natively).
+    ("claude-code", frozenset({"agents_md"}), ("AGENTS.md",)),
     # PRD-CORE-240-FR04: opencode writes no shared surface flag — its primary
     # artifact is .opencode/INSTRUCTIONS.md, referenced from opencode.json.
     ("opencode", frozenset(), (".opencode/INSTRUCTIONS.md",)),
@@ -73,7 +76,8 @@ def test_supported_profiles_generate_primary_bootstrap_surface(
     assert enabled_flags == expected_flags
 
     if ide != "claude-code":
-        assert all(not (initialized_repo / path).exists() for path in expected_paths)
+        # The claude-code fixture install already wrote the shared AGENTS.md.
+        assert all(not (initialized_repo / path).exists() for path in expected_paths if path != "AGENTS.md")
 
     result = update_project(initialized_repo, ide=ide)
 

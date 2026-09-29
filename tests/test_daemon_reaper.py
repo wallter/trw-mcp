@@ -1,8 +1,8 @@
-"""The session-end sweep finds daemons that never published a discovery file.
+"""trw-mcp's session-end sweep fails the suite on a leaked memory daemon, serial and under xdist.
 
-2026-09-24: five daemons from one test stalled before creating their memory
-directory. No discovery file named them, so a sweep by discovery file could not
-find them; the auto-started daemon's environment still places it under the run.
+The reaper itself (discovery file, placement, owner, spawn handle) is shared with
+trw-memory's suite and tested there: ``trw-memory/tests/test_testing_daemon_reaper.py``.
+These tests pin how trw-mcp's own ``conftest`` wires it.
 """
 
 from __future__ import annotations
@@ -10,95 +10,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-
-from tests._daemon_reaper import reap_daemons_under
+from trw_memory.testing.daemon_reaper import SessionSweep
 
 pytestmark = pytest.mark.integration
-
-_SLEEP = "import time; time.sleep(60)"
-
-
-@pytest.fixture
-def spawned() -> Iterator[list[subprocess.Popen[bytes]]]:
-    processes: list[subprocess.Popen[bytes]] = []
-    yield processes
-    for process in processes:
-        process.kill()
-        process.wait()
-
-
-def _unpublished(cwd: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
-    """A process whose command line is the daemon's and that never wrote ``daemon.json``."""
-    return subprocess.Popen(
-        [sys.executable, "-c", _SLEEP, "trw_memory.server", "serve", "http"], env={**os.environ, **env}, cwd=cwd
-    )
-
-
-@pytest.mark.parametrize("variable", ["TRW_USER_DIR", "HOME"])
-def test_an_unpublished_daemon_placed_under_the_run_is_stopped(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]], variable: str
-) -> None:
-    root, elsewhere = tmp_path / "run", tmp_path / "elsewhere"
-    root.mkdir()
-    elsewhere.mkdir()
-    daemon = _unpublished(elsewhere, {variable: str(root / "home" / ".trw")})
-    spawned.append(daemon)
-
-    assert reap_daemons_under(root, wait=True, by_process=True) == [daemon.pid]
-    assert daemon.poll() is not None
-
-
-def test_an_unpublished_daemon_running_in_the_run_is_stopped(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]]
-) -> None:
-    root = tmp_path / "run"
-    root.mkdir()
-    daemon = _unpublished(root, {"TRW_USER_DIR": str(tmp_path / "outside"), "HOME": str(tmp_path / "outside")})
-    spawned.append(daemon)
-
-    assert reap_daemons_under(root, wait=True, by_process=True) == [daemon.pid]
-
-
-def test_a_daemon_placed_and_running_elsewhere_is_left_alone(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]]
-) -> None:
-    root, elsewhere = tmp_path / "run", tmp_path / "elsewhere"
-    root.mkdir()
-    elsewhere.mkdir()
-    other = _unpublished(elsewhere, {"TRW_USER_DIR": str(elsewhere), "HOME": str(elsewhere)})
-    spawned.append(other)
-
-    assert reap_daemons_under(root, wait=True, by_process=True) == []
-    assert other.poll() is None
-
-
-def test_a_process_placed_under_the_run_that_is_not_a_daemon_is_never_signalled(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]]
-) -> None:
-    root = tmp_path / "run"
-    root.mkdir()
-    bystander = subprocess.Popen([sys.executable, "-c", _SLEEP], env={**os.environ, "HOME": str(root)}, cwd=root)
-    spawned.append(bystander)
-
-    assert reap_daemons_under(root, wait=True, by_process=True) == []
-    assert bystander.poll() is None
-
-
-def test_a_narrow_columns_setting_does_not_hide_a_daemon(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Linux ps cuts piped output to COLUMNS, and pytest sets COLUMNS: the command-line mark was lost (6.1.0 Linux leg)."""
-    monkeypatch.setenv("COLUMNS", "20")
-    root = tmp_path / "run"
-    root.mkdir()
-    daemon = _unpublished(root, {"TRW_USER_DIR": str(root / "home" / ".trw")})
-    spawned.append(daemon)
-
-    assert reap_daemons_under(root, wait=True, by_process=True) == [daemon.pid]
 
 
 # ── PRD-INFRA-196-FR07: the suite itself fails when the session-end sweep found a leak ──
@@ -114,7 +31,9 @@ def test_pytest_sessionfinish_fails_the_session_when_the_sweep_reaped_a_pid(monk
             _tmp_path_factory = type("F", (), {"getbasetemp": staticmethod(lambda: Path("/tmp/x"))})()
             stash = pytest.Stash()
 
-    monkeypatch.setattr(conftest_mod, "reap_daemons_under", lambda *_a, **_k: [12345])
+    monkeypatch.setattr(
+        conftest_mod, "sweep_session_daemons", lambda basetemp, _owner: SessionSweep(basetemp, [12345], [])
+    )
     monkeypatch.setattr(conftest_mod, "_timing_sessionfinish", lambda *_a, **_k: None)
     session = _FakeSession()
 
@@ -133,13 +52,37 @@ def test_pytest_sessionfinish_leaves_a_clean_session_unchanged(monkeypatch: pyte
             _tmp_path_factory = type("F", (), {"getbasetemp": staticmethod(lambda: Path("/tmp/x"))})()
             stash = pytest.Stash()
 
-    monkeypatch.setattr(conftest_mod, "reap_daemons_under", lambda *_a, **_k: [])
+    monkeypatch.setattr(conftest_mod, "sweep_session_daemons", lambda basetemp, _owner: SessionSweep(basetemp, [], []))
     monkeypatch.setattr(conftest_mod, "_timing_sessionfinish", lambda *_a, **_k: None)
     session = _FakeSession()
 
     conftest_mod.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
 
     assert session.exitstatus == 0
+
+
+def test_pytest_sessionfinish_fails_the_session_when_a_daemon_survives_the_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The survivor guard: nothing leaked by this sweep's count, but a daemon is still alive after it."""
+    import tests.conftest as conftest_mod
+
+    class _FakeSession:
+        exitstatus = 0
+
+        class config:
+            _tmp_path_factory = type("F", (), {"getbasetemp": staticmethod(lambda: Path("/tmp/x"))})()
+            stash = pytest.Stash()
+
+    monkeypatch.setattr(
+        conftest_mod, "sweep_session_daemons", lambda basetemp, _owner: SessionSweep(basetemp, [], [4242])
+    )
+    monkeypatch.setattr(conftest_mod, "_timing_sessionfinish", lambda *_a, **_k: None)
+    session = _FakeSession()
+
+    conftest_mod.pytest_sessionfinish(session, 0)  # type: ignore[arg-type]
+
+    assert session.exitstatus == 1
 
 
 _PLANTED_LEAK_TEST = """
@@ -187,20 +130,6 @@ def test_a_planted_leaking_test_fails_the_trw_mcp_suite_at_session_end(workers: 
 # ── C1 2026-09-25: a daemon a test auto-started is stopped before it publishes ──
 
 
-def test_stop_spawned_stops_a_running_daemon_and_skips_an_exited_one(
-    tmp_path: Path, spawned: list[subprocess.Popen[bytes]]
-) -> None:
-    from tests._daemon_reaper import stop_spawned
-
-    running = _unpublished(tmp_path, {})
-    exited = subprocess.Popen([sys.executable, "-c", "pass"])
-    exited.wait()
-    spawned.append(running)
-
-    assert stop_spawned([running, exited]) == [running.pid]
-    assert running.poll() is not None
-
-
 _PLANTED_AUTO_START_TEST = """
 import os
 from pathlib import Path
@@ -214,7 +143,7 @@ def test_auto_starts_a_daemon_and_returns_before_it_publishes(tmp_path):
     memory.mkdir(parents=True, mode=0o700)
     spawned = daemon_client.start_daemon_detached(DaemonPaths(user_memory_dir=memory))
     Path(os.environ["TRW_PLANTED_PID_FILE"]).write_text(str(spawned.pid))
-    assert spawned.poll() is None
+    assert spawned.running()
 """
 
 
@@ -260,3 +189,21 @@ def test_a_daemon_auto_started_by_a_test_does_not_outlive_it(tmp_path: Path) -> 
     assert not alive, f"the auto-started daemon {pid} outlived its test\n{output}"
     assert result.returncode == 0, output
     assert "leaked memory daemon" not in output, output
+
+
+def test_the_xdist_controller_collects_a_workers_survivors_as_well_as_its_leaks() -> None:
+    """The controller fails on what a finished worker hands over: its leaks AND its sweep's survivors."""
+    from types import SimpleNamespace
+
+    from tests import conftest as conftest_mod
+
+    config = SimpleNamespace(stash={})
+    node = SimpleNamespace(
+        config=config,
+        workeroutput={conftest_mod._WORKER_LEAKS_KEY: [7], conftest_mod._WORKER_SURVIVORS_KEY: [9]},
+    )
+
+    conftest_mod.pytest_testnodedown(node, None)
+
+    assert config.stash[conftest_mod._WORKER_LEAKS] == [7]
+    assert config.stash[conftest_mod._WORKER_SURVIVORS] == [9]

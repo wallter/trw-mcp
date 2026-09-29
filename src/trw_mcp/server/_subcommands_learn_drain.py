@@ -36,7 +36,6 @@ import argparse
 import json
 import sys
 
-_EXIT_OK = 0
 _EXIT_TRY_AGAIN = 1
 _EXIT_DEAD_LETTERED = 2
 

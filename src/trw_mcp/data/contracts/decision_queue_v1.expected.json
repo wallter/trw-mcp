@@ -1,0 +1,7 @@
+{
+  "_comment": "PRD-CORE-329 contract (charter Q3): every reader of .trw/runtime/decisions.jsonl (trw-mcp's trw_status/session_start/resolve, trw-loop's preflight gate) must derive exactly this from decision_queue_v1.jsonl. A resolution with actor 'unattended' never resolves (FR08 rule 3), so decision ...1111 stays pending; ...2222 is resolved by an attended actor; ...3333 has no resolution. oldest_pending is by queue order (the first pending record's position), never by ts, since ts is caller-written.",
+  "pending_ids": ["0b1c9f4e-6a1d-4c2e-9d1e-111111111111", "3d4e7f60-8c3f-4e40-9f30-333333333333"],
+  "oldest_pending_id": "0b1c9f4e-6a1d-4c2e-9d1e-111111111111",
+  "resolved_ids": ["2c3d8e5f-7b2e-4d3f-8e2f-222222222222"],
+  "unreadable": false
+}

@@ -11,6 +11,14 @@ from typing import Any
 import pytest
 
 
+def save_pin_store(store):
+    """Test-local: the removed writer took both pin-store locks around the live atomic write."""
+    from trw_mcp.state import _pin_store
+
+    with _pin_store._pin_store_threading_lock, _pin_store._pin_store_file_lock():
+        _pin_store._write_pin_store_locked(store)
+
+
 def test_pin_active_run_persists_to_disk(tmp_path: Path) -> None:
     """pin_active_run writes an entry to .trw/runtime/pins.json."""
     from trw_mcp.state._paths import pin_active_run
@@ -123,7 +131,7 @@ def test_pin_store_cache_ttl_collapses_burst_reads(monkeypatch: pytest.MonkeyPat
 def test_pin_store_save_acquires_file_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every save invokes _lock_ex on the pin-store lock-file FD."""
     import trw_mcp.state._pin_store as ps_mod
-    from trw_mcp.state._pin_store import pin_store_lock_path, save_pin_store
+    from trw_mcp.state._pin_store import pin_store_lock_path
 
     lock_calls: list[int] = []
     real_lock_ex = ps_mod._lock_ex

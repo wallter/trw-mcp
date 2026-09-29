@@ -68,7 +68,7 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
         # PRD-CORE-291-FR04) -- so patching `_utils.shutil.which` alone covers
         # both; patch at the real consumer site.
         patch("trw_mcp.bootstrap._utils.shutil.which", return_value=resolved),
-        patch("trw_mcp.bootstrap._cursor.shutil.which", return_value=resolved),
+        patch("shutil.which", return_value=resolved),
     ):
         ag_command, ag_args = antigravity_entry()
         entries: dict[str, Any] = {

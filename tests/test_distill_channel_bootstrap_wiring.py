@@ -129,6 +129,47 @@ def test_claude_code_subagent_withheld_without_a_licence(tmp_path: Path) -> None
     )
 
 
+def test_claude_code_subagent_withdrawn_on_losing_entitlement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-09-27 audit (touchpoint #6): a project that LOSES entitlement
+    (licence expiry, or copying the checkout to a distill-free machine) gets
+    the unedited agent file removed on the next ``update-project``, instead
+    of keeping a "powered by trw-distill" agent forever.
+    """
+    from trw_mcp.bootstrap._claude_code_distill_channels import (
+        install_claude_code_distill_channels,
+    )
+
+    agent_path = tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
+
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+    install_claude_code_distill_channels(tmp_path)
+    assert agent_path.exists()
+
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: False)
+    install_claude_code_distill_channels(tmp_path)
+
+    assert not agent_path.exists()
+
+
+def test_claude_code_subagent_edit_survives_losing_entitlement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A user edit to the agent file is preserved, exactly like a normal update would."""
+    from trw_mcp.bootstrap._claude_code_distill_channels import (
+        install_claude_code_distill_channels,
+    )
+
+    agent_path = tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
+
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+    install_claude_code_distill_channels(tmp_path)
+    agent_path.write_text(agent_path.read_text(encoding="utf-8") + "\n<!-- my note -->\n", encoding="utf-8")
+
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: False)
+    install_claude_code_distill_channels(tmp_path)
+
+    assert agent_path.exists()
+    assert "<!-- my note -->" in agent_path.read_text(encoding="utf-8")
+
+
 def test_bootstrap_cc_channel_manifest_is_idempotent(tmp_path: Path) -> None:
     """Running bootstrap_cc_channel_manifest twice does not duplicate entries."""
     from trw_mcp.bootstrap._claude_code_distill_channels import (

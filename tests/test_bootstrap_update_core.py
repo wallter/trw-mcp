@@ -12,6 +12,8 @@ from trw_mcp.models.config import TRWConfig
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 def _bundle_with_override(bundle_root: Path, rel: str, content: str) -> Path:
     """Return a copy of the shipped data dir with one artifact set to *content*.
@@ -255,12 +257,12 @@ class TestUpdateOverwritesFrameworkFiles:
 
 
 @pytest.mark.unit
-class TestUpdateClaudeMdSmartMerge:
-    """Test that update_project smart-merges CLAUDE.md."""
+class TestUpdateAgentsMdSmartMerge:
+    """Test that update_project smart-merges AGENTS.md."""
 
     def test_preserves_user_sections(self, initialized_repo: Path) -> None:
         """User content above TRW markers is preserved."""
-        claude_md = initialized_repo / "CLAUDE.md"
+        claude_md = initialized_repo / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
 
         # Add user content before the TRW section
@@ -278,7 +280,7 @@ class TestUpdateClaudeMdSmartMerge:
 
     def test_updates_trw_section(self, initialized_repo: Path) -> None:
         """TRW auto-generated section is updated."""
-        claude_md = initialized_repo / "CLAUDE.md"
+        claude_md = initialized_repo / "AGENTS.md"
 
         update_project(initialized_repo)
 
@@ -288,8 +290,8 @@ class TestUpdateClaudeMdSmartMerge:
         assert "trw_session_start" in resolve_instruction_text(claude_md)
 
     def test_appends_trw_section_if_missing(self, initialized_repo: Path) -> None:
-        """If CLAUDE.md has no TRW markers, append the section."""
-        claude_md = initialized_repo / "CLAUDE.md"
+        """If AGENTS.md has no TRW markers, append the section."""
+        claude_md = initialized_repo / "AGENTS.md"
         claude_md.write_text("# My Project\n\nNo TRW section here.\n", encoding="utf-8")
 
         update_project(initialized_repo)
@@ -299,9 +301,9 @@ class TestUpdateClaudeMdSmartMerge:
         assert "<!-- trw:start -->" in content
         assert "trw_session_start" in resolve_instruction_text(claude_md)
 
-    def test_creates_claude_md_if_missing(self, initialized_repo: Path) -> None:
-        """If CLAUDE.md doesn't exist, create it from template."""
-        claude_md = initialized_repo / "CLAUDE.md"
+    def test_creates_agents_md_if_missing(self, initialized_repo: Path) -> None:
+        """If AGENTS.md doesn't exist, create it from template."""
+        claude_md = initialized_repo / "AGENTS.md"
         claude_md.unlink()
 
         result = update_project(initialized_repo)

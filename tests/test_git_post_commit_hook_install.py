@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -174,7 +175,7 @@ def test_hook_fires_on_a_real_commit(git_repo: Path) -> None:
     assert receipt["ran_at"]
     assert receipt["head_sha"], "receipt must record the committed sha"
     # Both maintenance halves reported, even when each is a no-op here.
-    assert "sidecar_skipped_reason" in receipt
+    assert "sidecar_rebuild" in receipt
     assert "verify_entries_processed" in receipt
 
 
@@ -218,6 +219,29 @@ def test_consecutive_commits_each_acquire_the_lock_normally(git_repo: Path) -> N
     assert not (git_repo / ".trw" / PENDING_REL_PATH).exists(), "nothing was deferred"
 
 
+def test_a_linked_worktree_commit_runs_the_main_worktrees_script(git_repo: Path) -> None:
+    """O6: .trw/hooks is untracked, so a linked worktree has none; the shim must
+    fall back to the main worktree's copy instead of skipping silently."""
+    install_git_post_commit_hook(git_repo)
+    _commit(git_repo, "a.py")
+    wt = git_repo.parent / "wt"
+    subprocess.run(["git", "worktree", "add", "-q", str(wt)], cwd=git_repo, check=True)
+    (wt / INSTALLED_HOOK_REL).unlink()  # this fixture tracks .trw; a real repo ignores it
+
+    _commit(wt, "b.py")
+
+    assert read_receipt(wt) is not None, "the worktree commit did not reach the post-commit script"
+
+
+def test_a_missing_script_is_reported_not_silent(git_repo: Path) -> None:
+    install_git_post_commit_hook(git_repo)
+    (git_repo / INSTALLED_HOOK_REL).unlink()
+    (git_repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=git_repo, check=True)
+    done = subprocess.run(["git", "commit", "-qm", "a"], cwd=git_repo, capture_output=True, text=True, check=True)
+    assert "hook_script_absent" in done.stderr
+
+
 def test_hook_never_fails_the_commit(git_repo: Path) -> None:
     """NFR02 fail-open: a hostile dispatch target must not break `git commit`."""
     install_git_post_commit_hook(git_repo)
@@ -241,6 +265,40 @@ def test_user_hook_still_runs_after_chaining(git_repo: Path) -> None:
     _commit(git_repo, "c.py", sync_hook=False)
 
     assert marker.is_file(), "the pre-existing user hook stopped running"
+
+
+def test_a_commit_with_no_daemon_running_starts_none(
+    git_repo: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-310 FR04, B71-105: a commit's maintenance uses a serving daemon and never starts one.
+
+    A pinned, granted checkout reaches the daemon store on every commit. Pre-change
+    the hook's worker auto-started a daemon there that outlived the commit by its
+    idle window (rc9: 19 leaked from the test suite; in user repos, one per HOME).
+    """
+    from trw_memory.daemon import DaemonPaths, mint_grant, write_checkout_grant
+    from trw_memory.testing.daemon_reaper import daemon_pids_placed_under, reap_daemons_under
+
+    user_dir = tmp_path_factory.mktemp("hook-user")
+    monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
+    paths = DaemonPaths.resolve()
+    namespace = "project:hook-aaaaaaaa"
+    (git_repo / ".trw" / "config.yaml").write_text(f"project_namespace: {namespace}\n", encoding="utf-8")
+    write_checkout_grant(git_repo / ".trw", mint_grant(paths, [namespace], root=git_repo))
+    # The hook's interpreter must be this one: a bare python3 without trw-mcp's dependencies no-ops.
+    (git_repo / ".trw" / "channels").mkdir()
+    (git_repo / ".trw" / "channels" / "cc03-python.txt").write_text(sys.executable, encoding="utf-8")
+    install_git_post_commit_hook(git_repo)
+    try:
+        _commit(git_repo, "a.py")
+
+        receipt = read_receipt(git_repo)
+        assert receipt is not None
+        assert any("MEMORY_DAEMON_AUTOSTART=false" in error for error in receipt["errors"]), receipt["errors"]
+        assert not paths.discovery.exists(), "the commit started a memory daemon"
+        assert daemon_pids_placed_under(user_dir) == []
+    finally:
+        reap_daemons_under(user_dir, wait=True, by_process=True)
 
 
 # --- entry point ---------------------------------------------------------

@@ -31,16 +31,28 @@ on:
 
 run-name: ${{ inputs.correlation_id && format('CI {0}', inputs.correlation_id) || github.event.pull_request.title || 'CI' }}
 
+permissions:
+  contents: read
+
+# PRD-SEC-020 (S1 latest-pins follow-up): every actions/* reference below is pinned to its
+# GitHub-Releases "latest" commit (checkout v7.0.1, setup-python v7.0.0, cache v6.1.0,
+# upload-artifact v7.0.1). Each major bump (v4 -> v5/v6/v7+) moved the action's runtime to
+# Node.js 24 and raised the minimum Actions Runner to v2.327.1 -- GitHub-hosted ubuntu-latest
+# and macos-latest already satisfy this; only a self-hosted runner would need an upgrade.
+# No input this workflow sets was removed or renamed by any of these jumps.
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"  # 3.12+ excluded: sqlite-vec C extension segfaults on GH Actions runners
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -52,16 +64,23 @@ jobs:
         run: ruff check src/
       - name: Format check (ruff format --check)
         run: ruff format --check src/
+      # PRD-SEC-019 FR08: fail CI on any un-relocked advisory (dependabot.yml's uv
+      # ecosystem regenerates uv.lock; this step is the gate that fails the next PR
+      # if a lockfile drifts below a fixed advisory version).
+      - name: Dependency audit (pip-audit)
+        run: pip-audit
 
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"  # 3.12+ excluded: sqlite-vec C extension segfaults on GH Actions runners
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -78,12 +97,14 @@ jobs:
     env:
       TRW_SUITE: ${{ inputs.suite || 'unit' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"  # 3.12+ excluded: sqlite-vec C extension segfaults on GH Actions runners
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -119,12 +140,14 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-3.11-${{ hashFiles('pyproject.toml') }}
@@ -136,7 +159,7 @@ jobs:
         run: python .github/scripts/timing_job.py --out timing-results.json
       - name: Upload timing results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: timing-results
           path: |

@@ -37,6 +37,7 @@ from trw_mcp.formation._manifest import (
     FormationMember,
     FormationMemberStatus,
 )
+from trw_mcp.formation._orchestrator import orchestrator_member, require_factory_enabled
 from trw_mcp.formation._store import (
     _exclusive,
     manifest_path_for_run,
@@ -61,6 +62,8 @@ def create(
     orchestrator_run_path: Path,
     payload: dict[str, Any],
     prds_dir: Path | None = None,
+    orchestrator_member_id: str | None = None,
+    orchestrator_pin_key: str | None = None,
 ) -> FormationManifest:
     """Write a new manifest under *orchestrator_run_path* and index it (FR03).
 
@@ -78,7 +81,13 @@ def create(
     manifest mutation -- otherwise two concurrent ``create`` calls for the same
     orchestrator run can both pass the ``exists()`` check before either writes,
     and the second silently clobbers the first's manifest instead of refusing.
+
+    *orchestrator_member_id* (PRD-CORE-340-FR18) also registers the orchestrator as
+    an addressable, authority-free member bound to its run and *orchestrator_pin_key*,
+    in the same write, so the manifest never exists half-registered.
     """
+    if orchestrator_member_id:
+        require_factory_enabled()
     manifest_path = manifest_path_for_run(orchestrator_run_path)
     with _exclusive(manifest_path):
         if manifest_path.exists():
@@ -91,6 +100,11 @@ def create(
         data.setdefault("created_utc", now)
         data.setdefault("updated_utc", now)
         data["orchestrator_run_path"] = str(orchestrator_run_path)
+        if orchestrator_member_id:
+            if not isinstance(data.get("members", []), list):
+                raise FormationError("formation payload is invalid: members must be a list of member mappings")
+            lead = orchestrator_member(orchestrator_run_path, orchestrator_member_id, orchestrator_pin_key)
+            data["members"] = [*data.get("members", []), lead.model_dump(mode="json", exclude_none=True)]
         try:
             manifest = FormationManifest.model_validate(data)
         except Exception as exc:

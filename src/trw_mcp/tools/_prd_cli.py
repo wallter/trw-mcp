@@ -1,16 +1,23 @@
-"""``trw-mcp prd create|diff`` (PRD-CORE-300-FR07, slice S5).
+"""``trw-mcp prd create|diff|validate`` (PRD-CORE-300-FR07 slice S5; ``validate`` added by PRD-CORE-317).
 
 PRD create and PRD diff were two MCP tools paid in every
 session's prompt for a rare, deliberate authoring action (create) and an
 occasional review action (diff). They become ``trw-mcp prd create`` and
 ``trw-mcp prd diff``: same implementations (``create_prd`` in
 ``requirements.py``, ``prd_diff_report`` in ``query_tools.py``), same
-arguments as flags. ``trw_prd_validate`` is unaffected — it stays a tool,
-and the ``trw-prd-ready`` skill is the front door: create via the CLI, then
+arguments as flags. ``trw_prd_validate`` stays a tool AS WELL --- ``validate``
+is a second, CLI-native entrypoint onto the same ``run_prd_validate``, for a
+caller (e.g. a script) that would rather shell out than hold an MCP session.
+The ``trw-prd-ready`` skill is the front door: create via the CLI, then
 validate via the tool, in the same run.
 
 Only ``create`` is state-changing (it writes a PRD file); ``diff`` is
 read-only and runs even under the reviewer role or a dispatched child.
+``validate`` reads no state but still WRITES (it advances the active run's
+phase to PLAN, same as the ``trw_prd_validate`` tool it shares
+``run_prd_validate`` with, PRD-CORE-317), so it stays deny-by-default under
+those bounded lanes like the tool does --- ``server/_cli_reviewer_policy.py``
+does not allowlist it.
 
 Output is one JSON document with ``--json``, otherwise ``key: value``
 lines (list/dict values are rendered as compact JSON so a non-JSON run
@@ -51,7 +58,14 @@ def add_prd_create_diff_subcommands(
     diff.add_argument("--before-path", required=True)
     diff.add_argument("--after-path", required=True)
 
-    for parser in (create, diff):
+    validate = prd_verbs.add_parser(
+        "validate", help="Score a PRD against the validation suite (same engine as trw_prd_validate)"
+    )
+    validate.add_argument("--prd-path", required=True, help="Path to the PRD markdown file")
+    validate.add_argument("--fast", action="store_true", help="Text-only score; skips repo-grounded checks")
+    validate.add_argument("--verbose", action="store_true", help="Full diagnostic payload")
+
+    for parser in (create, diff, validate):
         parser.add_argument("--json", dest="as_json", action="store_true")
 
 
@@ -96,11 +110,27 @@ def _diff(args: argparse.Namespace) -> dict[str, Any]:
         sys.exit(1)
 
 
+def _validate(args: argparse.Namespace) -> dict[str, Any]:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.tools._prd_validate_tool import run_prd_validate
+
+    try:
+        result = run_prd_validate(
+            prd_path=args.prd_path,
+            fast=args.fast,
+            verbose=args.verbose,
+        )
+    except StateError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    return dict(result)
+
+
 def run_prd(args: argparse.Namespace) -> None:
-    """Dispatch ``prd create|diff``."""
-    handler = {"create": _create, "diff": _diff}.get(str(args.prd_command))
+    """Dispatch ``prd create|diff|validate``."""
+    handler = {"create": _create, "diff": _diff, "validate": _validate}.get(str(args.prd_command))
     if handler is None:
-        print("usage: trw-mcp prd {create|diff}", file=sys.stderr)
+        print("usage: trw-mcp prd {create|diff|validate}", file=sys.stderr)
         sys.exit(2)
     document = handler(args)
     _emit(document, as_json=args.as_json)

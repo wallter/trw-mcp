@@ -1,8 +1,9 @@
 """Transport startup for the MCP server.
 
-trw-mcp is stdio-only: every MCP client spawns its own server instance and
-communicates over stdio. This is the portability boundary — no HTTP transport,
-no shared server, no proxy.
+The default transport is stdio: every MCP client spawns its own server
+instance and communicates over stdio. The opt-in shared mode
+(``trw_mcp.shared_server``, off unless ``shared_mcp.enabled``) never passes
+through this module.
 """
 
 from __future__ import annotations

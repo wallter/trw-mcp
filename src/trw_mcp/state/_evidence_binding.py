@@ -92,7 +92,9 @@ def _normalize_scope_path(project_root: Path, raw: str) -> tuple[str | None, boo
             relative = normalized
         if relative == "." or len(relative.encode("utf-8")) > EvidenceLimits.MAX_PATH_BYTES:
             return None, False
-    except (ValueError, OSError, RuntimeError, UnicodeError):
+    except (ValueError, OSError, RuntimeError, UnicodeError) as exc:
+        logger.debug("scope_path_normalize_failed", raw=raw, error=str(exc))
+        # trw-fail-silent-allow: malformed-path failure now logged above; classification degrades to "not well-formed" (False), never silently to owned scope.
         return None, False
     return relative, True
 
@@ -220,7 +222,9 @@ def _read_journal_paths(run_path: Path | None, root: Path) -> tuple[list[str], b
             journal_ok = journal_ok and valid
             if rel is not None:
                 paths.add(rel)
-    except (OSError, UnicodeError):
+    except (OSError, UnicodeError) as exc:
+        logger.warning("evidence_journal_unreadable", run_path=str(run_path), error=str(exc))
+        # trw-fail-silent-allow: unreadable-journal failure now logged above; journal_ok=False is the documented degraded-scope signal, not silence.
         return [], False
     return sorted(paths), journal_ok
 

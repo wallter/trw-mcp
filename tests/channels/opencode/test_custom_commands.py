@@ -8,6 +8,25 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+
+def get_before_edit_content():
+    from trw_mcp.channels.opencode import _custom_commands as cc
+
+    return cc._apply_quota(cc._BEFORE_EDIT_CONTENT)
+
+
+def get_conventions_content():
+    from trw_mcp.channels.opencode import _custom_commands as cc
+
+    return cc._apply_quota(cc._CONVENTIONS_CONTENT)
+
+
+def get_hotspots_content():
+    from trw_mcp.channels.opencode import _custom_commands as cc
+
+    return cc._apply_quota(cc._HOTSPOTS_CONTENT)
+
+
 # ---------------------------------------------------------------------------
 # FR10-FR13 — Command content verification
 # ---------------------------------------------------------------------------
@@ -15,7 +34,6 @@ from unittest.mock import patch
 
 def test_before_edit_command_has_required_fields() -> None:
     """FR10-FR11: before-edit command has name, $1, trw_code, distill_status."""
-    from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
     assert "name: trw-before-edit" in content
@@ -26,7 +44,6 @@ def test_before_edit_command_has_required_fields() -> None:
 
 def test_before_edit_command_all_five_hint_fields() -> None:
     """FR11: before-edit command surfaces all 5 hint fields."""
-    from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
     for field in ("importers", "inferred_tests", "hotspot_warnings", "risk_score", "co_change_neighbors"):
@@ -35,7 +52,6 @@ def test_before_edit_command_all_five_hint_fields() -> None:
 
 def test_before_edit_command_advisory_not_blocking() -> None:
     """FR10: Command body notes it is advisory and must NOT block edit."""
-    from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
     assert "advisory" in content.lower() or "NOT block" in content or "must not block" in content.lower()
@@ -43,7 +59,6 @@ def test_before_edit_command_advisory_not_blocking() -> None:
 
 def test_before_edit_command_uses_public_mcp_fallback() -> None:
     """Public wheel installs never require the separately distributed distill CLI."""
-    from trw_mcp.channels.opencode._custom_commands import get_before_edit_content
 
     content = get_before_edit_content()
     assert "trw-mcp code risk" in content
@@ -52,7 +67,6 @@ def test_before_edit_command_uses_public_mcp_fallback() -> None:
 
 def test_conventions_command_single_recall_call() -> None:
     """FR12: Conventions command uses exactly ONE trw_recall call (P2-09)."""
-    from trw_mcp.channels.opencode._custom_commands import get_conventions_content
 
     content = get_conventions_content()
     assert content.count("trw_recall") == 1
@@ -61,7 +75,6 @@ def test_conventions_command_single_recall_call() -> None:
 
 def test_hotspots_command_table_columns() -> None:
     """FR13: Hotspots command includes table with required columns."""
-    from trw_mcp.channels.opencode._custom_commands import get_hotspots_content
 
     content = get_hotspots_content()
     for col in ("composite_score", "fanin", "churn", "untested"):
@@ -72,7 +85,6 @@ def test_hotspots_command_table_columns() -> None:
 
 def test_hotspots_command_high_risk_label() -> None:
     """FR13: Hotspots command labels high-risk files (>0.8)."""
-    from trw_mcp.channels.opencode._custom_commands import get_hotspots_content
 
     content = get_hotspots_content()
     assert "HIGH RISK" in content or "high-risk" in content
@@ -144,12 +156,7 @@ def test_stale_command_refreshed_only_when_recorded_as_trw_write(tmp_path: Path)
 
 def test_command_file_quota_4096_bytes() -> None:
     """FR15: All three command files are under 4096 bytes."""
-    from trw_mcp.channels.opencode._custom_commands import (
-        COMMAND_QUOTA_BYTES,
-        get_before_edit_content,
-        get_conventions_content,
-        get_hotspots_content,
-    )
+    from trw_mcp.channels.opencode._custom_commands import COMMAND_QUOTA_BYTES
 
     for fn, content in [
         ("before-edit", get_before_edit_content()),

@@ -32,9 +32,6 @@ from trw_mcp.state.claude_md._agents_md import (
     _sync_instruction_targets,
 )
 from trw_mcp.state.claude_md._profile_dispatch_report import (
-    _cache_hit_carrier_report as _cache_hit_carrier_report,
-)
-from trw_mcp.state.claude_md._profile_dispatch_report import (
     _capability_parity_drift as _capability_parity_drift,
 )
 from trw_mcp.state.claude_md._profile_render import render_profile_section
@@ -58,20 +55,21 @@ def dispatch_for_profile(
     dry_run: bool = False,
     force: bool = False,
 ) -> ClaudeMdSyncResultDict:
-    """Dispatch a CLAUDE.md / AGENTS.md sync for the active profile.
+    """Dispatch an AGENTS.md / per-client instruction sync for the active profile.
 
     PRD-CORE-149-FR11: profile-routing logic lifted from ``_sync.py`` so the
     monolithic sync file stays under the 350-LOC ceiling. The function
     orchestrates: hash cache lookup, per-profile write-target decision,
-    template render, ``CLAUDE.md`` / ``AGENTS.md`` write, and REVIEW.md
-    regeneration.
+    template render, ``AGENTS.md`` write, and REVIEW.md regeneration. TRW
+    no longer writes ``CLAUDE.md``: Claude Code reads ``AGENTS.md`` natively.
 
     Unknown or unrecognized ``client`` values route through the same
     ``_determine_write_target_decision`` logic as supported profiles and
-    therefore default to the ``claude-code`` behaviour (write CLAUDE.md).
+    therefore default to the ``claude-code`` behaviour (write AGENTS.md).
 
     Args:
-        scope: Sync scope -- ``"root"`` or ``"sub"``.
+        scope: Sync scope -- ``"root"`` (project ``AGENTS.md``) or ``"sub"``
+            (``AGENTS.md`` in *target_dir*).
         target_dir: Target directory for sub-scope rendering.
         config: Active TRW configuration.
         reader: File state reader (unused but preserved for API parity).
@@ -87,7 +85,7 @@ def dispatch_for_profile(
             before reaching here — leaving a user's edit indistinguishable from
             TRW's own output. ``None`` lets the generators read the manifest
             themselves, which is correct for a standalone sync.
-        dry_run: Compute what CLAUDE.md / AGENTS.md WOULD receive, return a
+        dry_run: Compute what AGENTS.md WOULD receive, return a
             unified diff per target, and write nothing (PRD-FIX-123-FR03). The
             per-client carriers, REVIEW.md, analytics and the hook env file
             have no diff mode, so a dry run skips them (B71-110).
@@ -110,7 +108,6 @@ def dispatch_for_profile(
         _review_md_failed_result,
         _write_stored_hash,
         generate_review_md,
-        recall_learnings,
     )
 
     # PRD: resolve the write target via LATE lookup through ``_paths`` so the
@@ -127,8 +124,9 @@ def dispatch_for_profile(
 
     # B71-110: a dry run writes nothing, so it also leaves the hook env file,
     # the per-client carriers, analytics and REVIEW.md alone.
+    hook_env_warnings: list[str] = []
     if not dry_run:
-        refresh_hook_policy(trw_dir, project_root, config, client)
+        hook_env_warnings = refresh_hook_policy(trw_dir, project_root, config, client)
 
     def _sync_carriers(targets: tuple[InstructionFileTarget, ...]) -> tuple[bool, str | None, list[str]]:
         # The per-client generators have no diff mode: a dry run reports them
@@ -145,13 +143,6 @@ def dispatch_for_profile(
         except Exception:  # justified: fail-open — REVIEW.md generation must not block the sync
             logger.warning(failure_event, exc_info=True)
             return _review_md_failed_result("generation failed")
-
-    # PRD-QUAL-143-FR01: before the cache check, so an unchanged render still
-    # drops a stale ``.trw`` sidecar and every ``@`` import of it.
-    if scope != "sub":
-        from trw_mcp.state.claude_md._sidecar_retire import retire_instruction_sidecars
-
-        retire_instruction_sidecars(project_root, dry_run=dry_run)
 
     # PRD-CORE-093 FR05: Hash excludes learning content — only package version
     # determines whether CLAUDE.md needs re-rendering. This keeps the prompt
@@ -181,23 +172,17 @@ def dispatch_for_profile(
                 "claude_md_sync_skip",
                 reason="no_changes",
             )
-            target = project_root / "CLAUDE.md"
-            agents_md_synced, agents_md_path, agents_verdict = _sync_agents_md_if_needed(
+            target = project_root / "AGENTS.md"
+            agents_md_synced, agents_md_path, agents_verdicts = _sync_agents_md_if_needed(
                 decision.write_agents,
                 config,
                 project_root,
-                trw_dir,
                 client=client,
-                recall_fn=recall_learnings,
                 force=force,
                 dry_run=dry_run,
             )
-            del agents_verdict  # cache-hit path reports no diff/refusal payload
+            del agents_verdicts  # cache-hit path reports no diff/refusal payload
             review_result = _review_md("review_md_generation_failed_cache_hit")
-            # PRD-CORE-203 FR07 (P1-1): report the carrier state even on a cache
-            # hit (no write happens, so this is a read-only classification of the
-            # current CLAUDE.md).
-            cm, ps = _cache_hit_carrier_report(target, decision.write_claude)
             return _build_sync_result(
                 path=str(target),
                 scope=scope,
@@ -210,26 +195,14 @@ def dispatch_for_profile(
                 instruction_file_paths=instruction_file_paths,
                 review_md=review_result,
                 hash_value=current_hash,
-                carrier_mode=cm,
-                pointer_skips=ps,
                 capability_parity_drift=_capability_parity_drift(decision.write_agents, client),
+                warnings=hook_env_warnings or None,
             )
 
-    if scope == "sub" and target_dir:
-        target = Path(target_dir).resolve() / "CLAUDE.md"
-        max_lines = config.sub_claude_md_max_lines
-    else:
-        target = project_root / "CLAUDE.md"
-        max_lines = config.claude_md_max_lines
-
-    # Resolved BEFORE the render: PRD-FIX-123-FR07's gate measures the merged
-    # total, which needs the target it would merge into — and the budget, so a
-    # sub-scope section that overflows collapses to the pointer form rather than
-    # having the writer refuse TRW's own output (``_section_budget``).
-    trw_section = render_profile_section(trw_dir, project_root, config, target, max_lines=max_lines, scope=scope)
+    sub_scope = scope == "sub" and bool(target_dir)
+    target = (Path(target_dir).resolve() if sub_scope and target_dir else project_root) / "AGENTS.md"
 
     decision = _determine_write_target_decision(client, config, project_root, scope)
-    write_claude = decision.write_claude
     write_agents = decision.write_agents
 
     total_lines = 0
@@ -237,11 +210,16 @@ def dispatch_for_profile(
     pointer_skips: list[InstructionPointerSkipDict] | None = None
     refusals: list[InstructionWriteRefusalDict] = []
     diffs: list[InstructionDiffDict] = []
-    if write_claude:
-        # PRD-CORE-203 FR04/FR06: a single-source pointer is healed and left
-        # un-clobbered; anything else gets the block inline.
+    if sub_scope:
+        # A module-level AGENTS.md (Claude Code loads a subdirectory's AGENTS.md
+        # on demand). Rendered against its target so PRD-FIX-123-FR07's gate
+        # measures the merged total and an overflowing section collapses to the
+        # pointer form (``_section_budget``). A single-source pointer is healed
+        # and left un-clobbered (PRD-CORE-203 FR04/FR06).
         from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, apply_carrier
 
+        max_lines = config.sub_claude_md_max_lines
+        trw_section = render_profile_section(trw_dir, project_root, config, target, max_lines=max_lines, scope=scope)
         outcome = apply_carrier(target, trw_section, max_lines, force=force, dry_run=dry_run)
         total_lines = outcome.total_lines
         if outcome.refusal is not None:
@@ -265,20 +243,19 @@ def dispatch_for_profile(
         decision.instruction_targets
     )
 
-    agents_md_synced, agents_md_path, agents_verdict = _sync_agents_md_if_needed(
+    agents_md_synced, agents_md_path, agents_verdicts = _sync_agents_md_if_needed(
         write_agents,
         config,
         project_root,
-        trw_dir,
         client=client,
-        recall_fn=recall_learnings,
         force=force,
         dry_run=dry_run,
     )
-    if agents_verdict is not None and agents_verdict.refusal is not None:
-        refusals.append(agents_verdict.refusal)
-    if agents_verdict is not None and agents_verdict.diff is not None:
-        diffs.append(agents_verdict.diff)
+    for agents_verdict in agents_verdicts:
+        if agents_verdict.refusal is not None:
+            refusals.append(agents_verdict.refusal)
+        if agents_verdict.diff is not None:
+            diffs.append(agents_verdict.diff)
 
     # Store hash after successful render (root scope only). A dry run and a
     # refused write must NOT record the hash: doing so would make the next real
@@ -287,7 +264,7 @@ def dispatch_for_profile(
         rendered_hash = _compute_sync_hash()
         _write_stored_hash(trw_dir, rendered_hash)
 
-    # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
+    # PRD-CORE-084 FR08: Generate REVIEW.md after the instruction sync completes.
     review_md_result = _review_md("review_md_generation_failed")
 
     logger.info(
@@ -295,7 +272,6 @@ def dispatch_for_profile(
         scope=scope,
         path=str(target),
         client=client,
-        write_claude=write_claude,
         write_agents=write_agents,
     )
     logger.debug(
@@ -320,4 +296,5 @@ def dispatch_for_profile(
         capability_parity_drift=_capability_parity_drift(write_agents, client),
         diffs=diffs if dry_run else None,
         refusals=refusals or None,
+        warnings=hook_env_warnings or None,
     )

@@ -66,6 +66,7 @@ Initial authoring preserves lifecycle/status and version unless separately autho
    - Ground claims, paths, interfaces, dependencies, and risks in repository or explicit product evidence.
    - Write testable FRs/NFRs with confidence and requirement-appropriate patterns; use EARS only when it improves clarity.
    - Map requirements to implementation seams and project-native verification, including a vertical proof slice when feasible.
+   - For a PRD with 2 or more slices, fill `time.slices` estimates as hour ranges (min/max), never single numbers.
    - Preserve preflight decisions and unresolved assumptions instead of smoothing them into prose.
 
 6. **Validation loop** (max 3 iterations):

@@ -138,11 +138,24 @@ def _scope_from_receipts(run_path: Path) -> list[str]:
     return entries
 
 
+def declared_scope_union(run_path: Path) -> list[str]:
+    """The run's declared PRD scope: ``run.yaml`` ``prd_scope`` united with every review receipt's ``prd_ids``.
+
+    Sorted and de-duplicated, empty entries dropped; entries are returned as
+    declared (ids, paths or globs), unresolved. The ONE scope rule shared by this
+    gate's :func:`_resolve_scope` (PRD-CORE-255-FR03) and
+    ``trw_mcp.tools._deliver_requirement_drift.compute_requirement_drift``
+    (PRD-CORE-321-FR05), so the two gates cannot disagree about which PRDs a run
+    governs.
+    """
+    return sorted({entry for entry in (*_scope_from_run_yaml(run_path), *_scope_from_receipts(run_path)) if entry})
+
+
 def _resolve_scope(run_path: Path | None) -> ScopeResolution:
     """FR03 resolution plus the unreadable ids behind an :data:`UNKNOWN_SCOPE`."""
     if run_path is None:
         return ScopeResolution(NOT_DECLARED)
-    union = sorted({entry for entry in (*_scope_from_run_yaml(run_path), *_scope_from_receipts(run_path)) if entry})
+    union = declared_scope_union(run_path)
     if not union:
         return ScopeResolution(NOT_DECLARED)
     from trw_mcp.tools._plan_acceptance_gate import _resolve_prd_scope
@@ -159,28 +172,6 @@ def _resolve_scope(run_path: Path | None) -> ScopeResolution:
     if unreadable:
         return ScopeResolution(UNKNOWN_SCOPE, unreadable)
     return ScopeResolution(flagged)
-
-
-def resolve_safety_critical_scope(
-    run_path: Path | None, project_root: Path
-) -> bool | Literal["unknown", "not_declared"]:
-    """PRD-CORE-255-FR03 — is this run's PRD scope safety-critical?
-
-    The input scope is the UNION of the run's declared ``run.yaml`` ``prd_scope``
-    and the ``prd_ids`` recorded on its typed :class:`ReviewReceipt`s — the two
-    scope sources that actually exist on HEAD (``trw_deliver`` takes no
-    ``prd_ids`` argument of its own).
-
-    Returns ``True`` when any named PRD declares ``safety_critical: true``,
-    ``False`` when every named PRD resolves and declares otherwise,
-    :data:`NOT_DECLARED` when the union is empty (inert — see the module
-    docstring), and :data:`UNKNOWN_SCOPE` when a NAMED PRD cannot be resolved,
-    read, or parsed. Only :data:`UNKNOWN_SCOPE` fails closed.
-
-    ``project_root`` is part of the FR03 signature; scope entries resolve through
-    ``_resolve_prd_scope``, which reads the project root itself.
-    """
-    return _resolve_scope(run_path).value
 
 
 def _read_safety_critical_flags(prd_files: list[Path]) -> tuple[bool, tuple[str, ...]]:
@@ -364,7 +355,7 @@ __all__ = [
     "REASON_ADVERSARIAL_AUDIT_MISSING",
     "UNKNOWN_SCOPE",
     "SafetyCriticalOutcome",
+    "declared_scope_union",
     "find_satisfying_adversarial_receipt",
-    "resolve_safety_critical_scope",
     "safety_critical_gate_result",
 ]

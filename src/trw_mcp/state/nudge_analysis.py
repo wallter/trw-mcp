@@ -365,31 +365,7 @@ def persist_nudge_analysis(trw_dir: Path, result: NudgeAnalysis) -> Path | None:
         return None
 
 
-def write_nudge_analysis(
-    trw_dir: Path,
-    *,
-    session_id: str | None = None,
-    resistance_threshold: int = DEFAULT_RESISTANCE_THRESHOLD,
-) -> Path | None:
-    """Compute and atomically write ``.trw/context/nudge-analysis.json``.
-
-    Convenience for on-demand callers; returns the artifact path or ``None``.
-    """
-    result = compute_nudge_analysis(
-        trw_dir,
-        session_id=session_id,
-        resistance_threshold=resistance_threshold,
-    )
-    return persist_nudge_analysis(trw_dir, result)
-
-
-# Canonical ceremony step order — re-exported so the surface-emission timing
-# helper (work target #4) shares one definition with the analysis layer.
-CEREMONY_STEP_ORDER: tuple[str, ...] = _STEPS
-
-
 __all__ = [
-    "CEREMONY_STEP_ORDER",
     "DEFAULT_RESISTANCE_THRESHOLD",
     "NudgeAnalysis",
     "TimingSummary",
@@ -398,5 +374,4 @@ __all__ = [
     "compute_nudge_analysis",
     "compute_nudge_timing",
     "persist_nudge_analysis",
-    "write_nudge_analysis",
 ]

@@ -80,6 +80,15 @@ REFUSALS: dict[str, _R] = {
     "invalid_message_enum": _R("correct the arguments and retry"),
     "invalid_request_key": _R("correct the arguments and retry"),
     "invalid_utf8": _R("send valid UTF-8 text"),
+    # PRD-CORE-322 handoffs: the recipient accepts and reports, the sender completes.
+    "not_a_handoff": _R("only a request is a handoff; accept, report and complete need a request's message_id"),
+    "handoff_not_authorized": _R(
+        "the recipient accepts and reports; only the original sender completes, and never its own handoff"
+    ),
+    "handoff_not_accepted": _R("accept the request first: trw_inbox(action='accept')"),
+    "handoff_not_reported": _R("wait for the owner's report: trw_inbox(action='status') shows it"),
+    "handoff_already_reported": _R("the report is recorded; send a new request for rework"),
+    "invalid_next_read": _R("next_read is 1-512 UTF-8 bytes of printable text: a branch@SHA, PRD, run path or file"),
     "wait_disabled": _R("fetch without wait_seconds", persisted_as="invalid_inbox_arguments"),
     "wait_already_active": _R("one wait per process; fetch without wait_seconds"),
     "wait_owner_changed": _R("retry the wait under the current identity", persisted_as="invalid_inbox_arguments"),
@@ -91,6 +100,10 @@ REFUSALS: dict[str, _R] = {
     "storage_unavailable": _R("the mailbox is unavailable; ask the operator"),
     "storage_corrupt": _R(
         "the mailbox failed verification; ask the operator (trw-mcp formation comms-upgrade/rollback)"
+    ),
+    "storage_verify_timeout": _R(
+        "the comms store could not be verified within 5 s (host load can cause this); retry later,"
+        " or ask the operator if it persists"
     ),
     "schema_version_mismatch": _R("restart this client on the current trw-mcp"),
     "mailbox_upgrade_required": _R("ask the operator to run trw-mcp formation comms-upgrade"),

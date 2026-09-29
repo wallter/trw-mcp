@@ -199,31 +199,31 @@ class TestTransitionGateHasNoSecondWeakerDefault:
         field's real default of ``block_coding``, so any config object that did
         not expose the attribute silently downgraded this gate to never-block.
         """
-        from trw_mcp.tools._prd_transition_gate import _gate_mode_blocks_task
+        from trw_mcp.tools._deliver_gate_mode import gate_mode_blocks_task
 
         config = TRWConfig()
 
         assert config.deliver_gate_mode == "block_coding"
-        assert _gate_mode_blocks_task(config, "coding") is True
+        assert gate_mode_blocks_task(config, "coding") is True
 
     @pytest.mark.parametrize("task_type", ["docs", "research", "planning", "unknown"])
     def test_non_artifact_task_types_never_block(self, task_type: str) -> None:
-        from trw_mcp.tools._prd_transition_gate import _gate_mode_blocks_task
+        from trw_mcp.tools._deliver_gate_mode import gate_mode_blocks_task
 
-        assert _gate_mode_blocks_task(TRWConfig(), task_type) is False
+        assert gate_mode_blocks_task(TRWConfig(), task_type) is False
 
     def test_explicit_advisory_still_disables_the_gate(self) -> None:
         """Non-vacuity control: the config is genuinely read, not hardcoded True."""
-        from trw_mcp.tools._prd_transition_gate import _gate_mode_blocks_task
+        from trw_mcp.tools._deliver_gate_mode import gate_mode_blocks_task
 
-        assert _gate_mode_blocks_task(TRWConfig(deliver_gate_mode="advisory"), "coding") is False
+        assert gate_mode_blocks_task(TRWConfig(deliver_gate_mode="advisory"), "coding") is False
 
     def test_per_task_type_override_still_wins(self) -> None:
-        from trw_mcp.tools._prd_transition_gate import _gate_mode_blocks_task
+        from trw_mcp.tools._deliver_gate_mode import gate_mode_blocks_task
 
         config = TRWConfig(deliver_gate_task_type_overrides={"coding": "advisory"})
 
-        assert _gate_mode_blocks_task(config, "coding") is False
+        assert gate_mode_blocks_task(config, "coding") is False
 
     def test_prd_transition_gate_default_is_block_not_warn(self) -> None:
         """The resolved gate_mode must match the declared field default.

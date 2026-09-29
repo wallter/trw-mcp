@@ -97,6 +97,7 @@ def store_learning(
     nudge_line: str = "",
     expires: str = "",
     confidence: str = "unverified",
+    evidence_level: str = "unknown",  # PRD-CORE-312-FR01
     task_type: str = "",
     domain: list[str] | None = None,
     phase_origin: str = "",
@@ -150,6 +151,7 @@ def store_learning(
         assertions=assertions,
         type=type,
         confidence=confidence,
+        evidence_level=evidence_level,
         domain=domain,
         phase_affinity=phase_affinity,
         protection_tier=protection_tier,
@@ -184,6 +186,7 @@ def store_learning(
         "type": args.type,
         "nudge_line": nudge_line,
         "confidence": args.confidence,
+        "evidence_level": args.evidence_level,
         "task_type": task_type,
         "domain": domain or [],
         "phase_origin": phase_origin,

@@ -242,3 +242,47 @@ def test_invalid_utf8_journal_is_unverifiable_without_partial_positive_scope(tmp
     outcome = build_content_binding(scope, tmp_path)
     assert outcome.state is ReceiptState.SCOPE_UNVERIFIABLE
     assert outcome.binding is None
+
+
+def test_invalid_utf8_journal_logs_unreadable_warning(tmp_path: Path) -> None:
+    """PRD-FIX-156 residual (B71-100 burn-down): an unreadable journal (bad
+    UTF-8) used to degrade to ``([], False)`` with no trace. It now logs one
+    structured warning naming the run path and the error."""
+    import structlog
+
+    (tmp_path / "valid").write_bytes(b"valid source")
+    run = _journal(tmp_path, ["valid"])
+    journal = run / "meta" / "events.jsonl"
+    journal.write_bytes(journal.read_bytes() + b"\xff\n")
+
+    with structlog.testing.capture_logs() as captured:
+        mint_run_owned_scope(run, tmp_path, scope_id="scope")
+
+    events = [e for e in captured if e.get("event") == "evidence_journal_unreadable"]
+    assert len(events) == 1
+    assert events[0]["run_path"] == str(run)
+
+
+def test_malformed_path_logs_normalize_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-FIX-156 residual (B71-100 burn-down): a path whose normalization
+    raises (e.g. ``Path.resolve`` hitting a broken filesystem state) used to
+    degrade to ``(None, False)`` silently. It now logs one structured debug
+    event naming the raw value and the error."""
+    from pathlib import Path as PathType
+
+    import structlog
+
+    from trw_mcp.state import _evidence_binding
+
+    def _raise_resolve(self: PathType) -> PathType:
+        raise OSError("simulated resolve failure")
+
+    monkeypatch.setattr(_evidence_binding.Path, "resolve", _raise_resolve)
+
+    with structlog.testing.capture_logs() as captured:
+        result = _evidence_binding._normalize_scope_path(tmp_path, "some/file.py")
+
+    assert result == (None, False)
+    events = [e for e in captured if e.get("event") == "scope_path_normalize_failed"]
+    assert len(events) == 1
+    assert events[0]["raw"] == "some/file.py"

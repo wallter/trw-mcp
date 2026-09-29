@@ -8,7 +8,6 @@
   },
   "generated_by": "scripts/check_config_field_consumers.py --write-baseline",
   "unread_fields": [
-    "framework_md_enabled",
-    "recall_verification_budget_ms"
+    "framework_md_enabled"
   ]
 }

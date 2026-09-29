@@ -32,21 +32,9 @@ from trw_mcp.channels.opencode._explorer_agent import (
 from trw_mcp.channels.opencode._shared_lock import (
     agents_md_lock as agents_md_lock,
 )
-from trw_mcp.channels.opencode._tool_return_enrichment import (
-    get_default_tier_for_opencode as get_default_tier_for_opencode,
-)
-from trw_mcp.channels.opencode._tool_return_enrichment import (
-    is_opencode_client as is_opencode_client,
-)
-from trw_mcp.channels.opencode._tool_return_enrichment import (
-    resolve_transport as resolve_transport,
-)
 
 __all__ = [
     "agents_md_lock",
-    "get_default_tier_for_opencode",
     "install_custom_commands",
     "install_explorer_agent",
-    "is_opencode_client",
-    "resolve_transport",
 ]

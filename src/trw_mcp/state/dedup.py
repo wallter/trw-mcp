@@ -36,7 +36,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["DedupResult", "dedup_verdict", "merge_into_survivor"]
+__all__ = ["DedupResult", "dedup_verdict", "merge_base", "merge_into_survivor"]
 
 _CONFIDENCES = {c.value for c in Confidence}
 
@@ -78,6 +78,27 @@ def _entry_view(data: dict[str, object], *, status: MemoryStatus = MemoryStatus.
             ],
         },
     )
+
+
+#: Merge-owned sidecar keys whose store column has the same name; ``impact`` is ``importance``.
+_ROW_OWNED = ("detail", "tags", "evidence", "recurrence", "merged_from", "assertions", "protection_tier", "type")
+
+
+def merge_base(sidecar: dict[str, object], row: MemoryEntry) -> dict[str, object]:
+    """*sidecar* with every merge-owned field taken from the store's *row* (PRD-CORE-308).
+
+    The row is the truth a merge folds into; the sidecar contributes only the keys the
+    store does not model, and its raw confidence while the row still holds what it maps to.
+    """
+    raw = str(sidecar.get("confidence") or "unverified")
+    stored = row.model_dump(mode="json")  # enum defaults as their values
+    same = (raw if raw in _CONFIDENCES else "unverified") == stored["confidence"]
+    return {
+        **sidecar,
+        **{key: stored[key] for key in _ROW_OWNED},
+        "impact": stored["importance"],
+        "confidence": raw if same else stored["confidence"],
+    }
 
 
 def _check_exact_content_duplicate(summary: str, detail: str, entries_dir: Path) -> str | None:
@@ -135,15 +156,13 @@ def merge_into_survivor(
     *,
     max_merge_tags: int = 20,
     existing_data: dict[str, object] | None = None,
-    merged_out: dict[str, object] | None = None,
     write: bool = True,
 ) -> Path:
     """Fold *new_entry_data* into the survivor sidecar with trw-memory's lossless merge.
 
-    PRD-FIX-130-FR07: ``existing_data`` is the body the caller already parsed and
-    ``merged_out`` receives the merged body, so the file is read at most once.
-    ``write=False`` only computes it: a caller that must commit the primary store
-    first writes ``merged_out`` itself afterwards.
+    PRD-FIX-130-FR07: ``existing_data`` is the body the caller already parsed, so the
+    file is read at most once; the merge updates it in place. ``write=False`` only
+    computes it: a caller that must commit the primary store first writes it afterwards.
     Only merge-owned keys are rewritten; every other sidecar key is preserved.
     Tags stay capped at *max_merge_tags*, existing tags first (FIX-071-FR04).
     """
@@ -175,7 +194,5 @@ def merge_into_survivor(
     )
     if write:
         writer.write_yaml(existing_path, existing)
-    if merged_out is not None:
-        merged_out.update(existing)
 
     return existing_path

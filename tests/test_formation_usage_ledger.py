@@ -244,7 +244,6 @@ def test_trw_dispatch_records_the_childs_usage_in_the_active_run(
         dispatch_default_models: dict[str, str] = {}
         dispatch_default_timeout_s = 60
         dispatch_default_read_only = True
-        dispatch_role_client: dict[str, str] = {}
 
     class _Root:
         dispatch = _Cfg()

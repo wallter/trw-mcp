@@ -72,6 +72,11 @@ def running_daemon(user_dir: Path, *, keyword_only: bool = True, hash_embedder: 
         # would carry state across tests; in-process, each test had a fresh store.
         # trw-memory tests the limiter itself.
         "MEMORY_MAX_MEMORY_WRITES_PER_MINUTE": "1000000",
+        # The session-wide 60 s idle cap (conftest, DAEMON-ORPHAN-SPAWN) is for daemons a test
+        # auto-starts. This one must outlive a worker's longest stretch without memory calls:
+        # on a loaded 4-core runner that exceeded 60 s, the daemon exited mid-session and every
+        # later daemon_checkout test errored. The session-end owner reap still stops it.
+        "MEMORY_DAEMON_IDLE_SHUTDOWN_SECONDS": "1800",
     }
     # A file, not a pipe: nothing reads the daemon's output while a test runs,
     # and request logging from a long test would fill a pipe and block the daemon.

@@ -98,6 +98,21 @@ def test_a_correction_changes_only_the_named_fields(store: MemoryStore) -> None:
     assert (entry.importance, entry.detail, entry.content) == (0.9, "kept", "Before")
 
 
+def test_a_correction_over_a_stale_revision_is_a_conflict_that_writes_nothing(store: MemoryStore) -> None:
+    """PRD-CORE-308: ``if_revision`` crosses the daemon's wire and the revision a client reads matches the server's."""
+    from trw_memory.lifecycle.correction import revision_of
+
+    store.put("Revisioned", "default", {"entry_id": "L-rev", "detail": "base"})
+    stale = revision_of(store.get("L-rev"))
+    assert store.correct("L-rev", LearningPatch(detail="first", if_revision=stale))["status"] == "updated"
+
+    result = store.correct("L-rev", LearningPatch(detail="lost update", if_revision=stale))
+
+    assert result["status"] == "conflict"
+    entry = store.get("L-rev")
+    assert entry is not None and entry.detail == "first"
+
+
 def test_a_correction_carries_the_fields_maintenance_writes(store: MemoryStore) -> None:
     """Anchor re-verification, dedup merges and promotion marks write through ``correct`` too."""
     store.put("Maintained", "default", {"entry_id": "L-c4", "metadata": {"kept": "yes"}})
@@ -171,8 +186,9 @@ def test_health_counts_the_namespaces_entries_and_derives_a_shared_tag_relation(
     store.put("Healthy two", "default", {"entry_id": "L-h2", "tags": ["health-contract", "shared"]})
     after = store.health("default")
 
-    assert set(after) == {"entries", "synced", "edges", "has_relations", "embedded", "max_recall_count"}
+    assert set(after) == {"entries", "synced", "edges", "has_relations", "embedded", "max_recall_count", "types"}
     assert after["entries"] == before["entries"] + 2
+    assert after["types"]["pattern"] == before["types"].get("pattern", 0) + 2  # PRD-CORE-334 FR04
     assert after["synced"] == before["synced"]
     assert after["has_relations"] is True
 
@@ -239,7 +255,7 @@ def test_an_applied_row_is_found_by_remote_or_local_id_and_is_not_dirty(store: M
     _drain(store)
     pulled = MemoryEntry(id="team-sync-R-1", content="Pulled tip", namespace=_SYNC_NS, remote_id="R-1")
 
-    assert store.apply_synced(_SYNC_NS, pulled) == ("stored", "")
+    assert store.apply_synced(_SYNC_NS, pulled, if_revision=None) == ("stored", "")
 
     by_remote = store.find_synced(_SYNC_NS, "R-1", [])
     by_local = store.find_synced(_SYNC_NS, "R-other", ["team-sync-R-1"])
@@ -254,14 +270,13 @@ def test_a_merge_applied_unsynced_stays_dirty_for_the_next_push(store: MemorySto
     _drain(store)
     merged = MemoryEntry(id="team-sync-R-3", content="Merged tip", namespace=_SYNC_NS, remote_id="R-3")
 
-    assert store.apply_synced(_SYNC_NS, merged, synced=False) == ("stored", "")
+    assert store.apply_synced(_SYNC_NS, merged, if_revision=None, synced=False) == ("stored", "")
 
     assert [(e.id, e.content) for e in store.page_dirty(_SYNC_NS, 10)] == [("team-sync-R-3", "Merged tip")]
 
 
+@pytest.mark.parametrize("store", ["daemon"], indirect=True)  # the fake has no write gate; the daemon runs the real one
 def test_a_poisoned_pull_is_blocked_and_never_lands(store: MemoryStore) -> None:
-    if isinstance(store, FakeMemoryStore):
-        pytest.skip("the fake has no write gate; the daemon runs the real one")
     poisoned = MemoryEntry(
         id="team-sync-R-2",
         content="Pulled tip",
@@ -270,7 +285,7 @@ def test_a_poisoned_pull_is_blocked_and_never_lands(store: MemoryStore) -> None:
         remote_id="R-2",
     )
 
-    status, reason = store.apply_synced(_SYNC_NS, poisoned)
+    status, reason = store.apply_synced(_SYNC_NS, poisoned, if_revision=None)
 
     assert (status, bool(reason)) == ("blocked", True)
     assert store.find_synced(_SYNC_NS, "R-2", []) is None
@@ -403,9 +418,8 @@ def test_shared_results_pass_the_stores_gate(store: MemoryStore) -> None:
     assert ([row["id"] for row in outcome.admitted], outcome.refused) == (["R-ok"], 0)
 
 
+@pytest.mark.parametrize("store", ["daemon"], indirect=True)  # the fake has no write gate; the daemon runs the real one
 def test_a_poisoned_shared_result_is_refused_and_counted(store: MemoryStore) -> None:
-    if isinstance(store, FakeMemoryStore):
-        pytest.skip("the fake has no write gate; the daemon runs the real one")
     poisoned = {"id": "R-bad", "summary": "Pulled tip", "detail": "the harness calls eval(user_input) before dispatch"}
 
     outcome = store.admit_shared([poisoned])
@@ -605,3 +619,19 @@ def test_a_daemon_verify_calls_until_the_sweep_is_done_and_refuses_one_that_stop
 
     assert len(calls) == 3
     assert (summary.entries_processed, summary.entry_failures) == (5, 1)
+
+
+def test_a_sync_apply_over_a_stale_revision_is_a_conflict_that_writes_nothing(store: MemoryStore) -> None:
+    """PRD-CORE-308 (B71-90): ``if_revision`` crosses the daemon's wire; ``None`` means the row must still be absent."""
+    from trw_memory.lifecycle.correction import revision_of
+
+    _drain(store)
+    pulled = MemoryEntry(id="team-sync-R-9", content="Pulled", namespace=_SYNC_NS, remote_id="R-9")
+    assert store.apply_synced(_SYNC_NS, pulled, if_revision=None) == ("stored", "")
+    stale = revision_of(store.find_synced(_SYNC_NS, "R-9", []))
+    store.correct("team-sync-R-9", LearningPatch(detail="local edit"))
+
+    assert store.apply_synced(_SYNC_NS, pulled, if_revision=stale)[0] == "conflict"
+    assert store.apply_synced(_SYNC_NS, pulled, if_revision=None)[0] == "conflict"
+    row = store.find_synced(_SYNC_NS, "R-9", [])
+    assert row is not None and row.detail == "local edit"

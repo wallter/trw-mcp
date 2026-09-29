@@ -78,9 +78,6 @@ _REPEATS = 3
 _WAL_TARGET_BYTES = 64 * 1024 * 1024
 _PENDING_RECORDS = 27
 _PENDING_CONTROL_RECORDS = 1
-# Measured at HEAD before PRD-FIX-130: 33,552 ms for 27 records against a 248 MB
-# store. Named in the expected-failure reason so the gap stays visible.
-_MEASURED_PENDING_DRAIN_MS = 33_552
 # CORE262-07: no fixed slack constant. The host-variance allowance is DERIVED
 # at runtime from two repeats of the K=1 control arm (see
 # ``measure_pending_control_repeats``) -- the same "measured zero-pending
@@ -106,7 +103,7 @@ _SKIP_REASON = stdio_import_skip_reason()
 
 pytestmark = [
     pytest.mark.timeout(600),
-    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),  # skip-category: optional-dependency
     # PRD-QUAL-141: the module-wide timing skip that used to live here is gone.
     # The tests in this module that assert a fixed wall-clock ceiling measured
     # against THIS box (calibrated on a known local Mac; see
@@ -295,7 +292,7 @@ def test_teardown_survives_raising_waits_with_multiple_children(tmp_path: Path) 
 # ── FR03 ─────────────────────────────────────────────────────────────────────
 
 
-def _measure_pending_drain(tmp_path: Path) -> tuple[float | None, Any, Any, float]:
+def _measure_pending_drain(tmp_path: Path) -> tuple[float, Any, Any, float]:
     """Shared setup+operation for the pending-drain tests (real server spawns).
 
     The claim under test is that the first ``trw_session_start`` is bounded
@@ -343,19 +340,10 @@ def _measure_pending_drain(tmp_path: Path) -> tuple[float | None, Any, Any, floa
 def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
     """FR03: every seeded pending record is consumed where the PRD-FIX-130 budget exists.
 
-    No branch reports success without a measurement behind it: present asserts
-    full consumption, absent reports expected-failure naming PRD-FIX-130 and
-    the measured cost, and an indeterminate probe raises out of
-    ``fix_130_budget_ms`` and FAILS the case.
+    Every seeded record must be consumed; a missing or unreadable budget raises
+    out of ``fix_130_budget_ms`` and FAILS the case.
     """
     budget_ms, _control, measured, _slack_ms = _measure_pending_drain(tmp_path)
-
-    if budget_ms is None:
-        pytest.xfail(
-            "PRD-FIX-130 [planned] is absent from this build: learn_journal_drain_budget_ms is not a "
-            "TRWConfig field, so the first trw_session_start is unbounded in K. Measured at HEAD: "
-            f"{_MEASURED_PENDING_DRAIN_MS} ms for K={_PENDING_RECORDS} against a 248 MB store."
-        )
 
     consumed_records = measured.seeded_records - measured.remaining_pending
     assert consumed_records == measured.seeded_records, (
@@ -366,17 +354,10 @@ def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
 
 @requires_local_timing
 def test_pending_drain_case_tracks_fix_130_budget(tmp_path: Path) -> None:
-    """FR03: assert the PRD-FIX-130 bound where the budget exists, report xfail where it does not."""
+    """FR03: the first session_start stays within the PRD-FIX-130 bound."""
     budget_ms, control, measured, slack_ms = _measure_pending_drain(tmp_path)
 
     assert_budget("pending_drain_initialize", measured.initialize_ms, _HANDSHAKE_ABS_CEILING_MS, "ms")
-
-    if budget_ms is None:
-        pytest.xfail(
-            "PRD-FIX-130 [planned] is absent from this build: learn_journal_drain_budget_ms is not a "
-            "TRWConfig field, so the first trw_session_start is unbounded in K. Measured at HEAD: "
-            f"{_MEASURED_PENDING_DRAIN_MS} ms for K={_PENDING_RECORDS} against a 248 MB store."
-        )
 
     bound_ms = control.first_session_start_ms + budget_ms + slack_ms
     assert_budget("pending_drain_first_session_start", measured.first_session_start_ms, bound_ms, "ms")
@@ -387,10 +368,10 @@ def test_pending_drain_case_tracks_fix_130_budget(tmp_path: Path) -> None:
 
 def test_module_budget_and_marker_placement() -> None:
     """NFR01: the module stays out of the fast lane."""
-    from tests.conftest import _SLOW_FILES, _UNIT_FILES
+    from tests.conftest import _SLOW_FILES
 
     assert "test_stdio_n_server_handshake.py" in _SLOW_FILES
-    assert "test_stdio_n_server_handshake.py" not in _UNIT_FILES
+    assert not any(mark.name == "unit" for mark in pytestmark)  # unit is an explicit marker now (PRD-INFRA-197 FR04)
 
 
 def test_no_process_or_lock_leak_and_no_live_store_touch(tmp_path: Path) -> None:
@@ -408,12 +389,15 @@ def test_no_process_or_lock_leak_and_no_live_store_touch(tmp_path: Path) -> None
     assert Path(env["TRW_USER_DIR"]) == user_dir
     assert env["TRW_PROJECT_ROOT"].startswith(str(tmp_path))
     assert env["TRW_USER_DIR"].startswith(str(tmp_path))
-    # No inherited TRW_* root can slip a second store in behind these two.
+    # No inherited TRW_* root can slip a second store in behind these two. The daemon-owner tag is the one
+    # pass-through (trw_memory.testing.daemon_reaper): it places no store, it only lets this session reap the
+    # daemon a child auto-starts.
     assert {key for key in env if key.startswith("TRW_")} == {
         "TRW_PROJECT_ROOT",
         "TRW_USER_DIR",
         "TRW_SESSION_ID",
         "TRW_HOT_PATH_STRICT",
+        "TRW_PYTEST_DAEMON_OWNER",
     }
 
 

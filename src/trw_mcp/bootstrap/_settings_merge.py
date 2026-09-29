@@ -12,6 +12,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 from ._file_ops import read_json_object
 
 logger = structlog.get_logger(__name__)
@@ -145,8 +147,9 @@ def _merge_settings_json(
         return
 
     try:
-        dest.write_text(merged_text, encoding="utf-8")
-    except OSError:
+        # dest is <project>/.claude/settings.json; the project is the root the write walks from.
+        write_checkout_file(dest.parents[1], dest, merged_text)
+    except (OSError, UnsafeWriteError):
         # Structural reason only — never echo the raw exception text.
         result["errors"].append(f"Failed to write merged settings.json: {dest}")
 
@@ -172,5 +175,5 @@ def _set_hook_registration(settings: Path, event: str, entry: dict[str, object],
     else:
         hooks.pop(event, None)
     data["hooks"] = hooks
-    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    write_checkout_file(settings.parents[1], settings, json.dumps(data, indent=2) + "\n")
     return True

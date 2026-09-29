@@ -94,12 +94,12 @@ Do not split solely by line count, fixed duration, or file count. Split when
 ownership, dependency, risk, or verification boundaries differ. Do not create
 parallel tasks that write the same path.
 
-## Embedded plan (resolved readiness mode)
+## Embedded plan
 
-Use the resolved selected mode from `trw-prd-ready`: new feature descriptions
-default to embedded; existing inputs without an explicit option retain their
-existing artifact authority and legacy route. Explicit project/operator separate-artifact
-requirements take precedence. Do not infer mode or authoring permission from a
+Plans are always embedded: the plan lives in the PRD's `## Execution plan`
+section, using the resolved selected mode from `trw-prd-ready`. This skill never
+writes a separate plan file; an explicit project/operator requirement for one is
+reported to the caller, not served. Do not infer mode or authoring permission from a
 missing flag, missing plan, draft status, or the generated path alone. The compatibility
 `--embedded-plan` option remains supported by the readiness owner. This is a skill instruction,
 not a new MCP argument, schema, automatic executor, or demonstrated efficacy claim.
@@ -176,7 +176,8 @@ writes. Implementation permissions, security and build/delivery gates are unchan
 
 ### Byte-preserving update procedure
 
-Before editing, inspect the PRD and configured separate-plan location. If a
+Before editing, inspect the PRD and any historical separate plan file for it
+(under `docs/requirements-aare-f/exec-plans/`). If a
 separate plan already exists, STOP and report the competing authority paths;
 do not overwrite, delete, or silently migrate it. Duplicate embedded sections,
 conflicting task ownership, or an ambiguous authority also block the update.
@@ -252,46 +253,19 @@ Ordinary progress recording follows its separate boundary above. Initial drafts
 may be repaired within original creation scope or its bounded finding-directed repair cycles. For existing scoped updates,
 invalid/partial output stops further reuse until corrected under separately reviewed scope, never a silent
 second write. Do not invent validator support for this section.
-In this mode no extra sprint or separate execution-plan artifact is required;
+No extra sprint or separate execution-plan artifact is required;
 optional test skeletons below remain caller-requested, not an extra gate.
-
-## Plan contract (legacy default)
-
-When the resolved mode is separate, write `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md` (or the
-project-configured sibling directory) with:
-
-```markdown
-# EXECUTION PLAN: {PRD-ID}
-
-## Metadata
-- PRD/version/readiness result
-- Pre-Implementation Checklist: complete
-- Repository and sizing/evidence basis
-
-## Requirement decomposition
-### {FR-ID}: {behavior}
-| Task | Owned paths/symbols | Consumer/interface | Proof | Dependencies |
-|---|---|---|---|---|
-
-## Dependency DAG and critical integration path
-## Safe waves or sequential order
-## File ownership and shared-interface contracts
-## Project-native verification checklist
-## Migration/rollback and known risks
-## Open decisions and blocked evidence
-```
 
 Generate test skeletons only when the project convention, acceptance criteria,
 and caller request make them useful. Skeletons must represent meaningful
 behavior and must not be committed as unconditional failures or broad skips.
-If generated, place them in the configured planning artifact area and include a
+If generated, place them where the project convention puts tests and include a
 manifest linking every skeleton to its requirement, owner, and verification.
 
 ## Completion
 
-In embedded mode report `{prd_path}#execution-plan` instead of a separate plan
-path, and report the selected route and substantive admission. Otherwise report the
-execution-plan path. In both modes report the PRD path, task/dependency count, parallelism
+Report `{prd_path}#execution-plan`, the selected route and substantive admission.
+Also report the PRD path, task/dependency count, parallelism
 assumptions, ownership conflicts, verification commands, generated optional
 artifacts, and blockers. Do not claim the plan is executable when paths,
 interfaces, or proof commands remain fabricated or UNKNOWN.

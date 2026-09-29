@@ -10,20 +10,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
 
 import structlog
 
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.learning import (
-    LearningConfidence,
     LearningEntry,
     LearningStatus,
-    LearningType,
 )
 from trw_mcp.state._helpers import is_active_entry
-from trw_mcp.state.analytics.core import is_noise_summary
 from trw_mcp.state.persistence import (
     FileStateReader,
     FileStateWriter,
@@ -37,45 +33,6 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Learning queries
 # ---------------------------------------------------------------------------
-
-
-def has_existing_success_learning(
-    trw_dir: Path,
-    summary_prefix: str,
-) -> bool:
-    """Check if a success learning with the given summary prefix already exists.
-
-    Deduplication check for positive learning generation — prevents
-    creating duplicate success pattern learnings across reflection cycles.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        summary_prefix: First 50 chars of the summary to match against.
-
-    Returns:
-        True if a matching learning already exists.
-    """
-    target = summary_prefix[:50].lower()
-
-    # Check SQLite first, then YAML (entries may exist in either during migration)
-    try:
-        from trw_mcp.state.memory_adapter import list_active_learnings
-
-        all_active = list_active_learnings(trw_dir, purpose="maintenance")
-        for entry in all_active:
-            if str(entry.get("summary", ""))[:50].lower() == target:
-                return True
-    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
-        logger.warning("sqlite_fallback_to_yaml", op="has_existing_success_learning", exc_info=True)
-
-    # Also check YAML (entries from save_learning_entry may only be in YAML)
-    entries_dir = _ac._entries_path(trw_dir)
-    if not entries_dir.exists():
-        return False
-
-    return any(
-        str(data.get("summary", ""))[:50].lower() == target for _path, data in _ac._iter_entry_files(entries_dir)
-    )
 
 
 def has_existing_mechanical_learning(
@@ -276,37 +233,6 @@ def resync_learning_index(trw_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def mark_promoted(trw_dir: Path, learning_id: str) -> None:
-    """Mark a learning entry as promoted to CLAUDE.md.
-
-    Updates both SQLite (primary) and YAML (fallback) if available.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        learning_id: ID of the learning entry to mark.
-    """
-    # Primary: update in SQLite
-    try:
-        from trw_memory.lifecycle.correction import LearningPatch
-
-        from trw_mcp.state._store_selection import selected_store
-
-        store, _namespace = selected_store(trw_dir)
-        store.correct(learning_id, LearningPatch(metadata_add={"promoted_to_claude_md": "true"}))
-    except Exception:  # justified: fail-open, promotion metadata update must not block caller
-        logger.warning("promotion_metadata_update_failed", learning_id=learning_id, exc_info=True)
-
-    # Fallback: also update YAML if it exists
-    entries_dir = _ac._entries_path(trw_dir)
-    if not entries_dir.exists():
-        return
-    found = _ac.find_entry_by_id(entries_dir, learning_id)
-    if found is not None:
-        entry_file, data = found
-        data["promoted_to_claude_md"] = True
-        FileStateWriter().write_yaml(entry_file, data)
-
-
 def apply_status_update(trw_dir: Path, learning_id: str, new_status: str) -> None:
     """Apply a status update to a learning entry on disk.
 
@@ -383,7 +309,7 @@ def extract_learnings_mechanical(
             evidence=[str(err.get("ts", ""))],
             impact=0.6,
             source_type="agent",
-            source_identity="trw_reflect",
+            source_identity="trw_deliver",
         )
         _save_and_record(trw_dir, entry, new_learnings)
 
@@ -392,107 +318,3 @@ def extract_learnings_mechanical(
     _ = repeated_ops  # acknowledged but intentionally unused
 
     return new_learnings
-
-
-def extract_learnings_from_llm(
-    llm_items: list[dict[str, object]],
-    trw_dir: Path,
-) -> list[dict[str, str]]:
-    """Convert LLM-extracted learning dicts into persisted LearningEntry objects.
-
-    Filters out telemetry noise (PRD-FIX-021): summaries starting with
-    "Repeated operation:" or "Success:" are analytics data, not learnings.
-
-    Args:
-        llm_items: List of dicts with summary, detail, tags, impact keys.
-        trw_dir: Path to .trw directory.
-
-    Returns:
-        List of dicts with 'id' and 'summary' keys for each new learning.
-    """
-    new_learnings: list[dict[str, str]] = []
-
-    for item in llm_items:
-        summary = str(item.get("summary", "LLM-extracted learning"))
-        if is_noise_summary(summary):
-            continue
-        raw_domain = item.get("domain")
-        raw_phase_affinity = item.get("phase_affinity")
-        raw_tags = item.get("tags")
-        tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else ["auto-discovered", "llm"]
-        normalized_audit = _ac.normalize_audit_learning_metadata(
-            tags,
-            type=str(item.get("type", "pattern")),
-            confidence=str(item.get("confidence", "unverified")),
-            domain=[str(v) for v in raw_domain] if isinstance(raw_domain, list) else None,
-            phase_affinity=([str(v) for v in raw_phase_affinity] if isinstance(raw_phase_affinity, list) else None),
-        )
-        entry = LearningEntry(
-            id=_ac.generate_learning_id(),
-            summary=summary,
-            detail=str(item.get("detail", "")),
-            tags=tags,
-            impact=_ac._safe_float(item, "impact", 0.6),
-            source_type="agent",
-            source_identity="trw_reflect:llm",
-            type=LearningType(str(normalized_audit["type"])),
-            confidence=LearningConfidence(str(normalized_audit["confidence"])),
-            domain=[str(value) for value in cast("list[object]", normalized_audit["domain"])],
-            phase_affinity=[str(value) for value in cast("list[object]", normalized_audit["phase_affinity"])],
-        )
-        _save_and_record(trw_dir, entry, new_learnings)
-
-    return new_learnings
-
-
-# ---------------------------------------------------------------------------
-# Source attribution backfill
-# ---------------------------------------------------------------------------
-
-
-def backfill_source_attribution(
-    trw_dir: Path,
-    *,
-    dry_run: bool = False,
-) -> dict[str, object]:
-    """Backfill missing source_type/source_identity on learning entries.
-
-    Iterates all .yaml entries in .trw/learnings/entries/, sets
-    source_type='agent' and source_identity='' on entries missing
-    valid source_type.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        dry_run: If True, count affected entries without modifying files.
-
-    Returns:
-        Dict with updated_count, skipped_count, and total_scanned.
-    """
-    entries_dir = _ac._entries_path(trw_dir)
-    if not entries_dir.is_dir():
-        return {"updated_count": 0, "skipped_count": 0, "total_scanned": 0}
-
-    valid_source_types = {"human", "agent", "tool", "consolidated"}
-    updated = 0
-    skipped = 0
-    total = 0
-
-    for entry_file, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
-        total += 1
-        existing = str(data.get("source_type", ""))
-        if existing in valid_source_types:
-            skipped += 1
-            continue
-        if not dry_run:
-            data["source_type"] = "agent"
-            data["source_identity"] = ""
-            data["updated"] = datetime.now(tz=timezone.utc).date().isoformat()
-            FileStateWriter().write_yaml(entry_file, data)
-        updated += 1
-
-    return {
-        "updated_count": updated,
-        "skipped_count": skipped,
-        "total_scanned": total,
-        "dry_run": dry_run,
-    }

@@ -34,6 +34,7 @@ def _begin_telemetry(tool: str) -> tuple[str | None, TraceBinding | None, object
         binding = _t.bind_trace_ids(trace_event_id)
     except Exception:  # justified: fail-open, NFR02 - tracing must never stop a tool call
         logger.debug("tool_call_trace_bind_failed", tool=tool, exc_info=True)
+        # trw-fail-silent-allow: trace-bind failure already logged above.
         return None, None, None
     try:
         return trace_event_id, binding, _t._learn_stage_timing.begin(tool)

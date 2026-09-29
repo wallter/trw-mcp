@@ -20,6 +20,8 @@ from trw_mcp.bootstrap import (
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
 
 def _sha(text: str) -> str:
     import hashlib

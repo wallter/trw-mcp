@@ -9,35 +9,20 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
 
 import pytest
 
-from tests._dispatch_host import unconfined_off_darwin
+from tests._dispatch_host import use_argv as _patch_argv
+from tests._dispatch_host import write_stub as _write_stub
 from trw_mcp.dispatch import dispatch
 from trw_mcp.dispatch._types import DispatchRequest
 
-
-def _write_stub(tmp_path: Path, name: str, body: str) -> Path:
-    """Write an executable shell stub and return its path."""
-    script = tmp_path / name
-    script.write_text("#!/usr/bin/env bash\n" + body)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
-    return script
-
-
-def _patch_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
-    """Make the runner execute *argv* regardless of the request's client, unconfined off macOS."""
-    unconfined_off_darwin(monkeypatch)
-
-    def _fixed(_req: DispatchRequest, *, confined: bool = False) -> list[str]:
-        # Keyword-only ``confined`` mirrors the real builder (PRD-CORE-277-FR02):
-        # the runner passes it on every call, so a stub without it would fail with
-        # a TypeError that looks like a runner bug.
-        return argv
-
-    monkeypatch.setattr("trw_mcp.dispatch._runner.build_command", _fixed)
+# _write_stub/_patch_argv aliases keep this file's call sites unchanged; the real
+# implementations (shared with the other dispatch test files) live in _dispatch_host.
+# ``_patch_argv``'s keyword-only ``confined`` mirrors the real builder (PRD-CORE-277-FR02):
+# the runner passes it on every call, so a stub without it would fail with a TypeError
+# that looks like a runner bug.
 
 
 def test_successful_run_extracts_text_and_marks_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

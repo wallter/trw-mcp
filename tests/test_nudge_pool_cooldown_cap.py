@@ -11,7 +11,6 @@ from trw_mcp.state._ceremony_progress_state import CeremonyState
 from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._nudge_rules import (
     _select_nudge_pool,
-    apply_pool_cooldown,
     resolve_pool_cooldown,
 )
 
@@ -49,17 +48,6 @@ class TestWallClockCap:
         state.pool_cooldowns["learnings"] = PoolCooldown(until_counter=100, set_at="not-a-real-timestamp")
         assert resolve_pool_cooldown(state, "learnings", wall_clock_max_hours=24) is False
         assert state.pool_cooldowns["learnings"].set_at == ""
-
-    def test_apply_pool_cooldown_stamps_set_at(self) -> None:
-        state = CeremonyState()
-        state.tool_call_counter = 0
-        state.pool_cooldowns["learnings"] = PoolCooldown(ignore_count=5)
-        activated = apply_pool_cooldown(state, "learnings", cooldown_after=3, cooldown_calls=10)
-        assert activated is True
-        assert state.pool_cooldowns["learnings"].set_at
-        # Stamp parses as ISO-8601 with tz
-        parsed = dt.datetime.fromisoformat(state.pool_cooldowns["learnings"].set_at)
-        assert parsed.tzinfo is not None
 
     def test_rotation_still_eligible_for_non_cooled_pools(self) -> None:
         """Normal rotation behavior preserved for pools not in cooldown."""

@@ -38,7 +38,7 @@ class TestToolDocstrings:
         # update split. The intent asserted here is unchanged: record only
         # behavior-changing learnings, routine observations hurt recall, and
         # the create mode's required field tier is stated.
-        assert "Routine observations" in doc
+        assert "Routine notes" in doc  # TRW-LEARN-DESC-OVER wording
         assert "dilute recall" in doc
         assert "required" in doc
         # Write-tier vocabulary (scope) still callable from the docstring alone.

@@ -17,7 +17,8 @@ server process and hook/tool shells. Naming that variable per profile — here,
 once — makes the pin key *mutually knowable*:
 
 * the server resolves it as ``resolve_pin_key`` layer 2b, and
-* the generated ``.trw/runtime/hook-env.sh`` exports it as ``TRW_SESSION_ID``
+* the generated ``.trw/runtime/hook-env.d/<key>.sh`` (one file per client)
+  exports it as ``TRW_SESSION_ID``
   so hooks resolve the identical string (``resolve_pin_key`` layer 2 already
   consumed that variable; it simply had no writer).
 
@@ -161,7 +162,7 @@ def resolve_client_session_id(
 
 
 def render_hook_env_session_block(client_id: str) -> str:
-    """Render the ``TRW_SESSION_ID`` stanza for ``.trw/runtime/hook-env.sh``.
+    """Render the ``TRW_SESSION_ID`` stanza for ``.trw/runtime/hook-env.d/<key>.sh``.
 
     The generated file is written once per install/sync but *evaluated* every
     time a hook sources it, so the stanza must resolve the identity at source

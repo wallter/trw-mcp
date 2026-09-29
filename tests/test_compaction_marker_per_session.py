@@ -141,7 +141,7 @@ def test_two_long_ids_get_distinct_bounded_markers(tmp_path: Path, monkeypatch: 
 def test_the_client_session_variable_keys_the_marker_when_trw_session_id_is_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The server resolves the identity hook-env.sh exports as TRW_SESSION_ID."""
+    """The server resolves the identity the per-client hook-env.d/<key>.sh exports as TRW_SESSION_ID."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cc-session")
     assert pre_compact_marker_path(tmp_path) == tmp_path / "context" / _hex("cc-session")
 

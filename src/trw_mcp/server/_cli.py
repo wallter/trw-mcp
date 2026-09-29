@@ -15,7 +15,8 @@ from pathlib import Path
 import structlog
 
 from trw_mcp._logging import StderrHandler, configure_logging
-from trw_mcp.models.config import TRWConfig, get_config, reload_config
+from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.models.config._loader import set_config_override
 from trw_mcp.server._cli_replacements import enforce_state_changing_guard
 from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 
@@ -185,6 +186,15 @@ def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
+    # PRD-CORE-305-FR05 sol round-2 P1: the bounded-lane guard runs BEFORE
+    # ANYTHING else touches disk -- including logging setup below, which
+    # creates .trw/logs/ and opens a file under --debug/-vv. A refused
+    # command must leave literally no trace, not just skip its own handler.
+    cmd = str(args.command or "")
+    handler = SUBCOMMAND_HANDLERS.get(cmd)
+    if handler is not None:
+        enforce_state_changing_guard(cmd, args)
+
     # Resolve shared CLI logging state before dispatching subcommands so they
     # don't inherit the noisy fallback stdlib logger.
     debug = bool(getattr(args, "debug", False))
@@ -206,6 +216,14 @@ def main() -> None:
         logs_dir = getattr(TRWConfig(), "logs_dir", "logs")
         subcommand_log_dir = Path.cwd() / trw_dir / logs_dir
 
+    # PRD-CORE-305-FR05 sol round-4 P2: --debug/-vv (or a config.yaml debug:
+    # true a bounded-lane checkout happens to carry) makes configure_logging
+    # create .trw/logs/ and open a file as a SIDE EFFECT of turning on verbose
+    # logging -- a write the guard above never gets a chance to refuse, since
+    # it is not the command the caller named. Force stderr-only here instead.
+    from trw_mcp.dispatch._child_marker import dispatched_child_active
+    from trw_mcp.state._surface_role import reviewer_role_active
+
     configure_logging(
         debug=debug,
         verbosity=verbosity,
@@ -213,16 +231,12 @@ def main() -> None:
         json_output=args.log_json or None,
         log_dir=subcommand_log_dir,
         package_name="trw-mcp",
+        force_stderr_only=reviewer_role_active() or dispatched_child_active(),
     )
 
-    # Dispatch subcommands
-    cmd = str(args.command or "")
-    handler = SUBCOMMAND_HANDLERS.get(cmd)
+    # Dispatch subcommands (cmd/handler already resolved above, ahead of the
+    # bounded-lane guard and before logging touched disk).
     if handler is not None:
-        # PRD-CORE-300-FR02 slice S0: the one shared refusal every
-        # state-changing CLI-replacement command inherits, applied before any
-        # handler runs.
-        enforce_state_changing_guard(cmd, args)
         handler(args)
         return
 
@@ -236,8 +250,20 @@ def main() -> None:
         _sys.exit(1)
 
     # Default: run MCP server (no subcommand or "serve")
-    config = _apply_cli_security_overrides(get_config(), args)
-    reload_config(config)
+    # PRD-CORE-305-FR04: install the CLI overrides as a transform on every
+    # file-backed build, so the config stays reloadable after a
+    # .trw/config.yaml edit and a reload keeps --allow-unsigned. main() owns
+    # the override: it never outlives this call.
+    set_config_override(lambda built: _apply_cli_security_overrides(built, args))
+    try:
+        _serve(args)
+    finally:
+        set_config_override(None)
+
+
+def _serve(args: argparse.Namespace) -> None:
+    """Run the MCP server with the CLI overrides already installed."""
+    config = get_config()
 
     _register_thread_dump_signal()
 
@@ -292,6 +318,12 @@ def main() -> None:
 
     # No WAL sweeper: the memory daemon owns the one store and its WAL, and this
     # process never opens a checkout's memory.db (PRD-CORE-298 FR01).
+
+    if getattr(args, "shared", False):  # opt-in: one detached server per env (trw_mcp.shared_server)
+        from trw_mcp.shared_server._cli import run_shared_serve
+
+        run_shared_serve(args)
+        return
 
     from trw_mcp.server._transport import resolve_and_run_transport
 

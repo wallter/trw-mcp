@@ -255,7 +255,6 @@ def _ss_counter(sctx: SessionStartContext) -> None:
 #: dropped here, so the work was paid for and its outcome was unobservable.
 MAINTENANCE_PROPAGATED_KEYS: tuple[str, ...] = (
     "update_advisory",
-    "auto_upgrade",
     "stale_runs_closed",
     # PRD-CORE-263-FR04: the ones that were computed and dropped.
     "pending_learns_replayed",

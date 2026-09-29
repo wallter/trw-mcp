@@ -22,11 +22,21 @@ from typing_extensions import TypedDict
 
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+from trw_mcp.state._platform_trust import (
+    payload_trw_dir,
+    platform_auth_headers,
+    platform_contact_enabled,
+    send_policy_all,
+)
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.anonymizer import redact_paths, redact_secrets
 
 logger = structlog.get_logger(__name__)
+
+#: Where ``enqueue`` stamps the ``.trw`` an event was produced under (its payload source). Popped
+#: before an event is buffered or sent, so it never leaves the process; an event without it has no
+#: project and is dropped at flush, never sent under another project's policy.
+_SOURCE_KEY = "_trw_source_trw_dir"
 
 
 class PipelineFlushResult(TypedDict):
@@ -257,6 +267,7 @@ class TelemetryPipeline:
             self._enrich_event_type(event)
             self._enrich_phase(event)
             self._enrich_timestamp(event)
+            event[_SOURCE_KEY] = str(resolve_trw_dir())  # the payload source: its .trw's policy gates the send
 
             register_atexit = False
             with self._lock:
@@ -373,22 +384,31 @@ class TelemetryPipeline:
             self._queue.clear()
 
         if not events:
-            return {
-                "sent": 0,
-                "failed": 0,
-                "overflow": self._overflow_count,
-                "skipped_reason": "empty_queue",
-            }
+            return {"sent": 0, "failed": 0, "overflow": self._overflow_count, "skipped_reason": "empty_queue"}
 
-        # Write events to local JSONL as durable buffer
-        jsonl_path = self._resolve_jsonl_path()
+        # Group by payload source: each group is buffered under, and sent under the policy of, the
+        # .trw it was produced in. An unstamped event has no project and is dropped (fail closed).
+        groups: dict[str, list[dict[str, object]]] = {}
+        dropped = 0
         for event in events:
-            try:
-                self._writer.append_jsonl(jsonl_path, event)
-            except Exception:  # per-item error handling: one write failure must not block the rest of the batch
-                logger.debug("pipeline_jsonl_write_error", exc_info=True)
+            source = event.pop(_SOURCE_KEY, None)
+            if isinstance(source, str) and source:
+                groups.setdefault(source, []).append(event)
+            else:
+                dropped += 1
+        if dropped:
+            logger.warning("pipeline_events_without_source_dropped", count=dropped, outcome="not_sent")
 
-        # Resolve config for remote send
+        # Write events to local JSONL as durable buffer, beside their own project
+        for source, group in groups.items():
+            jsonl_path = self._resolve_jsonl_path(Path(source))
+            for event in group:
+                try:
+                    self._writer.append_jsonl(jsonl_path, event)
+                except Exception:  # per-item error handling: one write failure must not block the rest of the batch
+                    logger.debug("pipeline_jsonl_write_error", exc_info=True)
+
+        # Resolve config for the remote endpoint (urls, key); the send POLICY is each source's own
         try:
             from trw_mcp.models.config import get_config
 
@@ -401,69 +421,69 @@ class TelemetryPipeline:
                 "overflow": self._overflow_count,
                 "skipped_reason": "config_unavailable",
             }
-
-        # PRD-SEC-004-FR01: single choke point — the documented opt-out flag
-        # platform_telemetry_enabled gates ALL off-machine telemetry sends.
-        # The local JSONL durable write above is preserved (opt-out suppresses
-        # only the network POST, not local buffering). Fail-closed for egress:
-        # a connected user who sets the flag false stops uploading immediately.
-        if not getattr(cfg, "platform_telemetry_enabled", False):
-            return {
-                "sent": 0,
-                "failed": 0,
-                "overflow": self._overflow_count,
-                "skipped_reason": "platform_telemetry_disabled",
-            }
-
-        # P1-C follow-up: platform_contact_enabled is the global egress kill
-        # switch, on top of the per-purpose consent flag above. No request is
-        # attempted; the local JSONL durable write is unaffected.
-        if not platform_contact_enabled():
-            return {
-                "sent": 0,
-                "failed": 0,
-                "overflow": self._overflow_count,
-                "skipped_reason": "platform_contact_disabled",
-            }
-
         urls = cfg.effective_platform_urls
-        if not urls:
-            return {
-                "sent": 0,
-                "failed": 0,
-                "overflow": self._overflow_count,
-                "skipped_reason": "offline_mode",
-            }
-
         try:
             api_key = cfg.platform_api_key.get_secret_value()
         except Exception:  # justified: fail-open, missing key = offline
             api_key = ""
 
-        # Chunk events into batches and send
         total_sent = 0
-        total_failed = 0
-        all_sent = True
-
-        for i in range(0, len(events), self._batch_size):
-            batch = events[i : i + self._batch_size]
-            success = self._send_batch(batch, urls, api_key)
-            if success:
-                total_sent += len(batch)
-            else:
-                total_failed += len(batch)
-                all_sent = False
-
-        # If all batches sent successfully, truncate the local JSONL
-        if all_sent and total_sent > 0:
-            self._truncate_jsonl(jsonl_path)
+        total_failed = dropped
+        reasons: list[str] = [] if groups else ["no_source_project"]
+        for source, group in groups.items():
+            sent, failed, reason = self._flush_group(Path(source), group, cfg, urls, api_key)
+            total_sent += sent
+            total_failed += failed
+            if reason:
+                reasons.append(reason)
 
         return {
             "sent": total_sent,
             "failed": total_failed,
             "overflow": self._overflow_count,
-            "skipped_reason": "",
+            "skipped_reason": "" if total_sent or not reasons else reasons[0],
         }
+
+    def _flush_group(
+        self,
+        source_trw_dir: Path,
+        events: list[dict[str, object]],
+        cfg: object,
+        urls: list[str],
+        api_key: str,
+    ) -> tuple[int, int, str]:
+        """Send one payload source's events under that source's own policy: (sent, failed, skip reason)."""
+        jsonl_path = self._resolve_jsonl_path(source_trw_dir)
+        if (owner := payload_trw_dir(jsonl_path)) is None:  # the .trw that owns this group's buffer file
+            return 0, 0, "no_source_project"
+        policy = send_policy_all(roots := (source_trw_dir, owner))  # the origin stamp AND the buffer's owner
+        # PRD-SEC-004-FR01: single choke point — the documented opt-out flag
+        # platform_telemetry_enabled gates ALL off-machine telemetry sends. The local JSONL durable
+        # write is preserved (opt-out suppresses only the network POST). The flag is the SOURCE
+        # project's; the process config can only restrict it further.
+        if not (getattr(cfg, "platform_telemetry_enabled", False) and policy.platform_telemetry):
+            return 0, 0, "platform_telemetry_disabled"
+        # P1-C follow-up: platform_contact_enabled is the global egress kill switch, on top of the
+        # per-purpose consent flag above. No request is attempted; the local JSONL is unaffected.
+        if not policy.contact:
+            return 0, 0, "platform_contact_disabled"
+        if not urls:
+            return 0, 0, "offline_mode"
+
+        sent = failed = 0
+        all_sent = True
+        for i in range(0, len(events), self._batch_size):
+            batch = events[i : i + self._batch_size]
+            if self._send_batch(batch, urls, api_key, roots=roots):
+                sent += len(batch)
+            else:
+                failed += len(batch)
+                all_sent = False
+
+        # If all batches sent successfully, truncate this source's local JSONL
+        if all_sent and sent > 0:
+            self._truncate_jsonl(jsonl_path)
+        return sent, failed, ""
 
     # ------------------------------------------------------------------
     # Internal: HTTP send
@@ -474,8 +494,10 @@ class TelemetryPipeline:
         events: list[dict[str, object]],
         urls: list[str],
         api_key: str,
+        *,
+        roots: tuple[Path, ...],
     ) -> bool:
-        """Send a batch to the first accepting backend URL with retry.
+        """Send a batch to the first accepting backend URL with retry; every root is re-asked per POST.
 
         Follows the BatchSender._send_batch_to pattern: httpx POST with
         exponential backoff. Returns True if any URL accepts the batch.
@@ -494,6 +516,8 @@ class TelemetryPipeline:
         for url in urls:
             endpoint = f"{url.rstrip('/')}/v1/telemetry"
             for attempt in range(self._max_retries):
+                if not all(platform_contact_enabled(r) for r in roots):  # every POST asks: a switch may flip
+                    return False
                 try:
                     # endpoint is built from cfg.effective_platform_urls,
                     # which a project's tracked .trw/config.yaml can set —
@@ -502,7 +526,7 @@ class TelemetryPipeline:
                     # bearer from anything off the trusted-host allowlist.
                     headers: dict[str, str] = {
                         "Content-Type": "application/json",
-                        **platform_auth_headers(endpoint, api_key),
+                        **platform_auth_headers(endpoint, api_key, source_trw_dir=roots[0]),
                     }
                     payload = json.loads(json.dumps({"events": events}, default=str))
                     with httpx.Client(timeout=30.0) as client:
@@ -551,9 +575,10 @@ class TelemetryPipeline:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_jsonl_path() -> Path:
-        """Return the path to the pipeline events JSONL file."""
-        return resolve_trw_dir() / "logs" / "pipeline-events.jsonl"
+    def _resolve_jsonl_path(source_trw_dir: Path | None = None) -> Path:
+        """Return the pipeline events JSONL of *source_trw_dir* (default: the current project's)."""
+        base = source_trw_dir if source_trw_dir is not None else resolve_trw_dir()
+        return base / "logs" / "pipeline-events.jsonl"
 
     @staticmethod
     def _truncate_jsonl(path: Path) -> None:

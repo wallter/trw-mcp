@@ -1,9 +1,10 @@
-"""Schema v4 (v3 plus fixed column steps) and read-only correspondence validation.
+"""Schema v5 (v3 plus fixed v4 and v5 steps) and read-only correspondence validation.
 
-One DDL path: a fresh v4 mailbox is the v3 DDL followed by ``V4_STEPS``, which is
-exactly what the explicit FR16 upgrade applies, so migrated and fresh files carry
-identical ``sqlite_master`` text (PRD-CORE-274 FR16). The expected text for each
-version is derived by running that path in memory, never hand-maintained.
+One DDL path: a fresh v5 mailbox is the v3 DDL followed by ``V4_STEPS`` and then
+``V5_STEPS``, which is exactly what the explicit upgrade applies from v3 or v4, so
+migrated and fresh files carry identical ``sqlite_master`` text (PRD-CORE-274 FR16,
+PRD-CORE-322 FR05). The expected text for each version is derived by running that
+path in memory, never hand-maintained.
 
 Validates retained state, not tamper-proof history. A cooperative actor rewriting
 all consistent evidence remains outside the security boundary. No repair/reset.
@@ -18,18 +19,28 @@ import sqlite3
 from itertools import pairwise
 from pathlib import Path
 
+from trw_mcp.code_index.bounds import Deadline
 from trw_mcp.comms._envelope import (
     DELIVERY_CLASSES,
+    HANDOFF_FACTS,
     KINDS,
     MEMBER_ID,
     MESSAGE_STATES,
     MILESTONE_FACTS,
     TERMINAL_MESSAGE_STATES,
     MessageState,
+    valid_next_read,
 )
 from trw_mcp.comms._policy import MAX_COUNTER, REFUSALS
 
-SCHEMA_VERSION = 4
+#: comms is a trw-mcp-only store with no trw-memory dependency (distinct from
+#: trw-memory's PROBE_DEADLINE_S). Installed on the connection before verify's
+#: first read, the code_index pattern (commit 9cbb148a8, PRD-QUAL-147 FR10).
+VERIFY_DEADLINE_S: float = 5.0
+
+SCHEMA_VERSION = 5
+#: Stored versions this build refuses ``mailbox_upgrade_required`` and upgrades from.
+UPGRADABLE_FROM = ("3", "4")
 V3_SCHEMA = """
 CREATE TABLE schema_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE groups (
@@ -69,14 +80,23 @@ V4_STEPS: tuple[str, ...] = (
     # FR15: live body bytes, snapshotted at group birth like the other admission policy.
     "ALTER TABLE groups ADD COLUMN body_budget INTEGER NOT NULL DEFAULT 16777216",
 )
-#: The endpoint protocol a v4 build records at enroll.
+#: The PRD-CORE-322 FR05 step: the next-read pointer of a reported handoff. Additive only.
+V5_STEPS: tuple[str, ...] = (
+    "CREATE TABLE handoff_reports (message_id TEXT PRIMARY KEY,next_read TEXT NOT NULL,reported_at REAL NOT NULL)",
+)
+#: The endpoint protocol a v4 or v5 build records at enroll. v5 changes no endpoint
+#: column or meaning, so the enrolment protocol stays 4 and upgraded rows stay valid.
 ENDPOINT_PROTOCOL = 4
 
 
 def ddl_statements(version: int) -> list[str]:
     """Every DDL statement that builds a schema of *version*, in order."""
     statements = [statement for statement in V3_SCHEMA.split(";") if statement.strip()]
-    return statements + list(V4_STEPS) if version >= 4 else statements
+    if version >= 4:
+        statements += V4_STEPS
+    if version >= 5:
+        statements += V5_STEPS
+    return statements
 
 
 class SchemaVersionError(ValueError):
@@ -84,7 +104,11 @@ class SchemaVersionError(ValueError):
 
 
 class UpgradeRequiredError(SchemaVersionError):
-    """A v3 mailbox opened by a v4 build: refuse and name the explicit upgrade (FR16)."""
+    """An older supported mailbox (``UPGRADABLE_FROM``) under this build: refuse and name the upgrade."""
+
+
+class VerifyDeadlineExceeded(ValueError):
+    """verify() hit VERIFY_DEADLINE_S: validity is unknown, not disproven -- never CORRUPT."""
 
 
 def _normalize(sql: str) -> str:
@@ -247,12 +271,15 @@ def _admissions(
     return rows
 
 
-def _milestones(conn: sqlite3.Connection, groups: dict[str, sqlite3.Row], admissions: dict[str, sqlite3.Row]) -> None:
+def _milestones(
+    conn: sqlite3.Connection, groups: dict[str, sqlite3.Row], admissions: dict[str, sqlite3.Row], version: int
+) -> dict[str, dict[str, float]]:
+    known = MILESTONE_FACTS if version >= 5 else tuple(fact for fact in MILESTONE_FACTS if fact not in HANDOFF_FACTS)
     facts: dict[str, dict[str, float]] = {}
     for row in conn.execute("SELECT * FROM milestones"):
         check(row["message_id"] in admissions, "orphan milestone")
         admission = admissions[row["message_id"]]
-        check(row["fact"] in MILESTONE_FACTS, "unknown milestone")
+        check(row["fact"] in known, "unknown milestone")
         check(
             ordered_times((admission["admitted_at"], row["at"], groups[admission["group_id"]]["group_time"])),
             "invalid milestone time",
@@ -268,6 +295,40 @@ def _milestones(conn: sqlite3.Connection, groups: dict[str, sqlite3.Row], admiss
             check(
                 message_facts["fetch_prepared"] <= message_facts[next(iter(terminals))], "fetch fact after termination"
             )
+    return facts
+
+
+def _handoffs(conn: sqlite3.Connection, admissions: dict[str, sqlite3.Row], facts: dict[str, dict[str, float]]) -> None:
+    """PRD-CORE-322 FR05 v5 rules: handoff facts only on requests, chained in order, pointer paired.
+
+    Soundness scope: proves the retained handoff facts are on ``request`` rows, each has
+    the fact before it at an equal or earlier time (acked <= accepted <= reported <=
+    completed), and a ``reported`` fact and a ``handoff_reports`` row exist together with
+    the same time and a valid pointer. It does NOT prove which member wrote a fact: the
+    ledger stores no actor, so "completed by the requester" is enforced only at write
+    time (FR02-FR04). Runtime caller: :func:`verify` for a v5 file.
+    """
+    chain = (MessageState.ACKED.value, *HANDOFF_FACTS)
+    for message_id, message_facts in facts.items():
+        handoff = [fact for fact in HANDOFF_FACTS if fact in message_facts]
+        if not handoff:
+            continue
+        check(admissions[message_id]["kind"] == "request", "handoff fact on a non-request message")
+        for before, after in pairwise(chain):
+            if after in message_facts:
+                check(before in message_facts, f"{after} fact without {before}")
+                check(message_facts[before] <= message_facts[after], f"{after} fact before {before}")
+    reports: set[str] = set()
+    for row in conn.execute("SELECT * FROM handoff_reports"):
+        message_id = row["message_id"]
+        check(message_id in admissions, "orphan handoff report")
+        check(valid_next_read(row["next_read"]), "invalid handoff next_read")
+        reported = facts.get(message_id, {}).get("reported")
+        check(reported is not None, "handoff report without a reported fact")
+        check(row["reported_at"] == reported, "handoff report time differs from its reported fact")
+        reports.add(message_id)
+    for message_id, message_facts in facts.items():
+        check("reported" not in message_facts or message_id in reports, "reported fact without its handoff report")
 
 
 def stored_version(conn: sqlite3.Connection) -> str:
@@ -280,24 +341,45 @@ def stored_version(conn: sqlite3.Connection) -> str:
 def verify(conn: sqlite3.Connection, *, version: int = SCHEMA_VERSION) -> None:
     """Exact schema and row correspondence, in caller-owned consistent snapshot.
 
-    *version* is what the caller requires. A v3 file where v4 is required raises
-    :class:`UpgradeRequiredError` so the facade names the explicit upgrade; any other
+    *version* is what the caller requires. An ``UPGRADABLE_FROM`` file where the current
+    version is required raises :class:`UpgradeRequiredError` so the facade names the
+    explicit upgrade; any other
     mismatch raises :class:`SchemaVersionError`. Nothing is ever migrated here.
+
+    Every read below runs under :data:`VERIFY_DEADLINE_S`: a checkout can pre-seed
+    .trw/comms.sqlite3, and a crafted schema (a slow view, a huge table) must fail
+    closed by that deadline rather than hang or scan to completion (PRD-QUAL-147 FR10).
     """
-    if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-        raise ValueError("integrity check failed")
-    stored = stored_version(conn)
-    if stored != str(version):
-        if stored == "3" and version == 4:
-            raise UpgradeRequiredError("v3 mailbox; run the explicit comms upgrade")
-        raise SchemaVersionError("unsupported schema version; no implicit migration")
-    actual = {
-        _normalize(str(row[0])) for row in conn.execute("SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
-    }
-    check(actual == _expected_ddl(version), "unexpected or incomplete schema")
-    groups = _groups(conn)
-    admissions = _admissions(conn, groups, _endpoints(conn, groups, version), version)
-    _milestones(conn, groups, admissions)
-    for row in conn.execute("SELECT * FROM refusal_counts"):
-        check(row["group_id"] in groups and row["reason"] in REFUSALS, "invalid refusal category or group")
-        check(_bounded_int(row["count"], 1, MAX_COUNTER), "invalid refusal counter")
+    deadline = Deadline(VERIFY_DEADLINE_S, "comms_verify_deadline_seconds")
+    conn.set_progress_handler(lambda: int(deadline.expired()), 10_000)
+    try:
+        if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise ValueError("integrity check failed")
+        stored = stored_version(conn)
+        if stored != str(version):
+            if version == SCHEMA_VERSION and stored in UPGRADABLE_FROM:
+                raise UpgradeRequiredError(f"v{stored} mailbox; run the explicit comms upgrade")
+            raise SchemaVersionError("unsupported schema version; no implicit migration")
+        actual = {
+            _normalize(str(row[0]))
+            for row in conn.execute("SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+        }
+        check(actual == _expected_ddl(version), "unexpected or incomplete schema")
+        groups = _groups(conn)
+        admissions = _admissions(conn, groups, _endpoints(conn, groups, version), version)
+        facts = _milestones(conn, groups, admissions, version)
+        if version >= 5:
+            _handoffs(conn, admissions, facts)
+        for row in conn.execute("SELECT * FROM refusal_counts"):
+            check(row["group_id"] in groups and row["reason"] in REFUSALS, "invalid refusal category or group")
+            check(_bounded_int(row["count"], 1, MAX_COUNTER), "invalid refusal counter")
+    except sqlite3.OperationalError as exc:
+        if deadline.expired():
+            raise VerifyDeadlineExceeded(
+                f"schema check exceeded the {VERIFY_DEADLINE_S}s comms_verify_deadline_seconds; "
+                "the store was not judged corrupt (host load can cause this); retry later,"
+                " or ask the operator if it persists"
+            ) from exc
+        raise
+    finally:
+        conn.set_progress_handler(None, 0)

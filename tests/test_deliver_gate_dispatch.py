@@ -24,6 +24,10 @@ from trw_mcp.tools._deliver_gate_dispatch import (
     evaluate_delivery_gates,
 )
 
+#: PRD-CORE-321: evaluate_delivery_gates always reports requirement drift; with no
+#: run there is no declared scope, so the report is exactly this and nothing more.
+_NO_RUN_DRIFT = {"scope": "not_declared", "prds": {}}
+
 
 def _run(
     gate_result: dict[str, object], *, allow_unverified: bool = False, reason: str = ""
@@ -258,7 +262,7 @@ def test_delivery_blocked_ledger_persistence_failure_blocks(monkeypatch: pytest.
 def test_build_gate_warning_without_override_remains_advisory() -> None:
     blocked, results, errors = _run({"build_gate_warning": "no successful build check found"})
     assert blocked is False
-    assert results == {}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT}
     assert errors == []
 
 
@@ -269,7 +273,7 @@ def test_build_gate_warning_ignores_free_text_override_arguments() -> None:
         reason="doc-only change validated by source inspection",
     )
     assert blocked is False
-    assert results == {}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT}
     assert errors == []
 
 
@@ -286,7 +290,7 @@ def test_build_gate_warning_does_not_ledger_unneeded_structured_override(
         reason='{"failed_command": "pytest", "residual_risk": "low", "owner": "me", "expiry_iso": "2099-01-01"}',
     )
     assert blocked is False
-    assert results == {}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT}
     assert errors == []
 
 

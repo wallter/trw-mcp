@@ -19,7 +19,6 @@ from typing import Any
 import structlog
 
 _SECRET_DIR_MODE = 0o700
-_SECRET_FILE_MODE = 0o600
 
 
 def _runtime_logger() -> Any:
@@ -83,17 +82,6 @@ def harden_trw_tree(trw_dir: Path, *, create_subdirs: bool = False) -> None:
             harden_dir_mode(sub, create=True)
         elif sub.is_dir():
             harden_dir_mode(sub, create=False)
-
-
-def harden_secret_file_mode(path: Path) -> None:
-    """Set a secret-bearing *path* to mode 0600, best-effort (PRD-QUAL-110-FR02).
-
-    A missing file is a no-op. A chmod failure logs ``path_chmod_failed`` at
-    WARNING and returns without raising (mirrors pins.json behavior).
-    """
-    if not path.exists():
-        return
-    _chmod_best_effort(path, _SECRET_FILE_MODE)
 
 
 def _chmod_best_effort(path: Path, mode: int) -> None:

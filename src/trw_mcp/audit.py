@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -20,7 +19,7 @@ logger = structlog.get_logger(__name__)
 from pathlib import Path
 from typing import cast
 
-from trw_mcp.models.config import TRWConfig, reload_config
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import (
     AuditCeremonyComplianceResult,
     AuditDuplicatePairDict,
@@ -36,6 +35,7 @@ from trw_mcp.models.typed_dicts import (
     LearningEntryDict,
 )
 from trw_mcp.state._helpers import load_project_config as _load_project_config
+from trw_mcp.state._project_root_binding import project_bound
 from trw_mcp.state.analytics import (
     apply_status_update,
     auto_prune_excess_entries,
@@ -259,18 +259,9 @@ def _audit_recall_effectiveness(
 def _audit_ceremony_compliance(
     target_dir: Path,
 ) -> AuditCeremonyComplianceResult:
-    """Cross-run ceremony compliance via scan_all_runs (with env override)."""
-    old_root = os.environ.get("TRW_PROJECT_ROOT")
-    try:
-        os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        reload_config()
+    """Cross-run ceremony compliance via scan_all_runs, bound to *target_dir*."""
+    with project_bound(target_dir):
         result = scan_all_runs()
-    finally:
-        if old_root is not None:
-            os.environ["TRW_PROJECT_ROOT"] = old_root
-        else:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        reload_config()
 
     aggregate = result.get("aggregate", {})
     if not isinstance(aggregate, dict):
@@ -288,17 +279,8 @@ def _audit_ceremony_compliance(
 
 def _audit_reflection_quality(trw_dir: Path) -> AuditReflectionQualityResult:
     """Reflection quality metrics."""
-    old_root = os.environ.get("TRW_PROJECT_ROOT")
-    try:
-        os.environ["TRW_PROJECT_ROOT"] = str(trw_dir.parent)
-        reload_config()
+    with project_bound(trw_dir.parent):
         result = compute_reflection_quality(trw_dir)
-    finally:
-        if old_root is not None:
-            os.environ["TRW_PROJECT_ROOT"] = old_root
-        else:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        reload_config()
     return cast("AuditReflectionQualityResult", result)
 
 
@@ -421,22 +403,10 @@ def run_audit(
         fix_actions["telemetry_bloat_retired"] = retired_count
 
         # Prune duplicates
-        old_root = os.environ.get("TRW_PROJECT_ROOT")
-        try:
-            os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-            reload_config()
-            prune_result = auto_prune_excess_entries(trw_dir)
-            fix_actions["prune"] = prune_result
-
-            # Resync index
+        with project_bound(target_dir):
+            fix_actions["prune"] = auto_prune_excess_entries(trw_dir)
             resync_learning_index(trw_dir)
             fix_actions["index_resynced"] = True
-        finally:
-            if old_root is not None:
-                os.environ["TRW_PROJECT_ROOT"] = old_root
-            else:
-                os.environ.pop("TRW_PROJECT_ROOT", None)
-            reload_config()
 
         result["fix_actions"] = fix_actions
 

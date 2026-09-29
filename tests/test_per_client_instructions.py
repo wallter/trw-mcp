@@ -14,26 +14,20 @@ import pytest
 # Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
 # scripts/ + docs/ layout) absent from the standalone trw-mcp PyPI/GitHub
 # mirror. Skip cleanly there; the monorepo CI still enforces it.
-if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
     )
 
 from trw_mcp.bootstrap._opencode import (
-    detect_model_family,
     generate_codex_instructions,
     generate_opencode_instructions,
 )
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.claude_md._agents_md import (
-    TRW_MARKER_END,
-    TRW_MARKER_START,
-    _migrate_trw_content_from_agents_md,
-)
 from trw_mcp.state.claude_md._static_sections import (
     render_codex_instructions,
-    render_codex_trw_section,
     render_opencode_instructions,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
@@ -49,7 +43,7 @@ class TestRenderCodexInstructions:
         """render_codex_instructions() returns valid markdown string."""
         result = render_codex_instructions()
         assert isinstance(result, str)
-        assert "## Runtime Guardrails" in result
+        assert result.startswith("# Codex TRW Instructions\n")
         assert "trw_session_start" in result
         assert "trw_deliver" in result
 
@@ -69,7 +63,7 @@ class TestRenderCodexInstructions:
 
         assert "trw_session_start" in result
         assert render_deliver_gate_statement().strip() in result
-        assert "## Runtime Guardrails" in result, "codex-specific deltas must survive the merge"
+        assert "OpenAI developer docs MCP server" in result, "codex-specific framing must survive the merge"
         assert len(result.encode("utf-8")) <= 16_000, "carrier grew past its ceiling — re-measure before raising"
 
     def test_codex_only_project_has_no_second_surface_to_duplicate(self, tmp_path: Path) -> None:
@@ -136,56 +130,36 @@ class TestRenderCodexInstructions:
         """
         result = render_codex_instructions()
 
-        assert "## TRW Delegation & Orchestration (Auto-Generated)" in result
-        assert "focused helpers only when the active harness supports them" in result
+        # PRD-CORE-301-FR13: the shared block points at the guide; FRAMEWORK.md serves it.
+        from trw_mcp.state.claude_md.sections._delegation import DELEGATION_GUIDE_POINTER
+
+        assert DELEGATION_GUIDE_POINTER in result
 
     def test_opencode_instructions_omit_delegation_protocol(self) -> None:
         """opencode shares `_light_profile(...)` with codex but was not
         re-measured for this change, so it must stay unaffected."""
-        result = render_opencode_instructions("generic")
+        result = render_opencode_instructions()
 
         assert "## TRW Delegation & Orchestration (Auto-Generated)" not in result
+        assert "DELEGATION AND FILE OWNERSHIP" not in result
 
-    def test_codex_agents_section_avoids_stale_guidance(self) -> None:
-        """Codex AGENTS.md guidance should stay portable and fail open on hooks."""
-        result = render_codex_trw_section()
+    def test_codex_framing_avoids_stale_guidance(self) -> None:
+        """Codex framing should stay portable and fail open on hooks."""
+        result = render_codex_instructions()
 
         assert "200K" not in result
         assert "Read `.trw/frameworks/FRAMEWORK.md`" not in result
         assert ".codex/agents/*.toml" in result
-        assert "stable but optional and trust-gated" in result.lower()
+        assert "optional and trust-gated" in result.lower()
 
 
 @pytest.mark.unit
 class TestRenderOpencodeInstructions:
-    """Tests for render_opencode_instructions(model_family)."""
-
-    @pytest.mark.parametrize("model_family", ["qwen", "gpt", "claude", "generic", "unknown-model"])
-    def test_model_family_hints_render_portable_title(self, model_family: str) -> None:
-        """Legacy family hints are accepted but v25 emits one portable title."""
-        result = render_opencode_instructions(model_family)
-
-        assert "# TRW Instructions" in result
-        assert "Model and Context Policy" in result
-        assert "Qwen-Coder-Next" not in result
-        assert "# GPT TRW Instructions" not in result
-        assert "# Claude TRW Instructions" not in result
-
-    def test_all_model_families_share_common_workflow(self) -> None:
-        """All model families share the same portable workflow."""
-        rendered = {family: render_opencode_instructions(family) for family in ["qwen", "gpt", "claude", "generic"]}
-
-        assert len(set(rendered.values())) == 1
-        for model_family, result in rendered.items():
-            assert "trw_session_start" in result, f"Missing trw_session_start for {model_family}"
-            assert "trw_deliver" in result, f"Missing trw_deliver for {model_family}"
-            assert "trw_checkpoint" in result, f"Missing trw_checkpoint for {model_family}"
-            assert "project-native" in result, f"Missing project-native validation guidance for {model_family}"
-            assert "Nudge Policy" in result, f"Missing nudge policy for {model_family}"
+    """Tests for render_opencode_instructions() (PRD-CORE-301-FR02: shared block plus opencode framing)."""
 
     def test_provider_specific_notes_are_not_core_workflow(self) -> None:
         """v25 portable instructions do not embed model-family prompt recipes."""
-        result = render_opencode_instructions("qwen")
+        result = render_opencode_instructions()
 
         assert "vLLM" not in result
         assert "chain-of-thought" not in result
@@ -193,7 +167,7 @@ class TestRenderOpencodeInstructions:
 
     def test_shared_instruction_output_has_no_foreign_client_identity(self) -> None:
         """QUAL-113 FR04: shared lifecycle prose stays provider-neutral."""
-        result = render_opencode_instructions("generic").lower()
+        result = render_opencode_instructions().lower()
 
         assert "openai" not in result
         assert "anthropic" not in result
@@ -210,7 +184,7 @@ class TestGenerateOpencodeInstructions:
 
     def test_creates_instructions_file(self, tmp_path: Path) -> None:
         """generate_opencode_instructions() creates .opencode/INSTRUCTIONS.md."""
-        result = generate_opencode_instructions(tmp_path, "qwen")
+        result = generate_opencode_instructions(tmp_path)
 
         instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
         assert instructions_path.exists()
@@ -221,9 +195,9 @@ class TestGenerateOpencodeInstructions:
         """If file exists with same content, returns preserved."""
         instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
         instructions_path.parent.mkdir(parents=True)
-        instructions_path.write_text(render_opencode_instructions("qwen"), encoding="utf-8")
+        instructions_path.write_text(render_opencode_instructions(), encoding="utf-8")
 
-        result = generate_opencode_instructions(tmp_path, "qwen")
+        result = generate_opencode_instructions(tmp_path)
 
         assert result["preserved"]
         assert not result["created"]
@@ -235,7 +209,7 @@ class TestGenerateOpencodeInstructions:
         instructions_path.parent.mkdir(parents=True)
         instructions_path.write_text("old content", encoding="utf-8")
 
-        result = generate_opencode_instructions(tmp_path, "qwen", force=True)
+        result = generate_opencode_instructions(tmp_path, force=True)
 
         assert result["updated"] or result["created"]
         assert "old content" not in instructions_path.read_text(encoding="utf-8")
@@ -244,12 +218,11 @@ class TestGenerateOpencodeInstructions:
         """Manifest hash mismatch preserves user-edited OpenCode instructions."""
         instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
         instructions_path.parent.mkdir(parents=True)
-        original = render_opencode_instructions("qwen")
+        original = render_opencode_instructions()
         instructions_path.write_text("customized instructions", encoding="utf-8")
 
         result = generate_opencode_instructions(
             tmp_path,
-            "qwen",
             manifest_hashes={
                 ".opencode/INSTRUCTIONS.md": hashlib.sha256(original.encode("utf-8")).hexdigest(),
             },
@@ -269,7 +242,7 @@ class TestGenerateOpencodeInstructions:
 
         monkeypatch.setattr(Path, "mkdir", mock_mkdir)
 
-        result = generate_opencode_instructions(tmp_path, "qwen")
+        result = generate_opencode_instructions(tmp_path)
 
         assert result["errors"]
         assert any("Permission denied" in err for err in result["errors"])
@@ -289,7 +262,7 @@ class TestGenerateOpencodeInstructions:
         monkeypatch.setattr(Path, "write_text", mock_write)
         monkeypatch.setattr("trw_mcp.state.persistence.FileStateWriter.write_text", mock_write)
 
-        result = generate_opencode_instructions(tmp_path, "qwen")
+        result = generate_opencode_instructions(tmp_path)
 
         assert result["errors"]
         assert any("Disk full" in err for err in result["errors"])
@@ -350,133 +323,6 @@ class TestGenerateCodexInstructions:
 
 
 # ── Model Family Detection Tests ──────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestDetectModelFamily:
-    """Tests for detect_model_family()."""
-
-    @pytest.mark.parametrize(
-        ("model_name", "expected_family"),
-        [
-            ("qwen", "qwen"),
-            ("Qwen2.5-Coder", "qwen"),
-            ("Qwen3-Coder-Next", "qwen"),
-            ("gpt-4o", "gpt"),
-            ("GPT-5.4", "gpt"),
-            ("o3-mini", "gpt"),
-            ("o1-preview", "gpt"),
-            ("claude-3-5-sonnet", "claude"),
-            ("claude-3-7-sonnet", "claude"),
-            ("some-other-model", "generic"),
-            ("", "generic"),
-            ("unknown", "generic"),
-        ],
-    )
-    def test_correct_model_family_detection(self, model_name: str, expected_family: str) -> None:
-        """Model names are correctly mapped to families."""
-        opencode_json = {"model": model_name}
-        result = detect_model_family(opencode_json)
-        assert result == expected_family
-
-    def test_empty_model_returns_generic(self) -> None:
-        """Empty model field defaults to generic."""
-        opencode_json: dict[str, str] = {}
-        result = detect_model_family(opencode_json)
-        assert result == "generic"
-
-    def test_case_insensitive_matching(self) -> None:
-        """Model detection is case-insensitive."""
-        for model in ["QWEN", "QWEN2", "GPT-4", "CLAUDE-3"]:
-            opencode_json = {"model": model}
-            result = detect_model_family(opencode_json)
-            assert result != "generic", f"Case-insensitive detection failed for {model}"
-
-
-# ── AGENTS.md Migration Tests ─────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestMigrateTrwContentFromAgentsMd:
-    """Tests for _migrate_trw_content_from_agents_md()."""
-
-    def test_returns_false_when_agents_md_not_exists(self, tmp_path: Path) -> None:
-        """No AGENTS.md → migration does not occur."""
-        from trw_mcp.models.config import TRWConfig
-
-        migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
-
-        assert migrated is False
-        assert path == ""
-
-    def test_returns_false_when_no_trw_markers(self, tmp_path: Path) -> None:
-        """AGENTS.md without TRW markers → no migration."""
-        agents_path = tmp_path / "AGENTS.md"
-        agents_path.write_text("# My Project\n\nNo TRW content here.\n", encoding="utf-8")
-
-        migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
-
-        assert migrated is False
-        assert path == ""
-
-    def test_strips_empty_trw_markers_from_agents_md(self, tmp_path: Path) -> None:
-        """Empty TRW markers are stripped from AGENTS.md and migrated=True is returned."""
-        agents_path = tmp_path / "AGENTS.md"
-        agents_path.write_text(
-            f"# My Project\n\n{TRW_MARKER_START}\n{TRW_MARKER_END}\n",
-            encoding="utf-8",
-        )
-
-        migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
-
-        # Empty markers are still cleaned up — markers removed, user content preserved.
-        assert migrated is True
-        assert path == ""
-        content = agents_path.read_text(encoding="utf-8")
-        assert TRW_MARKER_START not in content
-        assert TRW_MARKER_END not in content
-        assert "# My Project" in content
-
-    def test_migrates_trw_content_to_opencode_instructions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TRW section in AGENTS.md migrates to .opencode/INSTRUCTIONS.md."""
-        agents_path = tmp_path / "AGENTS.md"
-        trw_content = f"{TRW_MARKER_START}\n## TRW Content\n\nContent here.\n{TRW_MARKER_END}"
-        agents_path.write_text(f"# My Project\n\n{trw_content}", encoding="utf-8")
-
-        # Mock detect_ide to return opencode
-        def mock_detect_ide(path: Path) -> list[str]:
-            return ["opencode"]
-
-        monkeypatch.setattr("trw_mcp.bootstrap._utils.detect_ide", mock_detect_ide)
-
-        migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
-
-        assert migrated is True
-        assert path != ""
-
-        instructions_path = tmp_path / ".opencode" / "INSTRUCTIONS.md"
-        assert instructions_path.exists()
-
-    def test_migrates_trw_content_to_codex_instructions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """TRW section in AGENTS.md migrates to .codex/INSTRUCTIONS.md when codex detected."""
-        agents_path = tmp_path / "AGENTS.md"
-        trw_content = f"{TRW_MARKER_START}\n## TRW Content\n\nContent here.\n{TRW_MARKER_END}"
-        agents_path.write_text(f"# My Project\n\n{trw_content}", encoding="utf-8")
-
-        def mock_detect_ide(path: Path) -> list[str]:
-            return ["codex"]
-
-        monkeypatch.setattr("trw_mcp.bootstrap._utils.detect_ide", mock_detect_ide)
-
-        migrated, path = _migrate_trw_content_from_agents_md(tmp_path, TRWConfig())
-
-        assert migrated is True
-        assert path != ""
-
-        instructions_path = tmp_path / ".codex" / "INSTRUCTIONS.md"
-        assert instructions_path.exists()
 
 
 @pytest.mark.unit

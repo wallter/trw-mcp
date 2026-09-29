@@ -25,7 +25,6 @@ from trw_mcp.tools._evidence_binding import (
 )
 from trw_mcp.tools._evidence_gates import (
     read_evidence_mode,
-    select_typed_review_state,
     validate_build_receipt,
     validate_review_receipt,
     validate_verification_receipt,
@@ -33,20 +32,25 @@ from trw_mcp.tools._evidence_gates import (
 from trw_mcp.tools._evidence_persistence import (
     WriteOutcome,
     canonical_receipt_bytes,
-    collect_receipts,
     generate_receipt_id,
     list_receipt_ids,
     read_receipt_bytes,
     write_receipt,
 )
+from trw_mcp.tools._verification_receipt import (
+    VerificationReceiptRefusedError,
+    VerificationReceiptResult,
+    record_verification_receipt,
+)
 
 __all__ = [
     "BindingOutcome",
     "StableReadError",
+    "VerificationReceiptRefusedError",
+    "VerificationReceiptResult",
     "WriteOutcome",
     "build_content_binding",
     "canonical_receipt_bytes",
-    "collect_receipts",
     "content_binding_is_current",
     "generate_receipt_id",
     "list_receipt_ids",
@@ -54,7 +58,7 @@ __all__ = [
     "read_content_entry",
     "read_evidence_mode",
     "read_receipt_bytes",
-    "select_typed_review_state",
+    "record_verification_receipt",
     "validate_build_receipt",
     "validate_review_receipt",
     "validate_verification_receipt",

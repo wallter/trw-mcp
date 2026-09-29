@@ -1,20 +1,35 @@
 """Shared test fixtures for TRW MCP test suite.
 
-Test Tiering Philosophy
------------------------
-Tests are auto-assigned markers based on their filename:
+Test Tiering Philosophy (PRD-INFRA-197-FR04)
+---------------------------------------------
+Tiering is by EXPLICIT MARKER, never by filename. A filename table drifts the
+moment a file is renamed, moved, or split (PRD-INFRA-197-FR04 found a stale
+``_UNIT_FILES`` table whose entries no longer resolved to any file, and one
+basename collision that silently applied ``unit`` to four unrelated modules
+sharing a name) — so nothing here infers a tier from where a file lives.
 
-- **unit**: Pure logic tests — no filesystem I/O, no multi-tool interaction,
-  no ``tmp_path`` usage.  Target: <30s for the full unit tier.
-- **integration**: Tests that write files, call multiple tools, or use
-  ``tmp_path`` / ``tmp_project`` fixtures.
-- **e2e**: End-to-end workflows covering full phase sequences.
-- **slow**: Tests that individually take >5s (model loading, bootstrap).
+- **unit**: a test is unit ONLY if it (or its module) carries an explicit
+  ``@pytest.mark.unit`` / ``pytestmark = pytest.mark.unit``. Reserve it for
+  pure logic — no subprocess, no socket, no daemon fixture, no multi-tool
+  interaction. Target: the whole unit tier stays comfortably under 90s.
+- **integration**: the CONSERVATIVE DEFAULT. Anything not explicitly marked
+  ``unit`` or ``e2e`` is integration — this is applied automatically by
+  ``pytest_collection_modifyitems`` below, so no file needs to opt in.
+- **e2e**: end-to-end workflows covering full phase sequences — explicit
+  ``pytestmark = pytest.mark.e2e``, same rule as unit.
+- **slow**: tests that individually take >5s (model loading, bootstrap);
+  additive, can combine with any tier. Still filename-driven via
+  ``_SLOW_FILES`` — out of scope for FR04 (owned by FR05's duration-budget
+  slice); do not extend this table for tier (unit/integration/e2e) purposes.
+- **smoke**: a minimal sanity-check subset; additive, explicit
+  ``@pytest.mark.smoke`` only.
 
-To classify a new test file:
-  1. If it uses ``tmp_path``/``tmp_project`` → integration (default).
-  2. If it only patches/mocks and tests pure functions → add to ``_UNIT_FILES``.
-  3. If it loads heavy models or creates 100+ files → add to ``_SLOW_FILES``.
+To classify a new test file: mark it explicitly, or leave it unmarked and let
+it default to ``integration``. ``scripts/check_unit_marker_hygiene.py`` is a
+static, non-blocking lint that flags a ``unit``-marked module which imports
+``subprocess``/``socket`` or uses a fixture known to spawn a daemon/process —
+run it by hand when adding a new ``unit`` marker; it is not wired into any
+gate in this slice.
 """
 
 from __future__ import annotations
@@ -32,16 +47,24 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import structlog
 from fastmcp import FastMCP
+from trw_memory.testing.daemon_reaper import (
+    reap_daemons_under,
+    stop_spawned,
+    sweep_session_daemons,
+    tag_daemon_ownership,
+)
 
-from tests._daemon_reaper import reap_daemons_under, stop_spawned
 from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
 from tests._timing import pytest_sessionfinish as _timing_sessionfinish
 
 if TYPE_CHECKING:
     from trw_memory.daemon import DaemonPaths
+    from trw_memory.daemon._spawn import SpawnedDaemon
 
 from tests._trw_home import (
     isolated_trw_home,  # noqa: F401  (shared HOME/XDG/TRW_USER_DIR floor; see that module's docstring)
+    real_config_tripwire,  # noqa: F401
+    session_trw_home,  # noqa: F401
 )
 
 # Git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE into hooks and some worktree
@@ -52,7 +75,13 @@ from tests._trw_home import (
 for _git_var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX"):
     os.environ.pop(_git_var, None)
 
-pytest_plugins = ("tests._ceremony_helpers_support", "tests._memory_fixtures")
+pytest_plugins = (
+    "tests._ceremony_helpers_support",
+    "tests._memory_fixtures",
+    "tests._duration_budget",  # PRD-INFRA-197-FR05: duration_exempt marker + duration budgets
+    "tests._session_tmpdir",  # PRD-QUAL-146 FR09: mkdtemp outside tmp_path lands under basetemp
+    "pytester",  # enables the `pytester` fixture used by tests/test_duration_budget.py
+)
 
 
 # --------------------------------------------------------------------------
@@ -102,10 +131,10 @@ def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator
     """
     from trw_memory.daemon import client as daemon_client
 
-    spawned: list[subprocess.Popen[bytes]] = []
+    spawned: list[SpawnedDaemon] = []
     real = daemon_client.start_daemon_detached
 
-    def recording(paths: DaemonPaths) -> subprocess.Popen[bytes]:
+    def recording(paths: DaemonPaths) -> SpawnedDaemon:
         spawned.append(real(paths))
         return spawned[-1]
 
@@ -128,6 +157,21 @@ def _reap_isolated_home_daemons(isolated_trw_home: None) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _pin_factory_experiment_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the experimental factory gate's clock inside its window.
+
+    The gate expires 2026-12-27 UTC; tests that enable it must not start failing when
+    the real clock passes that date. Expiry behaviour is tested by injecting ``now``
+    or re-patching ``_utc_now`` inside the test, which runs after this fixture.
+    """
+    from datetime import datetime, timezone
+
+    from trw_mcp.state import _factory_experiment
+
+    monkeypatch.setattr(_factory_experiment, "_utc_now", lambda: datetime(2026, 10, 1, tzinfo=timezone.utc))
+
+
+@pytest.fixture(autouse=True)
 def _skip_installer_index_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the installer's regional preflight off the network in tests.
 
@@ -144,6 +188,11 @@ def _skip_installer_index_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
 #: worker's session and the run still exited 0 (C1, 2026-09-25).
 _WORKER_LEAKS_KEY = "trw_leaked_daemons"
 _WORKER_LEAKS = pytest.StashKey[list[int]]()
+#: The same handoff for daemons that survived a worker's own sweep (the survivor guard).
+_WORKER_SURVIVORS_KEY = "trw_surviving_daemons"
+_WORKER_SURVIVORS = pytest.StashKey[list[int]]()
+#: This process's ``TRW_PYTEST_DAEMON_OWNER`` token (``tag_daemon_ownership`` in ``pytest_configure``).
+_DAEMON_OWNER = pytest.StashKey[str]()
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
@@ -162,32 +211,33 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     finally:
         factory = getattr(session.config, "_tmp_path_factory", None)
         if factory is not None:
-            placements: dict[int, str] = {}
-            leaked = reap_daemons_under(factory.getbasetemp(), wait=True, by_process=True, placements=placements)
+            # Also stops daemons this process's owner token marks, placed anywhere, then fails the
+            # session if one survives the sweep (DAEMON-ORPHAN-SPAWN, 2026-09-26).
+            sweep = sweep_session_daemons(factory.getbasetemp(), session.config.stash.get(_DAEMON_OWNER, None))
             workeroutput = getattr(session.config, "workeroutput", None)
             if workeroutput is not None:
-                workeroutput[_WORKER_LEAKS_KEY] = leaked
-            leaked += session.config.stash.get(_WORKER_LEAKS, [])
-            if leaked:
-                print(
-                    f"\nFAIL: {len(leaked)} leaked memory daemon(s) stopped at session end under "
-                    f"{factory.getbasetemp()}: pids {leaked}",
-                    file=sys.stderr,
-                )
-                for pid in leaked:
-                    print(f"  leaked daemon {pid}: {placements.get(pid, '?')}", file=sys.stderr)
+                workeroutput[_WORKER_LEAKS_KEY] = sweep.leaked
+                workeroutput[_WORKER_SURVIVORS_KEY] = sweep.survivors
+            report = sweep.report(
+                session.config.stash.get(_WORKER_LEAKS, []), session.config.stash.get(_WORKER_SURVIVORS, [])
+            )
+            if report:
+                print("\n" + "\n".join(report), file=sys.stderr)
                 if session.exitstatus == 0:
                     session.exitstatus = 1
 
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node: object, error: object) -> None:
-    """xdist controller: collect the daemon pids a finished worker had to reap."""
+    """xdist controller: collect the daemon pids a finished worker had to reap, and any that survived its sweep."""
     del error
-    leaked = getattr(node, "workeroutput", {}).get(_WORKER_LEAKS_KEY) or []
+    output = getattr(node, "workeroutput", {})
     config = getattr(node, "config", None)
-    if leaked and config is not None:
-        config.stash[_WORKER_LEAKS] = [*config.stash.get(_WORKER_LEAKS, []), *leaked]
+    if config is None:
+        return
+    for key, stash_key in ((_WORKER_LEAKS_KEY, _WORKER_LEAKS), (_WORKER_SURVIVORS_KEY, _WORKER_SURVIVORS)):
+        if pids := output.get(key) or []:
+            config.stash[stash_key] = [*config.stash.get(stash_key, []), *pids]
 
 
 _MIN_FREE_GB_ENV = "TRW_PYTEST_MIN_FREE_GB"
@@ -227,7 +277,13 @@ def _refuse_on_low_disk(config: pytest.Config) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Refuse a wide xdist fan-out before it OOMs the workstation again, and a near-full disk."""
+    """Tag this process's memory daemons, then refuse a wide xdist fan-out and a near-full disk.
+
+    Every pytest process (the xdist controller and each worker alike) exports its own
+    daemon-owner token, which auto-started daemons inherit, and caps their idle life
+    at 60 s so a session killed before its sweep leaves daemons that exit on their own.
+    """
+    config.stash[_DAEMON_OWNER] = tag_daemon_ownership()
     _refuse_on_low_disk(config)
     allow_wide = os.environ.get(_ALLOW_WIDE_XDIST_ENV) == "1"
     violation = _xdist_fanout_violation(getattr(config.option, "numprocesses", None), allow_wide)
@@ -385,79 +441,14 @@ def extract_tool_fn(server: FastMCP, tool_name: str) -> Any:
     return tools[tool_name].fn
 
 
-# --- Marker auto-assignment ---
-
-_UNIT_FILES: frozenset[str] = frozenset(
-    {
-        # PRD-HPO-PROF-001 profile system — pure logic, no filesystem I/O.
-        "test_profile_model.py",
-        "test_model.py",
-        "test_resolver.py",
-        "test_invariants.py",
-        "test_inference.py",
-        "test_explain.py",
-        "test_snapshot.py",
-        "test_property_layer_composition.py",
-        "test_models.py",
-        "test_scoring.py",
-        "test_scoring_branches.py",
-        "test_scoring_edge_cases.py",
-        "test_scoring_properties.py",
-        "test_bayesian_calibration.py",
-        "test_clients_llm.py",
-        "test_middleware_ceremony.py",
-        "test_middleware_response_optimizer.py",
-        "test_prompts_messaging.py",
-        "test_validation_v2.py",
-        "test_prd_utils_edge.py",
-        "test_fix055_traceability_lang.py",
-        "test_core080_template_variants.py",
-        "test_response_optimizer.py",
-        "test_scoring_q_preseed.py",
-        # Token-bloat W5: prd_validate payload compaction — pure functions, no I/O
-        "test_prd_validate_payload_compaction.py",
-        # PRD-INFRA-145: OTel GenAI span shape — recording fake tracer, no I/O
-        "test_otel_genai.py",
-        # PRD-CORE-184: task-type detection + nudge weights — pure logic, no I/O
-        "test_task_type_detection.py",
-        "test_task_type_nudge_weights.py",
-        # Pure model/config validation — no filesystem I/O
-        "test_client_profile.py",
-        "test_sprint44_models.py",
-        "test_api_import.py",
-        "test_fix044_module_config.py",
-        "test_fix056_status_integrity.py",
-        # PRD-IMPROVE-MCP-01 FR1/FR2: pure tag coercion + regex policy, no I/O
-        "test_learn_ergonomics_improve_mcp_01.py",
-        # PRD-CORE-099: Pure env-var detection — no filesystem I/O
-        "test_source_detection_unit.py",
-        # PRD-CORE-104: Delivery metrics — pure scoring, no I/O
-        "test_composite_score.py",
-        "test_sigmoid.py",
-        "test_rework_rate.py",
-        # PRD-CORE-116: Enhanced recall scoring — pure scoring, no I/O
-        "test_core_116_recall_scoring.py",
-        # PRD-INFRA-054: Import guard regression test — pure source scanning, no I/O
-        "test_no_intelligence_imports.py",
-        # PRD-FIX-061: Layer boundary enforcement — pure source scanning, no I/O
-        "test_layer_boundaries.py",
-        "test_scoring_layer_boundary.py",
-        # PRD-QUAL-056: PRD scoring dimensions — pure scoring, no I/O
-        "test_prd_quality_flywheel.py",
-        "test_prd_file_path_coverage.py",
-        "test_user_prompt_submit_hook.py",
-        # PRD-CORE-125: Surface area control — pure config/model, no I/O
-        "test_tool_presets.py",
-        "test_surface_area_flags.py",
-        # PRD-FIX-076: tool surface reduction — registry/manifest absence, no I/O
-        "test_fix076_tool_surface_reduction.py",
-        # PRD-CORE-144: empirical probe harness — pure model/budget/cache/
-        # verdict/telemetry logic, no filesystem I/O (subprocess-spawning
-        # invocation/bounds/observability tests stay default/integration).
-        "test_budget.py",
-        "test_verdict.py",
-    }
-)
+# --- Marker auto-assignment (PRD-INFRA-197-FR04) ---
+#
+# There is deliberately no _UNIT_FILES / _E2E_FILES table here. unit and e2e
+# are explicit-marker-only tiers (module-level ``pytestmark = pytest.mark.unit``
+# or ``.e2e``, or a per-test ``@pytest.mark.unit``/``@pytest.mark.e2e``); a test
+# left unmarked defaults to ``integration`` below. ``_SLOW_FILES`` stays
+# filename-driven — it is FR05's duration-budget slice, not FR04's tier policy,
+# and additive (a test can be both integration/unit AND slow).
 
 _SLOW_FILES: frozenset[str] = frozenset(
     {
@@ -491,31 +482,27 @@ _SLOW_FILES: frozenset[str] = frozenset(
     }
 )
 
-_E2E_FILES: frozenset[str] = frozenset()
-
 
 def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    """Auto-assign unit/integration/e2e/slow markers to tests without explicit markers."""
+    """Apply the slow marker by filename (FR05); default the tier to integration (FR04).
+
+    unit and e2e are never inferred here — only an explicit marker on the item
+    or its module puts a test in one of those tiers. Everything else falls
+    through to ``integration``, the conservative default.
+    """
     apply_timing_policy(items)
     for item in items:
-        has_tier = any(m.name in ("unit", "integration", "e2e") for m in item.iter_markers())
-        if has_tier:
-            continue
-
         filename = Path(item.fspath).name
 
         # Assign slow marker (additive — a test can be both integration and slow)
         if filename in _SLOW_FILES or filename.startswith(("test_consolidation", "test_bootstrap_branches")):
             item.add_marker(pytest.mark.slow)
 
-        if filename in _UNIT_FILES:
-            item.add_marker(pytest.mark.unit)
-        elif filename in _E2E_FILES:
-            item.add_marker(pytest.mark.e2e)
-        else:
+        has_tier = any(m.name in ("unit", "integration", "e2e") for m in item.iter_markers())
+        if not has_tier:
             item.add_marker(pytest.mark.integration)
 
 
@@ -675,6 +662,34 @@ def _default_distill_absent(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_sidecar_rebuild_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin ``hint_sidecar_auto_refresh_enabled`` OFF by default (hermetic, and no real build).
+
+    On, any test that computes a pre-edit hint without a usable sidecar would
+    fork a detached ``trw-distill self-improve refresh-sidecars`` whenever the
+    dev venv ships the CLI: a real whole-repo build outliving the test. Set in
+    the environment, so hook subprocesses inherit it too; a child started with
+    an EXPLICIT env (most hook tests pass a literal one) gets it injected by a
+    ``subprocess.Popen`` subclass, because the dev venv's interpreter can import
+    trw_distill and ships the ``trw-distill`` script next to itself. Tests of
+    the rebuild request opt back in with ``monkeypatch.setenv(..., "true")`` and
+    fake ports; a test that sets the variable in its child env keeps its value.
+    """
+    key = "TRW_HINT_SIDECAR_AUTO_REFRESH_ENABLED"
+    monkeypatch.setenv(key, "false")
+    real_popen = subprocess.Popen
+
+    class _NoRebuildPopen(real_popen):  # type: ignore[valid-type,misc]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            env = kwargs.get("env")
+            if env is not None and key not in env:
+                kwargs["env"] = {**env, key: "false"}
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", _NoRebuildPopen)
+
+
+@pytest.fixture(autouse=True)
 def _reset_run_pin() -> Iterator[None]:
     """Reset active run pin + pin-store cache for test isolation.
 
@@ -705,22 +720,6 @@ def _reset_auto_close_throttle_fixture() -> Iterator[None]:
     _reset_auto_close_throttle()
     yield
     _reset_auto_close_throttle()
-
-
-@pytest.fixture(autouse=True)
-def _reset_update_check_throttle_fixture() -> Iterator[None]:
-    """Reset the per-process check_for_update throttle between tests.
-
-    W38: check_for_update() now caches its result for _VERSION_CACHE_HOURS;
-    tests need a fresh window per case so they can call it multiple times
-    (with different mocked responses/config) without being served a stale
-    cached result from an earlier test in the same process.
-    """
-    from trw_mcp.state.auto_upgrade import _reset_update_check_throttle
-
-    _reset_update_check_throttle()
-    yield
-    _reset_update_check_throttle()
 
 
 @pytest.fixture(autouse=True)
@@ -869,6 +868,27 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     _path_isolation.install()
 
     yield
+
+
+@pytest.fixture
+def governing_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Make the isolated project root the payload project of platform-sender tests.
+
+    A send's whole policy (the contact switch and the consent flags) is read from the ``.trw`` its
+    payload came from; with no ``.trw`` nothing is sent (fail closed). This gives the isolated root a
+    ``.trw`` whose config grants every consent, so a sender's own flags decide what a test sends. A
+    module that exercises a real send marks itself ``pytest.mark.usefixtures("governing_project")``.
+    """
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir(exist_ok=True)
+    config = trw_dir / "config.yaml"
+    if not config.exists():  # the payload project's consent: its own config grants the send
+        config.write_text(
+            "learning_sharing_enabled: true\nplatform_telemetry_enabled: true\nbackup_remote_enabled: true\n",
+            encoding="utf-8",
+        )
+    monkeypatch.chdir(tmp_path)  # trw-memory's config (a backup's store) finds the same project
+    return tmp_path
 
 
 @pytest.fixture
@@ -1024,8 +1044,44 @@ def _require_this_checkout(module_name: str, src: Path) -> None:
         )
 
 
+@pytest.fixture
+def stub_cli_version_probes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Answer every doctor ``<cli> --version`` probe without spawning the CLI.
+
+    A full ``_doctor_core`` spends ~1.3 s of its ~1.6 s running eight real client
+    binaries (formation readiness plus the Claude Code floor row), and what they
+    print depends on which CLIs this host has installed. Doctor tests that assert
+    on OTHER rows opt in with ``pytest.mark.usefixtures("stub_cli_version_probes")``.
+    ``test_doctor_formation_readiness.py`` never does: it keeps the real probe.
+    Returns the binaries that were asked, in order.
+    """
+    asked: list[str] = []
+
+    def _stub(binary: str, spec: object, timeout_s: int) -> tuple[str | None, str | None]:
+        asked.append(binary)
+        return "99.0.0 (test stub)", None
+
+    monkeypatch.setattr("trw_mcp.server._doctor_formation_readiness.probe_version", _stub)
+    return asked
+
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _require_this_checkout("trw_mcp", _PACKAGE_ROOT / "src")
 # trw-mcp's tests import trw_memory too; in the monorepo it must be this checkout's sibling.
 if (_PACKAGE_ROOT.parent / "trw-memory" / "src").is_dir():
     _require_this_checkout("trw_memory", _PACKAGE_ROOT.parent / "trw-memory" / "src")
+
+
+def _absolute_pythonpath(value: str, base: Path) -> str:
+    """``value`` with every relative entry resolved against ``base``.
+
+    A child process started with another ``cwd`` resolves a relative PYTHONPATH entry against
+    that ``cwd``, finds nothing, and falls back to the shared ``.venv``'s editable install of the
+    main checkout, so a worktree's subprocess tests exercise main's code (the check above only
+    guards this process). Resolved once here, every child inherits the checkout under test.
+    """
+    return os.pathsep.join(str((base / entry).resolve()) if entry else entry for entry in value.split(os.pathsep))
+
+
+if os.environ.get("PYTHONPATH"):
+    os.environ["PYTHONPATH"] = _absolute_pythonpath(os.environ["PYTHONPATH"], Path.cwd())

@@ -100,7 +100,7 @@ def build_compaction_block(tool_name: str, blocked_count: int, max_blocks: int) 
     # pairs against a MAX_BLOCKS of 2, one call short of the escape built for it.
     message = (
         f"{when} Call trw_session_start() to recover context and clear this gate."
-        " Delegates without that tool: retry; non-terminal calls pass after"
+        " Not in your tool list? Reconnect the trw MCP server; a delegate without it: retry, non-terminal calls pass after"
         f" {max_blocks} blocks. A delegate's dispatcher must recover; terminal calls remain blocked."
     )
 

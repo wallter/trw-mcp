@@ -25,30 +25,18 @@ if TYPE_CHECKING:
 def resolution_basis(resolved: ResolvedProfile, *, run_dir: Path | None) -> dict[str, object]:
     """Describe WHAT a resolved profile was resolved from.
 
-    PRD-FIX-141-FR06. ``trw_session_start`` reported
-    ``resolved_profile.ceremony_tier: COMPREHENSIVE`` and the profile explanation
-    reported ``STANDARD`` on the same machine in the same run (learning L-Rikf).
-    Both surfaces already call the SAME :func:`resolve_session_profile`; the
-    divergence is an ORDERING effect. ``trw_session_start`` runs before
-    ``trw_init``, so no run directory — and therefore no Scout-written
-    ``meta/session_profile.yaml`` session layer — existed yet, and the tier came
-    from the defaults layer. The explanation, requested afterwards, read the
-    session layer the Scout had since written.
-
-    Neither value was wrong. What was missing is that neither payload said what
-    it had been resolved FROM, so two correct answers read as a contradiction.
-    Both surfaces emit this block, so a reader can tell "the same inputs
-    disagree" (a defect) from "the inputs changed" (a session profile arriving).
+    PRD-FIX-141-FR06. Names the run directory and the layers the resolved
+    profile came from, so a session-start payload and a later explanation can be
+    reconciled. Both call the SAME :func:`resolve_session_profile`; the inputs
+    are the config and the ``.trw/profiles/`` layers, never the run directory.
 
     Returns:
-        ``{"run_dir": str|None, "session_layer_present": bool,
-        "layers_applied": [...], "ceremony_tier": str|None}``.
+        ``{"run_dir": str|None, "layers_applied": [...], "ceremony_tier": str|None}``.
     """
     layers = list(resolved.layers_applied)
     tier = resolved.profile.ceremony_tier
     return {
         "run_dir": str(run_dir) if run_dir is not None else None,
-        "session_layer_present": "session" in layers,
         "layers_applied": layers,
         "ceremony_tier": tier,
     }
@@ -77,7 +65,6 @@ def build_explanation(resolved: ResolvedProfile, *, run_dir: Path | None = None)
         "fields": fields,
         "layers_applied": list(resolved.layers_applied),
         "surface_snapshot_id": resolved.surface_snapshot_id,
-        "session_override_hash": resolved.session_override_hash,
         "resolved_profile": resolved.profile.model_dump(exclude_none=True, mode="json"),
         # PRD-FIX-141-FR06: the same block session_start emits, so a reader can
         # reconcile two reports instead of choosing between them.
@@ -95,6 +82,7 @@ def tool_surface_summary(config: TRWConfig) -> dict[str, object]:
     """
     from trw_mcp.models.surface_packs import FLAG_GATED_PACKS, PACK_TOOLS, REVIEWER_TOOLS, enabled_packs
     from trw_mcp.state._surface_role import reviewer_role_active
+    from trw_mcp.tools._assess_enablement import assess_surfaced
 
     if reviewer_role_active():
         return {"role": "reviewer", "tools": sorted(REVIEWER_TOOLS), "packs": [], "off": {}}
@@ -103,7 +91,7 @@ def tool_surface_summary(config: TRWConfig) -> dict[str, object]:
         mode,
         comms_enabled=getattr(config, "comms_enabled", False) is True,
         dispatch_enabled=getattr(config, "dispatch_tools_exposed", False) is True,
-        assess_enabled=getattr(config, "assess_enabled", False) is True,
+        assess_enabled=assess_surfaced(config),
     )
     return {
         "role": "agent",
@@ -126,16 +114,14 @@ def explain_surface(
 ) -> dict[str, object]:
     """The profile explanation plus the resolved tool surface (one service).
 
-    Resolves the full 6-layer profile chain (defaults -> org -> domain ->
-    task-type -> session -> client) exactly as session start does, then adds
-    ``tool_surface`` from :func:`tool_surface_summary`. Works with no pinned run
-    (``run_dir=None``): the session layer is then simply absent.
+    Resolves the profile chain (defaults -> org -> domain -> task-type ->
+    client) exactly as session start does, then adds ``tool_surface`` from
+    :func:`tool_surface_summary`. Works with no pinned run (``run_dir=None``).
     """
     from trw_mcp.profile.session_resolve import resolve_session_profile
 
     resolved = resolve_session_profile(
         config,
-        run_dir=run_dir,
         domain=domain,
         task_type=task_type,
         prd_path=prd_path,

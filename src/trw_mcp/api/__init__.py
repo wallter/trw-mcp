@@ -1,7 +1,10 @@
-"""Public API -- stable import paths for cross-package consumers.
+"""Public API -- the ONLY public module of trw-mcp (PRD-CORE-313 FR07).
 
-This module provides a curated subset of trw-mcp types for downstream
-consumers. Internal code should import from the full module paths.
+``trw_mcp.api`` and ``trw_mcp.api.scoring`` are the only import paths with a
+compatibility promise: adding a name is a minor release, removing or renaming
+one is a major release. Every other ``trw_mcp`` module is internal and may
+change in any release (declared in ``trw_mcp.__internal_modules__``). Code
+inside trw-mcp imports from the full module paths.
 """
 
 # --- Core configuration ---

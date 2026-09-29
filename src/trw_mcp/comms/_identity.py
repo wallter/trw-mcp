@@ -340,10 +340,3 @@ def resolve_authority_snapshot(ctx: Context | None, *, trw_dir: Path, project_ro
             raise IdentityError(IdentityRefusal.WORKTREE_UNBOUND, "caller is not the recorded worktree member")
         return snapshot
     return resolve_snapshot(ctx, trw_dir=trw_dir, project_root=project_root)
-
-
-def resolve_caller(ctx: Context | None, *, trw_dir: Path, project_root: Path) -> CallerBinding:
-    """Compatibility read-only binding plus eligibility; facade records closure."""
-    snapshot = resolve_snapshot(ctx, trw_dir=trw_dir, project_root=project_root)
-    snapshot.assert_eligible()
-    return snapshot.binding

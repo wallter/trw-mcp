@@ -2,12 +2,10 @@
 
 A source scan, because the failure it guards against is a new call site: a probe,
 a counter or a maintenance step that reaches for the file directly instead of the
-daemon. Two modules may still touch the file, each for a stated reason:
-
-* ``state/_store_migration.py`` moves an unmigrated store into the daemon and
-  checks it is empty afterwards (``memory migrate``).
-* ``server/_doctor_memory_store.py`` reads it read-only to report stray rows a
-  pinned checkout's file still holds (``trw-mcp doctor``).
+daemon. One module may still touch the file: ``state/_store_migration.py`` moves an
+unmigrated store into the daemon (``memory migrate``). What only needs to know
+whether the file holds rows (doctor, ``holds_rows``) asks trw-memory's bounded
+``probe_store`` (PRD-QUAL-147).
 
 The scan finds an opener by the ``"memory.db"`` literal in the same module. The
 WAL maintenance (``maybe_checkpoint_wal``, ``_wal_idle_sweep``) opened the file
@@ -38,7 +36,7 @@ _DELETED_MODULES = frozenset(
 _DELETED_NAMES = _ACCESSORS | {"maybe_checkpoint_wal", "start_wal_checkpoint_sweeper", "checkpoint_after_commit"}
 
 #: Modules that may open a file they locate as ``memory.db`` (see the module docstring).
-_MAY_OPEN_THE_CHECKOUT_STORE = frozenset({"state/_store_migration.py", "server/_doctor_memory_store.py"})
+_MAY_OPEN_THE_CHECKOUT_STORE = frozenset({"state/_store_migration.py"})
 
 
 def _call_name(call: ast.Call) -> str | None:
@@ -97,7 +95,7 @@ def test_no_module_defines_or_calls_an_in_process_store_accessor() -> None:
     assert accessors == {}, f"in-process store accessors are back: {accessors}"
 
 
-def test_only_migration_and_the_doctor_open_a_checkouts_memory_db() -> None:
+def test_only_migration_opens_a_checkouts_memory_db() -> None:
     _accessors, openers = _scan()
 
     assert set(openers) <= _MAY_OPEN_THE_CHECKOUT_STORE, (
@@ -106,8 +104,8 @@ def test_only_migration_and_the_doctor_open_a_checkouts_memory_db() -> None:
     )
 
 
-def test_the_scan_sees_the_two_modules_it_allows() -> None:
-    """A scan that finds nothing proves nothing: the allowed openers must still register as openers."""
+def test_the_scan_sees_the_module_it_allows() -> None:
+    """A scan that finds nothing proves nothing: the allowed opener must still register as one."""
     _accessors, openers = _scan()
 
     assert set(openers) >= _MAY_OPEN_THE_CHECKOUT_STORE

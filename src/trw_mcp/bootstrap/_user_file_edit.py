@@ -34,13 +34,12 @@ wrote and that is unchanged, and never reads or writes through a symlink.
 from __future__ import annotations
 
 import json
-import os
 import re
-import stat
 import sys
-import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
+
+from trw_mcp._checkout_write import write_checkout_file
 
 from ._safe_remove import path_refusal
 
@@ -93,18 +92,10 @@ def atomic_write_text(path: Path, text: str) -> None:
     would silently pick up the temp file's default (umask) mode instead of
     keeping whatever mode (e.g. ``0600``, an exec bit) the original had.
     """
-    tmp_path = path.with_name(f".{path.name}.trw-tmp-{uuid.uuid4().hex}")
-    try:
-        tmp_path.write_bytes(text.encode("utf-8"))
-        try:
-            original_mode = stat.S_IMODE(path.stat().st_mode)
-        except OSError:
-            original_mode = None  # file did not exist yet -- default mode is fine
-        if original_mode is not None:
-            os.chmod(tmp_path, original_mode)
-        os.replace(tmp_path, path)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    # Bytes, so no newline translation; the adapter keeps the existing file's mode and refuses a
+    # symlinked file (PRD-CORE-337). The file's own directory is the root: callers edit user files
+    # anywhere, so only the leaf is checked.
+    write_checkout_file(path.parent, path, text.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -160,15 +151,6 @@ TrwEntryPredicate = Callable[[str, object], bool]
 TrwHookCommandPredicate = Callable[[str, dict[str, object]], bool]
 
 
-def _entry_hook_commands(entry: object) -> list[dict[str, object]]:
-    if not isinstance(entry, dict):
-        return []
-    hooks = entry.get("hooks")
-    if not isinstance(hooks, list):
-        return []
-    return [h for h in hooks if isinstance(h, dict)]
-
-
 def prune_empty_event_keys(
     hooks_by_event: dict[str, object],
     new_lists: dict[str, list[object]],
@@ -189,33 +171,6 @@ def prune_empty_event_keys(
             merged[event] = pruned
         # else: originally non-empty, emptied by our own removal -> drop key
     return merged
-
-
-def drop_matching_hook_entries(
-    hooks_by_event: dict[str, object],
-    is_trw_entry: TrwEntryPredicate,
-    file_label: str,
-    result: dict[str, list[str]],
-) -> tuple[dict[str, object], bool]:
-    """Remove every TRW-owned whole ENTRY for which *is_trw_entry* is True.
-
-    Used for ``.claude/settings.json``, where one entry carries exactly one
-    script's identity, so a whole-entry drop is safe. An entry with hook
-    commands that is not verified TRW is kept.
-    """
-    changed = False
-    new_lists: dict[str, list[object]] = {}
-    for event, entries in hooks_by_event.items():
-        if not isinstance(entries, list):
-            continue
-        kept: list[object] = []
-        for entry in entries:
-            if _entry_hook_commands(entry) and is_trw_entry(event, entry):
-                changed = True
-                continue
-            kept.append(entry)
-        new_lists[event] = kept
-    return prune_empty_event_keys(hooks_by_event, new_lists), changed
 
 
 def drop_matching_hook_commands(
@@ -301,6 +256,19 @@ def drop_matching_flat_hook_entries(
 # ---------------------------------------------------------------------------
 
 
+def _drop_header_above(out: list[str], header: str) -> None:
+    """Pop *header* and the blank lines below it off the tail of *out*, if it is there.
+
+    Only an EXACT header line (compared without its line ending) directly above
+    the tail's blank run is removed; otherwise *out* is left untouched.
+    """
+    j = len(out)
+    while j > 0 and not out[j - 1].strip():
+        j -= 1
+    if j > 0 and out[j - 1].rstrip("\r\n") == header:
+        del out[j - 1 :]
+
+
 def strip_managed_block(text: str, marker_pairs: tuple[tuple[str, str], ...]) -> tuple[str, bool, list[str]]:
     """Remove verified marker-delimited spans from *text*.
 
@@ -311,14 +279,20 @@ def strip_managed_block(text: str, marker_pairs: tuple[tuple[str, str], ...]) ->
     end, or an end with no preceding start) is left in place and reported in
     the returned warnings list rather than deleted or used to delete to EOF.
 
-    No blank-line collapsing: the real writer (``state/claude_md``) inserts
-    its own separator BEFORE a generated-header comment line that sits ABOVE
-    the start marker, not adjacent to the marker line itself — so there is no
-    writer-inserted blank line directly touching ``trw:start``/``trw:end`` for
-    this function to remove. Removing exactly the marker span, and nothing
-    else, is what keeps every byte outside it — including the user's own
-    blank lines, wherever they fall — byte-identical.
+    The generated-header comment (``TRW_AUTO_COMMENT``) the real writer puts
+    ABOVE the start marker goes with the span it heads: when a span is
+    removed, the nearest preceding non-blank line is dropped if it is EXACTLY
+    that header (line ending aside), together with the blank lines between it
+    and the marker. A near-miss header, a header with user text between it and
+    the span, and a header in a file where no span was removed are all kept.
+
+    No other blank-line collapsing: the blank line the writer inserts BEFORE
+    the header is indistinguishable from the user's own, so it stays, as does
+    every blank line after the end marker. Everything outside the span (and
+    that exact header) is byte-identical.
     """
+    from trw_mcp.state.claude_md._parser import TRW_AUTO_COMMENT
+
     starts = {start for start, _end in marker_pairs}
     ends = {end for _start, end in marker_pairs}
     end_for_start = dict(marker_pairs)
@@ -347,6 +321,7 @@ def strip_managed_block(text: str, marker_pairs: tuple[tuple[str, str], ...]) ->
                 i += 1
                 continue
             changed = True
+            _drop_header_above(out, TRW_AUTO_COMMENT)
             i = end_index + 1
             continue
         if stripped in ends:

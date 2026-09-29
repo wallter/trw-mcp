@@ -11,6 +11,10 @@ ever refreshed.
 
 Every test here exercises the REAL production writers against real files on
 disk -- nothing is mocked.
+
+PRD-CORE-341: both writers put the same two-line link between the markers and
+the protocol body in ``.trw/INSTRUCTIONS.md``, so "the block is refreshed" is
+observed on that file and "one block" on AGENTS.md.
 """
 
 from __future__ import annotations
@@ -22,14 +26,15 @@ import pytest
 from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md._agents_md import _sync_agents_md_if_needed
+from trw_mcp.state.claude_md._instructions_link import (
+    INSTRUCTIONS_RELPATH,
+    LINK_BODY,
+    render_instructions_body,
+    render_instructions_file,
+)
 
 _SHARED_START = "<!-- trw:start -->"
 _LEGACY_START = "<!-- TRW:BEGIN -->"
-
-
-def _no_learnings(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
-    """Recall stub: the sync writer must not need a live memory backend."""
-    return []
 
 
 def _sync_agents_md(project_root: Path) -> None:
@@ -37,13 +42,12 @@ def _sync_agents_md(project_root: Path) -> None:
 
     call) against *project_root*'s AGENTS.md.
     """
-    _sync_agents_md_if_needed(
-        True,
-        TRWConfig(),
-        project_root,
-        project_root / ".trw",
-        recall_fn=_no_learnings,
-    )
+    _sync_agents_md_if_needed(True, TRWConfig(), project_root)
+
+
+def _expected_instructions(project_root: Path) -> str:
+    """The one file every writer produces: the generated header plus the shared body."""
+    return render_instructions_file(render_instructions_body(project_root))
 
 
 class TestFR06InstallThenSyncLeavesOneBlock:
@@ -52,11 +56,12 @@ class TestFR06InstallThenSyncLeavesOneBlock:
     def test_install_then_sync_leaves_one_block(self, tmp_path: Path) -> None:
         # 1. Install-time writer runs first (what `init_project(ide="cursor-cli")`
         #    calls at scaffold time).
-        install_result = generate_cursor_cli_agents_md(tmp_path, "INSTALL BODY")
+        install_result = generate_cursor_cli_agents_md(tmp_path)
         assert install_result["created"] == ["AGENTS.md"]
         after_install = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
         assert after_install.count(_SHARED_START) == 1
         assert _LEGACY_START not in after_install
+        instructions_after_install = (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
         # 2. Sync writer runs (what `instructions sync`/`trw_deliver` call).
         _sync_agents_md(tmp_path)
@@ -66,17 +71,21 @@ class TestFR06InstallThenSyncLeavesOneBlock:
         # duplicate_block lint's own predicate (scripts/lint-instruction-surfaces.py).
         assert after_sync.count(_SHARED_START) == 1
         assert _LEGACY_START not in after_sync
-        assert "INSTALL BODY" not in after_sync, "the sync writer must refresh the block, not leave it stale"
+        assert LINK_BODY in after_sync
+        # One renderer: sync leaves the installer's instructions file byte-identical (no first-sync rewrite).
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8") == instructions_after_install
 
     def test_second_sync_run_is_byte_identical(self, tmp_path: Path) -> None:
-        generate_cursor_cli_agents_md(tmp_path, "INSTALL BODY")
+        generate_cursor_cli_agents_md(tmp_path)
         _sync_agents_md(tmp_path)
         first = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        first_instructions = (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
         _sync_agents_md(tmp_path)
         second = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
 
         assert first == second
+        assert first_instructions == (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
 
     def test_sync_then_install_also_leaves_one_block(self, tmp_path: Path) -> None:
         """Order independence: the finding measured install-then-sync, but a
@@ -86,12 +95,13 @@ class TestFR06InstallThenSyncLeavesOneBlock:
         invoking the cursor-cli path again) must converge the same way.
         """
         _sync_agents_md(tmp_path)
-        generate_cursor_cli_agents_md(tmp_path, "INSTALL BODY")
+        generate_cursor_cli_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
 
         assert content.count(_SHARED_START) == 1
         assert _LEGACY_START not in content
-        assert "INSTALL BODY" in content
+        assert LINK_BODY in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8") == _expected_instructions(tmp_path)
 
 
 class TestFR08MarkerMatchingIsLineAnchored:
@@ -115,12 +125,13 @@ class TestFR08MarkerMatchingIsLineAnchored:
             encoding="utf-8",
         )
 
-        generate_cursor_cli_agents_md(tmp_path, "NEW BODY")
+        generate_cursor_cli_agents_md(tmp_path)
         content = agents_file.read_text(encoding="utf-8")
 
         assert mention in content, "the inline mention must be preserved verbatim"
         assert "Trailing user note." in content
-        assert "NEW BODY" in content
+        assert LINK_BODY in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8") == _expected_instructions(tmp_path)
         assert "OLD BODY" not in content
         # Exactly one WHOLE-LINE start marker remains: the inline mention above
         # (never a candidate region boundary) is excluded by counting only

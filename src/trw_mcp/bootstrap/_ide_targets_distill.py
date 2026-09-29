@@ -47,10 +47,13 @@ def _update_codex_distill_channels(
         from ._codex_distill_channels import install_codex_distill_channels
 
         dc = install_codex_distill_channels(target_dir)
-        for key in ("created", "updated", "preserved", "errors"):
+        for key in ("created", "updated", "preserved", "errors", "removed", "trashed"):
             items = dc.get(key)
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)
+        # Only the CC-03 withdrawal outcomes; the installer's standing Codex trust note stays install-only.
+        cc03 = [w for w in dc.get("warnings", []) if isinstance(w, str) and w.startswith(".claude/hooks/")]
+        result.setdefault("warnings", []).extend(cc03)
     except Exception as exc:  # justified: fail-open, distill channels are additive
         result.setdefault("warnings", []).append(f"codex distill channels update skipped: {exc}")
 

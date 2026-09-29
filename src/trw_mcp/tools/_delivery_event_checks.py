@@ -11,12 +11,22 @@ import structlog
 
 from trw_mcp import PROCESS_STARTED_AT as _PROCESS_STARTED_AT
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.tools._delivery_helpers import (
-    COMPLEXITY_DRIFT_MULTIPLIER,
-    REVIEW_SCOPE_FILE_THRESHOLD,
-)
 
 logger = structlog.get_logger(__name__)
+
+# Defined here, not in _delivery_helpers: _delivery_helpers imports this module at
+# load, so importing them back made a cycle. A process that loaded this module
+# first (evaluate_build_authority imports it lazily) then hit an ImportError that
+# the build-authority gate's fail-OPEN handler turned into "not blocked".
+# _delivery_helpers re-exports both names.
+
+#: Review-scope block gate (R-01): file_modified count above which delivery is
+#: blocked when no review was run.
+REVIEW_SCOPE_FILE_THRESHOLD = 5
+
+#: Complexity drift (R-02/R-05): actual files must exceed planned_files * this
+#: factor AND exceed REVIEW_SCOPE_FILE_THRESHOLD.
+COMPLEXITY_DRIFT_MULTIPLIER = 2
 
 #: When this server process started (stamped in ``trw_mcp/__init__``, the first
 #: import of every process — this module loads lazily at the first deliver call,
@@ -253,6 +263,7 @@ def _read_complexity_class_state(run_path: Path, reader: FileStateReader) -> tup
         run_data = reader.read_yaml(run_yaml_path)
     except Exception:  # justified: fail-open — the READABILITY is returned, not swallowed
         logger.warning("run_yaml_read_failed", run_path=str(run_path), exc_info=True)
+        # trw-fail-silent-allow: read failure already logged above; readability=False is returned, not swallowed.
         return "", False
     return str(run_data.get("complexity_class", "")), True
 

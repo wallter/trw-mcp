@@ -14,6 +14,8 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._doctor_agent_parity import agent_parity_report
 from trw_mcp.server._subcommands_doctor import _check_agent_parity, _doctor_core
 
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes", "no_memory_daemon")
+
 BUNDLED_AGENTS_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "agents"
 
 

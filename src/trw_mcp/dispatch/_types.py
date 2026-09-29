@@ -31,6 +31,13 @@ from trw_mcp.dispatch._client_specs import DispatchClient as DispatchClient
 from trw_mcp.dispatch._client_specs import DispatchPosture as DispatchPosture
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 
+# PRD-SEC-015-FR08. A layer name is a claim of VERIFIED enforcement -- each one
+# is backed by a named, passing probe in the FR08 table
+# (``trw_mcp.dispatch._enforcement_layers.enforcement_report``, the one place
+# that decides the tuple). An assumed or unmeasured layer is never a member of
+# this Literal's live values; it is named in ``mcp_role_note`` instead.
+EnforcementLayer = Literal["sandbox", "permissions_allowlist", "mcp_allowlist", "mcp_role", "mcp_absent"]
+
 # Upper bound on a forwarded model-override string. A model name is concatenated
 # into argv; even within the benign charset an unbounded value is pointless and a
 # resource/abuse vector, so cap it well above any real model id.
@@ -207,10 +214,13 @@ class DispatchRequest(BaseModel):
             "Session IDENTITY of the child, distinct from read_only (permission) and role "
             "(a prompt preamble). 'reviewer' launches the child with TRW's OWN trw-mcp server "
             "in its argv, marked TRW_SURFACE_ROLE=reviewer, so the server bounds it to "
-            "REVIEWER_TOOLS server-side. Refused before spawn for a client whose spec carries no "
-            "reviewer argv template, and refused with writes — see the model validator."
+            "REVIEWER_TOOLS server-side. Explicit opt-in only; resolution downgrades it to "
+            "'default' (with posture_note) for a client that cannot carry it, unless the caller "
+            "requires it. Refused with writes — see the model validator."
         ),
     )
+    #: Why a requested posture was not applied and what confinement the client does deliver ("" when applied).
+    posture_note: str = ""
     with_trw: bool = Field(
         default=False,
         description=(
@@ -402,13 +412,16 @@ class DispatchResult(BaseModel):
             "emitted that client's ``read_only_argv`` and OMITTED its "
             "``allow_writes_argv``, so no write/permission-bypass flag reached the "
             "child. It holds for every registered client by construction — a count "
-            "here went stale the moment the registry grew past four."
+            "here went stale the moment the registry grew past four. Filesystem only: "
+            "MCP tool writes are reported by ``enforcement_layers`` (PRD-SEC-015-FR08)."
         ),
     )
     posture: DispatchPosture = Field(
         default="default",
         description="The posture the request ASKED for. Compare with posture_enforced before trusting it.",
     )
+    #: Copied from the request: a posture the client could not carry, and what the child did get.
+    posture_note: str = ""
     posture_enforced: bool = Field(
         default=False,
         description=(
@@ -429,6 +442,17 @@ class DispatchResult(BaseModel):
             "request flag alone records an intention, and an intention beside an argv with no MCP "
             "entry is the delivered-but-not-wired claim this field exists to expose."
         ),
+    )
+    enforcement_layers: tuple[EnforcementLayer, ...] = Field(
+        default=(),
+        description=(
+            "Layers VERIFIED for this run per the PRD-SEC-015-FR08 probe table (never assumed); "
+            "an uncovered case is empty here and explained in ``mcp_role_note``."
+        ),
+    )
+    mcp_role_note: str = Field(
+        default="",
+        description="What ``enforcement_layers`` does not claim for this run, and why; empty when no caveat applies.",
     )
     exit_code: int | None = Field(description="Child process exit code; None if it timed out before exiting.")
     timed_out: bool = Field(description="True if the child exceeded timeout_s and was killed.")
@@ -484,6 +508,9 @@ class DispatchResult(BaseModel):
             "'subagent_deferral' (the client's own status field claims success while its answer text only "
             "announces a handoff to a subagent -- the work was never actually returned), "
             "'quota_exhausted' (the provider refused on usage or billing; fail over to another client), "
+            "'provider_capacity' (the provider is up but has no room now; the same client is retried once), "
+            "'credential_refresh_conflict' (another process spent the rotating OAuth refresh token; retried "
+            "once behind the credential lock), "
             "'sandbox_unsupported' or 'client_unsupported' (the installed CLI lacks a flag dispatch passes; "
             "nothing was run), 'nonzero_exit', 'empty_output', or None when the answer is usable. Exists "
             "because a caller that sees only empty findings cannot tell a clean review from "
@@ -502,6 +529,24 @@ class DispatchResult(BaseModel):
         default="",
         description="Why another client answered, or that every client in the chain failed over; else empty.",
     )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def error_class(self) -> str | None:
+        """The remedy class when the run produced no usable answer (PRD-CORE-304-FR01): provider_capacity,
+        quota, credential_refresh_conflict, auth, content_stop, timeout or unknown; ``None`` otherwise."""
+        from trw_mcp.dispatch._error_class import error_class  # it imports _normalize, which imports this module
+
+        return error_class(self.silence_reason, self.structured, self.raw_stderr)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def last_error(self) -> str | None:
+        """The client's own last error message (its structured error event, else its last stderr line),
+        capped; ``None`` for a usable answer. Nothing here the result does not already carry."""
+        from trw_mcp.dispatch._error_class import last_error
+
+        return last_error(self.structured, self.raw_stderr) if self.silence_reason is not None else None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

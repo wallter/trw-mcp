@@ -1,12 +1,10 @@
-"""Tests for CLAUDE.md template loading and rendering helpers."""
+"""Tests for instruction-file template loading and rendering helpers."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from trw_memory.models.memory import MemoryEntry
 
 from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import (  # noqa: F401
@@ -27,7 +25,6 @@ from trw_mcp.state.claude_md import (
     render_imperative_opener,
     render_memory_harmonization,
     render_phase_descriptions,
-    render_shared_learnings,
     render_template,
 )
 
@@ -102,46 +99,11 @@ class TestClaudeMdTemplate:
 
         result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
-        # CORE-093: learning promotion removed
-        assert result["learnings_promoted"] == 0
 
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
+        agents_md = tmp_path / "AGENTS.md"
+        content = agents_md.read_text(encoding="utf-8")
         assert "trw:start" in content
         assert "trw:end" in content
-
-    def test_custom_template_with_extra_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Custom templates can add static content alongside placeholders."""
-        trw_dir = tmp_path / _CFG.trw_dir
-        templates_dir = trw_dir / _CFG.templates_dir
-        templates_dir.mkdir(parents=True)
-
-        custom_template = (
-            "\n"
-            "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->\n"
-            "<!-- trw:start -->\n"
-            "\n"
-            "### Project-Specific Notes\n"
-            "- This project uses React 19\n"
-            "\n"
-            "{{imperative_opener}}"
-            "{{ceremony_quick_ref}}"
-            "{{memory_harmonization}}"
-            "{{shared_learnings}}"
-            "{{closing_reminder}}"
-            "<!-- trw:end -->\n"
-        )
-        (templates_dir / "claude_md.md").write_text(custom_template, encoding="utf-8")
-
-        tools = _get_tools()
-
-        result = instructions_sync_fn(scope="root")
-        assert result["status"] == "synced"
-
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        assert "Project-Specific Notes" in content
-        assert "React 19" in content
 
 
 class TestCeremonyRendering:
@@ -242,26 +204,6 @@ class TestCeremonyRendering:
         assert "opencode" not in result.lower()
         assert "AGENTS.md" not in result
 
-    def test_render_shared_learnings(self) -> None:
-        """Shared learnings section renders top org memories compactly."""
-        entries = [
-            MemoryEntry(
-                id="M-1",
-                content="Cross-project deployment lesson",
-                detail="Use staged rollouts before schema flips.",
-                namespace="project:other",
-                importance=0.9,
-                cross_validated=True,
-            )
-        ]
-
-        with patch("trw_mcp.state.claude_md._static_sections.list_org_shared_entries", return_value=entries):
-            result = render_shared_learnings()
-
-        assert "## Shared Learnings" in result
-        assert "Cross-project deployment lesson" in result
-        assert "Use staged rollouts before schema flips." in result
-
     def test_render_delegation_protocol(self) -> None:
         """Delegation protocol contains orchestrator role, decision tree, and value framing."""
         result = render_delegation_protocol()
@@ -287,46 +229,9 @@ class TestCeremonyRendering:
         assert "{{imperative_opener}}" in template
         assert "{{ceremony_quick_ref}}" in template
         assert "{{memory_harmonization}}" in template
-        assert "{{shared_learnings}}" in template
+        # PRD-CORE-341: no learnings in any instruction file, sub-scope included.
+        assert "{{shared_learnings}}" not in template
         assert "{{closing_reminder}}" in template
-
-    def test_sync_includes_ceremony_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """CLAUDE.md has compact protocol; ceremony details in hook only."""
-        tools = _get_tools()
-
-        tools["trw_learn"].fn(
-            summary="Ceremony sync test",
-            detail="Verify ceremony sections in output",
-            impact=0.9,
-        )
-
-        result = instructions_sync_fn(scope="root")
-        assert result["status"] == "synced"
-
-        claude_md = tmp_path / "CLAUDE.md"
-        content = claude_md.read_text(encoding="utf-8")
-        # Ceremony details moved to session-start hook — NOT in CLAUDE.md
-        assert "### Execution Phases" not in content
-        assert "### Tool Lifecycle" not in content
-        assert "## TRW Delegation & Orchestration" not in content
-        assert "## Rationalization Watchlist" not in content
-        # Quick ref card present with skill pointer
-        assert "/trw-ceremony-guide" in content
-        # Strong session_start trigger in opener (v26 delegation framing — 86da33ef0)
-        assert "delegation is an optimization, not a dependency" in content.lower()
-        assert "trw_session_start()" in content
-        assert "first action" in content.lower()
-        # Memory routing section present
-        assert "Memory Routing" in content
-        # Closing reminder bookends the section
-        assert "Session Boundaries" in content
-        # No unreplaced placeholders
-        assert "{{imperative_opener}}" not in content
-        assert "{{ceremony_phases}}" not in content
-        assert "{{ceremony_table}}" not in content
-        assert "{{ceremony_flows}}" not in content
-        assert "{{closing_reminder}}" not in content
-        assert "{{ceremony_quick_ref}}" not in content
 
 
 @pytest.mark.parametrize("fallback", [False, True])
@@ -378,19 +283,18 @@ def test_all_protocol_modes_preserve_truthful_boundaries(mode: str) -> None:
 
 
 def test_bootstrap_and_platform_text_consumers_preserve_boundaries() -> None:
-    from trw_mcp.bootstrap._config_templates import _minimal_claude_md
-    from trw_mcp.state.claude_md.renderers._review_and_opencode import (
-        render_antigravity_instructions,
-        render_opencode_generic,
+    from trw_mcp.state.claude_md.renderers._review_and_opencode import render_antigravity_instructions
+    from trw_mcp.state.claude_md.sections._delegation import render_agents_trw_section
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+        render_codex_instructions,
+        render_opencode_instructions,
     )
-    from trw_mcp.state.claude_md.sections._delegation import render_agents_trw_section, render_codex_trw_section
 
     for renderer in (
-        _minimal_claude_md,
         render_antigravity_instructions,
-        render_opencode_generic,
+        render_opencode_instructions,
         render_agents_trw_section,
-        render_codex_trw_section,
+        render_codex_instructions,
     ):
         text = renderer()
         assert "unfinished" in text

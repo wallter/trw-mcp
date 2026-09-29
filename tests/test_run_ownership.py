@@ -172,68 +172,6 @@ class TestRunOwnership:
         assert data["owner_session_id"] == "abc123"
 
 
-class TestMarkRunComplete:
-    """FR01: trw_deliver marks run as complete."""
-
-    def test_mark_run_complete(
-        self,
-        tmp_path: Path,
-        writer: FileStateWriter,
-    ) -> None:
-        from trw_mcp.state.persistence import FileStateReader
-        from trw_mcp.tools.ceremony import _mark_run_complete
-
-        run_dir = tmp_path / "run1"
-        (run_dir / "meta").mkdir(parents=True)
-        writer.write_yaml(
-            run_dir / "meta" / "run.yaml",
-            {"run_id": "test", "status": "active", "phase": "deliver"},
-        )
-
-        _mark_run_complete(run_dir)
-
-        reader = FileStateReader()
-        data = reader.read_yaml(run_dir / "meta" / "run.yaml")
-        assert data["status"] == "complete"
-
-    def test_mark_run_complete_no_yaml_noop(self, tmp_path: Path) -> None:
-        from trw_mcp.tools.ceremony import _mark_run_complete
-
-        run_dir = tmp_path / "run-missing"
-        (run_dir / "meta").mkdir(parents=True)
-        # No run.yaml — should not raise
-        _mark_run_complete(run_dir)
-
-    def test_delivered_run_not_recovered(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        writer: FileStateWriter,
-    ) -> None:
-        """_mark_run_complete seals the run: the status on disk flips to terminal.
-
-        This used to be asserted through the mtime scan's status filter, which
-        PRD-FIX-132 deleted as dormant. The predicate itself is covered by
-        test_run_status_vocabulary.py; what belongs here is that the sealing
-        writer actually writes a terminal status.
-        """
-        from trw_mcp.models.run import is_terminal_status
-        from trw_mcp.state.persistence import FileStateReader
-        from trw_mcp.tools.ceremony import _mark_run_complete
-
-        project = tmp_path / "project"
-        runs_root = project / ".trw" / "runs"
-        run = _make_run(runs_root, "task1", "20260220T100000Z-test", writer=writer)
-
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        before = FileStateReader().read_yaml(run / "meta" / "run.yaml")
-        assert not is_terminal_status(str(before["status"]))
-
-        _mark_run_complete(run)
-        after = FileStateReader().read_yaml(run / "meta" / "run.yaml")
-        assert is_terminal_status(str(after["status"]))
-
-
 class TestOwnershipWarning:
     """FR05: Ownership-aware recovery warnings."""
 

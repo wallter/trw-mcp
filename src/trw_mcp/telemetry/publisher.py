@@ -21,7 +21,12 @@ from typing_extensions import TypedDict
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+from trw_mcp.state._platform_trust import (
+    payload_trw_dir,
+    platform_auth_headers,
+    platform_contact_enabled,
+    send_policy_all,
+)
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_secrets
 from trw_mcp.telemetry.retention import rotate_and_compress
@@ -162,17 +167,26 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     Fail-open: never raises exceptions.
     """
     cfg = get_config()
+    trw_dir = resolve_trw_dir()
+    # The learnings were recorded under this project's .trw and are read from a directory whose OWNER
+    # (symlinks resolved) may be another project: both must allow the send, so a link can only
+    # restrict it (review r2/r3, classfix r1). The owner is also re-asked before every POST.
+    entries_dir = trw_dir / "learnings" / "entries"
+    source_trw_dir = payload_trw_dir(entries_dir)
+    policy = send_policy_all((trw_dir, source_trw_dir))
     # PRD-CORE-181-FR04: fold telemetry-log rotation into this maintenance step
     # (runs as deliver-step D08 on every trw_deliver). It is a local, network-
     # independent side task, so it runs BEFORE the offline early-returns below.
-    rotate_pipeline_telemetry_log(resolve_trw_dir())
+    rotate_pipeline_telemetry_log(trw_dir)
+    if source_trw_dir is None:  # the entries have no owning project: they have no policy to send under
+        return {"published": 0, "skipped": 0, "unchanged": 0, "errors": 0, "skipped_reason": "no_source_project"}
     urls = cfg.effective_platform_urls
     # PRD-SEC-004-FR05: learning-CONTENT publishing (full summary + detail) is
     # gated by its OWN consent flag, learning_sharing_enabled — NOT by the
     # anonymous-usage telemetry flag (platform_telemetry_enabled). Default off:
     # a user who only enabled usage telemetry never has their learning content
     # uploaded. No off-machine POST occurs unless learning_sharing_enabled=True.
-    if not urls or not cfg.learning_sharing_enabled:
+    if not urls or not (cfg.learning_sharing_enabled and policy.learning_sharing):
         return {
             "published": 0,
             "skipped": 0,
@@ -185,7 +199,7 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     # block this content-carrying POST outright, not just leave it
     # unauthenticated. No request is attempted; learnings stay locally
     # unpublished for a future consented run.
-    if not platform_contact_enabled():
+    if not policy.contact:
         return {
             "published": 0,
             "skipped": 0,
@@ -194,8 +208,6 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
             "skipped_reason": "platform_contact_disabled",
         }
 
-    trw_dir = resolve_trw_dir()
-    entries_dir = trw_dir / "learnings" / "entries"
     if not entries_dir.exists():
         return {
             "published": 0,
@@ -269,14 +281,23 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                 # Fan-out: publish to all configured backends in parallel
                 if executor:
                     futs = {
-                        executor.submit(_post_learning, url, payload, cfg.platform_api_key.get_secret_value()): url
+                        executor.submit(
+                            _post_learning,
+                            url,
+                            payload,
+                            cfg.platform_api_key.get_secret_value(),
+                            source_trw_dir=source_trw_dir,
+                        ): url
                         for url in urls
                     }
                     results = [f.result() for f in as_completed(futs)]
                     any_success = any(results)
                 else:
                     any_success = any(
-                        _post_learning(url, payload, cfg.platform_api_key.get_secret_value()) for url in urls
+                        _post_learning(
+                            url, payload, cfg.platform_api_key.get_secret_value(), source_trw_dir=source_trw_dir
+                        )
+                        for url in urls
                     )
 
                 if any_success:
@@ -308,7 +329,9 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     }
 
 
-def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = "") -> bool:
+def _post_learning(
+    platform_url: str, payload: _LearningPayload, api_key: str = "", *, source_trw_dir: Path | None
+) -> bool:
     """POST a learning to the backend. Returns True on 2xx.
 
     Retries up to 3 times on 429 (rate limit) with exponential backoff.
@@ -320,12 +343,16 @@ def _post_learning(platform_url: str, payload: _LearningPayload, api_key: str = 
     max_attempts = 4
 
     for attempt in range(max_attempts):
+        if not platform_contact_enabled(
+            source_trw_dir
+        ):  # every POST asks: the switch may flip mid-publish (sol r3, B71-106)
+            return False
         try:
             # platform_auth_headers is the ONE function that may build the
             # Authorization header — see _platform_trust module docstring.
             headers: dict[str, str] = {
                 "Content-Type": "application/json",
-                **platform_auth_headers(url, api_key),
+                **platform_auth_headers(url, api_key, source_trw_dir=source_trw_dir),
             }
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(url, json=dict(payload), headers=headers)

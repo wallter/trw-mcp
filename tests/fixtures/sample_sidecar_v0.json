@@ -23,6 +23,14 @@
       "DO-NOT-REMOVE markers present — load-bearing facade",
       "High co-change frequency with _schema.py"
     ],
-    "risk_score": 0.82
+    "risk_score": 0.82,
+    "lessons": [
+      {
+        "id": "L-a1b2c3d4",
+        "sha": "a1b2c3d",
+        "summary": "Row mapper and schema change together; a column added to one must be added to the other."
+      }
+    ],
+    "lessons_status": "ok"
   }
 }

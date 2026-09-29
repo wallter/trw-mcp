@@ -15,6 +15,26 @@ from trw_mcp.models.config._field_admission_registry_types import ConfigAdmissio
 from trw_mcp.models.config._field_admission_token_economy import TOKEN_ECONOMY_ADMISSIONS
 
 FORMATION_ADMISSIONS: dict[str, ConfigAdmission] = {
+    "factory_enabled": ConfigAdmission(
+        field_name="factory_enabled",
+        owner="PRD-CORE-340-FR11",
+        consumer="trw_mcp.state._factory_experiment.check -> factory status, receipt verify, factory checkpoint, orchestrator member",
+        default_rationale=(
+            "False. The software factory is an Alpha experiment with an expiry (2026-12-27); an "
+            "operator opts in, and an unreadable or invalid config refuses factory work rather than "
+            "enabling it by fallback."
+        ),
+        interaction_analysis=(
+            "Read only when a factory entry point runs (status, receipt verify, a checkpoint whose "
+            "message is a factory JSON object, the orchestrator-member addition); ordinary "
+            "checkpoint, build and formation behaviour is identical in every state. It cannot extend "
+            "the expiry, which is code-owned in the experiment record."
+        ),
+        deprecation_plan="Remove with the experiment at expiry unless the reviewed record promotes it.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-340.md",
+        test_pointer="trw-mcp/tests/test_factory_experimental_gate.py::test_default_off_and_banner",
+        budget_decision="admitted",
+    ),
     "formation_ownership_enforcement": ConfigAdmission(
         field_name="formation_ownership_enforcement",
         owner="PRD-CORE-265-FR09",

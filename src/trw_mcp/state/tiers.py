@@ -199,10 +199,14 @@ class TierManager:
         logger.debug("warm_tier_add", entry_id=entry_id)
 
     def _warm_sidecar_path(self) -> Path:
-        """Path to the warm tier keyword-search sidecar (JSONL)."""
+        """Path to the warm tier keyword-search sidecar (JSONL), making its directory for a write."""
         mem_dir = self._trw_dir / "memory"
         mem_dir.mkdir(parents=True, exist_ok=True)
         return mem_dir / "warm.jsonl"
+
+    def _warm_sidecar_read_path(self) -> Path:
+        """The sidecar's path for a READ or a delete: names it without creating the directory."""
+        return self._trw_dir / "memory" / "warm.jsonl"
 
     def _warm_sidecar_upsert(self, entry_id: str, entry_data: dict[str, object]) -> None:
         """Write entry metadata to the warm sidecar JSONL for keyword search."""
@@ -237,7 +241,7 @@ class TierManager:
         Args:
             entry_id: Learning entry identifier to remove.
         """
-        sidecar = self._warm_sidecar_path()
+        sidecar = self._warm_sidecar_read_path()
         if sidecar.exists():
             lines = []
             for line in sidecar.read_text(encoding="utf-8").splitlines():
@@ -276,7 +280,7 @@ class TierManager:
         Returns:
             List of result dicts with ``id`` and ``score`` (match fraction).
         """
-        sidecar = self._warm_sidecar_path()
+        sidecar = self._warm_sidecar_read_path()
         if not sidecar.exists() or not query_tokens:
             return []
 

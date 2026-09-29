@@ -13,7 +13,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # Public-mirror guard: this file asserts a MONOREPO invariant (repo-root
 # .trw/frameworks/FRAMEWORK.md parity) absent from the standalone trw-mcp
 # PyPI/GitHub mirror. Skip cleanly there; the monorepo CI still enforces it.
-if not (_REPO_ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
@@ -24,8 +26,7 @@ _FRAMEWORK_BUNDLED = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "fram
 
 
 def _framework_content() -> str:
-    if not _FRAMEWORK_ROOT.exists():
-        pytest.skip("FRAMEWORK.md not found at expected path")
+    assert _FRAMEWORK_ROOT.is_file(), f"the canonical {_FRAMEWORK_ROOT} is tracked in the monorepo"
     return _FRAMEWORK_ROOT.read_text(encoding="utf-8")
 
 
@@ -35,7 +36,8 @@ class TestFrameworkPortability:
     def test_header_declares_model_agnostic_policy(self) -> None:
         content = _framework_content()
         assert TRWConfig.model_fields["framework_version"].default in content
-        assert "MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK" in content
+        # Canon-swarm title decision (DECISION-LOG.md: "Engineering memory" is a capability, not the identity).
+        assert "MODEL-AGNOSTIC ENGINEERING FRAMEWORK FOR AGENTS" in content
         assert "Model policy: capability-based" in content
 
     def test_framework_removes_v24_provider_and_beta_claims(self) -> None:
@@ -45,8 +47,6 @@ class TestFrameworkPortability:
             assert token not in content, f"FRAMEWORK.md still contains retired v24/beta token: {token}"
 
     def test_framework_md_bundled_copy_matches_root(self) -> None:
-        if not _FRAMEWORK_BUNDLED.exists():
-            pytest.skip("bundled framework.md not found")
         assert _FRAMEWORK_ROOT.read_bytes() == _FRAMEWORK_BUNDLED.read_bytes(), (
             "bundled framework.md has drifted from .trw/frameworks/FRAMEWORK.md"
         )

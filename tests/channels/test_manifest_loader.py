@@ -11,13 +11,11 @@ from trw_mcp.channels._manifest_loader import (
     ChannelManifest,
     ManifestMissingError,
     ManifestValidationError,
-    MarkerCollisionError,
     auto_recreate_empty,
-    check_marker_collisions,
     load,
     write,
 )
-from trw_mcp.channels._manifest_models import ChannelEntry, MarkersConfig
+from trw_mcp.channels._manifest_models import MarkersConfig
 
 
 def _write_yaml(path: Path, content: str) -> None:
@@ -436,118 +434,3 @@ def test_auto_recreate_empty_emits_manifest_recovered_telemetry_event(tmp_path: 
     assert ev["channel_id"] == "__system__"
     assert ev["client"] == "__system__"
     assert ev["outcome"] == "auto_recreated_empty"
-
-
-# ---------------------------------------------------------------------------
-# check_marker_collisions()
-# ---------------------------------------------------------------------------
-
-
-def test_check_marker_collisions_clean_file_no_error(tmp_path: Path) -> None:
-    target = tmp_path / "AGENTS.md"
-    target.write_text("# Hello world\nSome content\n", encoding="utf-8")
-    entry = ChannelEntry(
-        id="ch1",
-        client="codex",
-        surface="agents_md_segment",
-        telemetry_tag="t",
-        markers={"start": "<!-- trw:unique:start -->", "end": "<!-- trw:unique:end -->"},
-    )
-    # Should not raise
-    check_marker_collisions(target, entry)
-
-
-def test_check_marker_collisions_detects_collision(tmp_path: Path) -> None:
-    # MED-7: ceremony markers (trw:start / trw:end) are now excluded from the
-    # collision scope.  Use a distill-channel marker to test real collision
-    # detection (<!-- trw:codex:start --> is a DISTILL_MARKER_KEYS marker).
-    target = tmp_path / "CLAUDE.md"
-    target.write_text(
-        "# Hello\n<!-- trw:codex:start -->\nsome content\n<!-- trw:codex:end -->\n",
-        encoding="utf-8",
-    )
-    entry = ChannelEntry(
-        id="ch1",
-        client="claude-code",  # different client from codex markers → foreign
-        surface="instruction_file_segment",
-        telemetry_tag="t",
-    )
-    with pytest.raises(MarkerCollisionError):
-        check_marker_collisions(target, entry)
-
-
-def test_check_marker_collisions_skips_aspirational(tmp_path: Path) -> None:
-    # Use a distill-channel marker (would normally trigger a collision) to
-    # confirm the aspirational skip takes priority over collision detection.
-    target = tmp_path / "AGENTS.md"
-    target.write_text("<!-- trw:codex:start -->\n<!-- trw:codex:end -->\n", encoding="utf-8")
-    entry = ChannelEntry(
-        id="ch1",
-        client="claude-code",
-        surface="agents_md_segment",
-        telemetry_tag="t",
-        status="aspirational",
-    )
-    # Aspirational channels skip collision check — should not raise
-    check_marker_collisions(target, entry)
-
-
-def test_check_marker_collisions_missing_file_no_error(tmp_path: Path) -> None:
-    entry = ChannelEntry(
-        id="ch1",
-        client="codex",
-        surface="agents_md_segment",
-        telemetry_tag="t",
-    )
-    # Missing target file — no collision possible
-    check_marker_collisions(tmp_path / "nonexistent.md", entry)
-
-
-def test_check_marker_collisions_own_markers_not_a_collision(tmp_path: Path) -> None:
-    """Re-install scenario: entry's OWN markers already in the file → not a collision.
-
-    When a channel was previously installed, its own start/end markers will
-    already be present in the target file.  Re-running check_marker_collisions
-    must NOT flag those as a collision — only foreign markers from other channels
-    are collisions.
-    """
-    own_start = "<!-- trw:distill:start -->"
-    own_end = "<!-- trw:distill:end -->"
-    target = tmp_path / "AGENTS.md"
-    target.write_text(
-        f"# Agents\n{own_start}\nSome distill content\n{own_end}\n",
-        encoding="utf-8",
-    )
-    entry = ChannelEntry(
-        id="ch-agents-distill",
-        client="codex",
-        surface="agents_md_segment",
-        telemetry_tag="t",
-        markers={"start": own_start, "end": own_end},
-    )
-    # Should not raise — finding the channel's own markers is expected on re-install
-    check_marker_collisions(target, entry)
-
-
-def test_check_marker_collisions_ceremony_markers_not_a_collision(tmp_path: Path) -> None:
-    """MED-7 behavioral test: ceremony markers in CLAUDE.md must NOT trigger MarkerCollisionError.
-
-    CLAUDE.md / AGENTS.md files always contain <!-- trw:start --> and <!-- trw:end -->
-    as part of the standard TRW bootstrap.  Treating them as distill-channel
-    collisions would produce a false-positive on every standard deployment.
-    """
-    target = tmp_path / "CLAUDE.md"
-    # Standard TRW-bootstrapped CLAUDE.md contains ceremony markers
-    target.write_text(
-        "# Claude guidance\n<!-- trw:start -->\nCeremony section\n<!-- trw:end -->\n## Other content\n",
-        encoding="utf-8",
-    )
-    entry = ChannelEntry(
-        id="cc-01",
-        client="claude-code",
-        surface="instruction_file_segment",
-        telemetry_tag="t",
-        markers={"start": "<!-- trw:distill:start -->", "end": "<!-- trw:distill:end -->"},
-    )
-    # Must NOT raise — ceremony markers are excluded from the distill collision scope
-    check_marker_collisions(target, entry)

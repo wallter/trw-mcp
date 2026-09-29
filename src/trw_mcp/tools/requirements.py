@@ -55,19 +55,9 @@ from trw_mcp.state.validation import (
 )
 from trw_mcp.state.validation.template_variants import get_required_sections
 
-# Backward-compatible re-exports for test imports (assignments are
-# formatter-stable; the isort hook re-splits aliased import blocks).
-_CACHED_TEMPLATE_BODY = _helpers._CACHED_TEMPLATE_BODY
-_CACHED_TEMPLATE_VERSION = _helpers._CACHED_TEMPLATE_VERSION
-_apply_prefill = _helpers._apply_prefill
 _extract_prefill = _helpers._extract_prefill
-_filter_sections_for_category = _helpers._filter_sections_for_category
 _generate_prd_body = _helpers._generate_prd_body
-_load_template_body = _helpers._load_template_body
 _render_prd = _helpers._render_prd
-_strip_deprecated_fields = _helpers._strip_deprecated_fields
-_substitute_template = _helpers._substitute_template
-reset_template_cache = _helpers.reset_template_cache
 
 logger = structlog.get_logger(__name__)
 

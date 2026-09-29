@@ -19,9 +19,6 @@ from trw_mcp.scoring._complexity import (
     _HIGH_RISK_SIGNALS as _HIGH_RISK_SIGNALS,
 )
 from trw_mcp.scoring._complexity import (
-    _TIER_EXPECTATIONS as _TIER_EXPECTATIONS,
-)
-from trw_mcp.scoring._complexity import (
     CeremonyDepthContract as CeremonyDepthContract,
 )
 from trw_mcp.scoring._complexity import (
@@ -29,9 +26,6 @@ from trw_mcp.scoring._complexity import (
 )
 from trw_mcp.scoring._complexity import (
     classify_complexity as classify_complexity,
-)
-from trw_mcp.scoring._complexity import (
-    compute_tier_ceremony_score as compute_tier_ceremony_score,
 )
 from trw_mcp.scoring._complexity import (
     get_ceremony_depth_contract as get_ceremony_depth_contract,
@@ -49,16 +43,10 @@ from trw_mcp.scoring._decay import (
     _days_since_access as _days_since_access,
 )
 from trw_mcp.scoring._decay import (
-    apply_impact_decay as apply_impact_decay,
-)
-from trw_mcp.scoring._decay import (
     entry_utility as entry_utility,
 )
 from trw_mcp.scoring._decay import (
     utility_params_for as utility_params_for,
-)
-from trw_mcp.scoring._distribution import (
-    compute_impact_distribution as compute_impact_distribution,
 )
 from trw_mcp.scoring._distribution import (
     enforce_tier_distribution as enforce_tier_distribution,
@@ -74,12 +62,6 @@ from trw_mcp.scoring._recall import (
 )
 from trw_mcp.scoring._recall import (
     utility_based_prune_candidates as utility_based_prune_candidates,
-)
-from trw_mcp.scoring._utils import (
-    _IMPACT_DECAY_FLOOR as _IMPACT_DECAY_FLOOR,
-)
-from trw_mcp.scoring._utils import (
-    _LN2 as _LN2,
 )
 from trw_mcp.scoring._utils import (
     _TIER_HIGH_CEILING as _TIER_HIGH_CEILING,
@@ -131,12 +113,9 @@ def __getattr__(name: str) -> object:
 __all__ = [
     "CeremonyDepthContract",
     "RecallContext",
-    "apply_impact_decay",
     "apply_time_decay",
     "classify_complexity",
-    "compute_impact_distribution",
     "compute_rework_rate",
-    "compute_tier_ceremony_score",
     "compute_utility_score",
     "correlate_recalls",
     "enforce_tier_distribution",

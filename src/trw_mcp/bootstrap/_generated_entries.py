@@ -24,14 +24,21 @@ GroupedHooks = tuple[dict[str, list[object]], dict[str, list[object]]]
 def mcp_server_entries(shape: str, root: Path) -> list[object]:
     """Every ``trw`` server entry TRW's writers produce for a file of *shape*."""
     if shape == "mcp-server-map":
-        # .mcp.json, .cursor/mcp.json, .antigravitycli/settings.json and the
-        # home-scoped antigravity mcp_config.json share this one shape.
+        # .mcp.json, .cursor/mcp.json, .antigravitycli/settings.json, the Copilot
+        # CLI's .github/mcp.json and the home-scoped antigravity mcp_config.json
+        # share this one shape.
         from ._antigravity_cli import _resolve_trw_mcp_command
+        from ._copilot_cli_mcp import copilot_cli_trw_entry
         from ._cursor import _get_trw_mcp_entry_cursor
         from ._utils import _trw_mcp_server_entry
 
         command, args = _resolve_trw_mcp_command()
-        return [_trw_mcp_server_entry(root), dict(_get_trw_mcp_entry_cursor(root)), {"command": command, "args": args}]
+        return [
+            _trw_mcp_server_entry(root),
+            dict(_get_trw_mcp_entry_cursor(root)),
+            {"command": command, "args": args},
+            copilot_cli_trw_entry(root),
+        ]
     if shape == "vscode-server-map":
         from trw_mcp.channels.copilot._vscode_mcp import _TRW_MCP_SERVER_ENTRY, _trw_entry_for
 
@@ -101,10 +108,15 @@ def grouped_hook_entries(shape: str) -> GroupedHooks:
 
         return _grouped(_copilot_hooks_payload()["hooks"])  # type: ignore[arg-type]
     if shape == "claude-settings":
+        from ._claude_code_distill_channels import _CC03_ENTRY
         from ._utils import _DATA_DIR
 
         bundled = json.loads((_DATA_DIR / "settings.json").read_text(encoding="utf-8"))
-        return _grouped(bundled.get("hooks", {}))
+        hooks: dict[str, list[dict[str, object]]] = dict(bundled.get("hooks", {}))
+        # The CC-03 pre-edit hint entry is registered by its channel installer, not the template; uninstall
+        # removes its script, so it must withdraw this registration too or Claude Code calls a missing hook.
+        hooks["PreToolUse"] = [*hooks.get("PreToolUse", []), _CC03_ENTRY]
+        return _grouped(hooks)
     return {}, {}
 
 

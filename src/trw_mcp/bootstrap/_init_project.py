@@ -12,6 +12,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.bootstrap._client_integrations import run_install_integrations
 from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
@@ -21,7 +22,6 @@ from ._utils import (
     _copy_file,
     _default_config,
     _merge_mcp_json,
-    _minimal_claude_md,
     _minimal_review_md,
     _write_if_missing,
     _write_installer_metadata,
@@ -58,9 +58,6 @@ from trw_mcp.bootstrap._init_project_ide import (
 )
 from trw_mcp.bootstrap._init_project_ide import (
     _install_opencode_artifacts as _install_opencode_artifacts,
-)
-from trw_mcp.bootstrap._init_project_ide import (
-    _load_model_family as _load_model_family,
 )
 from trw_mcp.bootstrap._init_project_ide import (
     _run_copilot_installer as _run_copilot_installer,
@@ -132,7 +129,6 @@ def _write_ceremony_state_skeleton(
     state_path = target_dir / ".trw" / "context" / "ceremony-state.json"
     if state_path.exists():
         return
-    state_path.parent.mkdir(parents=True, exist_ok=True)
     skeleton: dict[str, object] = {
         "session_started": False,
         "checkpoint_count": 0,
@@ -156,7 +152,7 @@ def _write_ceremony_state_skeleton(
         # PRD-FIX-076 sentinel — flipped to False on first session_start.
         "mcp_never_connected_yet": True,
     }
-    state_path.write_text(_json.dumps(skeleton, separators=(",", ":")), encoding="utf-8")
+    write_checkout_file(target_dir, state_path, _json.dumps(skeleton, separators=(",", ":")))
     result["created"].append(str(state_path.relative_to(target_dir)))
     if on_progress is not None:
         on_progress("created", str(state_path))
@@ -181,14 +177,10 @@ def _write_initial_config(
         force,
         result,
         on_progress,
+        root=target_dir,
     )
-    _write_if_missing(
-        target_dir / ".trw" / "learnings" / "index.yaml",
-        "entries: []\n",
-        force,
-        result,
-        on_progress,
-    )
+    index = target_dir / ".trw" / "learnings" / "index.yaml"
+    _write_if_missing(index, "entries: []\n", force, result, on_progress, root=target_dir)
 
 
 def _install_hooks(
@@ -216,13 +208,20 @@ def _install_hooks(
     from ``detect_ide`` resolving off an on-disk marker on a bare install,
     which must NOT drop it. The git-hook family and the intent-hook
     re-blessing stay unconditional — both are client-neutral.
+
+    Only scripts a written configuration runs are copied
+    (``_hook_closure.deployable_hook_files``); codex registers its five only
+    when ``[features].hooks`` is on (PRD-CORE-301 FR07).
     """
     from ._client_ownership import writes_surface
-    from ._hook_closure import deployable_hook_files
+    from ._hook_closure import init_hook_files
 
     hooks_source = _DATA_DIR / "hooks"
     if writes_surface(".claude/hooks", clients, explicit=explicit) and hooks_source.is_dir():
-        for name in sorted(deployable_hook_files(clients, hooks_source)):
+        names = init_hook_files(clients, hooks_source, target_dir, explicit=explicit)
+        if names:
+            (target_dir / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+        for name in names:
             _copy_file(
                 hooks_source / name,
                 target_dir / ".claude" / "hooks" / name,
@@ -294,8 +293,7 @@ def _recordable_targets(target_dir: Path, ide_targets: list[str], *, explicit: b
     ``init-project`` on a machine that merely HAS Cursor would permanently record
     cursor-ide for a project that never chose it. Detected clients are therefore
     kept only when the project carries evidence TRW could not have fabricated
-    (``.opencode/``, ``.codex/`` and the like); ``_file_evidenced_clients``
-    derives that from the same marker table the update path uses.
+    (``.opencode/``, ``.codex/`` and the like), from ``_CLIENT_EVIDENCE_MARKERS``.
 
     An empty result means nothing identified the project, which is the default
     scaffold — not "no clients".
@@ -305,10 +303,8 @@ def _recordable_targets(target_dir: Path, ide_targets: list[str], *, explicit: b
 
     from ._template_claude_md import clients_with_markers_on_disk
 
-    # `clients_with_markers_on_disk`, not `_file_evidenced_clients`: the latter
-    # ignores markers TRW scaffolds, which is right on the update path and wrong
-    # here — at install nothing has been scaffolded yet, so a `.claude/` on disk
-    # is the user's own. Only the machine-global half of detection is dropped.
+    # At install nothing has been scaffolded yet, so a `.claude/` on disk is the
+    # user's own; only the machine-global half of detection is dropped.
     on_disk = set(clients_with_markers_on_disk(target_dir))
     kept = [client for client in ide_targets if client in on_disk]
     # PRD-INFRA-192 FR09 §2: a bare init-project (explicit=False) still writes
@@ -317,6 +313,22 @@ def _recordable_targets(target_dir: Path, ide_targets: list[str], *, explicit: b
     # from the record whenever detection found ANY other on-disk client,
     # though the scaffold write happened regardless. Deduped, order-preserving.
     return list(dict.fromkeys([*kept, "claude-code"]))
+
+
+def _record_installed_clients(target_dir: Path, ide_targets: list[str], result: dict[str, list[str]]) -> None:
+    """Record each detected client whose artifacts this init wrote and TRW hashed.
+
+    ``_recordable_targets`` deliberately keeps a machine-global guess out of the record; this is the
+    other half, run AFTER the installers: a detected client that now has TRW-hashed artifacts on disk
+    was installed, so it is recorded exactly as an explicit ``--ide`` is (append-only, same recorder).
+    """
+    from ._client_adoption import adopt_hash_proven_clients
+    from ._manifest_recorders import collect_manifest_content_hashes
+    from ._version_manifest import _manifest_content_hashes, _read_manifest
+
+    prev_hashes = _manifest_content_hashes(_read_manifest(target_dir))
+    hashes = collect_manifest_content_hashes(target_dir, prev_hashes)
+    adopt_hash_proven_clients(target_dir, hashes, ide_targets, result)
 
 
 def _generate_root_files(
@@ -328,110 +340,51 @@ def _generate_root_files(
     *,
     ide_explicit: bool = False,
 ) -> None:
-    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``, ``REVIEW.md``).
+    """Generate root-level configuration files (``.mcp.json``, ``AGENTS.md``, ``REVIEW.md``).
 
     *ide_explicit* says whether *ide_targets* came from a user ``--ide`` choice
     or from detection. It decides nothing else, but it decides this: a detected
     list must never be treated as authoritative, because ``detect_ide`` reports
     cursor-ide from ``shutil.which("cursor")``. Passing a detected list as if the
     user had chosen it made a plain ``init-project`` on any machine with Cursor
-    installed strip the CLAUDE.md protocol from every new project.
+    installed withhold the claude-code protocol from every new project.
     """
     from ._client_ownership import writes_surface
 
     if writes_surface(".mcp.json", ide_targets or [], explicit=ide_explicit):
         _merge_mcp_json(target_dir, result, on_progress)
-    claude_md_path = target_dir / "CLAUDE.md"
-    # Record which clients the user actually chose BEFORE anything reads it
-    # back. Installing writes `.claude/` and `.cursor/` into every project
-    # whatever the client, so from here on detection cannot tell a codex-only
-    # project from a Claude Code one; without the record, every later run
-    # re-derives the wrong answer from artifacts we created ourselves.
-    from ._template_claude_md import claude_md_is_claimed
+    # TRW 8.0: claude-code's carrier is AGENTS.md (Claude Code reads it
+    # natively); TRW writes no CLAUDE.md. A detected list is never authoritative
+    # here, because `detect_ide` reports cursor-ide from `shutil.which("cursor")`.
+    from ._template_claude_md import claude_code_is_claimed, retire_claude_md, write_claude_code_agents_md
 
-    claimed = claude_md_is_claimed(target_dir, ide_targets if ide_explicit else None)
-    # PRD-CORE-262-FR05: an EXPLICIT, codex-only selection never gets a root
-    # CLAUDE.md at all -- not even the write-then-strip shell every other
-    # unclaimed client (e.g. an explicit cursor-ide) still receives. Before
-    # this, the scaffold write ran unconditionally and the orphan-strip below
-    # only hollowed the file out, so a codex-only project still ended up with
-    # a 17-line root CLAUDE.md none of its clients load. Every other
-    # selection -- default, claude-code, cursor-ide, or codex alongside
-    # another client -- keeps HEAD's write-then-strip behavior unchanged, and
-    # the write itself stays on the guarded seam below (no new write path).
-    codex_only = ide_explicit and set(ide_targets or []) == {"codex"}
-    if not claude_md_path.exists() and codex_only:
-        logger.debug("claude_md_scaffold_skipped_codex_only", ide_targets=list(ide_targets or []))
-    elif claude_md_path.exists() and force:
-        # `_write_if_missing`'s force branch is a raw write_text: fine for the
-        # non-user config/REVIEW.md callers below, but a raw clobber of a
-        # hand-edited CLAUDE.md -- the class of loss FR06 exists to prevent.
-        from trw_mcp.bootstrap._guarded_write import guarded_claude_md_scaffold_write
-
-        guarded_claude_md_scaffold_write(
-            claude_md_path, _minimal_claude_md(), project_root=target_dir, result=result, force=force
-        )
-    else:
-        _write_if_missing(claude_md_path, _minimal_claude_md(), force, result, on_progress)
-    # Write the TRW block into the file we just scaffolded, so a fresh install
-    # produces the same shape an existing project converges to. Bookkeeping goes to a scratch dict only to avoid double-reporting the path
-    # `_write_if_missing` already recorded — but its ERRORS are merged back. A
-    # carrier failure here (EROFS/ENOSPC, malformed markers) would otherwise be
-    # discarded while the installer still reported a clean create, which is a
-    # truthfulness defect, not just a cosmetic one.
-    if claude_md_path.exists() and not claimed:
-        # PRD-CORE-240-FR04, same rule as the shared AGENTS.md: only claude-code
-        # declares CLAUDE.md, so for a codex/opencode/copilot project this file
-        # is scaffolded documentation that none of its clients load. Injecting
-        # the protocol here put a THIRD copy of the framework text in an unread
-        # file, where it then froze while the surfaces those clients do read
-        # moved on. The MCP sync path already declined this write
-        # (`_determine_write_target_decision`); bootstrap did it anyway, so the
-        # two entry points disagreed about the same file.
-        from trw_mcp.exceptions import StateError
-        from trw_mcp.state.claude_md._agents_md import strip_orphaned_claude_md_block
-
-        # CORE262-14: the strip's write can now fail loudly (StateError) instead
-        # of silently returning False, so a genuine failure here must be
-        # surfaced, not swallowed -- an install that leaves the foreign TRW
-        # block behind must not report a clean result.
-        try:
-            strip_orphaned_claude_md_block(target_dir, ide_targets)
-        except StateError as exc:
-            result["errors"].append(f"Failed to remove orphaned TRW block from {claude_md_path}: {exc}")
-    elif claude_md_path.exists():
-        from ._template_claude_md import _update_claude_md_trw_section
-
-        carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
-        _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir)
-        result.setdefault("errors", []).extend(carrier_result["errors"])
-        # An existing user CLAUDE.md that `_write_if_missing` reported as
-        # "skipped" IS modified by the carrier; say so rather than leaving the
-        # operator with "Skipped: CLAUDE.md" over a rewritten file.
-        for path in carrier_result["updated"]:
-            if path not in result.get("updated", []):
-                result.setdefault("updated", []).append(path)
-    _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress)
+    errors_before = len(result.get("errors", []))
+    if claude_code_is_claimed(target_dir, ide_targets if ide_explicit else None):
+        write_claude_code_agents_md(target_dir, result)
+    if len(result.get("errors", [])) == errors_before:  # never leave the protocol in neither file
+        retire_claude_md(target_dir, result)
+    _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress, root=target_dir)
 
 
-def _write_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[str]) -> None:
-    """PRD-CORE-149 FR04: resolve the primary profile and emit hook-env.sh.
+def _write_hook_env_for_installed_profiles(
+    target_dir: Path, ide_targets: list[str], result: dict[str, list[str]] | None = None
+) -> None:
+    """PRD-CORE-149 FR04 / R8 sol round 1 P1: emit hook-env.d files for EVERY resolved client.
 
-    Picks the first target from ``ide_targets`` as primary and falls back to
-    ``claude-code`` when no targets resolved. Fail-open: any error is logged
-    and swallowed so bootstrap never aborts because of hook-env propagation.
+    ``run_install_integrations`` installs for every entry in ``ide_targets``,
+    not just the first, so a multi-client init that wrote only
+    ``ide_targets[0]``'s file left every other installed client's hooks either
+    stale or (for a client sharing ``.claude/hooks``) silently governed by
+    whichever profile happened to be first. ``result``, when given, collects
+    the operator-facing warnings :func:`write_hook_env_for_clients` raises.
     """
-    from trw_mcp.models.config._profiles import resolve_client_profile
+    from ._file_ops import write_hook_env_for_clients
 
-    from ._file_ops import _write_hook_env_file
-
-    primary = ide_targets[0] if ide_targets else "claude-code"
-    try:
-        profile = resolve_client_profile(primary)
-        trw_dir = target_dir / ".trw"
-        _write_hook_env_file(trw_dir, profile)
-    except Exception as exc:  # justified: fail-open, hook-env is best-effort
-        logger.warning("hook_env_write_failed", error=str(exc), primary=primary)
+    write_hook_env_for_clients(
+        target_dir / ".trw",
+        ide_targets,
+        warnings=result.setdefault("warnings", []) if result is not None else None,
+    )
 
 
 @with_instruction_write_trigger("bootstrap_init", "init-project")
@@ -480,9 +433,11 @@ def init_project(
         logger.warning("project_init_non_git", project_root=str(target_dir))
 
     from trw_mcp.agents._report_cap import project_report_cap
+    from trw_mcp.state._project_root_binding import installing_into
 
     try:
-        with project_report_cap(target_dir):  # PRD-CORE-290-FR04: the target's configured report cap
+        # PRD-CORE-290-FR04: the target's configured report cap; B71-117: the target is "the project".
+        with project_report_cap(target_dir), installing_into(target_dir):
             _run_init_phases(
                 target_dir,
                 result,
@@ -496,11 +451,7 @@ def init_project(
         result["errors"].append(f"init-project failed: {type(exc).__name__}: {exc}")
 
     if result["errors"]:
-        logger.warning(
-            "project_init_partial",
-            project_root=str(target_dir),
-            errors=result["errors"][:3],
-        )
+        logger.warning("project_init_partial", project_root=str(target_dir), errors=result["errors"][:3])
     logger.info(
         "project_init_ok",
         project_root=str(target_dir),
@@ -584,6 +535,10 @@ def _run_init_phases(
 
     # 4. Copy hook scripts
     _install_hooks(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
+    # 4a. The interpreter those hooks start (PRD-FIX-155); rewritten even without --force
+    from ._update_external import write_hook_interpreter
+
+    write_hook_interpreter(target_dir, result)
 
     # 5. Copy skills
     _install_skills(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
@@ -594,7 +549,7 @@ def _run_init_phases(
     # makes the client-parameterised installer reachable in production at all.
     _install_agents(target_dir, force, result, on_progress, clients=ide_targets)
 
-    # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
+    # 7. Generate root-level files (Claude Code: .mcp.json, AGENTS.md)
     _generate_root_files(target_dir, force, result, ide_targets, on_progress, ide_explicit=ide_explicit)
 
     # 7a. Claude Code distill channels (always installed — claude-code is the default)
@@ -606,6 +561,8 @@ def _run_init_phases(
             result["created"].extend(cc_dc.get("created", []))
             result.setdefault("skipped", []).extend(cc_dc.get("preserved", []))
             result["errors"].extend(cc_dc.get("errors", []))
+            for _key in ("removed", "warnings", "trashed"):  # CC-03 withdrawal outcomes
+                result.setdefault(_key, []).extend(cc_dc.get(_key, []))
         except Exception as _exc:  # justified: fail-open, distill channels are additive
             result.setdefault("warnings", []).append(f"claude-code distill channels skipped: {_exc}")
 
@@ -624,10 +581,15 @@ def _run_init_phases(
     # 7b-7g. Registry-ordered client integrations (PRD-CORE-148).
     run_install_integrations(target_dir, ide_targets, force=force, result=result)
 
-    # 7g. PRD-CORE-149 FR04: write .trw/runtime/hook-env.sh so hook scripts
-    # can honor per-profile hooks_enabled / nudge_enabled without re-reading
-    # config on every fire.
-    _write_hook_env_for_primary_profile(target_dir, ide_targets)
+    # 7g. PRD-CORE-149 FR04: write every installed client's
+    # .trw/runtime/hook-env.d/<key>.sh so hook scripts can honor per-profile
+    # hooks_enabled / nudge_enabled without re-reading config on every fire.
+    _write_hook_env_for_installed_profiles(target_dir, ide_targets, result)
+
+    # 7h. Record what detection installed. The record is what update, the uninstall planner and the
+    # manifest owners read; a client whose artifacts were written but not recorded is orphaned.
+    if not ide_explicit and not result["errors"]:
+        _record_installed_clients(target_dir, ide_targets, result)
 
     # 8. The manifest records a successful install (PRD-INFRA-192 FR12). An init
     # that reported errors writes none, so a later update refuses and names the remedy.

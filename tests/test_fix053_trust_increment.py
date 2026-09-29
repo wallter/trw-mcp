@@ -30,8 +30,9 @@ from trw_mcp.state._trust_outcome import (
     consume_trust_outcome,
 )
 from trw_mcp.state.trust import read_trust_registry, write_trust_registry
+from trw_mcp.tools._command_results import parse_build_command_results
 from trw_mcp.tools._evidence_persistence import write_receipt
-from trw_mcp.tools._evidence_writers import parse_build_command_results, record_build_receipt
+from trw_mcp.tools._evidence_writers import record_build_receipt
 
 from ._evidence_factories import (
     build_receipt,

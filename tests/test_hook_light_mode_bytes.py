@@ -17,6 +17,7 @@ not fire.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -116,10 +117,20 @@ def test_init_installed_hooks_honor_generated_policy(tmp_path: Path) -> None:
 
 
 def test_light_profile_stdout_is_less_than_half_of_full_profile(tmp_path: Path) -> None:
-    """FR09 measures the shipped hook with real generated-policy semantics."""
-    runtime = tmp_path / ".trw" / "runtime"
+    """FR09 measures the shipped hook with real generated-policy semantics.
+
+    ``SESSION_HOOK`` runs straight from the bundled source tree (never an
+    installed ``.claude/hooks/``), so lib-trw.sh derives its per-client key from
+    that location rather than from any client profile -- see
+    ``hook_env_key_for_hooks_dir``. Writing under any OTHER key would never be
+    read, which would make this test vacuous.
+    """
+    from trw_mcp.bootstrap._file_ops import hook_env_key_for_hooks_dir
+
+    runtime = tmp_path / ".trw" / "runtime" / "hook-env.d"
     runtime.mkdir(parents=True)
-    env_file = runtime / "hook-env.sh"
+    key = hook_env_key_for_hooks_dir(SESSION_HOOK.parent)
+    env_file = runtime / f"{key}.sh"
 
     env_file.write_text("export NUDGE_ENABLED=true\n", encoding="utf-8")
     full = _run_session_hook(tmp_path)
@@ -152,3 +163,48 @@ def test_default_hook_assets_never_recommend_bypassing_host_trust() -> None:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in hook_root.glob("*.sh"))
 
     assert "dangerously-bypass-hook-trust" not in combined
+
+
+def _run_compaction_hook(hook: Path, root: Path, payload: bytes) -> subprocess.CompletedProcess[bytes]:
+    """Run one compaction hook with no session identity, so both read the project-wide marker."""
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root), "TRW_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": ""}
+    return subprocess.run(
+        ["/bin/sh", str(hook)], input=payload, env=env, cwd=str(root), capture_output=True, timeout=10, check=False
+    )
+
+
+@pytest.mark.parametrize("with_marker", [True, False], ids=["recovered-run", "no-marker"])
+def test_post_compact_output_is_injected_or_absent(tmp_path: Path, with_marker: bool) -> None:
+    """PRD-CORE-301 FR06: PostCompact prints nothing, and SessionStart:compact still recovers.
+
+    Claude Code documents no injection of PostCompact output, and the operator's
+    recorded transcript (six compactions, 2026-09-23..26) shows the hook's stdout
+    only as a dim status line in the ``/compact`` command echo, under a
+    ``<local-command-caveat>``; no ``hook_*`` attachment carries it, while every
+    SessionStart:compact output arrives as a ``hook_success`` attachment. Plain
+    stdout that claimed "injected automatically" was therefore neither injected
+    nor true, so the hook is silent, and the recovered run still reaches the model
+    through the SessionStart compact branch.
+    """
+    context = tmp_path / ".trw" / "context"
+    context.mkdir(parents=True)
+    run_rel = ".trw/runs/fetch-retry/20260926T000000Z-feedface"
+    if with_marker:
+        marker = {"run_path": f"{tmp_path}/{run_rel}", "phase": "validate", "events_logged": 15}
+        marker["last_checkpoint"] = "added retry with jitter"
+        (context / "pre_compact_state.json").write_text(json.dumps(marker), encoding="utf-8")
+
+    post = _run_compaction_hook(HOOK.with_name("post-compact.sh"), tmp_path, b'{"trigger":"auto"}')
+    assert post.returncode == 0
+    assert post.stdout == b"", post.stdout.decode(errors="replace")
+
+    start = _run_compaction_hook(SESSION_HOOK, tmp_path, b'{"source":"compact"}')
+    assert start.returncode == 0
+    recovered = start.stdout.decode(errors="replace")
+    assert "CONTEXT COMPACTED" in recovered
+    if with_marker:
+        assert f"RECOVERED: Run at {run_rel}" in recovered
+        assert "RECOVERED: Phase: validate | Events: 15" in recovered
+        assert 'LAST CHECKPOINT: "added retry with jitter"' in recovered
+    else:
+        assert "RECOVERED:" not in recovered

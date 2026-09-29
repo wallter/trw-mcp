@@ -36,6 +36,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result
 from trw_mcp.channels._manifest_loader import ManifestValidationError
@@ -100,9 +101,7 @@ def _install_c5_hook(
         return
 
     content = src.read_text(encoding="utf-8")
-    hooks_dir = repo_root / ".github" / "hooks"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    dest = hooks_dir / hook_name
+    dest = repo_root / ".github" / "hooks" / hook_name
     rel = f".github/hooks/{hook_name}"
 
     try:
@@ -110,10 +109,10 @@ def _install_c5_hook(
         if existed and dest.read_text(encoding="utf-8") == content:
             result["preserved"].append(rel)
             return
-        dest.write_text(content, encoding="utf-8")
+        write_checkout_file(repo_root, dest, content)
         dest.chmod(dest.stat().st_mode | 0o111)
         result["updated" if existed else "created"].append(rel)
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to install {hook_name}: {exc}")
 
 
@@ -152,6 +151,16 @@ def install_copilot_distill_channels(
     except Exception as exc:  # justified: fail-open, vscode config is best-effort
         log.warning("copilot_vscode_mcp_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"Copilot .vscode/mcp.json install failed: {exc}")
+
+    # 1b. The Copilot CLI reads .github/mcp.json, never .vscode/mcp.json (CLIENT-SURFACE COPILOT-CLI-NO-MCP).
+    try:
+        from ._copilot_cli_mcp import generate_copilot_cli_mcp_config
+
+        for key, items in generate_copilot_cli_mcp_config(target_dir, force=force).items():
+            result[key].extend(items)
+    except Exception as exc:  # justified: fail-open like C3 above; the error is reported in the result
+        log.warning("copilot_cli_mcp_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"Copilot .github/mcp.json install failed: {exc}")
 
     # 2. PRD-CORE-239: the C2 path-instructions stub is NO LONGER WRITTEN.
     #    It planted `run `trw-distill self-improve risk-report`` into

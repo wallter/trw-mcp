@@ -190,6 +190,13 @@ def _register_tools() -> None:
     # runs each registrar exactly once.
     _assert_manifest_parity(mcp)
 
+    # PRD-INFRA-195-FR01: each tool's one summary heads its served description,
+    # the same string the instruction files and /docs/tools render. Before the
+    # live fingerprint freezes, so the fingerprint binds the served text.
+    from trw_mcp.server._tool_summaries import apply_tool_summaries
+
+    _run_async(apply_tool_summaries(mcp))
+
     # Mark the ceremony floor always-loaded so a deferring client (Claude Code
     # defers every MCP schema by default) does not make the agent pay a
     # ToolSearch round-trip before it can call trw_session_start. Must run AFTER
@@ -223,17 +230,15 @@ def _register_tools() -> None:
 def _apply_always_load_meta() -> None:
     """Apply the deferral opt-out to the always-on kernel (fail-open at boot).
 
-    See ``server/_always_load.py`` for which tools qualify: the kernel, plus each
-    flag-gated tool whose config flag is on. Failure here costs a ToolSearch
-    round-trip, never a boot.
+    See ``server/_always_load.py`` for which tools qualify: the kernel plus the
+    flag-gated tools, whatever their flags say (the surface mask decides
+    visibility, so a flag turned on mid-session needs no re-apply). Failure here
+    costs a ToolSearch round-trip, never a boot.
     """
     try:
-        from trw_mcp.models.config import get_config
-        from trw_mcp.server._always_load import GATING_FLAGS, apply_always_load_meta
+        from trw_mcp.server._always_load import apply_always_load_meta
 
-        config = get_config()
-        flags = {flag: bool(getattr(config, flag, False)) for flag in GATING_FLAGS}
-        applied = _run_async(apply_always_load_meta(mcp, flags=flags))
+        applied = _run_async(apply_always_load_meta(mcp))
         logger.debug("always_load_meta_applied", tools=list(applied))
     except Exception:  # justified: fail-open, deferral metadata is an optimization
         logger.info("always_load_meta_failed", reason="deferral opt-out not applied")

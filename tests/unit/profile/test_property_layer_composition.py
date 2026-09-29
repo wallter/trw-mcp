@@ -6,6 +6,7 @@ and invariants-fail-closed (any review_threshold=NONE prod profile raises).
 
 from __future__ import annotations
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -15,6 +16,9 @@ from trw_mcp.profile import (
     ProfileLayer,
     compose,
 )
+
+pytestmark = pytest.mark.unit
+
 
 _TIERS = st.sampled_from(["MINIMAL", "STANDARD", "COMPREHENSIVE"])
 _SCOPES = st.sampled_from(["targeted", "full"])  # 'none' needs env=dev; excluded
@@ -50,7 +54,6 @@ def test_override_determinism(defaults: ProfileLayer, org: ProfileLayer, task: P
     second = compose(list(reversed(layers)))
     assert first.profile == second.profile
     assert first.surface_snapshot_id == second.surface_snapshot_id
-    assert first.session_override_hash == second.session_override_hash
 
 
 @given(env=st.none() | st.just("prod"))

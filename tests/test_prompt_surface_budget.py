@@ -77,8 +77,14 @@ pytestmark = pytest.mark.unit
 # a byte copy of the SKILL.md beside it that nothing named (-16,149 once dropped from
 # PRD_READY_CONTRACTS). Ceiling lowered to the new max + a 1,000-byte margin.
 _MEASURED_GRAND_TOTAL_BYTES_DEFAULT: Final[int] = 1_349_797
-_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_374_810
-PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_375_810
+#
+# Re-measured 2026-09-26 (separate budget change, not in the growing diff): DISPATCH-SIMPLIFY
+# (22d81ecf8, e9bc085a3; reviewed) documented optional role presets, prompt variants and
+# best-effort posture (`reviewer!`) in trw-delegate, +2,169 bytes across all rendered copies
+# (1,376,979 at assess_enabled). A trim attempt broke the delegate contract tests, so the budget
+# moves instead. Ceiling = the new max + the same 1,000-byte margin.
+_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_376_979
+PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_377_979
 
 _FORK_CLIENTS: Final[tuple[str, ...]] = ("codex", "copilot", "opencode")
 

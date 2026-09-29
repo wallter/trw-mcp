@@ -36,9 +36,11 @@ def test_install_hook_script_write_failure(tmp_path: Path) -> None:
     """install_before_edit_hook returns error dict when script write fails (lines 281-293)."""
     from trw_mcp.channels.antigravity._before_edit_hook import install_before_edit_hook
 
-    # Make the hooks dir a FILE (so mkdir will succeed but write_text will fail
-    # on a directory conflict). We patch write_text on Path to raise OSError.
-    with patch("pathlib.Path.write_text", side_effect=OSError("Permission denied")):
+    # The hook script is written through the checkout-write adapter; make that write fail.
+    with patch(
+        "trw_mcp.channels.antigravity._before_edit_hook.write_checkout_file",
+        side_effect=OSError("Permission denied"),
+    ):
         result = install_before_edit_hook(tmp_path, overwrite=True)
 
     assert result["installed"] is False
@@ -48,23 +50,22 @@ def test_install_hook_script_write_failure(tmp_path: Path) -> None:
 
 def test_install_hooks_json_write_failure(tmp_path: Path) -> None:
     """install_before_edit_hook returns error when hooks.json write fails (lines 326-339)."""
+    from trw_mcp._checkout_write import write_checkout_file
     from trw_mcp.channels.antigravity._before_edit_hook import install_before_edit_hook
 
     call_count = [0]
-    original_write = Path.write_text
 
-    def write_text_side_effect(self: Path, content: str, **kwargs: Any) -> None:
+    def write_side_effect(root: Path, path: Path, data: str | bytes) -> None:
         call_count[0] += 1
         if call_count[0] == 2:  # Second write is hooks.json
             raise OSError("Disk full")
-        original_write(self, content, **kwargs)
+        write_checkout_file(root, path, data)
 
-    with patch("pathlib.Path.write_text", write_text_side_effect):
+    with patch("trw_mcp.channels.antigravity._before_edit_hook.write_checkout_file", write_side_effect):
         result = install_before_edit_hook(tmp_path, overwrite=True)
 
-    # Either hooks.json failed or we got a partial failure
-    if result["installed"] is False:
-        assert result["error"] is not None
+    assert result["installed"] is False
+    assert "Failed to write hooks.json" in result["error"]
 
 
 def test_install_hooks_json_parse_failure(tmp_path: Path) -> None:
@@ -135,7 +136,10 @@ def test_subagent_write_error_on_write_failure(tmp_path: Path) -> None:
         "conventions": [],
     }
 
-    with patch("pathlib.Path.write_text", side_effect=OSError("Permission denied")):
+    with patch(
+        "trw_mcp.channels.antigravity._explorer_subagent.write_checkout_file",
+        side_effect=OSError("Permission denied"),
+    ):
         result = generate_distill_explorer_agent(
             repo_root=tmp_path,
             sidecar_data=sidecar,

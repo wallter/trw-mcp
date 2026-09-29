@@ -169,7 +169,7 @@ class TestCheckMemoryVersion:
         from trw_mcp.server._app import _check_memory_version
 
         with (
-            patch("trw_mcp.server._app.importlib.metadata.version", return_value="0.9.4"),
+            patch("trw_memory.__version__", "0.9.4"),  # B71-111: its source version, not dist-info
             structlog.testing.capture_logs() as logs,
         ):
             _check_memory_version()
@@ -183,7 +183,7 @@ class TestCheckMemoryVersion:
         from trw_mcp.server._app import _check_memory_version
 
         with (
-            patch("trw_mcp.server._app.importlib.metadata.version", return_value="0.9.5"),
+            patch("trw_memory.__version__", "0.9.5"),  # B71-111: its source version, not dist-info
             structlog.testing.capture_logs() as logs,
         ):
             _check_memory_version()
@@ -197,7 +197,7 @@ class TestCheckMemoryVersion:
         from trw_mcp.server._app import _check_memory_version
 
         with (
-            patch("trw_mcp.server._app.importlib.metadata.version", return_value="1.0.0"),
+            patch("trw_memory.__version__", "1.0.0"),  # B71-111: its source version, not dist-info
             structlog.testing.capture_logs() as logs,
         ):
             _check_memory_version()
@@ -206,17 +206,14 @@ class TestCheckMemoryVersion:
         assert "trw_memory_version_below_minimum" not in warning_events
 
     def test_warns_when_package_not_found(self) -> None:
-        import importlib.metadata
+        import sys
 
         import structlog.testing
 
         from trw_mcp.server._app import _check_memory_version
 
         with (
-            patch(
-                "trw_mcp.server._app.importlib.metadata.version",
-                side_effect=importlib.metadata.PackageNotFoundError("trw-memory"),
-            ),
+            patch.dict(sys.modules, {"trw_memory": None}),  # the import fails: trw-memory is absent
             structlog.testing.capture_logs() as logs,
         ):
             _check_memory_version()
@@ -230,10 +227,7 @@ class TestCheckMemoryVersion:
         from trw_mcp.server._app import _check_memory_version
 
         with (
-            patch(
-                "trw_mcp.server._app.importlib.metadata.version",
-                side_effect=OSError("permission denied"),
-            ),
+            patch("trw_mcp.server._app._parse_version", side_effect=OSError("permission denied")),
             structlog.testing.capture_logs() as logs,
         ):
             _check_memory_version()  # Must not raise

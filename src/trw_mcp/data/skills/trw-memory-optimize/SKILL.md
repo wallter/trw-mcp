@@ -27,8 +27,6 @@ Interactive, evidence-backed maintenance of learning memory. Audit first, presen
 
 Optimize retrieval usefulness and domain coverage—not a fixed global count, entries-per-domain formula, impact threshold, or compendium size.
 
-The optional `trw-distill maintain optimize` workflow may generate a machine-readable plan when installed. Use it for planning only: verify its version/command, review the dry-run output under the same rules, and never treat optional LLM scoring as authoritative evidence. Do not invoke `trw-distill maintain optimize --apply`; the current CLI rebuilds an unbound plan instead of applying an immutable reviewed receipt. Apply confirmed IDs and fields narrowly through `trw_learn(learning_id=...)`.
-
 ## 2. Confirm destructive/semantic changes
 
 Present the full plan. Require explicit user confirmation before obsoleting entries, merging meaning, renaming tags broadly, or applying an external batch plan. Do not interpret approval of one candidate as approval of the batch.

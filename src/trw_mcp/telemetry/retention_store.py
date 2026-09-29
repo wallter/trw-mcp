@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from enum import Enum
 from pathlib import Path
@@ -24,6 +25,11 @@ logger = structlog.get_logger(__name__)
 
 STORE_RELATIVE_DIR = Path(".trw") / "retention" / "store"
 REFS_RELATIVE_DIR = Path(".trw") / "retention" / "refs"
+
+# store_payload() always produces "sha256:" + 64 lowercase hex chars; add_reference
+# accepts nothing else (PRD-FIX-157-FR02: a caller-supplied digest builds a path
+# component, so this is the untrusted-input boundary, not pure narrowing).
+_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class StoreOutcome(str, Enum):
@@ -82,10 +88,33 @@ def store_payload(root: Path, payload: bytes) -> StoreReceipt:
 
 
 def add_reference(root: Path, digest: str, reference_id: str) -> Path:
-    """Register an inbound reference; a referenced blob is never collectible."""
-    refs_dir = root / REFS_RELATIVE_DIR / digest.removeprefix("sha256:")
+    """Register an inbound reference; a referenced blob is never collectible.
+
+    ``digest`` and ``reference_id`` build path components (PRD-FIX-157-FR02),
+    so both are validated fail-closed before anything is written: ``digest``
+    must match the exact form ``store_payload`` produces, and ``reference_id``
+    must be a single safe path segment. A caller with a hierarchical id (e.g.
+    a relative file path) must flatten it first -- ``scripts/_runtime_retention
+    .py``'s ``_ref_id`` already replaces ``/`` with ``__`` for this reason.
+    """
+    if not _DIGEST_RE.fullmatch(digest):
+        raise ValueError(f"add_reference: digest must match {_DIGEST_RE.pattern!r}, got {digest!r}")
+    if (
+        not reference_id
+        or reference_id in {".", ".."}
+        or "/" in reference_id
+        or "\\" in reference_id
+        or any(ord(c) < 0x20 or ord(c) == 0x7F for c in reference_id)
+    ):
+        raise ValueError(f"add_reference: reference_id must be a single safe path segment, got {reference_id!r}")
+
+    refs_root = (root / REFS_RELATIVE_DIR).resolve()
+    refs_dir = (refs_root / digest.removeprefix("sha256:")).resolve()
+    ref_file = (refs_dir / f"{reference_id}.json").resolve()
+    if not ref_file.is_relative_to(refs_root):
+        raise ValueError(f"add_reference: resolved path {ref_file} escapes {refs_root}")
+
     refs_dir.mkdir(parents=True, exist_ok=True)
-    ref_file = refs_dir / f"{reference_id}.json"
     ref_file.write_text(json.dumps({"digest": digest, "reference_id": reference_id}) + "\n")
     return ref_file
 

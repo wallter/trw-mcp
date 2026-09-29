@@ -423,7 +423,16 @@ def test_no_client_literal_outside_the_registry_module() -> None:
     # Removing that literal means widening `DispatchResult.client` to allow None,
     # a public contract change outside this PRD's boundary. It is recorded as
     # debt in PRD-CORE-266-NFR04, not absorbed.
-    exempt = {"_client_specs.py", "_run_job.py"}
+    #
+    # `_enforcement_layers.py` is exempt for a different reason (PRD-SEC-015-FR08):
+    # its table is keyed by client id because the FR08 layers are per-client
+    # PROBE RESULTS (e.g. "agy's global trw server inherits the read-only role" is a measured fact
+    # about that one CLI, not derivable from any existing `ClientSpec` field).
+    # Moving it into the registry would require inventing new spec fields for
+    # data this FR never asked the registry to carry; the literal-per-client
+    # table is the honest shape of a hand-verified probe matrix.
+    # `_client_aliases.py` is registry data too: friendly names -> client ids.
+    exempt = {"_client_specs.py", "_client_aliases.py", "_run_job.py", "_enforcement_layers.py"}
     ids = set(get_args(DispatchClient))
     offenders: dict[str, list[str]] = {}
     for path in sorted(_DISPATCH_PKG.glob("*.py")):
@@ -506,3 +515,22 @@ def test_grok_emits_exactly_one_permission_mode_per_posture() -> None:
     assert writes.count("--permission-mode") == 1 and "auto" in writes
     assert "dontAsk" not in writes, "the write path must not also carry the deny mode"
     assert "--no-subagents" in read_only and "--no-subagents" in writes
+
+
+def test_grok_read_only_admits_only_the_trw_servers_mcp_tools_under_the_reviewer_role() -> None:
+    # dontAsk alone cancels every MCP call (measured grok 1.0.34 2026-09-26), so a read-only
+    # grok lane had TRW's tools listed but unusable. The allow rule must name the trw server
+    # only, and the role env must bound what it admits.
+    from trw_mcp.dispatch._enforcement_layers import enforcement_report
+    from trw_mcp.dispatch._env import build_subprocess_env
+
+    read_only = _argv_for("grok", read_only=True)
+    rule = read_only[read_only.index("--allow") + 1]
+    assert rule == "MCPTool(trw__*)"
+    assert "--allow" not in _argv_for("grok", read_only=False), "the write path needs no allow rule"
+
+    assert build_subprocess_env("grok", source_env={}, read_only=True)["TRW_SURFACE_ROLE"] == "reviewer"
+    assert "TRW_SURFACE_ROLE" not in build_subprocess_env("grok", source_env={}, read_only=False)
+
+    layers, note = enforcement_report("grok", read_only=True, isolate=True, posture_enforced=False, mcp_injected=False)
+    assert layers == ("mcp_role",) and "dontAsk" in note

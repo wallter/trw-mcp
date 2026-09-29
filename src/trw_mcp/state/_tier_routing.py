@@ -179,23 +179,6 @@ def classify_tier(
     return "project"
 
 
-def tier_of_entry(entry: object) -> Tier:
-    """Read the routed tier off a built :class:`MemoryEntry`'s metadata.
-
-    ``_store_arguments.build_store_arguments`` stamps ``metadata["tier"]`` with
-    the routing decision. Falls back to the namespace, then to ``"project"``.
-    """
-    meta = getattr(entry, "metadata", None)
-    if isinstance(meta, dict):
-        tier = meta.get("tier")
-        if tier == "user":
-            return "user"
-        if tier == "project":
-            return "project"
-    ns = getattr(entry, "namespace", "")
-    return "user" if isinstance(ns, str) and ns.startswith("user:") else "project"
-
-
 def route_tier(
     *,
     scope: Scope = "auto",

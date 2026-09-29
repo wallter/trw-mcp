@@ -81,17 +81,17 @@ def _prompt_hook(root: Path, setting: str) -> str:
     import subprocess
 
     import trw_mcp
+    from tests._auto_recall_hook_harness import _write_learning, fixture_store_python
 
-    entries = root / ".trw" / "learnings" / "entries"
-    entries.mkdir(parents=True)
-    (entries / "L-1.yaml").write_text(
-        'id: "L-1"\nstatus: active\nsummary: "Database pool exhausts under load"\nimpact: 0.9\n', encoding="utf-8"
-    )
+    rows_file = root / ".trw" / "fixture-store-rows.json"
+    rows_file.parent.mkdir(parents=True)
+    rows_file.write_text("[]", encoding="utf-8")
+    _write_learning(rows_file, "L-1", status="active", summary="Database pool exhausts under load")
     (root / ".trw" / "config.yaml").write_text(f"learning_recall_enabled: {setting}\n", encoding="utf-8")
     write_hook_flags(root / ".trw", TRWConfig(learning_recall_enabled=setting == "true"))
     hook = Path(trw_mcp.__file__).parent / "data" / "hooks" / "user-prompt-submit.sh"
     env = {key: value for key, value in os.environ.items() if not key.startswith("TRW_AUTO_RECALL")}
-    env |= {"CLAUDE_PROJECT_DIR": str(root), "HOME": str(root / ".home")}
+    env |= {"CLAUDE_PROJECT_DIR": str(root), "HOME": str(root / ".home"), "TRW_PYTHON": str(fixture_store_python(root))}
     return subprocess.run(
         ["/bin/sh", str(hook)],
         input='{"prompt":"database pool exhausts under load","session_id":"s"}',
@@ -105,5 +105,5 @@ def _prompt_hook(root: Path, setting: str) -> str:
 
 @pytest.mark.parametrize(("setting", "injected"), [("true", True), ("false", False)])
 def test_the_master_switch_governs_the_prompt_hook_recall(tmp_path: Path, setting: str, injected: bool) -> None:
-    """The fourth path: UserPromptSubmit reads the entries mirror itself, outside the Python predicate."""
+    """The fourth path: the UserPromptSubmit hook, whose shell gate runs before its store read."""
     assert ("Database pool exhausts under load" in _prompt_hook(tmp_path, setting)) is injected

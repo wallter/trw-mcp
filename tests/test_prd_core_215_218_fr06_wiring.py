@@ -5,7 +5,7 @@ rendered by ``bootstrap/_client_integrations.py``. These tests prove the
 renderers are WIRED into the production instruction-generation path: they run
 the real AGENTS.md writer (``execute_claude_md_sync`` — the entrypoint
 ``instructions sync`` drives) into ``tmp_path`` and assert the generated
-file on disk carries both markers, all four transport-loss boundaries, and the
+``.trw/INSTRUCTIONS.md`` that AGENTS.md links to (PRD-CORE-341) carries both markers, all four transport-loss boundaries, and the
 two capability classes (PRD-CORE-300 S11b flattened the former three-tier
 listing to available/gated). The sync result must also surface the capability
 parity check so lifecycle/count drift fails loudly.
@@ -69,13 +69,28 @@ def _run_sync(tmp_path: Path, **kwargs: object) -> dict[str, object]:
         return execute_claude_md_sync(**args)  # type: ignore[arg-type]
 
 
+def _assert_capabilities_by_pointer(content: str) -> None:
+    """The carrier names the live surface once and copies no capability class (PRD-CORE-301-FR13)."""
+    from trw_mcp.state.claude_md.sections._delegation import SURFACE_POINTER
+
+    assert content.count(SURFACE_POINTER) == 1
+    assert "<!-- trw:capabilities:agents -->" not in content
+    for label in _TWO_CLASSES:
+        assert label not in content, f"capability class {label} is still copied into the carrier"
+
+
 def test_generated_agents_md_carries_transport_loss_and_capabilities(tmp_path: Path) -> None:
-    """The real AGENTS.md writer emits both FR06 blocks (opencode/generic surface)."""
+    """The real AGENTS.md writer emits both FR06 blocks into the instructions file its link names."""
+    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH, LINK_BODY
+
     result = _run_sync(tmp_path, client="all")
 
     agents_md = tmp_path / "AGENTS.md"
     assert agents_md.exists(), "AGENTS.md should be generated for client=all"
-    content = agents_md.read_text(encoding="utf-8")
+    assert LINK_BODY in agents_md.read_text(encoding="utf-8")
+    instructions = tmp_path / INSTRUCTIONS_RELPATH
+    assert instructions.exists(), "the link's target should be generated for client=all"
+    content = instructions.read_text(encoding="utf-8")
 
     # PRD-CORE-215-FR06: transport-loss marker + all four boundaries.
     assert "<!-- trw:transport-loss:agents -->" in content
@@ -85,12 +100,9 @@ def test_generated_agents_md_carries_transport_loss_and_capabilities(tmp_path: P
     # The retry-once-then-record-gap safeguard rides along.
     assert "record the gap" in content
 
-    # PRD-CORE-218-FR06: capabilities marker + all three classes.
-    assert "<!-- trw:capabilities:agents -->" in content
-    for label in _TWO_CLASSES:
-        assert label in content, f"missing capability class: {label}"
-    # Derived from the LIVE surface manifest: a kernel tool appears "available".
-    assert "trw_session_start" in content
+    # PRD-CORE-218-FR06 after PRD-CORE-301-FR13: the capability listing moved to the
+    # live surface call; the carrier points at it instead of copying it.
+    _assert_capabilities_by_pointer(content)
 
 
 def test_generated_codex_carrier_carries_both_blocks(tmp_path: Path) -> None:
@@ -123,12 +135,11 @@ def test_generated_codex_carrier_carries_both_blocks(tmp_path: Path) -> None:
     assert carrier.exists(), "codex lost its instruction carrier entirely"
     content = carrier.read_text(encoding="utf-8")
 
-    assert "<!-- trw:transport-loss:codex -->" in content
-    assert "<!-- trw:capabilities:codex -->" in content
+    # PRD-CORE-301-FR02: codex embeds the shared block, whose appendix is keyed "agents".
+    assert "<!-- trw:transport-loss:agents -->" in content
     for boundary in _FOUR_BOUNDARIES:
         assert boundary in content
-    for label in _TWO_CLASSES:
-        assert label in content
+    _assert_capabilities_by_pointer(content)
 
 
 def test_sync_result_surfaces_capability_parity_check(tmp_path: Path) -> None:

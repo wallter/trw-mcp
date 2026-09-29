@@ -25,9 +25,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.bootstrap import update_project
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 # Durable artifacts, each grounded in the production writer that creates it.
 # Names alone would rot the same way the allowlist did, so the structural test

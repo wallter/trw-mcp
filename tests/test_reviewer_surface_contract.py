@@ -287,7 +287,7 @@ def test_audit_external_agy_branch_is_read_only() -> None:
         assert "--sandbox" in header
         assert "auto-denied" in header or "auto-denies" in header
 
-    # Both branches carry the reviewer role (FR09), even though agy headless
-    # spawns no MCP server to receive it today — it must never be reported as
-    # containment, only forwarded.
+    # Both branches carry the reviewer role (FR09). agy 1.2.11 headless does spawn its
+    # global trw server, which inherits the role (read_only_env); it is still never
+    # reported as a reviewer POSTURE, only as the mcp_role layer.
     assert "TRW_SURFACE_ROLE=reviewer" in code

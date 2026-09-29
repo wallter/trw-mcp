@@ -115,7 +115,7 @@ def agent_harness(temp_project: tuple[Path, Path], tmp_path: Path) -> Iterator[_
 def _require_stdio() -> None:
     reason = stdio_import_skip_reason()
     if reason is not None:  # pragma: no cover - environment guard
-        pytest.skip(reason)
+        pytest.skip(reason)  # skip-category: optional-dependency
 
 
 def _learnings_files(project: Path) -> set[str]:

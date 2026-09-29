@@ -54,7 +54,7 @@ def _persist_deferred_results(
         # ``promotion_path="metadata_only"`` / ``meta_tune_integration="tool_unavailable"``.
         # That was a self-documented no-op: nothing in the codebase ever read
         # those keys back (CORE-093 removed automatic CLAUDE.md learning
-        # promotion, and no trw_meta_tune() tool ships), so the signal was
+        # promotion, and no meta_tune() tool ships), so the signal was
         # computed, written, and silently dropped. The arrays also ballooned
         # legacy run.yaml files to multiple MB and dominated boot-time YAML
         # parsing (see state/_run_gc.py). Wiring them into instructions sync

@@ -16,6 +16,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import re
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -180,3 +182,53 @@ class TestProprietaryRefusal:
         wheel = tmp_path / "some_public_pkg-1.0-py3-none-any.whl"
         wheel.write_bytes(b"corrupt zip bytes")
         module._refuse_proprietary_wheel(wheel)  # must not raise
+
+
+@pytest.mark.integration
+class TestOutDirArgument:
+    """skip-audit D5: --out / build_installer(out_dir=...) writes outside dist/.
+
+    Lets a test build install-trw.py into an isolated tmp dir instead of the
+    tracked (gitignored) dist/ tree, without needing DIST_DIR monkeypatched.
+    """
+
+    def test_build_installer_out_dir_writes_outside_default_dist(self, tmp_path: Path) -> None:
+        module = _load_build_installer()
+        source_dist = tmp_path / "source-dist"
+        mcp_wheel, memory_wheel, _, _ = _make_fake_wheels(source_dist)
+        out_dir = tmp_path / "elsewhere"
+
+        output = module.build_installer(
+            wheel_path=mcp_wheel,
+            memory_wheel_path=memory_wheel,
+            out_dir=out_dir,
+        )
+
+        assert output == out_dir / "install-trw.py"
+        assert output.is_file()
+        assert not (module.DIST_DIR / "install-trw.py").exists() or module.DIST_DIR != out_dir
+
+    def test_cli_out_flag_writes_to_out_dir(self, tmp_path: Path) -> None:
+        source_dist = tmp_path / "source-dist"
+        _make_fake_wheels(source_dist)
+        mcp_wheel = next(source_dist.glob("trw_mcp-*.whl"))
+        memory_wheel = next(source_dist.glob("trw_memory-*.whl"))
+        out_dir = tmp_path / "cli-out"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(_SCRIPT_PATH),
+                "--wheel",
+                str(mcp_wheel),
+                "--memory-wheel",
+                str(memory_wheel),
+                "--out",
+                str(out_dir),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert (out_dir / "install-trw.py").is_file()

@@ -19,16 +19,16 @@ def _no_platform_contact_by_default(
 ) -> Iterator[None]:
     """Keep the general suite hermetic while online-boundary tests opt in.
 
-    The update check and the team-sync pull are the only automatic platform
-    contacts, and both ask ``platform_contact_enabled`` first. The general suite
-    has it answer False at both consumer sites; the modules that exercise those
-    contacts' own request/header behavior mock the HTTP client directly and
-    drive the switch themselves. Model loads need no guard: runtime loads are
+    The team-sync pull is the automatic platform contact, and it asks
+    ``platform_contact_enabled`` first. The general suite has it answer False;
+    the modules that exercise the contact's own request/header behavior mock the
+    HTTP client directly and drive the switch themselves. Model loads need no guard: runtime loads are
     cache-only (PRD-CORE-302 W40).
     """
     online_owner_modules = {
-        "test_auto_upgrade_credential_egress.py",
-        "test_auto_upgrade_update_checks.py",
+        "test_platform_contact_deny_all_egress.py",  # must exercise the REAL switch at every sender
+        "test_platform_contact_governing_root.py",  # the REAL switch, read from each sender's project
+        "test_platform_contact_live.py",
         "test_platform_trust.py",
         "test_sync_pull.py",
     }
@@ -38,12 +38,10 @@ def _no_platform_contact_by_default(
 
 
 def disable_platform_contact(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make both automatic platform contacts see the switch turned off."""
-    import trw_mcp.state.auto_upgrade as auto_upgrade
+    """Make the automatic platform contact see the switch turned off."""
     import trw_mcp.sync.pull as pull
 
-    monkeypatch.setattr(auto_upgrade, "_platform_contact_enabled", lambda: False)
-    monkeypatch.setattr(pull, "platform_contact_enabled", lambda: False)
+    monkeypatch.setattr(pull, "platform_contact_enabled", lambda _root: False)
 
 
 @pytest.fixture()

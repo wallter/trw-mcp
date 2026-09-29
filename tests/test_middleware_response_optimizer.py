@@ -33,6 +33,8 @@ from trw_mcp.middleware.response_optimizer import (
     _is_empty,
 )
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def _force_json_format(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -26,12 +26,12 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 from ._copilot_models import PathScopedTemplate
 from ._file_ops import _new_result, _record_write
 
 logger = structlog.get_logger(__name__)
-
-_COPILOT_AGENTS_DIR = ".github/agents"
 _COPILOT_SKILLS_DIR = ".github/skills"
 _COPILOT_INSTRUCTIONS_DIR = ".github/instructions"
 
@@ -159,9 +159,9 @@ def generate_copilot_path_instructions(
             continue
 
         try:
-            path.write_bytes(incoming)
+            write_checkout_file(target_dir, path, incoming)
             _record_write(result, rel_path, existed=existed)
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to write {path}: {exc}")
 
     return result
@@ -172,7 +172,7 @@ def generate_copilot_path_instructions(
 # ---------------------------------------------------------------------------
 
 
-def copilot_skill_contents() -> dict[str, bytes]:
+def copilot_skill_contents(project_root: Path | None = None) -> dict[str, bytes]:
     """Bundled ``.github/skills/**`` content, keyed by repo-relative path.
 
     Applies the same ``_validate_skill`` gate the installer does, so an invalid
@@ -183,7 +183,7 @@ def copilot_skill_contents() -> dict[str, bytes]:
     from ._optional_skills import CONDITIONAL_SKILLS, skill_enabled
 
     contents: dict[str, bytes] = {}
-    for name in [*skill_names("copilot"), *(n for n in CONDITIONAL_SKILLS if skill_enabled(n))]:
+    for name in [*skill_names("copilot"), *(n for n in CONDITIONAL_SKILLS if skill_enabled(n, project_root))]:
         is_valid, reason = _validate_skill(canonical_skills_dir() / name)
         if not is_valid:
             logger.warning("copilot_skill_validation_failed", skill=name, reason=reason)
@@ -220,9 +220,14 @@ def install_copilot_skills(
 
     result = _new_result()
     retire_disabled_skills(
-        target_dir / _COPILOT_SKILLS_DIR, canonical_skills_dir(), result, _COPILOT_SKILLS_DIR, client="copilot"
+        target_dir / _COPILOT_SKILLS_DIR,
+        canonical_skills_dir(),
+        result,
+        _COPILOT_SKILLS_DIR,
+        client="copilot",
+        project_root=target_dir,
     )
-    contents = copilot_skill_contents()
+    contents = copilot_skill_contents(target_dir)
     if not contents:
         return result
 
@@ -239,10 +244,9 @@ def install_copilot_skills(
             continue
 
         try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(incoming)
+            write_checkout_file(target_dir, dest, incoming)
             _record_write(result, rel_path, existed=existed)
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             result["errors"].append(f"Failed to write {dest}: {exc}")
 
     return result

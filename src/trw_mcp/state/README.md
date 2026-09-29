@@ -65,7 +65,6 @@
 | `knowledge_topology.py` | 543 | Primary | Tag-based knowledge clustering (CORE-021) |
 | `semantic_checks.py` | — | Primary | Rubric-based semantic validation |
 | `phase.py` | — | Primary | Phase tracking and transitions |
-| `auto_upgrade.py` | — | Primary | Schema auto-migration |
 | `dry_check.py` | — | Primary | DRY violation scanning |
 | `receipts.py` | — | Primary | Recall receipt tracking |
 | `llm_helpers.py` | — | Primary | LLM client facade |

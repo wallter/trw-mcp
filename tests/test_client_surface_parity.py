@@ -334,6 +334,8 @@ class TestFastLoopSeesRegistryTotality:
                 "unit",
                 "--collect-only",
                 "-q",
+                "-p",
+                "no:tmpdir",  # collect-only never needs tmp_path; else the child leaves pytest-of-<user> in TMPDIR (FR09)
             ],
             capture_output=True,
             text=True,

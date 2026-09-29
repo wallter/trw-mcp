@@ -52,6 +52,9 @@ class TestRecallLearningsWrapper:
             tags=None,
             min_impact=0.0,
             max_results=5,
+            anchor_file=None,
+            single_page=False,
+            rerank=True,
         )
 
     def test_propagates_adapter_exception(self, tmp_path) -> None:

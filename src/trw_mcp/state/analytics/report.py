@@ -19,6 +19,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.models.config._client_profile import CeremonyWeights
 from trw_mcp.models.run import TOOL_CALL_EVENTS
+from trw_mcp.models.surface_v2 import DELIVER_COMPLETION_TOOL_NAMES
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
     AnalyticsReport,
@@ -77,7 +78,7 @@ def _classify_event(
     """
     has_session_start = event_type == "session_start" or (is_tool_call and tool_name == "trw_session_start")
     has_deliver = event_type in ("reflection_complete", "trw_deliver_complete") or (
-        is_tool_call and tool_name in ("trw_deliver", "trw_reflect")
+        is_tool_call and tool_name in DELIVER_COMPLETION_TOOL_NAMES
     )
     has_checkpoint = event_type == "checkpoint" or (is_tool_call and tool_name == "trw_checkpoint")
     has_learn = "learn" in event_type or (is_tool_call and tool_name == "trw_learn")

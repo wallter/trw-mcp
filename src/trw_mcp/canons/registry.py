@@ -43,7 +43,6 @@ from trw_mcp.canons._models import (
 from trw_mcp.canons._views import (
     RuntimeArtifactView,
     SourceArtifactView,
-    current_default_surfaces,
     install_view,
     managed_install_view,
     runtime_view,
@@ -143,7 +142,6 @@ __all__ = [
     "bundled_source_version",
     "canonical_json",
     "clear_cache",
-    "current_default_surfaces",
     "digest_of",
     "extract_version",
     "install_view",

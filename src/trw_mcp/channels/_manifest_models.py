@@ -266,9 +266,6 @@ CEREMONY_MARKER_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# Distill-channel marker keys: the full registry minus the ceremony-layer entries.
-DISTILL_MARKER_KEYS: frozenset[str] = frozenset(MARKER_REGISTRY) - CEREMONY_MARKER_KEYS
-
 # ---------------------------------------------------------------------------
 # Cross-client meta-tune contract constants (FR22-FR24)
 # ---------------------------------------------------------------------------

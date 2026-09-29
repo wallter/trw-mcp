@@ -113,46 +113,6 @@ def test_mixed_and_expired_pass():
     assert evidence["observation"] == "failure"
 
 
-def test_registered_recall_penalizes_before_cap_without_refresh(daemon_checkout: DaemonCheckout, monkeypatch):
-    """PRD-CORE-280 slice e (batch 23b): ported off ``get_backend`` onto ``daemon_checkout``."""
-    set_current_root(daemon_checkout.trw_dir.parent)
-    tools = _get_tools()
-    now = datetime.now(timezone.utc)
-    for entry_id, result in [("L-failed", False), ("L-clean", True)]:
-        _seed(daemon_checkout, entry_id, pattern="claim", target="*.py", result=result, stamp=now - timedelta(days=30))
-    before = {i: _fetch(daemon_checkout, i).model_dump(mode="json") for i in ["L-failed", "L-clean"]}
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("recall attempted implicit verification")
-
-    for path in [
-        "trw_memory.lifecycle.verification_pass.run_verification_pass",
-        "trw_memory.lifecycle.verification_pass.persist_verification_outcome",
-        "trw_memory.lifecycle.verification.verify_assertions",
-        "trw_memory.lifecycle.anchor_validation.compute_anchor_validity",
-        "trw_mcp.tools._verification_cache.warm_verified_verdict",
-    ]:
-        monkeypatch.setattr(path, forbidden)
-    captured = _capture_presented_rows(monkeypatch)
-    result = tools["trw_recall"].fn(query="*", max_results=1)
-    assert [row["id"] for row in result["learnings"]] == ["L-clean"]
-    assert captured[-1][0]["verification_evidence"]["current_tree_verified"] is False
-    visible = tools["trw_recall"].fn(query="*", max_results=2)
-    assert len(visible["learnings"]) == 2
-    failed = next(row for row in captured[-1] if row["id"] == "L-failed")
-    assert failed["verification_evidence"]["observation"] == "failure"
-    assert failed["verification_evidence"]["assertions"][0]["freshness"] == "expired"
-    for i, prior in before.items():
-        after = _fetch(daemon_checkout, i).model_dump(mode="json")
-        for field in [
-            "assertions",
-            "verification_checked_at",
-            "verification_status",
-            "outcome_history",
-        ]:
-            assert after[field] == prior[field]
-
-
 def test_startup_acquired_siblings_before_cap(tmp_path, monkeypatch):
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.persistence import FileStateReader
@@ -209,7 +169,6 @@ def test_explicit_refresh_reverses_public_recall_and_advice(daemon_checkout: Dae
             for path in [
                 "trw_memory.lifecycle.verification_pass.run_verification_pass",
                 "trw_memory.lifecycle.verification_pass.persist_verification_outcome",
-                "trw_mcp.tools._verification_cache.warm_verified_verdict",
                 "trw_memory.lifecycle.verification_pass.run_maintain_verify",
                 "trw_mcp.tools._maintain_verify.run_maintain_verify_for_project",
                 "trw_memory.lifecycle.verification.verify_assertions",
@@ -297,32 +256,6 @@ def test_compact_acquisition_preserves_raw_observation_without_lookup():
     assert evidence["observation"] == "failure"
     assert fraction == 1
     assert evidence["aggregate"]["observation"] == "pass"
-
-
-def test_registered_miss_is_unknown_without_implicit_work(daemon_checkout: DaemonCheckout, monkeypatch):
-    """PRD-CORE-280 slice e (batch 23b): ported off ``get_backend`` onto ``daemon_checkout``."""
-    set_current_root(daemon_checkout.trw_dir.parent)
-    tools = _get_tools()
-    _seed(daemon_checkout, "L-unverified", pattern="missing", target="**/*.py")
-
-    def forbidden(*args, **kwargs):
-        pytest.fail("unknown recall scheduled or performed verification")
-
-    for path in [
-        "trw_memory.lifecycle.verification_pass.run_verification_pass",
-        "trw_memory.lifecycle.verification_pass.persist_verification_outcome",
-        "trw_mcp.tools._verification_cache.warm_verified_verdict",
-        "trw_memory.lifecycle.verification.verify_assertions",
-    ]:
-        monkeypatch.setattr(path, forbidden)
-    captured = _capture_presented_rows(monkeypatch)
-    result = tools["trw_recall"].fn(query="*", max_results=1)
-    assert len(result["learnings"]) == 1
-    evidence = captured[-1][0]["verification_evidence"]
-    assert evidence["observation"] == "unknown"
-    assert evidence["assertions"][0]["freshness"] == "unknown"
-    assert evidence["current_tree_verified"] is False
-    assert _fetch(daemon_checkout, "L-unverified").assertions[0].last_result is None
 
 
 @pytest.mark.parametrize("namespaced", [False, True])

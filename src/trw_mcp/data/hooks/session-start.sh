@@ -197,7 +197,6 @@ _TRW_INSTRUCTION_MARKER='<!-- trw:start -->'
 
 _protocol_in_instruction_file() {
   for _pif_f in \
-    "$_project_root/CLAUDE.md" \
     "$_project_root/AGENTS.md" \
     "$_project_root/ANTIGRAVITY.md" \
     "$_project_root/.claude/INSTRUCTIONS.md" \
@@ -262,15 +261,15 @@ fi
 
 # PRD-CORE-095 FR03: Clear phase cache on all session events so the next
 # UserPromptSubmit invocation always emits phase guidance.
-rm -f "$_project_root/.trw/context/last_ups_phase" 2>/dev/null || true
+_trw_safe_rm "$_project_root/.trw/context/last_ups_phase" || true
 # PRD-CORE-095 FR12: Clear injection dedup state so learnings can be re-injected.
 printf '' | _trw_safe_write "$_project_root/.trw/context/injected_learning_ids.txt" || true
 
 case "$_source" in
   startup)
-    # FR01: Fresh startup — protocol table lives in CLAUDE.md (single source of truth).
+    # FR01: Fresh startup — protocol table lives in the client instruction file (single source of truth).
     # _emit_protocol is NOT called here to avoid duplication (PRD-CORE-120-FR01).
-    # It IS called for compact/clear/resume where CLAUDE.md context may be lost.
+    # It IS called for compact/clear/resume where instruction-file context may be lost.
     _emit_run_state
     echo ""
     if _framework_ref_enabled; then

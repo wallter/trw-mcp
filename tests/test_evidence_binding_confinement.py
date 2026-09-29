@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import subprocess_pythonpath
 from trw_mcp.models._evidence_core import EntryState, ReceiptState
 from trw_mcp.state import _evidence_binding as binding
 
@@ -219,6 +220,8 @@ else:
     raise AssertionError('FIFO accepted')
 """
     env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
+    # Without this the child resolves trw_mcp from the interpreter's editable install: the MAIN checkout.
+    env["PYTHONPATH"] = subprocess_pythonpath()
     result = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path)],
         env=env,

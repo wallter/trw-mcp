@@ -220,3 +220,24 @@ def test_a_key_no_hook_reads_is_still_warned_about() -> None:
         _reset_warned_keys()
 
     assert warned == ["cc03_hook_enbaled"], "the real typo must still be reported"
+
+
+def test_channels_cc03_hook_enabled_spelling_produces_no_false_warning() -> None:
+    """Release-window fix, 2026-09-27: ``channels: {cc03_hook_enabled: true}`` is
+    an accepted alternate spelling the bundled hooks and ``read_cc03_config``
+    both read, but the top-level ``channels`` key was absent from TRWConfig and
+    from ``owned_elsewhere`` -- so setting it exactly as the hooks' own comments
+    document produced a 'has no effect... check for a typo' warning on every
+    invocation."""
+    from trw_mcp.models.config._retired_keys import (
+        _reset_warned_keys,
+        warn_unrecognised_config_keys,
+    )
+
+    _reset_warned_keys()
+    try:
+        warned = warn_unrecognised_config_keys(["channels"], defined=["trw_dir"])
+    finally:
+        _reset_warned_keys()
+
+    assert warned == [], "channels: {cc03_hook_enabled: true} must not warn as an unrecognised key"

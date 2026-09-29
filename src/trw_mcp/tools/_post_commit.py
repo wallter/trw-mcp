@@ -2,7 +2,10 @@
 
 A commit changes two things at once that TRW cares about:
 
-* the HEAD sha, which invalidates the whole sha-keyed T2 hint sidecar (FR01);
+* the HEAD sha, which leaves the T2 hint sidecar further behind (FR01). The
+  whole-repo build takes minutes, so post-commit only REQUESTS it detached,
+  through the same helper the pre-edit hint uses
+  (``_distill_spawn.request_rebuild_if_due``), and never waits for it;
 * the working tree, which can make a learning's assertions or anchors go stale
   (FR02) — and staleness is otherwise only noticed if someone happens to recall
   that exact entry.
@@ -55,6 +58,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -66,6 +71,10 @@ logger = structlog.get_logger(__name__)
 #: DEFERRED run deliberately does not write it — overwriting the running owner's
 #: receipt with a no-op record would erase the only account of the real sweep.
 RECEIPT_REL_PATH = Path(".trw") / "runtime" / "post-commit-receipt.json"
+
+#: Written on EVERY invocation, deferred included, so "the hook fired" is
+#: provable even when the sweep receipt above is (correctly) left untouched.
+INVOCATION_REL_PATH = Path(".trw") / "runtime" / "post-commit-invocation.json"
 
 #: Single-flight lock and pending marker, relative to the RESOLVED trw dir.
 LOCK_REL_PATH = Path("runtime") / "post-commit.lock"
@@ -101,16 +110,17 @@ class PostCommitReceipt:
 
     ran_at: str = ""
     head_sha: str = ""
-    #: Targets a sidecar on disk demonstrably describes after the refresh —
-    #: NOT the number of files the refresh was asked to cover, and not a count
-    #: of exit codes. It used to be ``len(plan.files)``, so a 13-file commit
-    #: that left one usable artifact reported ``sidecar_files: 13``.
-    sidecar_files: int = 0
-    #: What the refresh was asked to cover. Kept beside the achieved count so
-    #: the shortfall is legible in the receipt instead of requiring a log dig:
-    #: ``13 planned / 1 refreshed`` is a fact an operator can act on.
-    sidecar_files_planned: int = 0
-    sidecar_skipped_reason: str = ""
+    #: What the detached sidecar rebuild request did: a ``RebuildStatus`` from
+    #: ``_distill_spawn`` (``spawned``, ``not_due``, ``min_interval``, ...), or
+    #: ``disabled_by_config`` when ``hint_sidecar_refresh_enabled`` is off. It
+    #: records the REQUEST; the build writes its own ``build-receipt.json``.
+    sidecar_rebuild: str = ""
+    #: PRD-DIST-2482 FR04: a current-sha risk-report sidecar was written by THIS run.
+    risk_report_refreshed: bool = False
+    #: PRD-DIST-2482 FR04: ``disabled`` | ``already_running`` | ``spawned`` |
+    #: ``spawn_failed`` | ``lock_unavailable`` | ``distill_unavailable`` |
+    #: ``distill_cli_unavailable`` (empty when the step never ran).
+    distill_incremental: str = ""
     verify_entries_processed: int = 0
     verify_stale_transitions: int = 0
     verify_cleared_transitions: int = 0
@@ -134,9 +144,9 @@ class PostCommitReceipt:
         return {
             "ran_at": self.ran_at,
             "head_sha": self.head_sha,
-            "sidecar_files": self.sidecar_files,
-            "sidecar_files_planned": self.sidecar_files_planned,
-            "sidecar_skipped_reason": self.sidecar_skipped_reason,
+            "sidecar_rebuild": self.sidecar_rebuild,
+            "risk_report_refreshed": self.risk_report_refreshed,
+            "distill_incremental": self.distill_incremental,
             "verify_entries_processed": self.verify_entries_processed,
             "verify_stale_transitions": self.verify_stale_transitions,
             "verify_cleared_transitions": self.verify_cleared_transitions,
@@ -264,15 +274,15 @@ def _release_lock(lock_path: Path) -> None:
         lock_path.unlink()
 
 
-def _mark_pending(pending_path: Path, head_sha: str) -> bool:
-    """Record that this commit arrived while a sweep was already running."""
+def _mark_pending(trw_dir: Path, head_sha: str) -> bool:
+    """Record, beneath *trw_dir*, that this commit arrived while a sweep was already running."""
+    pending_path = trw_dir / PENDING_REL_PATH
     try:
-        pending_path.parent.mkdir(parents=True, exist_ok=True)
-        pending_path.write_text(
-            json.dumps({"head_sha": head_sha, "marked_at": _now_iso()}),
-            encoding="utf-8",
-        )
-    except OSError:  # trw-fail-silent-allow: the WARNING is the durable record and the returned False is reported in the receipt as pending_marked, so an unwritable marker is visible rather than assumed
+        write_checkout_file(trw_dir, pending_path, json.dumps({"head_sha": head_sha, "marked_at": _now_iso()}))
+    except (
+        OSError,
+        UnsafeWriteError,
+    ):  # trw-fail-silent-allow: the WARNING is the durable record and the returned False is reported in the receipt as pending_marked, so an unwritable (or symlink-refused) marker is visible rather than assumed
         logger.warning("post_commit_pending_marker_unwritable", marker=str(pending_path), exc_info=True)
         return False
     return True
@@ -341,23 +351,62 @@ def _deadline(seconds: float) -> Iterator[bool]:
         signal.signal(signal.SIGALRM, previous)
 
 
+def _run_distill_steps(repo_root: Path, source_env: dict[str, str] | None, receipt: PostCommitReceipt) -> None:
+    """PRD-DIST-2482 FR04: risk-report refresh, then the opt-in detached incremental run."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._distill_spawn import distill_available
+    from trw_mcp.tools._post_commit_distill import refresh_risk_report, spawn_incremental_run
+
+    if not distill_available():
+        receipt.distill_incremental = "distill_unavailable"
+        return
+    config = get_config()
+    env = dict(source_env if source_env is not None else os.environ)
+    if config.hint_sidecar_refresh_enabled:
+        receipt.risk_report_refreshed = refresh_risk_report(repo_root, env)
+    receipt.distill_incremental = spawn_incremental_run(repo_root, env, enabled=config.post_commit_distill_incremental)
+
+
+def _request_sidecar_rebuild(repo_root: Path, source_env: dict[str, str] | None) -> str:
+    """FR01: look up HEAD's batch sidecar as the hint would, and request a detached rebuild when one is due."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
+    from trw_mcp.tools._distill_spawn import request_rebuild_if_due
+    from trw_mcp.tools._sidecar_substrate import ANCESTOR_ARTIFACT, resolve_current_sidecar
+
+    config = get_config()
+    if not config.hint_sidecar_refresh_enabled:
+        return "disabled_by_config"
+    lookup = resolve_current_sidecar(
+        repo_root=str(repo_root),
+        cache_dir=None,
+        feature=DISTILL_SIDECAR_FEATURE,
+        artifact_name=ANCESTOR_ARTIFACT,
+        cli_remediation=None,
+        ancestor_bound=config.hint_sidecar_max_commits_behind if config.hint_sidecar_ancestor_enabled else None,
+    )
+    env = dict(source_env if source_env is not None else os.environ)
+    return request_rebuild_if_due(lookup, cache_dir=None, trigger="post-commit", source_env=env).status
+
+
 def _run_pass(repo_root: Path, source_env: dict[str, str] | None, receipt: PostCommitReceipt) -> None:
-    """One maintenance pass: FR01's sidecar refresh, then FR02's verify sweep.
+    """One maintenance pass: FR01's sidecar rebuild request, then FR02's verify sweep.
 
     The receipt carries the LAST pass's counts (a follow-up re-sweeps the same
     corpus, so summing would double-count), with ``follow_up_ran`` saying that a
     second pass happened. Errors accumulate across both.
     """
     try:
-        from trw_mcp.tools._hint_sidecar_refresh import run_post_commit_refresh
-
-        outcome = run_post_commit_refresh(repo_root, dict(source_env if source_env is not None else os.environ))
-        receipt.sidecar_files = outcome.refreshed_files
-        receipt.sidecar_files_planned = len(outcome.plan.files)
-        receipt.sidecar_skipped_reason = outcome.plan.skipped_reason
+        receipt.sidecar_rebuild = _request_sidecar_rebuild(repo_root, source_env)
     except Exception as exc:  # justified: fail-open, must never block git commit
-        logger.debug("post_commit_sidecar_refresh_failed", exc_info=True)
-        receipt.errors.append(f"sidecar_refresh: {exc}")
+        logger.debug("post_commit_sidecar_rebuild_failed", exc_info=True)
+        receipt.errors.append(f"sidecar_rebuild: {exc}")
+
+    try:
+        _run_distill_steps(repo_root, source_env, receipt)
+    except Exception as exc:  # justified: fail-open, must never block git commit
+        logger.warning("post_commit_distill_steps_failed", error=str(exc))
+        receipt.errors.append(f"distill_steps: {exc}")
 
     try:
         from trw_mcp.tools._maintain_verify import run_maintain_verify_for_project
@@ -393,8 +442,9 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
     lock_state = _acquire_lock(lock_path, head_sha)
     if lock_state is None:
         receipt.lock_state = "deferred"
-        receipt.pending_marked = _mark_pending(pending_path, head_sha)
+        receipt.pending_marked = _mark_pending(trw_dir, head_sha)
         receipt.duration_ms = int((time.monotonic() - started) * 1000)
+        _write_receipt(repo_root, receipt, INVOCATION_REL_PATH)
         logger.info(
             "post_commit_deferred_to_running_sweep",
             head_sha=head_sha,
@@ -429,6 +479,7 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
                 )
         receipt.duration_ms = int((time.monotonic() - started) * 1000)
         _write_receipt(repo_root, receipt)
+        _write_receipt(repo_root, receipt, INVOCATION_REL_PATH)
         logger.info(
             "post_commit_maintenance_complete",
             head_sha=receipt.head_sha,
@@ -436,8 +487,7 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
             follow_up_ran=receipt.follow_up_ran,
             bounded_stop=receipt.bounded_stop,
             hard_stop_armed=hard_stop_armed,
-            sidecar_files=receipt.sidecar_files,
-            sidecar_files_planned=receipt.sidecar_files_planned,
+            sidecar_rebuild=receipt.sidecar_rebuild,
             verify_entries_processed=receipt.verify_entries_processed,
             duration_ms=receipt.duration_ms,
             errors=len(receipt.errors),
@@ -447,14 +497,14 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
     return receipt
 
 
-def _write_receipt(repo_root: Path, receipt: PostCommitReceipt) -> None:
+def _write_receipt(repo_root: Path, receipt: PostCommitReceipt, rel_path: Path = RECEIPT_REL_PATH) -> None:
     """Persist the receipt; a write failure is itself non-fatal."""
     try:
-        path = repo_root / RECEIPT_REL_PATH
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(receipt.as_dict(), indent=2), encoding="utf-8")
+        write_checkout_file(repo_root, repo_root / rel_path, json.dumps(receipt.as_dict(), indent=2))
     except OSError:
         logger.debug("post_commit_receipt_write_failed", exc_info=True)
+    except UnsafeWriteError:  # trw-fail-silent-allow: run_post_commit never raises into the git hook; the refusal is a WARNING here and in safe_fs
+        logger.warning("post_commit_receipt_write_refused", exc_info=True)
 
 
 def read_receipt(repo_root: Path) -> dict[str, Any] | None:
@@ -470,6 +520,7 @@ def read_receipt(repo_root: Path) -> dict[str, Any] | None:
 __all__ = [
     "BUDGET_ENV_VAR",
     "HEAD_ENV_VAR",
+    "INVOCATION_REL_PATH",
     "LOCK_REL_PATH",
     "PENDING_REL_PATH",
     "RECEIPT_REL_PATH",

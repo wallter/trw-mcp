@@ -11,7 +11,7 @@ from pathlib import Path
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.state.validation import check_phase_exit, check_phase_input
+from trw_mcp.state.validation import check_phase_exit
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,42 +77,3 @@ class TestPhaseExitDispatch:
         result = check_phase_exit(Phase.VALIDATE, run_dir, TRWConfig())
         rules = [f.rule for f in result.failures]
         assert "phase_test_advisory" in rules
-
-
-# ---------------------------------------------------------------------------
-# Input dispatch integration tests
-# ---------------------------------------------------------------------------
-
-
-class TestPhaseInputDispatch:
-    """Verify that check_phase_input delegates to per-phase validators."""
-
-    def test_plan_input(
-        self,
-        tmp_path: Path,
-        writer: FileStateWriter,
-    ) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.PLAN, run_dir, TRWConfig(strict_input_criteria=True))
-        rules = [f.rule for f in result.failures]
-        assert "research_complete" in rules
-
-    def test_deliver_input(
-        self,
-        tmp_path: Path,
-        writer: FileStateWriter,
-    ) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.DELIVER, run_dir, TRWConfig(strict_input_criteria=True))
-        rules = [f.rule for f in result.failures]
-        assert "events_exist" in rules
-
-    def test_research_input_no_errors(
-        self,
-        tmp_path: Path,
-        writer: FileStateWriter,
-    ) -> None:
-        run_dir = _make_run_dir(tmp_path, writer)
-        result = check_phase_input(Phase.RESEARCH, run_dir, TRWConfig())
-        error_failures = [f for f in result.failures if f.severity == "error"]
-        assert len(error_failures) == 0

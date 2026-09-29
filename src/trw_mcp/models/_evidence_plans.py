@@ -103,8 +103,25 @@ class BuildCommandResult(BaseModel):
     failure_count: int | None = Field(default=None, ge=0)
     coverage_pct: float | None = Field(default=None, ge=0.0, le=100.0)
     limitations: str = ""
+    # PRD-CORE-320-FR01: whether this capability's verification reached a real,
+    # verified production call chain (FR02) or only proved itself in isolation.
+    # Additive, back-compat default (NFR03): an existing receipt with no
+    # ``integration`` key still parses, unchanged, as ``not_applicable``.
+    # NFR02: ``strict=True`` on this model already refuses a malformed literal
+    # rather than coercing it to ``"wired"`` — never widen this to a plain
+    # ``str`` or a default of ``"wired"``.
+    integration: Literal["wired", "isolated", "not_applicable"] = "not_applicable"
+    call_site: str = ""
+    # PRD-CORE-320-FR03: optional evidence that a ``wired`` capability's
+    # production guard was reverted, the same test re-run and observed to
+    # fail, and the guard restored (the worker-2 autouse-stub precedent,
+    # 6fcdf0f4a). Additive, back-compat default (NFR03): an existing receipt
+    # with no ``mutation_proof`` key still parses unchanged, as "". Nothing
+    # here detects autouse stubs heuristically — this is claimant-supplied
+    # evidence only (D3).
+    mutation_proof: str = ""
 
-    @field_validator("label", "limitations")
+    @field_validator("label", "limitations", "call_site", "mutation_proof")
     @classmethod
     def _bound_text(cls, value: str) -> str:
         if len(value.encode("utf-8")) > EvidenceLimits.MAX_FREE_TEXT_BYTES:
@@ -114,6 +131,21 @@ class BuildCommandResult(BaseModel):
     @property
     def passed(self) -> bool:
         return self.exit_code == 0
+
+    def render_integration_claim(self) -> str:
+        """Human-facing integration claim text (FR03).
+
+        A ``wired`` claim with a ``mutation_proof`` renders as
+        "wired, revert-proven: <proof>", carrying the proof text verbatim —
+        never summarized or truncated. Without a proof it renders as plain
+        "wired". ``isolated``/``not_applicable`` render as their bare literal;
+        there is no revert-proof concept without a verified call chain.
+        """
+        if self.integration != "wired":
+            return self.integration
+        if self.mutation_proof.strip():  # whitespace-only is no proof (worker-3 review, P2 row (a))
+            return f"wired, revert-proven: {self.mutation_proof}"
+        return "wired"
 
 
 class RequiredValidationPlan(BaseModel):
@@ -173,6 +205,3 @@ class VerificationOutcome(str, Enum):
     FAIL = "fail"
     INCONCLUSIVE = "inconclusive"
     NOT_RUN = "not_run"
-
-
-ExecutionProvenance = Literal["reporter_asserted"]

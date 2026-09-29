@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from trw_mcp.state.validation import score_traceability_v2
-from trw_mcp.state.validation.prd_quality import _KNOWN_TEST_PATTERNS, _TEST_REF_RE
+from trw_mcp.state.validation.prd_quality import _TEST_REF_RE
 
 from ._validation_v2_support import _FILLED_PRD, _MINIMAL_FRONTMATTER
 
@@ -88,24 +88,6 @@ class TestTestRefsRegex:
         matches = _TEST_REF_RE.findall(matrix_section)
         assert "`src/validation.py`" not in matches
         assert "`test_api.py`" in matches
-
-
-class TestKnownTestPatterns:
-    """Verify _KNOWN_TEST_PATTERNS constant is populated."""
-
-    def test_constant_has_expected_languages(self) -> None:
-        assert "python" in _KNOWN_TEST_PATTERNS
-        assert "typescript" in _KNOWN_TEST_PATTERNS
-        assert "go" in _KNOWN_TEST_PATTERNS
-        assert "java" in _KNOWN_TEST_PATTERNS
-        assert "ruby" in _KNOWN_TEST_PATTERNS
-        assert "rust" in _KNOWN_TEST_PATTERNS
-
-    def test_constant_values_are_strings(self) -> None:
-        for lang, description in _KNOWN_TEST_PATTERNS.items():
-            assert isinstance(description, str) and description, (
-                f"Language '{lang}' has empty or non-string description"
-            )
 
 
 class TestTraceabilityV2LanguageAgnostic:

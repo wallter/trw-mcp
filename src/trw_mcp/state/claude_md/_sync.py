@@ -31,12 +31,6 @@ from trw_mcp.state.claude_md._agents_md import (
     _determine_write_target_decision as _determine_write_target_decision,
 )
 from trw_mcp.state.claude_md._agents_md import (
-    _determine_write_targets as _determine_write_targets,
-)
-from trw_mcp.state.claude_md._agents_md import (
-    _inject_learnings_to_agents as _inject_learnings_to_agents,
-)
-from trw_mcp.state.claude_md._agents_md import (
     _sync_agents_md_if_needed as _sync_agents_md_if_needed,
 )
 from trw_mcp.state.claude_md._agents_md import (
@@ -87,9 +81,6 @@ from trw_mcp.state.claude_md._sync_hash import (
 from trw_mcp.state.claude_md._sync_hash import (
     _write_stored_hash as _write_stored_hash,
 )
-from trw_mcp.state.claude_md._sync_hash import (
-    invalidate_claude_md_hash as invalidate_claude_md_hash,
-)
 from trw_mcp.state.persistence import FileStateReader
 
 if TYPE_CHECKING:
@@ -126,13 +117,13 @@ def _build_sync_result(
     capability_parity_drift: list[str] | None = None,
     diffs: list[InstructionDiffDict] | None = None,
     refusals: list[InstructionWriteRefusalDict] | None = None,
+    warnings: list[str] | None = None,
 ) -> ClaudeMdSyncResultDict:
     """Construct the stable sync result shape used by the tool and tests."""
     result: ClaudeMdSyncResultDict = {
         "path": path,
         "scope": scope,
         "status": status,
-        "learnings_promoted": 0,
         "patterns_included": 0,
         "total_lines": total_lines,
         "llm_used": False,
@@ -160,6 +151,11 @@ def _build_sync_result(
         result["diffs"] = diffs
     if refusals is not None:
         result["refusals"] = refusals
+    # PRD-FIX-118/R8: operator-facing hook-env warnings (e.g. this profile's
+    # hooks are installed but the project's resolved hooks_enabled is false).
+    # Omitted when empty rather than published as `[]` noise on every call.
+    if warnings:
+        result["warnings"] = warnings
     return result
 
 
@@ -174,9 +170,12 @@ def _get_repo_root() -> Path | None:
     Kept in _sync.py (not re-exported from _review_md) because tests
     patch ``_sync.subprocess.run`` at the module level.
     """
+    from trw_mcp.state import _paths
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],  # noqa: S607 — git is a well-known VCS tool; all args are static literals, no user input
+            cwd=_paths.resolve_project_root(),  # the project (an install's target), never this process's cwd (B71-118)
             capture_output=True,
             text=True,
             timeout=5,
@@ -191,8 +190,7 @@ def _get_repo_root() -> Path | None:
 # Constants and helpers (_sanitize_summary, _get_repo_root, recall_learnings)
 # are re-exported from _review_md.py. generate_review_md stays here because
 # tests patch _sync.recall_learnings and _sync.tempfile at module level.
-# AGENTS.md functions re-exported from _agents_md.py:
-#   _determine_write_targets, _inject_learnings_to_agents, _sync_agents_md_if_needed
+# AGENTS.md functions re-exported from _agents_md.py: _sync_agents_md_if_needed
 
 
 def generate_review_md(
@@ -220,15 +218,34 @@ def generate_review_md(
     # with no behavior change, so this is the one owner of ranking + cap.
     from trw_mcp.state.recall_factories import recall_for_review_tags
 
-    selected = recall_for_review_tags(
-        trw_dir,
-        tags=_REVIEW_TAGS,
-        min_impact=_REVIEW_MIN_IMPACT,
-        max_results=_REVIEW_MAX_LEARNINGS,
-    )
+    skipped_reason: str | None = None
+    skipped_name = ""
+    try:
+        selected = recall_for_review_tags(
+            trw_dir,
+            tags=_REVIEW_TAGS,
+            min_impact=_REVIEW_MIN_IMPACT,
+            max_results=_REVIEW_MAX_LEARNINGS,
+        )
+    except Exception as exc:  # trw-fail-silent-allow: only an unreadable store degrades; others re-raise
+        # ToolError is what the daemon's memory tools raise when the store is
+        # unreachable; imported here so the common no-failure path never pays
+        # for loading fastmcp.
+        from fastmcp.exceptions import ToolError
+
+        from trw_mcp.state._store_selection import StoreUnavailableError
+
+        if not isinstance(exc, (StoreUnavailableError, ToolError, OSError)):
+            raise
+        skipped_name = type(exc).__name__
+        skipped_reason = f"store unavailable: {skipped_name}"
+        logger.warning("review_md_learnings_skipped", reason=skipped_reason)
+        selected = []
 
     # Build learning entries section
-    if selected:
+    if skipped_reason is not None:
+        learning_entries = f"_Learnings section skipped: store unavailable ({skipped_name})._"
+    elif selected:
         lines: list[str] = []
         for entry in selected:
             lid = str(entry.get("id", "unknown"))
@@ -273,11 +290,14 @@ def generate_review_md(
         path=str(target_path),
         rules_count=rules_count,
     )
-    return {
+    generated: ReviewMdResultDict = {
         "path": str(target_path),
         "rules_count": rules_count,
         "status": "generated",
     }
+    if skipped_reason is not None:
+        generated["learnings_skipped"] = skipped_reason
+    return generated
 
 
 # PRD-CORE-149-FR11: ``execute_claude_md_sync`` moved to

@@ -18,7 +18,7 @@ _log() {
   mkdir -p "${_LOG_DIR}" 2>/dev/null || true
   printf '{"ts":"%s","level":"info","component":"cursor-hook","event":"beforeSubmitPrompt","msg":%s}\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"<log-error>"')" \
+    "$(printf '%s' "$1" | python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || echo '"<log-error>"')" \
     >> "${_LOG_FILE}" 2>/dev/null || true
 }
 

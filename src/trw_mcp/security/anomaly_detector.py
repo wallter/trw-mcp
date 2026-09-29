@@ -37,15 +37,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 import structlog
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.security._anomaly_state import SHADOW_WINDOW_DAYS as SHADOW_WINDOW_DAYS
+from trw_mcp.security._anomaly_state import _ensure_shadow_clock, _state_unwritable
 from trw_mcp.telemetry.event_base import MCPSecurityEvent
 from trw_mcp.telemetry.unified_events import emit as emit_unified_event
 
 logger = structlog.get_logger(__name__)
 
-SHADOW_WINDOW_DAYS = 21
 DEFAULT_SIGMA_THRESHOLD = 5.0
 DEFAULT_WINDOW_SECONDS = 60
 # Per-(server, tool) cap on remembered novel arg-hashes. Bounds in-memory
@@ -106,43 +106,6 @@ def _hash_args(args: dict[str, Any]) -> str:
     """Stable SHA-256 over canonicalized JSON of the args dict (FR-4)."""
     blob = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
-
-
-def _ensure_shadow_clock(path: Path, *, now: datetime | None = None) -> dict[str, str]:
-    """Idempotent shadow-clock bootstrap at ``path`` (Deliverable #7).
-
-    Writes ``{started_at, phase: "shadow", threshold_review_at}`` on first
-    invocation; subsequent invocations return the existing contents.
-    """
-    now = now or datetime.now(tz=timezone.utc)
-    if path.exists():
-        try:
-            raw = yaml.safe_load(path.read_text()) or {}
-        except (OSError, yaml.YAMLError):  # justified: boundary, re-bootstrap on corrupt state rather than crash
-            logger.warning(
-                "mcp_shadow_clock_corrupt_rebootstrapping",
-                path=str(path),
-                outcome="rewriting",
-            )
-            raw = {}
-        if isinstance(raw, dict) and "started_at" in raw:
-            return {str(k): str(v) for k, v in raw.items()}
-
-    payload = {
-        "started_at": now.isoformat(),
-        "phase": "shadow",
-        "threshold_review_at": (now + timedelta(days=SHADOW_WINDOW_DAYS)).isoformat(),
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(payload, sort_keys=True))
-    logger.info(
-        "mcp_shadow_clock_started",
-        path=str(path),
-        started_at=payload["started_at"],
-        threshold_review_at=payload["threshold_review_at"],
-        outcome="initialized",
-    )
-    return payload
 
 
 def _emit_anomaly(
@@ -275,9 +238,13 @@ class AnomalyDetector:
             "run_id": obs.run_id or "",
             "session_id": obs.session_id,
         }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        except OSError as exc:  # trw-fail-silent-allow: a read-only sandbox must not fail the tool call; logged, baseline stays in memory
+            _state_unwritable(path, exc)
+            return
         self._roll_baseline_store(path)
 
     def _roll_baseline_store(self, path: Path) -> None:
@@ -397,8 +364,11 @@ class AnomalyDetector:
     def observe(self, obs: AnomalyObservation) -> list[str]:
         """Process a single observation; return list of anomaly types emitted."""
         if not self._shadow_clock_ensured:
-            _ensure_shadow_clock(self._config.shadow_clock_path, now=self._now_fn())
-            self._shadow_clock_ensured = True
+            try:
+                _ensure_shadow_clock(self._config.shadow_clock_path, now=self._now_fn())
+                self._shadow_clock_ensured = True
+            except OSError as exc:  # trw-fail-silent-allow: a read-only sandbox must not fail the tool call; logged, retried next call
+                _state_unwritable(self._config.shadow_clock_path, exc)
         fired: list[str] = []
         spike, rate_fields = self._check_rate_spike(obs)
         if spike:

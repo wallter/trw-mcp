@@ -34,6 +34,7 @@ from types import FrameType
 
 from trw_mcp.comms._hint import _lean_roots, _parent_pid, _same_run, hint_advanced, live_client, pending_counts
 from trw_mcp.comms._pins import member_pin_entry, member_pin_store
+from trw_mcp.comms._schema import SCHEMA_VERSION
 from trw_mcp.formation import StallFinding, stall_scan
 
 #: reason -> exit code. 2 = authority, 3 = platform, 4 = upgrade the mailbox, 5 = unreadable.
@@ -157,7 +158,7 @@ def observe(
     if conn is not None:
         try:
             version = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
-            if version is not None and version[0] != "4":
+            if version is not None and version[0] != str(SCHEMA_VERSION):
                 return Observation(refused="mailbox_upgrade_required")
             count, newest = pending_counts(conn, derive_group_id(project_root, manifest_path), member_id)
             pending_measured = True
@@ -166,7 +167,15 @@ def observe(
             pass
         finally:
             conn.close()
-    scan = stall_scan(manifest, manifest_path, project_root, now=time.time())
+    from trw_mcp.formation import settings as formation_settings
+
+    scan = stall_scan(
+        manifest,
+        manifest_path,
+        project_root,
+        now=time.time(),
+        activity_stall_seconds=formation_settings().activity_stall_seconds,
+    )
     stalls = tuple(item for item in scan.findings if item.member_id == member_id)
     return Observation(
         client=client,

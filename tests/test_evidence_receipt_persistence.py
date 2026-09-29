@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from trw_mcp.models._evidence_core import (
@@ -15,7 +14,6 @@ from trw_mcp.models._evidence_core import (
 from trw_mcp.models._evidence_plans import ReviewVerdict
 from trw_mcp.models._evidence_records import ReviewReceipt
 from trw_mcp.tools._evidence_persistence import (
-    collect_receipts,
     generate_receipt_id,
     read_receipt_bytes,
     write_receipt,
@@ -71,40 +69,6 @@ class TestAtomicIdempotentCollision:
         # Original payload is untouched.
         stored = read_receipt_bytes(tmp_path, "review", rid)
         assert stored is not None and b'"verdict":"pass"' in stored
-
-    def test_tombstoned_id_cannot_be_reused(self, tmp_path: Path) -> None:
-        rid = generate_receipt_id("review")
-        write_receipt(tmp_path, "review", rid, _receipt(rid))
-        # Force collection by using an old mtime cutoff.
-        collected = collect_receipts(
-            tmp_path,
-            "review",
-            referenced_ids=frozenset(),
-            now=datetime.now(timezone.utc) + timedelta(days=200),
-        )
-        assert rid in collected
-        assert read_receipt_bytes(tmp_path, "review", rid) is None
-        # Re-minting the tombstoned ID is refused.
-        out = write_receipt(tmp_path, "review", rid, _receipt(rid))
-        assert not out.ok and out.reason_code == "receipt_id_tombstoned"
-
-    def test_referenced_receipt_survives_gc(self, tmp_path: Path) -> None:
-        rid = generate_receipt_id("review")
-        write_receipt(tmp_path, "review", rid, _receipt(rid))
-        collected = collect_receipts(
-            tmp_path,
-            "review",
-            referenced_ids=frozenset({rid}),
-            now=datetime.now(timezone.utc) + timedelta(days=200),
-        )
-        assert collected == []
-        assert read_receipt_bytes(tmp_path, "review", rid) is not None
-
-    def test_unexpired_receipt_not_collected(self, tmp_path: Path) -> None:
-        rid = generate_receipt_id("review")
-        write_receipt(tmp_path, "review", rid, _receipt(rid))
-        collected = collect_receipts(tmp_path, "review", referenced_ids=frozenset())
-        assert collected == []
 
 
 class TestCorruptOrPartialReceipt:

@@ -650,11 +650,17 @@ def test_live_probe_with_no_seed_reports_the_graph_contract_inconclusive(tmp_pat
 
 
 @pytest.mark.parametrize("keep", [False, True], ids=["removed", "kept"])
-def test_fixture_dir_stops_the_daemon_placed_under_it(probe_mod: ModuleType, keep: bool) -> None:
+def test_fixture_dir_stops_the_daemon_placed_under_it(
+    probe_mod: ModuleType, keep: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A detached daemon (30-min idle exit) outlived every probe run; two were found 16 min on."""
     import shutil
     import subprocess
 
+    # fixture_dir(keep=False) chdirs this process to the system temp dir, as the probe needs;
+    # restore the worker's cwd after, or later tests on it resolve cwd-anchored paths (the
+    # SEC-001 anchor, config.yaml) from a directory with no .trw above it.
+    monkeypatch.chdir(Path.cwd())
     daemon: subprocess.Popen[bytes] | None = None
     fixture: Path | None = None
     try:

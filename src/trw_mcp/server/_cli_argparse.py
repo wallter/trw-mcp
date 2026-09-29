@@ -17,11 +17,15 @@ from trw_mcp.server._cli_argparse_code import add_code_subcommands
 from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import _ide_choice, add_project_subcommands
+from trw_mcp.server._cli_factory import add_factory_subcommands
+from trw_mcp.shared_server._cli import add_shared_subcommands
+from trw_mcp.tools._decision_cli import add_decision_subcommands
 from trw_mcp.tools._delivery_cli import add_delivery_subcommands
 from trw_mcp.tools._experiment_cli import add_experiment_subcommands
 from trw_mcp.tools._instructions_cli import add_instructions_subcommands
 from trw_mcp.tools._prd_cli import add_prd_create_diff_subcommands
 from trw_mcp.tools._profile_cli import add_profile_subcommands
+from trw_mcp.tools._receipt_cli import add_receipt_subcommands
 from trw_mcp.tools._run_cli import add_run_subcommands
 from trw_mcp.tools._telemetry_cli import add_telemetry_subcommands
 
@@ -32,6 +36,12 @@ from trw_mcp.tools._telemetry_cli import add_telemetry_subcommands
 #: here's the migration hint" error `--ide` gives, instead of a bare argparse
 #: "invalid choice".
 _REMOVE_IDE_CHOICES = sorted(SUPPORTED_IDES)
+
+#: Top-level commands that belong to the Alpha software factory. The public CLI
+#: reference and the generated inventory list stable surfaces only (C17: a stable
+#: surface must not depend on the factory), so ``scripts/_cli_subcommands_inventory.py``
+#: skips these. Drop a name here when its command graduates to stable.
+EXPERIMENTAL_COMMANDS: frozenset[str] = frozenset({"factory", "receipt"})
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -101,7 +111,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("serve", help="Run MCP server (default)")
+    serve_parser = subparsers.add_parser("serve", help="Run MCP server (default)")
+    serve_parser.add_argument("--shared", action="store_true", help="serve one env over loopback HTTP (opt-in)")
+    serve_parser.add_argument("--env", default="stable", help="the env a --shared server serves")
+    serve_parser.add_argument("--successor", action="store_true", help=argparse.SUPPRESS)  # set by `trw-mcp swap`
+    add_shared_subcommands(subparsers)
 
     # Project-management subcommands (init-project / update-project / audit /
     # export / import-learnings) live in a sibling module to keep this parser
@@ -123,7 +137,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
 
     # uninstall
-    uninstall_parser = subparsers.add_parser("uninstall", help="Remove TRW files from a project")
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Remove TRW files from a project",
+        description=(
+            "Remove TRW files from a project. "
+            "Everything under the project's .trw/ is removed (except the learning corpus with --keep-memory)."
+        ),
+    )
     uninstall_parser.add_argument(
         "target_dir",
         nargs="?",
@@ -145,6 +166,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--delete-memory",
         action="store_true",
         help="Also delete this checkout's own namespace from the shared memory store, through its grant",
+    )
+    uninstall_parser.add_argument(
+        "--global",
+        dest="global_config",
+        action="store_true",
+        help=(
+            "Also remove TRW's entry from user-global client configs (e.g. mcpServers.trw in "
+            "~/.gemini/config/mcp_config.json). That entry is shared by every project on this machine, "
+            "so without this flag uninstall leaves it in place and only reports it"
+        ),
     )
     uninstall_parser.add_argument(
         "--keep-memory",
@@ -203,10 +234,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Print suggested remediation (suggest-only in v1 — applies nothing)",
     )
 
-    # local (PRD-FIX-073: offline ceremony fallback)
+    # local (PRD-FIX-073: offline ceremony fallback). PRD-CORE-301-FR13: the
+    # offline-substitute table is this verb's epilog, the surface the instruction
+    # block's troubleshooting pointer names. Function-local import: the renderer
+    # pulls the claude_md package, which the rest of the CLI never needs.
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_offline_substitutes
+
     local_parser = subparsers.add_parser(
         "local",
         help="Offline ceremony fallback — init/checkpoint/status/learn/recall/feedback/deliver without MCP server",
+        epilog=render_offline_substitutes(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     local_sub = local_parser.add_subparsers(dest="local_command")
     local_init = local_sub.add_parser("init", help="Create a run directory")
@@ -248,6 +286,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--confidence",
         default="unverified",
         help="unverified | low | medium | high | verified (default: unverified). 'verified' still requires --evidence.",
+    )
+    local_learn.add_argument(
+        "--evidence-level",
+        default="unknown",
+        help=(
+            "observed | verified | inferred | unknown (default: unknown, PRD-CORE-312). "
+            "--confidence verified requires --evidence-level observed or verified."
+        ),
     )
     local_learn.add_argument(
         "--impact",
@@ -368,5 +414,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # run adopt / instructions sync: run maintenance, moved to the CLI (PRD-CORE-300 S6b).
     add_run_subcommands(subparsers)
     add_instructions_subcommands(subparsers)
+    # decision resolve: the ESCALATE-halt resolution verb (PRD-CORE-329 FR04).
+    add_decision_subcommands(subparsers)
+    # receipt verify / factory status: the experimental software-factory commands.
+    # Their top-level names are listed in EXPERIMENTAL_COMMANDS (the one list the
+    # public CLI-reference inventory reads to leave them out); register a new
+    # experimental command here AND there.
+    add_receipt_subcommands(subparsers)  # slice 1: the VerificationReceipt writer
+    add_factory_subcommands(subparsers)  # PRD-CORE-340-FR10: the packaged reader
 
     return parser

@@ -54,23 +54,24 @@ _repo="$(_resolve_project_dir)"
 # --- Read JSON payload from stdin (Cursor preToolUse) ---
 _payload=$(cat 2>/dev/null) || _allow_and_exit
 
-# Cursor preToolUse stdin carries the model's tool arguments under tool_input.
-# Write/edit tools expose the target path as file_path / path / target_file.
-_file_path=""
-_tool_name=""
-
-# jq only (T29): the hint is advisory, so a jq-less host simply allows.
-command -v jq >/dev/null 2>&1 || _allow_and_exit
-_tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
-_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // .tool_input.path // .tool_input.target_file // empty' 2>/dev/null) || true
-
-# --- Skip 1: shared opt-in gate (FR-6) => plain allow no-op ---
+# --- Skip 1: shared opt-in gate (FR-6) => plain allow no-op. It runs BEFORE the payload
+# is parsed, so a disabled hint starts no interpreter at all (PRD-FIX-156 sol r1).
 if ! _get_cc03_enabled; then
     _allow_and_exit
 fi
 
+# Cursor preToolUse stdin carries the model's tool arguments under tool_input.
+# Write/edit tools expose the target path as file_path / path / target_file.
+# jq, else python (PRD-FIX-156-FR04); with neither the path stays empty and
+# Skip 2 below allows.
+_file_path=$(printf '%s' "$_payload" | _read_json_field \
+    .tool_input.file_path .tool_input.path .tool_input.target_file) || _file_path=""
+
 # --- Skip 2: no file_path (non-file tool, e.g. terminal) => plain allow ---
 [ -n "$_file_path" ] || _allow_and_exit
+
+# --- Skip 2b: target outside the project (scratch files) => plain allow, no interpreter, no record ---
+_path_inside_repo "$_file_path" "$_repo" || _allow_and_exit
 
 # --- Skip 3: safe extension allowlist => plain allow ---
 if _is_safe_extension "$_file_path"; then
@@ -102,7 +103,8 @@ fi
 date +%s | _trw_safe_write "$_debounce_file" || true
 
 # --- Resolve Python path; no python => plain allow (still advisory) ---
-_py=$(_get_python_path 2>/dev/null) || _allow_and_exit
+_py=$(_get_python_path "$(_resolve_project_dir)" 2>/dev/null) || _allow_and_exit
+_wt_pythonpath=$(_worktree_pythonpath "$(_resolve_project_dir)" 2>/dev/null) || _wt_pythonpath=""
 
 # --- Portable 2.5s bound for the hint subprocess (FR30) -----------------------
 # This call used to read `timeout 2.5 "$_py" -c ...`. `timeout` is GNU
@@ -169,6 +171,7 @@ _trw_bounded_python() {
 _response=$(
     _trw_bounded_python 2.5 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
+    PYTHONPATH="$_wt_pythonpath${_wt_pythonpath:+${PYTHONPATH:+:}}${PYTHONPATH:-}" \
     TRW_EMBEDDINGS_ENABLED=false \
     TRW_CUR06_FILE_PATH="$_file_path" \
     "$_py" -c '
@@ -193,7 +196,7 @@ except Exception:
 # Always-valid fallback: a non-blocking allow with no agent_message.
 _fallback = {"permission": "allow"}
 try:
-    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
+    from trw_mcp.tools._before_edit_hint_core import T2_STATUSES, compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
         format_t0_beacon, format_t1_hint, format_t2_hint,
     )
@@ -201,13 +204,17 @@ try:
     result = compute_before_edit_hint(file_path=fp)
     hint = result.distill_hint
     learnings = [{"summary": l.summary} for l in result.learnings]
-    if hint and result.distill_status == "hint_available":
+    if hint and result.distill_status in T2_STATUSES:
         text = format_t2_hint(
             file_path=fp,
             risk_score=hint.risk_score,
             hotspot_warnings=hint.hotspot_warnings,
             co_change_neighbors=hint.co_change_neighbors,
             inferred_tests=hint.inferred_tests,
+            lessons=hint.lessons,
+            lessons_status=hint.lessons_status,
+            as_of=result.distill_as_of,
+            recall_learnings=learnings,
         )
     elif learnings:
         text = format_t1_hint(learnings)
@@ -233,7 +240,7 @@ except Exception:
 # agent_message content once the debounce window has lapsed. Never suppresses
 # a hint that changed, or the first hint for a file.
 if [ -n "$_response" ]; then
-    _dedup_text=$(printf '%s' "$_response" | jq -r '.agent_message // empty' 2>/dev/null) || _dedup_text=""
+    _dedup_text=$(printf '%s' "$_response" | _read_json_field .agent_message) || _dedup_text=""
     if [ -n "$_dedup_text" ] && _distill_hint_already_seen "$_repo" "$_file_path" "$_dedup_text"; then
         _response='{"permission": "allow"}'
     fi

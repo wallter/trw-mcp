@@ -154,8 +154,10 @@ RULES: list[tuple[str, Path, str]] = [
         "R2-033",
         TRW_MCP_SRC / "data" / "framework.md",
         "`trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` "
-        "— record observed project-native validation at VALIDATE and before DELIVER after "
-        "code/test changes; it does not run checks",
+        "— record observed project-native validation at VALIDATE and before DELIVER, whether "
+        "or not code changed: a passing full-suite run is Path 1; a failing run plus an "
+        "acceptable-failure record is Path 2; Path 3 needs a recorded authorized override "
+        "instead. It records what you report; it does not run checks",
     ),
     (
         "R2-016",

@@ -2,6 +2,8 @@
 # Tracked: config.yaml, frameworks/, learnings/, scripts/, templates/
 # Secret: credentials.yaml holds the platform_api_key (mode 0600) — never track it (PRD-SEC-005).
 credentials.yaml
+# Backups TRW moved aside instead of deleting (user bytes, per machine) — never track them.
+trash/
 # The proprietary-entitlement record is a per-machine install fact, not project
 # config. Tracked, it told a teammate's credential-less clone to take the
 # proprietary path, which then aborted their whole public install
@@ -9,6 +11,8 @@ credentials.yaml
 proprietary-installed.json
 # Secret: runtime/memory-token is this checkout's memory daemon grant (mode 0600) — never track it (PRD-CORE-280).
 runtime/memory-token
+# The interpreter this machine's hooks start is a local install fact (PRD-FIX-155).
+channels/cc03-python.txt
 context/
 reflections/
 logs/

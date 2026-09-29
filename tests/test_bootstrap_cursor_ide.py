@@ -10,6 +10,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -28,6 +30,7 @@ def _make_git_repo(tmp_path: Path) -> Path:
         check=True,
         capture_output=True,
         env={
+            **daemon_env_passthrough(),
             "GIT_AUTHOR_NAME": "test",
             "GIT_AUTHOR_EMAIL": "t@t.com",
             "GIT_COMMITTER_NAME": "test",

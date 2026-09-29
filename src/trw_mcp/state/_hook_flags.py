@@ -13,12 +13,13 @@ Published at server boot, at ``trw_session_start``, at install, and by
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.config._loader import resolve_config_overrides
+from trw_mcp.models.config._loader import _read_yaml_overrides, resolve_config_overrides
 from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +39,37 @@ def write_hook_flags(trw_dir: Path, config: TRWConfig | None = None) -> Path:
     body = "".join(f"{field}={str(bool(getattr(resolved, field))).lower()}\n" for field in HOOK_FLAG_FIELDS)
     FileStateWriter().write_text(path, body)
     return path
+
+
+def resolve_hooks_enabled(trw_dir: Path, config: TRWConfig | None = None) -> bool:
+    """The cascade-resolved ``hooks_enabled`` for *trw_dir* -- the same value :func:`write_hook_flags` publishes.
+
+    A separate accessor (rather than re-reading the published ``hook-flags`` file)
+    so a caller mid-install, before that file has been written this run, still
+    sees the true resolved value.
+    """
+    resolved = config or TRWConfig(**resolve_config_overrides(trw_dir / "config.yaml"))  # type: ignore[arg-type]
+    return bool(resolved.hooks_enabled)
+
+
+def resolve_hooks_enabled_source(trw_dir: Path) -> str:
+    """Which config layer decided the resolved ``hooks_enabled`` -- env > project > machine > default.
+
+    Mirrors :func:`~trw_mcp.models.config._loader.resolve_config_overrides`'s own
+    precedence (``TRW_HOOKS_ENABLED`` env, else the project ``config.yaml``, else
+    ``~/.trw/config.yaml``) so a caller can point an operator at the layer that
+    actually needs editing, rather than a fixed path that may not be the one
+    in effect.
+    """
+    if os.environ.get("TRW_HOOKS_ENABLED") is not None:
+        return "the TRW_HOOKS_ENABLED environment variable"
+    project_path = trw_dir / "config.yaml"
+    if "hooks_enabled" in _read_yaml_overrides(project_path):
+        return str(project_path)
+    machine_path = Path.home() / ".trw" / "config.yaml"
+    if "hooks_enabled" in _read_yaml_overrides(machine_path):
+        return str(machine_path)
+    return "a TRWConfig default"
 
 
 def publish_hook_flags(trw_dir: Path, config: TRWConfig | None = None) -> None:

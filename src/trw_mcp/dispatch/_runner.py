@@ -33,7 +33,9 @@ from trw_mcp.dispatch._capability import unadvertised_flags
 from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._client_specs import client_spec_for
 from trw_mcp.dispatch._commands import build_command
+from trw_mcp.dispatch._enforcement_layers import enforcement_fields
 from trw_mcp.dispatch._env import build_subprocess_env
+from trw_mcp.dispatch._error_class import run_dispatch
 from trw_mcp.dispatch._host_confinement import _confinement_for, _needs_host_confinement, _read_only_enforced
 from trw_mcp.dispatch._isolated import IsolationFailedError, run_isolated
 from trw_mcp.dispatch._normalize import classify_silence, normalize_output, turn_cap_next_read
@@ -47,6 +49,7 @@ from trw_mcp.dispatch._posture import (
     verify_trw_access,
 )
 from trw_mcp.dispatch._process_identity import capture_identity, signal_group
+from trw_mcp.dispatch._runner_results import _early_result as _early_result
 from trw_mcp.dispatch._sandbox_probe import SandboxProbe, probe_write_containment
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
@@ -182,6 +185,16 @@ def _wrap_pty(argv: list[str]) -> list[str]:
 
 
 def dispatch(
+    req: DispatchRequest, *, pid_callback: Callable[[int], None] | None = None, _lane_home: Path | None = None
+) -> DispatchResult:
+    """Run *req* (:func:`_run_once`): once more after a capacity or credential-refresh failure, and behind the
+    client's credential lock when its login could expire during the run (PRD-CORE-304-FR02/FR03)."""
+    run = lambda one: _run_once(one, pid_callback=pid_callback, _lane_home=_lane_home)  # noqa: E731
+    refuse = lambda why: _early_result(req, [], exit_code=-1, stderr=why, silence_reason="credential_refresh_conflict")  # noqa: E731
+    return run_dispatch(req, run, refuse)
+
+
+def _run_once(
     req: DispatchRequest,
     *,
     pid_callback: Callable[[int], None] | None = None,
@@ -281,7 +294,7 @@ def dispatch(
         # of every process in the tree, or a grandchild escapes the denial.
         run_argv = [*confine_argv, *run_argv]
         argv_redacted = [*confine_argv, *argv_redacted]
-    env = build_subprocess_env(req.client, posture=req.posture, with_trw=req.with_trw)
+    env = build_subprocess_env(req.client, posture=req.posture, with_trw=req.with_trw, read_only=req.read_only)
     if _lane_home is not None:
         env["HOME"] = str(_lane_home)
 
@@ -413,13 +426,23 @@ def dispatch(
     if next_read:
         silence_reason = "turn_cap_reached"
 
+    posture_enforced = reviewer_posture_enforced(req.client, req.posture)
+    trw_enforced = trw_access_enforced(req.client, req.with_trw)
     result = DispatchResult(
         client=req.client,
         argv_redacted=argv_redacted,
         read_only_enforced=_read_only_enforced(req, confine_argv),
         posture=req.posture,
-        posture_enforced=reviewer_posture_enforced(req.client, req.posture),
-        trw_access_enforced=trw_access_enforced(req.client, req.with_trw),
+        posture_note=req.posture_note,
+        posture_enforced=posture_enforced,
+        trw_access_enforced=trw_enforced,
+        **enforcement_fields(
+            req.client,
+            read_only=req.read_only,
+            isolate=req.isolate,
+            posture_enforced=posture_enforced,
+            mcp_injected=posture_enforced or trw_enforced,
+        ),
         exit_code=exit_code,
         timed_out=timed_out,
         duration_s=duration_s,
@@ -451,7 +474,7 @@ def _enter_isolated_lane(req: DispatchRequest, pid_callback: Callable[[int], Non
     """Admit, then run *req* in a standalone snapshot (PRD-CORE-297-FR04); refusals never spawn."""
     try:
         verify_reviewer_posture(req.client, req.posture, read_only=req.read_only)
-        return run_isolated(req, lambda lane_req, home: dispatch(lane_req, pid_callback=pid_callback, _lane_home=home))
+        return run_isolated(req, lambda lane_req, home: _run_once(lane_req, pid_callback=pid_callback, _lane_home=home))
     except ReviewerPostureError as exc:
         logger.warning("dispatch_posture_refused", client=req.client, posture=req.posture, error=str(exc))
         return _early_result(req, [], exit_code=-1, stderr=f"reviewer posture refused: {exc}")
@@ -481,7 +504,7 @@ def _sandbox_claim(req: DispatchRequest, confine_note: str) -> tuple[bool | Lite
     try:
         probe: SandboxProbe = probe_write_containment(
             req.client,
-            run=lambda probe_req: dispatch(probe_req),
+            run=lambda probe_req: _run_once(probe_req),
             model=req.model,
             timeout_s=req.timeout_s,
             mechanism=confine_note or "the client's own read-only flags",
@@ -533,40 +556,3 @@ def _warn_trw_access_config_residue(req: DispatchRequest) -> None:
             client=req.client,
             residue=spec.trw_access_config_residue,
         )
-
-
-def _early_result(
-    req: DispatchRequest,
-    argv_redacted: list[str],
-    *,
-    exit_code: int,
-    stderr: str,
-    silence_reason: str = "nonzero_exit",
-) -> DispatchResult:
-    """Build a clean failure result for a pre-spawn / launch failure (no child).
-
-    ``posture_enforced`` and ``trw_access_enforced`` are False on every one of
-    these paths by construction: no child was launched, so nothing was bounded
-    and nothing was connected. Reporting the spec's capability here would claim
-    containment -- or a TRW connection -- for a process that never existed.
-
-    ``read_only_enforced`` is False for the same reason: a wrapper prefix that
-    was found but never ran enforced nothing (a missing agy binary once
-    reported enforced containment here).
-    """
-    return DispatchResult(
-        client=req.client,
-        argv_redacted=argv_redacted,
-        read_only_enforced=False,
-        posture=req.posture,
-        posture_enforced=False,
-        trw_access_enforced=False,
-        exit_code=exit_code,
-        timed_out=False,
-        duration_s=0.0,
-        text="",
-        raw_stdout="",
-        raw_stderr=stderr,
-        structured=None,
-        silence_reason=silence_reason,
-    )

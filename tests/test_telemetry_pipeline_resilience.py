@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests._auto_upgrade_test_support import _mock_httpx_response
+from tests._httpx_mock_support import _mock_httpx_response
 from tests._telemetry_pipeline_support import (
     _make_event,
     _make_fake_cfg,

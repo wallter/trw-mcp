@@ -5,7 +5,7 @@ aggregator. All paths are fail-open (never raise). Tests follow the
 pattern established in test_sync_health.py.
 
 These tests use tmp_path for filesystem fixtures, so they are integration
-tier (default when not in _UNIT_FILES).
+tier (the default for a test with no explicit unit mark).
 """
 
 from __future__ import annotations
@@ -331,6 +331,10 @@ def test_no_probe_opens_the_checkout_memory_db(tmp_path: Path, pinned: bool, mon
     trw_dir = _make_trw_dir(tmp_path)
     store = _unmigrated_store(trw_dir)
     before = store.read_bytes()
+    # The fixture's own open leaves the store's permanent lock file (<db>.oplock) beside it;
+    # the probe must add nothing (no -wal/-shm/-journal, no second lock file).
+    siblings = sorted(p.name for p in store.parent.iterdir())
+    assert "memory.db" in siblings
     if not pinned:
         _real_selection(monkeypatch)
 
@@ -338,7 +342,7 @@ def test_no_probe_opens_the_checkout_memory_db(tmp_path: Path, pinned: bool, mon
         result = step_pipeline_health(trw_dir)
 
     assert store.read_bytes() == before
-    assert sorted(p.name for p in store.parent.iterdir()) == ["memory.db"]
+    assert sorted(p.name for p in store.parent.iterdir()) == siblings
     for probe in ("graph_edges", "embedding_coverage", "recall_feedback"):
         assert "AssertionError" not in str(result[probe].get("advisory", "")), probe
         assert result[probe]["measured"] is pinned, probe

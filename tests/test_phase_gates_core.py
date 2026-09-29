@@ -7,7 +7,6 @@ import pytest
 from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.state.validation.phase_gates import (
     PHASE_EXIT_CRITERIA,
-    PHASE_INPUT_CRITERIA,
     _build_phase_result,
 )
 
@@ -16,19 +15,9 @@ class TestPhaseConstants:
     """Verify PHASE_INPUT_CRITERIA and PHASE_EXIT_CRITERIA are sane."""
 
     @pytest.mark.unit
-    def test_input_criteria_has_all_phases(self) -> None:
-        for phase in ("research", "plan", "implement", "validate", "review", "deliver"):
-            assert phase in PHASE_INPUT_CRITERIA, f"{phase} missing from PHASE_INPUT_CRITERIA"
-
-    @pytest.mark.unit
     def test_exit_criteria_has_all_phases(self) -> None:
         for phase in ("research", "plan", "implement", "validate", "review", "deliver"):
             assert phase in PHASE_EXIT_CRITERIA, f"{phase} missing from PHASE_EXIT_CRITERIA"
-
-    @pytest.mark.unit
-    def test_input_criteria_nonempty(self) -> None:
-        for phase, criteria in PHASE_INPUT_CRITERIA.items():
-            assert len(criteria) > 0, f"{phase} has empty input criteria"
 
     @pytest.mark.unit
     def test_exit_criteria_nonempty(self) -> None:

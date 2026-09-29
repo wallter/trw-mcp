@@ -9,21 +9,35 @@ re-exported from ``_utils.py`` so existing import paths are preserved.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import re
-import shlex
-import shutil
 import stat
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import structlog
 
-if TYPE_CHECKING:
-    from trw_mcp.models.config._client_profile import ClientProfile
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
+# Hook-env writer moved to _hook_env.py (module-size compliance); re-exported
+# here so `from trw_mcp.bootstrap._file_ops import ...` keeps working.
+from ._hook_env import (
+    _hook_env_key as _hook_env_key,
+)
+from ._hook_env import (
+    _write_hook_env_file as _write_hook_env_file,
+)
+from ._hook_env import (
+    hook_env_dir as hook_env_dir,
+)
+from ._hook_env import (
+    hook_env_key_for_hooks_dir as hook_env_key_for_hooks_dir,
+)
+from ._hook_env import (
+    write_hook_env_for_clients as write_hook_env_for_clients,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -121,6 +135,7 @@ def read_settings_for_merge(
     *,
     rel_path: str,
     result: dict[str, list[str]],
+    recover: bool = True,
 ) -> dict[str, object] | None:
     """Read a JSON *settings* file for an in-place ``mcpServers`` merge.
 
@@ -148,6 +163,10 @@ def read_settings_for_merge(
         a recovery warning to ``result["warnings"]``.
       - **valid object** → the parsed mapping.
 
+    With ``recover=False`` (a file shared by every project, where a replacement drops the
+    user's other servers) the non-UTF-8 / malformed / non-object outcomes instead append a
+    warning naming the file and return ``None``: nothing is backed up or rewritten.
+
     A ``{}`` return means "proceed, merging into this (possibly empty) base";
     ``None`` means "stop — an unrecoverable read error was already recorded".
     """
@@ -162,12 +181,20 @@ def read_settings_for_merge(
     if not raw.strip():
         return {}
 
-    def _backup_and_warn(reason: str) -> dict[str, object]:
+    def _backup_and_warn(reason: str) -> dict[str, object] | None:
+        if not recover:
+            result.setdefault("warnings", []).append(
+                f"{rel_path} {reason}; left untouched (nothing was backed up or rewritten). "
+                "Fix or remove the file, then run the installer again."
+            )
+            return None
         backup = path.with_suffix(path.suffix + ".bak")
         backup_note = f"backed up to {backup.name}"
         try:
-            backup.write_bytes(raw)
-        except OSError:
+            # The settings file's own directory is the root: it may sit outside any checkout
+            # (a user-level settings file), so only the .bak leaf is walked no-follow.
+            write_checkout_file(path.parent, backup, raw)
+        except (OSError, UnsafeWriteError):
             # Backup is best-effort; never let a recovery write block the merge.
             # Keep diagnostics structural/content-free and truthfully report that
             # the recovery copy was unavailable rather than claiming it was made.
@@ -232,7 +259,9 @@ def _copy_file(
             on_progress("Skipped", str(dest))
         return
     try:
-        shutil.copy2(src, dest)
+        write_checkout_file(
+            dest.parent, dest, src.read_bytes()
+        )  # the destination's own directory is the root: a symlinked file is refused, not written through
         # Ensure shell scripts are executable (pip install may strip permissions)
         if dest.suffix == ".sh":
             executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
@@ -240,7 +269,7 @@ def _copy_file(
         result["created"].append(str(dest))
         if on_progress:
             on_progress("Created", str(dest))
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
         if on_progress:
             on_progress("Error", str(dest))
@@ -252,115 +281,24 @@ def _write_if_missing(
     force: bool,
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
+    *,
+    root: Path,
 ) -> None:
-    """Write *content* to *dest* if it doesn't exist (or *force* is True)."""
+    """Write *content* to *dest* (under *root*) if it doesn't exist (or *force* is True)."""
     if dest.exists() and not force:
         result["skipped"].append(str(dest))
         if on_progress:
             on_progress("Skipped", str(dest))
         return
     try:
-        dest.write_text(content, encoding="utf-8")
+        write_checkout_file(root, dest, content)
         result["created"].append(str(dest))
         if on_progress:
             on_progress("Created", str(dest))
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {dest}: {exc}")
         if on_progress:
             on_progress("Error", str(dest))
-
-
-def _write_hook_env_file(trw_dir: Path, profile: ClientProfile) -> Path:
-    """PRD-CORE-149 FR04: write ``.trw/runtime/hook-env.sh`` for hook scripts.
-
-    The generated file is sourced by every TRW hook at startup to decide
-    whether to run the nudge-pool init (``NUDGE_ENABLED``) and which
-    client-identity tokens to expose (``TRW_CLIENT_DISPLAY_NAME`` /
-    ``TRW_CLIENT_CONFIG_DIR``). Whether hooks run at all is ``hooks_enabled`` in
-    ``TRWConfig``; a profile with hooks off only seeds that key into
-    ``.trw/config.yaml`` when the operator has not set it, and the resolved
-    switches are then published to ``.trw/runtime/hook-flags`` for ``lib-trw.sh``.
-
-    PRD-FIX-118 FR01 appends a ``TRW_SESSION_ID`` stanza sourced from the
-    client's own session variable (see
-    :mod:`trw_mcp.client_profiles.session_identity`). The stanza is static text
-    evaluated at source time, so this file remains session-independent and
-    idempotent while hooks still resolve the *live* session identity -- the same
-    string ``resolve_pin_key`` keys ``.trw/runtime/pins.json`` on.
-
-    Idempotent: safe to rewrite on every sync. Permissions are 0644
-    (world-readable; hooks only need read access). Creates ``runtime/`` if
-    missing.
-    """
-    from trw_mcp.client_profiles.session_identity import render_hook_env_session_block
-    from trw_mcp.state.persistence import write_text_atomic
-
-    runtime_dir = trw_dir / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    path = runtime_dir / "hook-env.sh"
-    nudge_flag = "true" if profile.nudge_enabled else "false"
-    # SECURITY: shell-quote every embedded value. display_name / config_dir are
-    # profile-derived (potentially user-defined) and a value containing shell
-    # metacharacters ($(), backticks, quotes, newlines) would otherwise break or
-    # inject into this script, which every hook ``source``s at startup. shlex.quote
-    # emits a safely single-quoted token (no surrounding double quotes needed).
-    content = (
-        "# TRW hook environment (generated by instructions sync / init-project)\n"
-        "# PRD-CORE-149 FR04: surfaces per-profile hook flags + client identity.\n"
-        f"export NUDGE_ENABLED={shlex.quote(nudge_flag)}\n"
-        f"export TRW_CLIENT_DISPLAY_NAME={shlex.quote(profile.display_name)}\n"
-        f"export TRW_CLIENT_CONFIG_DIR={shlex.quote(profile.config_dir)}\n"
-        + render_hook_env_session_block(profile.client_id)
-    )
-    # Every hook sources this file; an atomic replace never shows one a
-    # truncated script.
-    write_text_atomic(path, content, mode=0o644)
-    if not profile.hooks_enabled:
-        _seed_config_default(trw_dir / "config.yaml", "hooks_enabled", False)
-    from trw_mcp.state._hook_flags import publish_hook_flags
-
-    publish_hook_flags(trw_dir)
-    logger.debug(
-        "hook_env_written",
-        path=str(path),
-        client_id=profile.client_id,
-        hooks_enabled=profile.hooks_enabled,
-        nudge_enabled=profile.nudge_enabled,
-    )
-    return path
-
-
-def _seed_config_default(config_path: Path, key: str, value: object) -> None:
-    """Set *key* in a YAML config only when the operator has not, in any mapping style.
-
-    Parsed rather than grepped: a line match misses a flow mapping or a quoted
-    key, and appending a block line to a flow mapping yields invalid YAML.
-    Round-trip mode keeps the operator's comments, ordering and style. A file
-    that is not a mapping is left alone and logged.
-    """
-    from ruamel.yaml import YAML
-
-    from trw_mcp.state.persistence import write_text_atomic
-
-    yaml = YAML(typ="rt")
-    text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
-    data = yaml.load(text) if text.strip() else None
-    if data is None:
-        data = {}
-    if not isinstance(data, dict):
-        logger.warning("config_seed_skipped_not_a_mapping", path=str(config_path), key=key)
-        return
-    if key in data:
-        return
-    data[key] = value
-    buffer = io.StringIO()
-    yaml.dump(data, buffer)
-    target = config_path.resolve()  # a symlinked config is updated where it lives, the link kept
-    try:
-        mode = stat.S_IMODE(target.stat().st_mode)
-    except FileNotFoundError:
-        mode = 0o644
-    write_text_atomic(target, buffer.getvalue(), mode=mode)
 
 
 def _files_identical(a: Path, b: Path) -> bool:

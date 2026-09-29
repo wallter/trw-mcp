@@ -73,7 +73,9 @@ When invoked as `@trw-distill-explorer <file-path>`:
    - **Co-change Neighbors** (`distill_hint.co_change_neighbors` list)
    - **Hotspot Warnings** (`distill_hint.hotspot_warnings` list)
    - **Learnings** (top-3 from the `learnings` field)
-3. If `distill_status == "stale_sha"`, include a staleness notice.
+3. If `distill_status == "stale_sha"`, include a staleness notice. If it is
+   `"hint_available_stale"`, say the hint is historical, citing
+   `distill_as_of.sidecar_sha` and `distill_as_of.commits_behind`.
 4. If `distill_status == "tier_required"`, note the tier gate and return
    only `trw_recall` learnings.
 

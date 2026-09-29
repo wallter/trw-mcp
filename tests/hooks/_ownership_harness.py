@@ -66,12 +66,22 @@ def write_pins(root: Path, pins: object) -> None:
     path.write_text(pins if isinstance(pins, str) else json.dumps(pins), encoding="utf-8")
 
 
-def write_hook_env(root: Path, client_id: str = "claude-code") -> Path:
-    """Generate .trw/runtime/hook-env.sh with the REAL production writer."""
-    from trw_mcp.bootstrap._file_ops import _write_hook_env_file
+def write_hook_env(root: Path, client_id: str = "claude-code", *, hook_dir: Path | None = None) -> Path:
+    """Generate a `.trw/runtime/hook-env.d/<key>.sh` file with the REAL production writer.
+
+    ``hook_dir``, when given, is the ACTUAL directory the hook under test will
+    run from (``BUNDLED_HOOKS`` or ``MIRROR_HOOKS``) -- the key is then derived
+    from that location (matching what ``lib-trw.sh`` independently computes from
+    its own install path) rather than from *client_id*'s own ``config_dir``, so
+    the file lands where the executing script will actually look for it. Tests
+    that source ``lib-trw.sh`` directly (never a real hook file) leave this
+    unset and drive the profile's own key instead.
+    """
+    from trw_mcp.bootstrap._file_ops import _write_hook_env_file, hook_env_key_for_hooks_dir
     from trw_mcp.models.config._profiles import resolve_client_profile
 
-    return _write_hook_env_file(root / ".trw", resolve_client_profile(client_id))
+    key = hook_env_key_for_hooks_dir(hook_dir) if hook_dir is not None else None
+    return _write_hook_env_file(root / ".trw", resolve_client_profile(client_id), key=key)
 
 
 def shell_env(root: Path, **extra: str) -> dict[str, str]:

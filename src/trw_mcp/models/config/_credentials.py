@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import structlog
+from trw_memory.exceptions import UnsafeWriteError
+from trw_memory.safe_fs import write_beneath
 
 logger = structlog.get_logger(__name__)
 
@@ -41,8 +43,6 @@ ALT_ENV_VAR = "TRW_API_KEY"
 
 # Filename of the ignored credential store, sibling to ``config.yaml``.
 CREDENTIALS_FILENAME = "credentials.yaml"
-
-_KEY_FIELD = "platform_api_key"
 
 # Matches a top-level ``platform_api_key:`` line in a flat YAML file. The
 # credential file is intentionally a tiny flat mapping, so a regex line scan
@@ -84,25 +84,22 @@ def read_key_from_file(path: Path) -> str:
 def write_credentials_key(credentials_path: Path, api_key: str) -> None:
     """Write *api_key* to *credentials_path* (``platform_api_key``) mode 0600.
 
-    Creates the parent directory if needed. The file is (re)written with a
-    single ``platform_api_key`` field. The chmod is best-effort: on platforms
-    that do not honor POSIX mode bits (e.g. Windows) a WARNING is logged and
-    the write still proceeds, mirroring ``_pin_store.py`` (NFR03).
+    Delegates the whole write to ``trw_memory.safe_fs.write_beneath``, anchored
+    one level above *credentials_path* (its grandparent as the trusted root,
+    its parent-dir name plus leaf as the safe-fs relative path): the file is
+    created at mode 0600 directly -- there is no separate ``os.chmod`` call
+    after the write, closing the create-then-chmod window R12/V03/V04 all
+    confirmed (PRD-CORE-337-FR09). A symlinked leaf or a symlinked parent
+    component (e.g. a hostile checkout replacing the credentials directory
+    with a link) is refused with ``trw_memory.exceptions.UnsafeWriteError``
+    rather than written through; the parent directory is still created when
+    missing, matching the previous ``mkdir(parents=True, exist_ok=True)``
+    behavior for the ordinary (non-symlinked) case.
     """
-    credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    credentials_path.write_text(
-        f'# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\nplatform_api_key: "{api_key}"\n',
-        encoding="utf-8",
-    )
-    try:
-        os.chmod(credentials_path, 0o600)
-    except OSError as exc:
-        # Windows does not honor POSIX mode bits; warn and proceed (NFR03).
-        logger.warning(
-            "credentials_chmod_failed",
-            path=str(credentials_path),
-            error=type(exc).__name__,
-        )
+    root = credentials_path.parent.parent
+    rel_path = PurePath(credentials_path.parent.name, credentials_path.name)
+    content = f'# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\nplatform_api_key: "{api_key}"\n'
+    write_beneath(root, rel_path, content.encode("utf-8"), mode=0o600)
 
 
 def remove_credentials_key(credentials_path: Path) -> bool:
@@ -215,10 +212,11 @@ def migrate_config_key(config_path: Path) -> bool:
 def migrate_for_update_project(config_path: Path, result: dict[str, list[str]]) -> None:
     """Run the FR05 credential migration for ``update-project``, recording notes.
 
-    Idempotent and fail-open: a missing config, an absent/empty key, or an OS
-    error never raises — the update continues. On a successful migration the
-    ``result`` dict's ``updated``/``warnings`` lists gain operator-facing notes
-    (including the rotate-if-committed advisory).
+    Idempotent and fail-open: a missing config, an absent/empty key, an OS
+    error, or a refused symlinked write target never raises — the update
+    continues. On a successful migration the ``result`` dict's
+    ``updated``/``warnings`` lists gain operator-facing notes (including the
+    rotate-if-committed advisory).
     """
     if not config_path.is_file():
         return
@@ -229,5 +227,5 @@ def migrate_for_update_project(config_path: Path, result: dict[str, list[str]]) 
                 "platform_api_key moved out of git-tracked config.yaml — "
                 "ROTATE the key if it was already committed to git history."
             )
-    except OSError as exc:
+    except (OSError, UnsafeWriteError) as exc:
         result["warnings"].append(f"Credential migration skipped: {exc}")

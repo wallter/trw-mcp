@@ -37,16 +37,3 @@ def test_complexity_module_under_max_lines(module_name: str) -> None:
     assert path.exists(), f"{module_name} missing from scoring package"
     lines = _line_count(path)
     assert lines <= _MAX_LINES, f"{module_name} has {lines} raw lines (ceiling {_MAX_LINES})"
-
-
-def test_back_compat_imports_preserved() -> None:
-    """Tier-score symbols stay importable from both the facade and ``_complexity``."""
-    from trw_mcp.scoring import _TIER_EXPECTATIONS as facade_table
-    from trw_mcp.scoring import compute_tier_ceremony_score as facade_score
-    from trw_mcp.scoring._complexity import _TIER_EXPECTATIONS as complexity_table
-    from trw_mcp.scoring._complexity import compute_tier_ceremony_score as complexity_score
-    from trw_mcp.scoring._tier_score import compute_tier_ceremony_score as tier_score
-
-    # All three import paths resolve to the same object (single source of truth).
-    assert facade_score is complexity_score is tier_score
-    assert facade_table is complexity_table

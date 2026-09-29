@@ -68,7 +68,6 @@ _run_path=""
 _phase=""
 _event_count=0
 _last_checkpoint=""
-_wave_manifest=""
 _active_tasks=0
 _pending_decisions=""
 
@@ -93,15 +92,6 @@ if [ -n "$_run_dir" ]; then
     _last_checkpoint=$(tail -1 "$_cp_path" 2>/dev/null | _json_get .message) || true
   fi
 
-  # FR02: wave_manifest — read wave status from wave_manifest.yaml or run.yaml
-  _wave_yaml="${_run_dir}meta/wave_manifest.yaml"
-  if [ -f "$_wave_yaml" ]; then
-    _wave_manifest=$(grep '^status:' "$_wave_yaml" | head -1 | sed 's/^status:[[:space:]]*//' | tr -d "'" | tr -d '"') || true
-    [ -z "$_wave_manifest" ] && _wave_manifest="present"
-  elif [ -f "$_run_yaml" ]; then
-    _wave_manifest=$(grep '^wave:' "$_run_yaml" | head -1 | sed 's/^wave:[[:space:]]*//' | tr -d "'" | tr -d '"') || true
-  fi
-
   # FR02: active_tasks — count in-progress tasks from task directory
   _task_dir="${_run_dir}tasks"
   if [ -d "$_task_dir" ]; then
@@ -118,7 +108,7 @@ fi
 _state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || exit 0
 # PRD-FIX-154 FR02: _json_object builds this snapshot on both the jq and the
 # jq-less path, so an operator without jq no longer loses last_checkpoint,
-# wave_manifest, active_tasks and pending_decisions, and run_path/phase are
+# active_tasks and pending_decisions, and run_path/phase are
 # always escaped (they are unowned-session data, not trusted literals).
 _json_object \
   --str ts "$_ts" \
@@ -127,7 +117,6 @@ _json_object \
   --str phase "$_phase" \
   --int events_logged "${_event_count:-0}" \
   --str last_checkpoint "$_last_checkpoint" \
-  --str wave_manifest "$_wave_manifest" \
   --int active_tasks "${_active_tasks:-0}" \
   --str pending_decisions "$_pending_decisions" \
   --str ownership "$_ownership" \

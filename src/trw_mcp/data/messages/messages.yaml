@@ -35,4 +35,4 @@ server_instructions: "TRW provides persistent engineering memory. Call {tool:trw
 # --- Ceremony Middleware Warning (prepended to tool responses when ceremony not run) ---
 ceremony_warning: "{tool:trw_session_start}() has not been called yet for this session.\nWithout it, you are working without:\n  - Prior session learnings (patterns and gotchas that prevent re-work)\n  - Active run state (phase, progress, last checkpoint)\nCall {tool:trw_session_start}(query='your task domain') now — pass a query for focused recall, or call without args for default high-impact recall."
 
-# --- Delegation Guidance (CLAUDE.md auto-generated section, session-start hint) ---
+# --- Delegation Guidance (auto-generated instruction section, session-start hint) ---

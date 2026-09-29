@@ -26,7 +26,6 @@ from trw_mcp.state._nudge_content import load_pool_message
 from trw_mcp.state._nudge_rules import (
     _highest_priority_pending_step,
     _select_nudge_pool,
-    apply_pool_cooldown,
     resolve_pool_cooldown,
 )
 from trw_mcp.state._nudge_state import (
@@ -226,33 +225,6 @@ def test_cooldown_expires_after_counter() -> None:
     assert resolve_pool_cooldown(state, "workflow") is False
 
 
-@pytest.mark.unit
-def test_apply_cooldown_activates() -> None:
-    """apply_pool_cooldown activates when ignore count reaches threshold."""
-    state = CeremonyState(tool_call_counter=10)
-    state.pool_cooldowns["workflow"] = PoolCooldown(ignore_count=3)
-
-    activated = apply_pool_cooldown(state, "workflow", cooldown_after=3, cooldown_calls=10)
-    assert activated is True
-    assert state.pool_cooldowns["workflow"].until_counter == 20  # 10 + 10
-    assert state.pool_cooldowns["workflow"].ignore_count == 0  # Reset
-
-
-@pytest.mark.unit
-def test_apply_cooldown_not_activated() -> None:
-    """apply_pool_cooldown does not activate when ignore count is below threshold."""
-    state = CeremonyState(tool_call_counter=10)
-    state.pool_cooldowns["workflow"] = PoolCooldown(ignore_count=2)
-
-    activated = apply_pool_cooldown(state, "workflow", cooldown_after=3, cooldown_calls=10)
-    assert activated is False
-    assert state.pool_cooldowns["workflow"].until_counter == 0
-
-    empty = CeremonyState()
-    assert apply_pool_cooldown(empty, "workflow", cooldown_after=3, cooldown_calls=10) is False
-    assert empty.pool_cooldowns == {}
-
-
 # ---------------------------------------------------------------------------
 # YAML content loading tests
 # ---------------------------------------------------------------------------
@@ -341,18 +313,6 @@ def test_load_pool_message_ceremony_all_steps() -> None:
         msg = load_pool_message("ceremony", phase_hint=step)
         assert isinstance(msg, str), f"Step {step} returned non-string"
         assert len(msg) > 0, f"Step {step} returned empty message"
-
-
-@pytest.mark.unit
-def test_compute_nudge_context_pool_on_build_failure() -> None:
-    """compute_nudge uses context pool content on build failure."""
-    from trw_mcp.state.ceremony_nudge import compute_nudge
-
-    state = CeremonyState(session_started=True, phase="validate")
-    context = NudgeContext(tool_name="build_check", build_passed=False)
-    result = compute_nudge(state, available_learnings=0, context=context)
-    assert isinstance(result, str)
-    assert "TRW" in result  # Contains header
 
 
 # ---------------------------------------------------------------------------
@@ -492,38 +452,6 @@ def test_record_pool_ignore(tmp_path: Path) -> None:
     record_pool_ignore(trw_dir, "ceremony")
     state = read_ceremony_state(trw_dir)
     assert state.pool_cooldowns["ceremony"].ignore_count == 1
-
-
-# ---------------------------------------------------------------------------
-# compute_nudge integration with pools
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-def test_compute_nudge_with_pools() -> None:
-    """compute_nudge uses pool-based selection and returns non-empty content."""
-    from trw_mcp.state.ceremony_nudge import compute_nudge
-
-    state = CeremonyState(session_started=True, phase="implement")
-    # Should return some content regardless of which pool is selected
-    result = compute_nudge(state, available_learnings=3)
-    assert isinstance(result, str)
-    assert len(result) > 0
-    assert "TRW" in result  # Should contain the header
-
-
-@pytest.mark.unit
-def test_compute_nudge_disabled_returns_empty() -> None:
-    """compute_nudge returns empty string when nudges are disabled."""
-    from trw_mcp.models.config._loader import get_config
-    from trw_mcp.state.ceremony_nudge import compute_nudge
-
-    config = get_config()
-    # Patch effective_nudge_enabled to return False
-    with patch.object(type(config), "effective_nudge_enabled", new_callable=lambda: property(lambda self: False)):
-        state = CeremonyState()
-        result = compute_nudge(state, available_learnings=5)
-        assert result == ""
 
 
 # ---------------------------------------------------------------------------

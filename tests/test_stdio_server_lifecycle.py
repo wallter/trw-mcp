@@ -25,7 +25,7 @@ _SKIP_REASON = stdio_import_skip_reason()
 
 pytestmark = [
     pytest.mark.timeout(180),
-    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),  # skip-category: optional-dependency
     pytest.mark.skipif(sys.platform == "win32", reason="parent-loss is detected through POSIX reparenting"),
 ]
 

@@ -18,10 +18,12 @@ import re
 import pytest
 
 from trw_mcp.state.validation.prd_quality import (
-    _KNOWN_TEST_PATTERNS,
     _TEST_REF_RE,
     score_traceability_v2,
 )
+
+pytestmark = pytest.mark.unit
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -386,45 +388,6 @@ class TestScoreTraceabilityV2Integration:
         assert result.details["matrix_score"] == 1.0, (
             f"Expected max matrix_score=1.0, got {result.details['matrix_score']}"
         )
-
-
-# ---------------------------------------------------------------------------
-# _KNOWN_TEST_PATTERNS constant completeness
-# ---------------------------------------------------------------------------
-
-
-class TestKnownTestPatternsConstant:
-    """The _KNOWN_TEST_PATTERNS dict must document all supported languages."""
-
-    REQUIRED_KEYS = {"python", "typescript", "javascript", "go", "rust", "java", "ruby"}
-
-    def test_all_required_languages_present(self) -> None:
-        missing = self.REQUIRED_KEYS - _KNOWN_TEST_PATTERNS.keys()
-        assert not missing, f"Missing language entries in _KNOWN_TEST_PATTERNS: {missing}"
-
-    def test_all_values_are_non_empty_strings(self) -> None:
-        for lang, description in _KNOWN_TEST_PATTERNS.items():
-            assert isinstance(description, str) and description.strip(), (
-                f"_KNOWN_TEST_PATTERNS['{lang}'] is empty or not a string"
-            )
-
-    def test_regex_covers_all_documented_languages(self) -> None:
-        """Each language in _KNOWN_TEST_PATTERNS must have at least one match example."""
-        examples: dict[str, str] = {
-            "python": "`test_example.py`",
-            "typescript": "`example.test.ts`",
-            "javascript": "`example.test.js`",
-            "go": "`example_test.go`",
-            "rust": "`tests/example.rs`",
-            "java": "`ExampleTest.java`",
-            "ruby": "`example_spec.rb`",
-            "generic_spec": "`example.spec.tsx`",
-        }
-        for lang in _KNOWN_TEST_PATTERNS:
-            if lang in examples:
-                assert _has_match(examples[lang]), (
-                    f"_TEST_REF_RE does not match example for language '{lang}': {examples[lang]}"
-                )
 
 
 # ---------------------------------------------------------------------------

@@ -80,8 +80,8 @@ class TestGeneratedInstructionsNameOnlyExposedTools:
 
         assert validate_instruction_manifest(rendered, resolve_exposed_tools("standard")) == []
 
-    @requires_monorepo  # AGENTS.md / CLAUDE.md are private instruction files stripped from the public mirror
-    @pytest.mark.parametrize("filename", ["AGENTS.md", "CLAUDE.md"])
+    @requires_monorepo  # AGENTS.md is a private instruction file stripped from the public mirror
+    @pytest.mark.parametrize("filename", ["AGENTS.md"])
     def test_check_instructions_is_clean_for_this_repository(self, filename: str) -> None:
         """The acceptance criterion, run against the real committed instruction files."""
         path = _REPO_ROOT / filename

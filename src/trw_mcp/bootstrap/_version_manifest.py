@@ -198,11 +198,10 @@ def _instruction_file_baselines(target_dir: Path) -> list[tuple[str, Path, set[s
     write side. A render failure yields NO entry, which fails toward preservation
     (PRD-FIX-121-NFR04).
     """
-    from trw_mcp.state.claude_md._instruction_clients import _detect_opencode_model_family
     from trw_mcp.state.claude_md._static_sections import render_codex_instructions, render_opencode_instructions
 
     renderers: tuple[tuple[str, Callable[[], str]], ...] = (
-        (".opencode/INSTRUCTIONS.md", lambda: render_opencode_instructions(_detect_opencode_model_family(target_dir))),
+        (".opencode/INSTRUCTIONS.md", render_opencode_instructions),
         (".codex/INSTRUCTIONS.md", render_codex_instructions),
     )
     entries: list[tuple[str, Path, set[str]]] = []
@@ -599,12 +598,32 @@ def preserve_uncommitted_changes(
     ownership recorders see the preserved bytes. A dirty path whose pre-run
     bytes hash to its ``content_hashes`` record is TRW's own last write and
     keeps the refresh.
-    """
-    from ._update_transaction import _file_signature, _restore_transaction_file
 
+    ``.trw/INSTRUCTIONS.md`` is skipped: its writer refuses a user-authored
+    file and backs up a generated one before replacing it (PRD-CORE-341-FR07),
+    so undoing its refresh protected nothing and re-created the stale file on
+    every run (the retire loop, FR08).
+    """
+    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH
+
+    from ._canon_ownership import is_trw_deployed_canon, is_trw_owned_runtime_canon
+    from ._update_transaction import _file_signature, _is_under_pruned_dir, _restore_transaction_file
+
+    # A path remove_if_hash moved to .trw/trash this run was proven, from its captured bytes, to be TRW's
+    # unchanged file, and those bytes are kept in trash: restoring it would re-deploy a withdrawn hook and
+    # add a fresh capture on every update.
+    trashed = set(result.get("trashed", []))
     for rel in sorted(dirty):
+        if _is_under_pruned_dir(target_dir, rel):  # never snapshotted, never written: not ours to inspect
+            continue
+        if rel in trashed:
+            continue
         before, after = snapshot_root / rel, target_dir / rel
-        if _file_signature(before) == _file_signature(after):
+        if rel == INSTRUCTIONS_RELPATH or _file_signature(before) == _file_signature(after):
+            continue
+        if is_trw_deployed_canon(snapshot_root, rel):  # the canon's receipt, not content_hashes, records it
+            continue
+        if is_trw_owned_runtime_canon(rel):  # TRW-owned: a hand edit is drift the redeploy repairs
             continue
         if before.is_file() and not before.is_symlink():
             recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))

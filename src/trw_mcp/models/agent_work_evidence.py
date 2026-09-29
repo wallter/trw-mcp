@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-JsonValue: TypeAlias = str | int | float | bool | list["JsonValue"] | dict[str, "JsonValue"] | None
 
 SCHEMA_VERSION: Literal["agent-work-evidence/v1"] = "agent-work-evidence/v1"
 

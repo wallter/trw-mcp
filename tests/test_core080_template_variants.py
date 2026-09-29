@@ -10,21 +10,23 @@ Covers:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 # Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
 # scripts/ + docs/ layout) absent from the standalone trw-mcp PyPI/GitHub
 # mirror. Skip cleanly there; the monorepo CI still enforces it.
-if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+pytestmark = pytest.mark.unit
+
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
     )
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.validation._prd_scoring_parsing import _EXPECTED_SECTION_NAMES
 from trw_mcp.state.validation.prd_quality import (
     score_content_density,
     score_structural_completeness,
@@ -45,12 +47,6 @@ def test_feature_template_has_12_sections() -> None:
     """Feature variant (CORE/QUAL) must have exactly 12 sections."""
     sections = TEMPLATE_VARIANTS["feature"]
     assert len(sections) == 12
-
-
-def test_legacy_expected_sections_use_a_copy_of_canonical_feature_sections() -> None:
-    """The compatibility list follows the canonical mapping without aliasing it."""
-    assert _EXPECTED_SECTION_NAMES == get_required_sections("CORE")
-    assert _EXPECTED_SECTION_NAMES is not TEMPLATE_VARIANTS["feature"]
 
 
 def test_fix_template_has_8_sections() -> None:
@@ -295,7 +291,7 @@ def test_category_param_overrides_frontmatter() -> None:
 
 def test_strip_deprecated_fields_removes_aaref_components() -> None:
     """_strip_deprecated_fields must remove the aaref_components key."""
-    from trw_mcp.tools.requirements import _strip_deprecated_fields
+    from trw_mcp.tools._prd_template_helpers import _strip_deprecated_fields
 
     fm: dict[str, object] = {
         "id": "PRD-001",
@@ -310,7 +306,7 @@ def test_strip_deprecated_fields_removes_aaref_components() -> None:
 
 def test_strip_deprecated_fields_removes_conflicts_with_from_traceability() -> None:
     """_strip_deprecated_fields must remove conflicts_with from nested traceability."""
-    from trw_mcp.tools.requirements import _strip_deprecated_fields
+    from trw_mcp.tools._prd_template_helpers import _strip_deprecated_fields
 
     fm: dict[str, object] = {
         "id": "PRD-001",
@@ -330,7 +326,7 @@ def test_strip_deprecated_fields_removes_conflicts_with_from_traceability() -> N
 
 def test_strip_deprecated_fields_removes_none_values() -> None:
     """_strip_deprecated_fields must remove None-valued keys."""
-    from trw_mcp.tools.requirements import _strip_deprecated_fields
+    from trw_mcp.tools._prd_template_helpers import _strip_deprecated_fields
 
     fm: dict[str, object] = {
         "id": "PRD-001",
@@ -346,7 +342,7 @@ def test_strip_deprecated_fields_removes_none_values() -> None:
 
 def test_strip_deprecated_fields_preserves_valid_data() -> None:
     """_strip_deprecated_fields must preserve all non-deprecated, non-null fields."""
-    from trw_mcp.tools.requirements import _strip_deprecated_fields
+    from trw_mcp.tools._prd_template_helpers import _strip_deprecated_fields
 
     fm: dict[str, object] = {
         "id": "PRD-001",

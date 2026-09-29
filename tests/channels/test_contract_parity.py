@@ -91,19 +91,33 @@ def test_fixture_required_fields_present() -> None:
 
 
 def test_fixture_schema_mismatch_raises_validation_error() -> None:
-    """Adding an unknown required field to the fixture triggers ValidationError.
+    """Known fields stay strict: a wrong type on an existing field raises ValidationError.
 
-    Confirms the test is correctly catching schema drift. The model uses
-    extra='forbid', so unknown fields raise a ValidationError.
+    Schema drift on KNOWN fields must still be caught. Unknown additive fields
+    are the other half of the contract (see the next test): the read side uses
+    ``extra="ignore"`` so a newer trw-distill cannot drop the whole hint (31fbd7185).
     """
     from trw_mcp.tools._before_edit_hint_core import BeforeYouEditHintPayload
 
     data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     payload_dict = dict(data["payload"])
-    payload_dict["new_required_field_that_does_not_exist"] = "sentinel"
+    key = next(k for k, v in payload_dict.items() if isinstance(v, str))
+    payload_dict[key] = 12345
 
     with pytest.raises(ValidationError):
         BeforeYouEditHintPayload.model_validate(payload_dict, strict=True)
+
+
+def test_fixture_unknown_additive_field_is_ignored() -> None:
+    """An unknown field from a newer trw-distill is ignored, not a reason to drop the hint."""
+    from trw_mcp.tools._before_edit_hint_core import BeforeYouEditHintPayload
+
+    data = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    payload_dict = dict(data["payload"])
+    payload_dict["new_field_from_a_newer_distill"] = "sentinel"
+
+    parsed = BeforeYouEditHintPayload.model_validate(payload_dict, strict=True)
+    assert not hasattr(parsed, "new_field_from_a_newer_distill")
 
 
 def test_compute_before_edit_hint_importable() -> None:

@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.bootstrap._opencode import (
-    _parse_jsonc,
     generate_agents_md,
     generate_opencode_config,
     install_opencode_commands,
@@ -14,6 +15,20 @@ from trw_mcp.bootstrap._opencode import (
     load_opencode_skill_inventory,
     merge_opencode_json,
 )
+from trw_mcp.state.claude_md._instructions_link import (
+    INSTRUCTIONS_RELPATH,
+    LINK_BODY,
+    render_instructions_body,
+    render_instructions_file,
+)
+
+
+def _expected_instructions(project_root: Path) -> str:
+    """The one file every writer produces: the generated header plus the shared body."""
+    return render_instructions_file(render_instructions_body(project_root))
+
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 
 class TestOpenCodeBootstrap:
@@ -42,26 +57,31 @@ class TestOpenCodeBootstrap:
         assert "args" not in config["mcp"]["trw"]
 
     def test_fr11_agents_md_created(self, tmp_path: Path) -> None:
-        result = generate_agents_md(tmp_path, "## TRW Section\nContent here")
+        result = generate_agents_md(tmp_path)
         assert "AGENTS.md" in result["created"]
         content = (tmp_path / "AGENTS.md").read_text()
         assert "<!-- trw:start -->" in content
         assert "<!-- trw:end -->" in content
+        # PRD-CORE-341: AGENTS.md holds the link; the section lives in the instructions file.
+        assert LINK_BODY in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text() == _expected_instructions(tmp_path)
 
     def test_fr11_agents_md_same_markers(self, tmp_path: Path) -> None:
-        generate_agents_md(tmp_path, "Test content")
+        generate_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text()
         assert "<!-- trw:start -->" in content
         assert "<!-- trw:end -->" in content
 
     def test_fr11_agents_md_updates_existing(self, tmp_path: Path) -> None:
         # Write initial
-        generate_agents_md(tmp_path, "Version 1")
+        generate_agents_md(tmp_path)
         # Update
-        generate_agents_md(tmp_path, "Version 2")
+        generate_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text()
-        assert "Version 2" in content
-        assert "Version 1" not in content
+        instructions = (tmp_path / INSTRUCTIONS_RELPATH).read_text()
+        assert instructions == _expected_instructions(tmp_path)  # a rewrite leaves the same file
+        assert LINK_BODY in content
+        assert content.count("<!-- trw:start -->") == 1
 
     def test_fr11_agents_md_preserves_user_content(self, tmp_path: Path) -> None:
         # Write file with user content + markers
@@ -71,12 +91,13 @@ class TestOpenCodeBootstrap:
             "<!-- trw:start -->\nOld TRW\n<!-- trw:end -->\n\n"
             "More user content\n"
         )
-        generate_agents_md(tmp_path, "New TRW content")
+        generate_agents_md(tmp_path)
         content = (tmp_path / "AGENTS.md").read_text()
         assert "User content here" in content
         assert "More user content" in content
-        assert "New TRW content" in content
+        assert LINK_BODY in content
         assert "Old TRW" not in content
+        assert (tmp_path / INSTRUCTIONS_RELPATH).read_text() == _expected_instructions(tmp_path)
 
     def test_opencode_commands_installed(self, tmp_path: Path) -> None:
         result = install_opencode_commands(tmp_path)
@@ -215,16 +236,6 @@ class TestOpenCodeJsonMerge:
         assert "permission" in config
         assert "mcp" in config
         assert "trw" in config["mcp"]
-
-    def test_fr16_jsonc_line_comments(self) -> None:
-        jsonc = '{\n  // This is a comment\n  "key": "value"\n}'
-        result = _parse_jsonc(jsonc)
-        assert result["key"] == "value"
-
-    def test_fr16_jsonc_block_comments(self) -> None:
-        jsonc = '{\n  /* block\n  comment */\n  "key": "value"\n}'
-        result = _parse_jsonc(jsonc)
-        assert result["key"] == "value"
 
     def test_fr16_smart_merge_existing_file(self, tmp_path: Path) -> None:
         # Write existing opencode.json with another server
@@ -382,3 +393,76 @@ def test_ready_contract_install_preserves_user_edits(tmp_path: Path) -> None:
     result = install_opencode_skills(tmp_path)
     assert path.read_text() == "Operator-owned local contract\n"
     assert str(path.relative_to(tmp_path)) in result["preserved"]
+
+
+def test_retired_opencode_contract_survives_update_and_doctor_reports_it(tmp_path: Path) -> None:
+    """PRD-INFRA-200 FR05 (redesigned per lead direction after 3 fix-delta rounds
+
+    surfaced deletion-safety races): update-project NEVER deletes the retired
+    OpenCode ``trw-prd-ready-contract.md`` self-copy (0f5fba2cb stopped writing
+    it). It survives every update untouched; update-project prints one-line
+    notice naming the file and its manual removal command, and doctor reports
+    the same thing as a WARN row. No unlink, no allowlist, no symlink logic.
+    """
+    from trw_mcp.bootstrap import init_project, update_project
+    from trw_mcp.bootstrap._retired_artifacts import RETIRED_OPENCODE_CONTRACT
+    from trw_mcp.server._doctor_retired_artifacts import retired_artifact_row
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    assert not init_project(repo, ide="claude-code")["errors"]
+    assert not update_project(repo)["errors"]
+
+    # Absent case: no notice, doctor PASS.
+    status, message = retired_artifact_row(repo)
+    assert status == "PASS"
+    assert RETIRED_OPENCODE_CONTRACT not in message
+
+    # Plant the legacy artifact an older TRW version wrote.
+    retired_path = repo / RETIRED_OPENCODE_CONTRACT
+    retired_path.parent.mkdir(parents=True, exist_ok=True)
+    retired_path.write_text("legacy self-copy of trw-prd-ready/SKILL.md\n", encoding="utf-8")
+
+    result = update_project(repo)
+
+    assert retired_path.is_file(), "update-project must never delete the retired artifact -- report only"
+    notices = [w for w in result["warnings"] if RETIRED_OPENCODE_CONTRACT in w]
+    assert len(notices) == 1, f"expected exactly one notice, got {result['warnings']}"
+    assert "rm " in notices[0], "the notice must name the manual removal command"
+    # codex sol fix-delta round 1: a bare relative path in the removal command is
+    # ambiguous outside the inspected project (`doctor /projects/B` run with cwd
+    # in project A would delete A's same-named file if followed literally) --
+    # the command must be rooted at THIS target_dir, not left to the operator's cwd.
+    assert str(retired_path) in notices[0], "the removal command must use an absolute, target_dir-rooted path"
+
+    status, message = retired_artifact_row(repo)
+    assert status == "WARN"
+    assert RETIRED_OPENCODE_CONTRACT in message
+    assert "rm " in message
+    assert str(retired_path) in message, "the doctor row's removal command must use an absolute, target_dir-rooted path"
+
+
+def test_retired_artifact_removal_command_is_shell_quoted(tmp_path: Path) -> None:
+    """PRD-INFRA-200 FR05, codex sol fix-delta round 2 on lane-infra-200-b: a
+
+    project path containing a single quote must never let the printed
+    ``rm`` command break out of its quoting -- a bare ``f"rm '{path}'"`` lets
+    ``/tmp/project' ; printf INJECTED ; #`` tokenize as two separate shell
+    commands if the operator follows the advice literally.
+    """
+    import shlex
+
+    from trw_mcp.bootstrap._retired_artifacts import retired_artifact_notices
+
+    repo = tmp_path / "it's-a-project"
+    retired_path = repo / ".opencode" / "skills" / "trw-prd-ready" / "trw-prd-ready-contract.md"
+    retired_path.parent.mkdir(parents=True)
+    retired_path.write_text("legacy self-copy\n", encoding="utf-8")
+
+    (notice,) = retired_artifact_notices(repo)
+    command = notice.split("remove it manually: ", 1)[1]
+    tokens = shlex.split(command)
+    assert tokens == ["rm", str(retired_path.resolve())], (
+        f"the removal command must shell-quote the path as a single operand, got: {tokens}"
+    )

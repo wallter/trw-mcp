@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from trw_mcp.scoring import (
-    _IMPACT_DECAY_FLOOR,
-    _LN2,
     _TIER_HIGH_CEILING,
     _TIER_MEDIUM_CEILING,
     _clamp01,
@@ -19,12 +15,6 @@ from trw_mcp.scoring import (
 
 class TestScoringConstants:
     """Verify scoring constants have expected mathematical values."""
-
-    def test_ln2_value(self) -> None:
-        assert _LN2 == pytest.approx(math.log(2), abs=1e-10)
-
-    def test_impact_decay_floor(self) -> None:
-        assert _IMPACT_DECAY_FLOOR == 0.1
 
     def test_tier_high_ceiling(self) -> None:
         assert _TIER_HIGH_CEILING == 0.89

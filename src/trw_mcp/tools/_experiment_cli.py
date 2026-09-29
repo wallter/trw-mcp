@@ -29,7 +29,6 @@ from typing import Any
 
 __all__ = ["add_experiment_subcommands", "run_meta_tune", "run_probe"]
 
-_DEFAULT_MODE = "TRIANGULATED_WITH_PROBE"
 _UNSAFE_RUN_ID = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -47,7 +46,6 @@ def add_experiment_subcommands(subparsers: argparse._SubParsersAction[argparse.A
     budget = probe_verbs.add_parser("budget", help="Report a run's probe budget usage; read-only")
     for parser in (run, budget):
         parser.add_argument("--run-id", default="unknown")
-        parser.add_argument("--planning-mode", default=_DEFAULT_MODE)
         parser.add_argument("--json", dest="as_json", action="store_true")
 
     meta = subparsers.add_parser("meta-tune", help="SAFE-001 promotion and rollback; Linux only")
@@ -90,15 +88,15 @@ def _state_path(run_id: str) -> Path:
     return resolve_trw_dir() / "runtime" / "probe" / f"{_UNSAFE_RUN_ID.sub('_', run_id)}.json"
 
 
-def _load_state(run_id: str, planning_mode: str) -> tuple[Any, Any]:
-    """The run's budget and cache; a run's first probe pins its planning mode."""
+def _load_state(run_id: str) -> tuple[Any, Any]:
+    """The run's budget and cache."""
     from trw_mcp.models.probe import ProbeResult
     from trw_mcp.probe.budget import ProbeBudget
     from trw_mcp.probe.cache import ProbeCache
 
     path = _state_path(run_id)
     saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    budget = ProbeBudget(saved.get("planning_mode", planning_mode))
+    budget = ProbeBudget()
     budget.used = int(saved.get("used", 0))
     budget.by_hypothesis_id = dict(saved.get("by_hypothesis_id", {}))
     cache = ProbeCache()
@@ -111,7 +109,6 @@ def _save_state(run_id: str, budget: Any, cache: Any) -> None:
     from trw_mcp.state.persistence import FileStateWriter
 
     document = {
-        "planning_mode": budget.planning_mode,
         "used": budget.used,
         "by_hypothesis_id": budget.by_hypothesis_id,
         "results": {key: result.model_dump(mode="json") for key, result in cache.items()},
@@ -146,7 +143,7 @@ def _probe_run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
             "reason": "probes are gated OFF (CORE-144 §9 Phase 1)",
             "remediation": "set TRW_PROBE_ENABLED=1 to enable empirical probes",
         }, True
-    budget, cache = _load_state(args.run_id, args.planning_mode)
+    budget, cache = _load_state(args.run_id)
     key = probe_cache_key(command=args.probe_argv, hypothesis=args.hypothesis, hypothesis_id=args.hypothesis_id)
     cached = cache.get(key)
     if cached is not None:
@@ -157,7 +154,6 @@ def _probe_run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     except ProbeBudgetExhausted as exc:
         return {
             "error": "probe_budget_exhausted",
-            "planning_mode": exc.planning_mode,
             "total": exc.total,
             "remaining": exc.remaining,
             "override_hint": exc.override_hint,
@@ -181,21 +177,19 @@ def _probe_run(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         return {"error": "probe_validation_error", "detail": str(exc)}, True
     cache.put(key, result)
     _save_state(args.run_id, budget, cache)
-    _publish_probe_event(build_probe_event(result, session_id=args.run_id, planning_mode=args.planning_mode))
+    _publish_probe_event(build_probe_event(result, session_id=args.run_id))
     return result.model_dump(mode="json"), False
 
 
 def _probe_budget(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     from trw_mcp.models.probe import ProbeBudgetStatus
 
-    budget, _ = _load_state(args.run_id, args.planning_mode)
+    budget, _ = _load_state(args.run_id)
     status = ProbeBudgetStatus(
         used=budget.used,
         remaining=budget.remaining,
         total=budget.total,
-        planning_mode=budget.planning_mode,
         by_hypothesis_id=dict(budget.by_hypothesis_id),
-        by_mode={budget.planning_mode: budget.used},
     )
     return status.model_dump(mode="json"), False
 

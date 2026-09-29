@@ -51,10 +51,9 @@ def test_accepted_keys_match_the_flat_parameter_names_they_replaced() -> None:
         "config_overrides",
         "formation",
         "join_formation",
-        "planning_mode",
+        "target_utc",
         "protected",
         "task_root",
-        "wave_manifest",
     }
 
 
@@ -65,11 +64,9 @@ def test_absent_bag_reproduces_the_old_flat_defaults(empty: object) -> None:
 
     assert adv.config_overrides is None
     assert adv.task_root is None
-    assert adv.wave_manifest is None
     assert adv.complexity_signals is None
     assert adv.artifacts == []
     assert adv.protected is False
-    assert adv.planning_mode is None
 
 
 def test_json_string_payload_is_parsed_not_rejected() -> None:
@@ -106,9 +103,9 @@ def test_unknown_keys_are_all_reported_not_just_the_first() -> None:
         {"config_overrides": ["not", "an", "object"]},
         {"complexity_signals": "files_affected=1"},
         {"artifacts": "docs/one.md"},
-        {"wave_manifest": [1, 2]},
+        {"target_utc": 5},
     ],
-    ids=["protected", "config_overrides", "complexity_signals", "artifacts", "wave_manifest"],
+    ids=["protected", "config_overrides", "complexity_signals", "artifacts", "target_utc"],
 )
 def test_wrong_value_type_is_refused_rather_than_coerced(bag: dict[str, object]) -> None:
     """Coercion would silently reinterpret intent (``protected: "no"`` -> True)."""
@@ -184,6 +181,7 @@ def test_unknown_advanced_key_creates_no_run(orch_tools: dict[str, Any], tmp_pat
 def test_formation_init_tool_and_cli_write_the_same_manifest(
     formation_env: FormationFixture,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03. Two entry points, one facade — so neither can drift from the other.
 
@@ -200,16 +198,22 @@ def test_formation_init_tool_and_cli_write_the_same_manifest(
     from trw_mcp.tools._formation_cli import run_formation
     from trw_mcp.tools._orchestration_formation import apply_formation_init
 
+    monkeypatch.setenv("TRW_FACTORY_ENABLED", "1")  # the orchestrator member is experimental (PRD-CORE-340-FR11)
     result: dict[str, str] = {}
     apply_formation_init(formation_env.payload(), None, formation_env.orchestrator_run, None, result)
     assert result["formation_id"] == "release-train"
     assert result["formation_revision"] == "1"
     via_tool = yaml.safe_load(formation_env.manifest_path().read_text(encoding="utf-8"))
-    assert [m["status"] for m in via_tool["members"]] == ["pending", "pending"]
+    # PRD-CORE-340-FR18: init also registers the orchestrator as a joined, addressable member.
+    assert [m["status"] for m in via_tool["members"]] == ["pending", "pending", "joined"]
+    assert via_tool["members"][-1]["member_id"] == "orchestrator"
 
     second_run = make_run_dir(formation_env.trw_dir / "runs", "orchestrator-2")
     payload_file = tmp_path / "payload.yaml"
     payload_file.write_text(yaml.safe_dump(formation_env.payload(formation_id="release-train-2")), encoding="utf-8")
+    from tests._formation_test_support import pin_session
+
+    pin_session(monkeypatch, second_run)  # the CLI binds the pinned session to its own run
     args = argparse.Namespace(
         formation_command="init", from_file=str(payload_file), run_path=str(second_run), as_json=False
     )
@@ -219,9 +223,19 @@ def test_formation_init_tool_and_cli_write_the_same_manifest(
     via_cli = yaml.safe_load((second_run / "formation.yaml").read_text(encoding="utf-8"))
 
     volatile = ("created_utc", "updated_utc", "orchestrator_run_path", "formation_id")
-    assert {k: v for k, v in via_tool.items() if k not in volatile} == {
-        k: v for k, v in via_cli.items() if k not in volatile
-    }, "the tool path and the CLI path must produce identical manifests apart from timestamps and roots"
+    per_run = (
+        "run_path",
+        "joined_utc",
+        "pin_key",
+    )  # pin_key differs only on the orchestrator member; workers are None either way  # the orchestrator member is bound to its own run and join time
+
+    def comparable(manifest: dict[str, Any]) -> dict[str, Any]:
+        members = [{k: v for k, v in m.items() if k not in per_run} for m in manifest["members"]]
+        return {k: v for k, v in {**manifest, "members": members}.items() if k not in volatile}
+
+    assert comparable(via_tool) == comparable(via_cli), (
+        "the tool path and the CLI path must produce identical manifests apart from timestamps and roots"
+    )
 
     with pytest.raises(StateError, match="already exists"):
         apply_formation_init(formation_env.payload(), None, formation_env.orchestrator_run, None, {})
@@ -300,3 +314,38 @@ def test_join_formation_is_atomic_and_refuses_unknown_member(formation_env: Form
     elsewhere = make_run_dir(formation_env.trw_dir / "runs", "impl-1-restarted")
     with pytest.raises(FormationError, match="refusing to rebind"):
         join("release-train", "impl-1", elsewhere)
+
+
+# --- PRD-CORE-338-FR03: target_utc ------------------------------------------
+
+
+def test_target_utc_requires_an_offset() -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.tools._orchestration_init_advanced import parse_init_advanced
+
+    with pytest.raises(StateError, match="target_utc"):
+        parse_init_advanced({"target_utc": "2026-09-26T18:00:00"})
+    with pytest.raises(StateError, match="target_utc"):
+        parse_init_advanced({"target_utc": "tomorrow evening"})
+    assert parse_init_advanced({"target_utc": "2026-09-26T12:00:00-06:00"}).target_utc == "2026-09-26T18:00:00Z"
+    assert parse_init_advanced({}).target_utc is None
+
+
+def test_target_utc_is_recorded_once_and_tracks_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Served path: trw_init records one time_target event and run.yaml target_utc; the run becomes tracked."""
+    import json
+
+    from tests.conftest import get_tools_sync, make_test_server
+    from trw_mcp.state.persistence import FileStateReader
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    tools = get_tools_sync(make_test_server("orchestration"))
+    result = tools["trw_init"].fn(
+        task_name="targeted", complexity_hint="EASY", advanced={"target_utc": "2026-09-26T18:00:00Z"}
+    )
+    meta = Path(result["run_path"]) / "meta"
+    events = [json.loads(line) for line in (meta / "events.jsonl").read_text().splitlines() if line.strip()]
+    targets = [event for event in events if event.get("event") == "time_target"]
+    assert [event["target_utc"] for event in targets] == ["2026-09-26T18:00:00Z"]
+    assert FileStateReader().read_yaml(meta / "run.yaml")["target_utc"] == "2026-09-26T18:00:00Z"
+    assert tools["trw_status"].fn(run_path=result["run_path"])["time"]["target"] == "2026-09-26T18:00:00Z"

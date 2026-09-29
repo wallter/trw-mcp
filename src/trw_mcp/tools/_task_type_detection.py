@@ -20,9 +20,7 @@ and did not match :func:`detect_task_type`):
    ``implementation`` legacy alias)
 4. Fallback: ``unknown``
 
-The joined text is byte-identical to the one the Scout classifier builds for the
-same ``trw_init`` call (``_orchestration_scaling.run_scout_for_init``), so the
-two classifiers in one call read the same input (PRD-CORE-246-FR01). This is
+The joined text is built from all three inputs (PRD-CORE-246-FR01). This is
 what makes ``objective`` participate at all: ``task_name`` is constrained to
 ``^[a-zA-Z0-9][a-zA-Z0-9_-]*$`` and ``prd_scope`` entries are identifiers, so
 before FR01 no free-text description of the work reached the detector.
@@ -100,12 +98,7 @@ class DetectionResult:
 
 
 def _join_detection_text(task_name: str, objective: str, prd_scope: list[str] | None) -> str:
-    """Build the classification text — byte-identical to the Scout's join.
-
-    See ``_orchestration_scaling.run_scout_for_init``, which builds the same
-    string for ``cognitive_scaling.classify``. Keeping ONE join means the two
-    classifiers in a single ``trw_init`` can never read different inputs.
-    """
+    """Build the classification text from name, objective and PRD scope."""
     return "\n".join(part for part in (task_name, objective, " ".join(prd_scope or [])) if part)
 
 

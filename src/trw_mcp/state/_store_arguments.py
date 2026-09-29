@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 import structlog
-from trw_memory.models.memory import Anchor, Assertion, Confidence, MemoryType, ProtectionTier
+from trw_memory.models.memory import Anchor, Assertion, Confidence, EvidenceLevel, MemoryType, ProtectionTier
 
 from trw_mcp.state._constants import DEFAULT_NAMESPACE, VALID_SOURCES
 from trw_mcp.state._tier_routing import Tier
@@ -47,6 +47,7 @@ class StoreArguments:
     anchors: list[Anchor]
     type: MemoryType
     confidence: Confidence
+    evidence_level: EvidenceLevel
     protection_tier: ProtectionTier
 
 
@@ -60,6 +61,7 @@ def build_store_arguments(
     assertions: list[dict[str, str]] | None,
     type: str,
     confidence: str,
+    evidence_level: str,
     domain: list[str] | None,
     phase_affinity: list[str] | None,
     protection_tier: str,
@@ -127,5 +129,6 @@ def build_store_arguments(
         anchors=anchor_objects,
         type=MemoryType(type) if isinstance(type, str) else type,
         confidence=Confidence(confidence) if isinstance(confidence, str) else confidence,
+        evidence_level=(EvidenceLevel(evidence_level) if isinstance(evidence_level, str) else evidence_level),
         protection_tier=(ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier),
     )

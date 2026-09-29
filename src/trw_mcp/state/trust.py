@@ -11,9 +11,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.models.typed_dicts import HumanReviewResult, TrustLevelResult
-from trw_mcp.models.typed_dicts._trust import ApprovalControlMapResult
+from trw_mcp.models.config import TRWConfig
 
 # PRD-CORE-206: outcome-based lifecycle trust. The eligibility matrix + atomic
 # one-time consumption live in focused siblings (kept under the 350 effective-LOC
@@ -94,137 +92,7 @@ def write_trust_registry(trw_dir: Path, data: dict[str, object]) -> None:
     writer.write_yaml(path, data)
 
 
-# --- FR02: Trust Level Calculation ---
-
-
-def trust_level_calculate(trw_dir: Path, config: TRWConfig | None = None) -> TrustLevelResult:
-    """Calculate current trust tier from session count.
-
-    Returns dict with: tier, session_count, review_mode, review_sample_rate,
-    locked, lock_reason.
-    """
-    if config is None:
-        config = get_config()
-
-    registry = read_trust_registry(trw_dir)
-    project = registry.get("project", {})
-    if not isinstance(project, dict):
-        project = {}
-    session_count = int(project.get("session_count", 0))
-
-    # FR08: Admin lock overrides everything
-    if config.trust_locked:
-        return {
-            "tier": "crawl",
-            "session_count": session_count,
-            "review_mode": "mandatory",
-            "review_sample_rate": 1.0,
-            "locked": True,
-            "lock_reason": "admin_override",
-        }
-
-    # FR02: Tier assignment from boundaries
-    crawl_boundary = config.trust_crawl_boundary
-    walk_boundary = config.trust_walk_boundary
-
-    if session_count <= crawl_boundary:
-        tier = "crawl"
-        review_mode = "mandatory"
-        review_sample_rate: float | None = 1.0
-    elif session_count <= walk_boundary:
-        tier = "walk"
-        review_mode = "sampled"
-        review_sample_rate = config.trust_walk_sample_rate
-    else:
-        tier = "run"
-        review_mode = "risk_based"
-        review_sample_rate = None
-
-    return {
-        "tier": tier,
-        "session_count": session_count,
-        "review_mode": review_mode,
-        "review_sample_rate": review_sample_rate,
-        "locked": False,
-        "lock_reason": None,
-    }
-
-
 # --- FR03: Security-Tagged Change Override ---
-
-
-def requires_human_review(
-    security_tags: list[str],
-    changed_files: list[str],
-    trust_result: dict[str, object],
-    config: TRWConfig | None = None,
-) -> HumanReviewResult:
-    """Determine if a change requires human review.
-
-    Security-tagged changes ALWAYS require review regardless of tier.
-    """
-    if config is None:
-        config = get_config()
-
-    tier = str(trust_result.get("tier", "crawl"))
-
-    # Security tag override
-    config_security_tags = set(config.trust_security_tags)
-    if any(tag in config_security_tags for tag in security_tags):
-        return {
-            "required": True,
-            "reason": "security_tagged",
-            "override_tier": True,
-        }
-
-    # Tier-based review
-    if tier == "crawl":
-        return {"required": True, "reason": "crawl_mandatory", "override_tier": False}
-    if tier == "walk":
-        return {"required": True, "reason": "sampled_review", "override_tier": False}
-    # run — Risk-based: check changed files for risk patterns
-    risk_patterns = (
-        "auth",
-        "secret",
-        "permission",
-        "encrypt",
-        "password",
-        "token",
-        "key",
-    )
-    has_risk = any(any(p in f.lower() for p in risk_patterns) for f in changed_files)
-    if has_risk:
-        return {
-            "required": True,
-            "reason": "risk_based_file_pattern",
-            "override_tier": False,
-        }
-    return {"required": False, "reason": "risk_based", "override_tier": False}
-
-
-def approval_control_map() -> ApprovalControlMapResult:
-    """Map internal approval primitives without claiming external compliance."""
-    return {
-        "compliance_claim": "none",
-        "non_compliance_boundary": "These are operator approval controls, not a SOC 2 attestation or certification.",
-        "operator_diagnostics": (
-            "approval controls require project-specific compliance review before external claims",
-        ),
-        "controls": {
-            "trust_registry": {
-                "purpose": "graduated review mode by successful session count",
-                "code_path": "trw_mcp.state.trust.trust_level_calculate",
-            },
-            "human_review_gate": {
-                "purpose": "force approval for crawl tier, sampled walk tier, and risk/security changes",
-                "code_path": "trw_mcp.state.trust.requires_human_review",
-            },
-            "ceremony_proposals": {
-                "purpose": "register/approve/revert ceremony tier changes with audit history",
-                "code_path": "trw_mcp.state._ceremony_escalation.approve_proposal",
-            },
-        },
-    }
 
 
 def _tier_for_count(count: int, config: TRWConfig) -> str:
@@ -271,12 +139,3 @@ def _log_trust_transition(
         new_tier=new_tier,
         session_count=session_count,
     )
-
-
-def read_audit_log(trw_dir: Path) -> list[dict[str, object]]:
-    """Read all trust audit log entries."""
-    reader = FileStateReader()
-    path = _audit_log_path(trw_dir)
-    if not path.exists():
-        return []
-    return reader.read_jsonl(path, strict=True)

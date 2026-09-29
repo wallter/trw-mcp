@@ -61,13 +61,17 @@ def test_explicit_env_off_beats_the_machine_switch(
     assert status == "WARN" and "backend off" in message
 
 
-def test_backend_on_but_tool_hidden_in_this_project_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_backend_switched_on_shows_the_tool_without_assess_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operator directive 2026-09-26: trw_assess is shown whenever any layer enables it, so the
+    "backend on, tool hidden" state this row used to warn about no longer exists."""
     monkeypatch.setenv("TRW_JEV_ENABLED", "true")
     monkeypatch.setenv("OPENROUTER_API_KEY", _KEY)
 
     status, message = jev_row(tmp_path, TRWConfig(assess_enabled=False))
 
-    assert status == "WARN" and "tool hidden" in message
+    assert status == "PASS" and "tool hidden" not in message
 
 
 def test_a_project_switch_off_is_named_as_the_reason(

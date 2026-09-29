@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.state._nudge_messages import (
-    _build_done_next_then_status,
     _build_done_next_then_status_light,
     _context_reactive_message,
 )
@@ -235,37 +234,6 @@ class TestFR03NudgeMessages:
 class TestFR04StatusLine:
     """FR04: Status line uses Done/Next/Then format."""
 
-    def test_fr04_full_mode_uses_done_next_then(self) -> None:
-        """AC13: Full mode status line uses Done/Next/Then format."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=0,
-            learnings_this_session=1,
-        )
-        line = _build_done_next_then_status(state)
-        assert "Done:" in line
-        assert "Next:" in line
-
-    def test_fr04_next_includes_why(self) -> None:
-        """AC14: Next step includes a one-line WHY."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=0,
-        )
-        line = _build_done_next_then_status(state)
-        # The "Next:" line should have a dash separator before the WHY
-        assert "Next:" in line
-        # WHY is separated by " -- " or " - "
-        next_part = ""
-        for part in line.split("\n"):
-            if "Next:" in part:
-                next_part = part
-                break
-        # The next part must contain a rationale (after a dash)
-        assert "\u2014" in next_part or " -- " in next_part or " - " in next_part, (
-            f"Next step lacks WHY rationale: {next_part!r}"
-        )
-
     def test_fr04_light_mode_under_100_chars(self) -> None:
         """AC15: Light mode status line is under 100 characters."""
         state = CeremonyState(
@@ -275,46 +243,6 @@ class TestFR04StatusLine:
         line = _build_done_next_then_status_light(state)
         assert len(line) <= 100, f"Light mode status line is {len(line)} chars (max 100): {line!r}"
 
-    def test_fr04_full_mode_under_200_chars(self) -> None:
-        """AC16: Full mode status line is under 200 characters."""
-        # Test several states
-        states = [
-            CeremonyState(session_started=True, learnings_this_session=1),
-            CeremonyState(session_started=True, checkpoint_count=1, build_check_result="passed"),
-            CeremonyState(
-                session_started=True,
-                checkpoint_count=1,
-                build_check_result="passed",
-                review_called=True,
-            ),
-        ]
-        for state in states:
-            line = _build_done_next_then_status(state)
-            assert len(line) <= 200, f"Full mode status line is {len(line)} chars (max 200): {line!r}"
-
-    def test_fr04_all_complete_shows_only_done(self) -> None:
-        """When all steps complete, only Done line appears."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=True,
-            deliver_called=True,
-            phase="done",
-        )
-        line = _build_done_next_then_status(state)
-        assert "Done:" in line
-        assert "Next:" not in line
-
-    def test_fr04_learn_count_in_done(self) -> None:
-        """Done line includes learn(N) when learnings > 0."""
-        state = CeremonyState(
-            session_started=True,
-            learnings_this_session=3,
-        )
-        line = _build_done_next_then_status(state)
-        assert "learn(3)" in line
-
     def test_fr04_light_mode_uses_pipe_format(self) -> None:
         """Light mode uses pipe-separated single line."""
         state = CeremonyState(
@@ -323,13 +251,6 @@ class TestFR04StatusLine:
         )
         line = _build_done_next_then_status_light(state)
         assert "|" in line
-
-    def test_fr04_done_next_then_no_session_start(self) -> None:
-        """When session not started, Next is session_start."""
-        state = CeremonyState(session_started=False)
-        line = _build_done_next_then_status(state)
-        assert "Next:" in line
-        assert "session_start" in line.lower()
 
 
 # -------------------------------------------------------------------------
@@ -386,27 +307,6 @@ class TestFR05DeliverSelfReflection:
 
 class TestBackwardCompatibility:
     """Ensure existing behavior is preserved."""
-
-    def test_existing_nudge_tests_still_pass(self) -> None:
-        """compute_nudge still works with all existing state combinations."""
-        from trw_mcp.state.ceremony_nudge import compute_nudge
-
-        states = [
-            CeremonyState(),
-            CeremonyState(session_started=True),
-            CeremonyState(session_started=True, files_modified_since_checkpoint=10),
-            CeremonyState(
-                session_started=True,
-                checkpoint_count=1,
-                build_check_result="passed",
-                review_called=True,
-                deliver_called=True,
-                phase="done",
-            ),
-        ]
-        for state in states:
-            result = compute_nudge(state, available_learnings=5)
-            assert isinstance(result, str)
 
     def test_ceremony_scoring_not_affected(self) -> None:
         """Ceremony scoring reads ceremony-state.json, not status line text."""

@@ -23,6 +23,9 @@ import pytest
 
 from trw_mcp.bootstrap._cursor import _CURSOR_IDE_APPENDIX, generate_cursor_rules_mdc
 from trw_mcp.bootstrap._init_project_ide import _install_cursor_artifacts
+from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH, LINK_BODY
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 _RULES_REL = ".cursor/rules/trw-ceremony.mdc"
 
@@ -56,26 +59,82 @@ def test_dual_surface_install_keeps_the_cursor_ide_appendix(tmp_path: Path) -> N
     # And the redundant call is not made at all: nothing about this file was
     # skipped or preserved, because only one caller ever wrote it.
     assert _RULES_REL not in result["skipped"]
-    assert any("cursor-cli shares the cursor-ide rule body" in line for line in result.get("info", []))
+    # The IDE body is cursor-ide's carrier; the cursor-cli retirement must leave it.
+    assert _RULES_REL not in result.get("removed", [])
 
 
 @pytest.mark.integration
-def test_cli_only_install_still_writes_the_rule_file(tmp_path: Path) -> None:
-    """Non-vacuity: skipping the CLI write on dual-surface must not delete it.
+def test_cli_only_install_carries_the_protocol_behind_the_agents_md_link_only(tmp_path: Path) -> None:
+    """PRD-CORE-301-FR14: cursor-cli auto-loads .cursor/rules AND AGENTS.md, so it gets one carrier.
 
-    A cursor-cli-only project has no IDE writer, so this is the only thing that
-    puts a rule file in ``.cursor/rules`` — the surface PRD-CORE-137 added after
-    the profile had wrongly described AGENTS.md as the CLI's only carrier.
+    Before FR14 a cursor-cli-only install wrote the protocol into both (about 5,400
+    tokens per session). AGENTS.md is kept: cursor documents that its CLI reads it.
+    Since PRD-CORE-341 AGENTS.md holds the link and ``.trw/INSTRUCTIONS.md`` the protocol.
     """
     result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
 
     _install_cursor_artifacts(tmp_path, force=False, result=result, ide_targets=["cursor-cli"])
 
-    content = _rules_path(tmp_path).read_text(encoding="utf-8")
-    assert "alwaysApply: true" in content
-    assert "trw_session_start" in content
-    assert "TRW Trigger Phrases" not in content
-    assert _RULES_REL in result["created"]
+    assert not _rules_path(tmp_path).exists()
+    assert _RULES_REL not in result["created"]
+    assert LINK_BODY in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "trw_session_start" in (tmp_path / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
+
+
+def _pre_fr14_cli_rule(root: Path) -> str:
+    """Write the rule file exactly as a pre-FR14 cursor-cli install did; return its text."""
+    from trw_mcp.bootstrap._cursor_cli import _cursor_cli_trw_section
+
+    generate_cursor_rules_mdc(root, _cursor_cli_trw_section(), client_id="cursor-cli")
+    return _rules_path(root).read_text(encoding="utf-8")
+
+
+_NOTICE = f"retired_artifact_present: {_RULES_REL}"
+
+
+def _cursor_project(root: Path, ide: str) -> Path:
+    from trw_mcp.bootstrap import init_project
+
+    (root / ".git").mkdir(parents=True)
+    assert init_project(root, ide=ide)["errors"] == []
+    return root
+
+
+@pytest.mark.integration
+def test_update_reports_but_never_deletes_a_pre_fr14_cli_rule(tmp_path: Path) -> None:
+    """An older cursor-cli copy is named with its removal command; the file is left exactly as it was."""
+    from trw_mcp.bootstrap import update_project
+    from trw_mcp.bootstrap._retired_artifacts import retired_artifact_row
+
+    repo = _cursor_project(tmp_path, "cursor-cli")
+    before = _pre_fr14_cli_rule(repo)
+
+    notices = [w for w in update_project(repo, ide="cursor-cli")["warnings"] if _NOTICE in w]
+
+    assert len(notices) == 1 and "AGENTS.md" in notices[0] and "rm " in notices[0]
+    assert _rules_path(repo).read_text(encoding="utf-8") == before
+    status, message = retired_artifact_row(repo)
+    assert status == "WARN" and _RULES_REL in message
+
+
+@pytest.mark.integration
+def test_the_cursor_ide_rule_file_is_never_reported(tmp_path: Path) -> None:
+    """cursor-ide's carrier is not retired: not when recorded, and not by its appendix alone."""
+    from trw_mcp.bootstrap import update_project
+    from trw_mcp.bootstrap._retired_artifacts import retired_artifact_notices
+
+    ide_repo = _cursor_project(tmp_path / "ide", "cursor-ide")
+    assert not [w for w in update_project(ide_repo, ide="cursor-ide")["warnings"] if _NOTICE in w]
+
+    # A cursor-cli project holding the IDE body (cursor-ide was used once, never recorded) keeps it too.
+    cli_repo = _cursor_project(tmp_path / "cli", "cursor-cli")
+    generate_cursor_rules_mdc(cli_repo, "SHARED SECTION", client_id="cursor-ide")
+    assert not [n for n in retired_artifact_notices(cli_repo) if _NOTICE in n]
+
+    # Nor after a CRLF conversion (core.autocrlf on Windows) of that IDE body.
+    rules = _rules_path(cli_repo)
+    rules.write_bytes(rules.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    assert not [n for n in retired_artifact_notices(cli_repo) if _NOTICE in n]
 
 
 @pytest.mark.integration

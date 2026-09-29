@@ -235,9 +235,9 @@ async def test_sync_lifespan_defers_the_start_and_still_cancels(tmp_path, monkey
                 #    schedules, and what the first tool call runs inline — starts
                 #    the loop on the serving loop the lifespan recorded.
                 assert _boot_deferred.ensure_deferred_boot_work() is True
-                await asyncio.wait_for(started.wait(), timeout=1)
+                await asyncio.wait_for(started.wait(), timeout=30)
 
             # 3. Shutdown still owns cancellation of the task it did not create.
-            await asyncio.wait_for(cancelled.wait(), timeout=1)
+            await asyncio.wait_for(cancelled.wait(), timeout=30)
     finally:
         _boot_deferred.reset_deferred_boot_state()

@@ -121,17 +121,16 @@ def lexical_search(
 ) -> CodeSearchResponse:
     """Return ranked lexical matches from the published store."""
 
-    query_terms = _terms(query[: (bounds or CodeIndexBounds()).query_max_chars])  # a longer query is refused unscanned
+    budgets = bounds or CodeIndexBounds()
+    query_terms = _terms(query[: budgets.query_max_chars])  # a longer query is refused unscanned
+    term_clause = _bounded_like_clause(budgets.like_scan_max_bytes)
 
     def candidates(conn: sqlite3.Connection, scope: tuple[str, tuple[object, ...]]) -> Iterator[sqlite3.Row]:
         term_clauses: list[str] = []
         params: list[object] = []
         for term in query_terms:
             pattern = f"%{_escape_like(term)}%"
-            term_clauses.append(
-                "(symbol_name LIKE ? ESCAPE '\\' OR signature LIKE ? ESCAPE '\\' OR docstring_summary LIKE ? "
-                "ESCAPE '\\' OR text LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\')"
-            )
+            term_clauses.append(term_clause)
             params.extend([pattern] * 5)
         where = " OR ".join(term_clauses) or "0"
         if scope[0]:
@@ -156,10 +155,11 @@ def symbol_search(
 ) -> CodeSearchResponse:
     """Return exact symbol matches before fuzzy symbol matches."""
 
-    needle = symbol[: (bounds or CodeIndexBounds()).query_max_chars].strip().lower()  # a longer one is refused
+    budgets = bounds or CodeIndexBounds()
+    needle = symbol[: budgets.query_max_chars].strip().lower()  # a longer one is refused
 
     def candidates(conn: sqlite3.Connection, scope: tuple[str, tuple[object, ...]]) -> Iterator[sqlite3.Row]:
-        where = "symbol_name LIKE ? ESCAPE '\\'"
+        where = f"{_bounded_substr('symbol_name', budgets.like_scan_max_bytes)} LIKE ? ESCAPE '\\'"
         params: list[object] = [f"%{_escape_like(needle)}%"]
         if scope[0]:
             where = f"{where} AND {scope[0]}"
@@ -280,6 +280,42 @@ def _scope(path: str | None) -> tuple[str, tuple[object, ...]]:
     if path is None:
         return "", ()
     return "(path = ? OR path LIKE ? ESCAPE '\\')", (path, f"{_escape_like(path)}/%")
+
+
+#: Every column a lexical query's LIKE clause scans (PRD-CORE-316 FR05).
+_LIKE_SCANNED_COLUMNS: tuple[str, ...] = ("symbol_name", "signature", "docstring_summary", "text", "path")
+
+
+def _bounded_substr(column: str, max_bytes: int) -> str:
+    """*column* truncated to *max_bytes* leading bytes, exactly.
+
+    ``substr()`` on a TEXT value counts CHARACTERS, not bytes -- for a column packed with
+    multi-byte UTF-8 content (up to 4 bytes/character), ``substr(column, 1, max_bytes)`` could scan
+    up to 4x *max_bytes* raw bytes before the byte-count bound this function's name promises ever
+    applies (core-316-sD round 1 review: a crafted adversarial row could use exactly this to
+    undercut FR05's bound). Casting to BLOB first makes SQLite's ``substr`` count bytes instead,
+    giving an exact bound regardless of the column's encoding. The truncated bytes are then cast back
+    to TEXT, so ``LIKE`` never sees a BLOB operand: a SQLite built with the documented
+    ``SQLITE_LIKE_DOESNT_MATCH_BLOBS`` option returns false for ANY ``LIKE`` over a BLOB, which would
+    silently empty every search (code-index-blob review). The TEXT cast keeps default ``LIKE``
+    semantics (ASCII case folding, ``ESCAPE``) on every build. A truncation can only narrow the
+    candidate set the bound already accepts as a tradeoff (FR05's documented "matching now stops at
+    the bound" behavior change).
+    """
+    return f"CAST(substr(CAST({column} AS BLOB), 1, {max_bytes}) AS TEXT)"
+
+
+def _bounded_like_clause(max_bytes: int) -> str:
+    """One term's OR-clause across every LIKE-scanned column, each bounded to *max_bytes* leading bytes.
+
+    Bounding stops one row's per-term scan cost from scaling with the row's stored length (up to
+    ``STORE_LENGTH_LIMIT``, 4 MiB) and ties it instead to *max_bytes*
+    (``CodeIndexBounds.like_scan_max_bytes``). *max_bytes* is this process's own trusted bound, never
+    query input, so embedding it as a literal (not a bound parameter) is safe -- SQLite's query planner
+    can also constant-fold it, which a bound parameter would not allow.
+    """
+    clauses = (f"{_bounded_substr(column, max_bytes)} LIKE ? ESCAPE '\\'" for column in _LIKE_SCANNED_COLUMNS)
+    return f"({' OR '.join(clauses)})"
 
 
 def _escape_like(text: str) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import math
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,7 @@ from typing import Any
 from trw_memory.lifecycle.correction import LearningPatch
 from trw_memory.lifecycle.dedup import DedupResult
 from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings, assertion_health
-from trw_memory.models.memory import MemoryEntry
+from trw_memory.models.memory import MemoryEntry, MemoryType
 from trw_memory.sync import AdmissionOutcome
 
 from trw_mcp.state._store_selection import (
@@ -77,12 +78,14 @@ class FakeMemoryStore:
 
     def correct(self, learning_id: str, patch: LearningPatch) -> dict[str, str]:
         # The patch-to-field mapping is trw-memory's own, so the fake cannot drift from it.
-        from trw_memory.lifecycle.correction import _collect, not_found
+        from trw_memory.lifecycle.correction import _collect, not_found, revision_of
 
         self.calls.append(("correct", (learning_id, patch.model_dump(exclude_none=True))))
         entry = self.get(learning_id)
         if entry is None:
             return not_found(learning_id)
+        if patch.if_revision is not None and patch.if_revision != revision_of(entry):
+            return {"learning_id": learning_id, "status": "conflict", "error": f"{learning_id} changed"}
         fields, changes = _collect(entry, patch)
         self._write((entry.namespace, learning_id), entry.model_copy(update=fields))
         # Mirrors trw_memory.lifecycle.correction._close_prior: a patch naming
@@ -118,7 +121,10 @@ class FakeMemoryStore:
         hits = [
             entry
             for (ns, _id), entry in self.rows.items()
-            if ns == namespace and needle in entry.content.lower() and status in (None, entry.status)
+            if ns == namespace
+            and needle in entry.content.lower()
+            and status in (None, entry.status)
+            and spec.record_type in (None, entry.type)
         ]
         return sorted(hits, key=lambda entry: entry.updated_at, reverse=True)[:limit]
 
@@ -264,16 +270,26 @@ class FakeMemoryStore:
             "has_relations": self.edges.get(namespace, 0) > 0 or derived,
             "embedded": sum(1 for entry in rows if entry.id in self.stored_vectors),
             "max_recall_count": max((entry.recall_count for entry in rows), default=0),
+            "types": dict(Counter(MemoryType(entry.type).value for entry in rows)),
         }
 
     def list_entries(
-        self, namespace: str, *, status: str | None = None, tags: list[str] | None = None, limit: int
+        self,
+        namespace: str,
+        *,
+        status: str | None = None,
+        tags: list[str] | None = None,
+        limit: int,
+        types: list[str] | None = None,
     ) -> list[MemoryEntry]:
         self.calls.append(("list_entries", (namespace, status, tags, limit)))
         return [
             e
             for (ns, _eid), e in self.rows.items()
-            if ns == namespace and status in (None, e.status) and set(tags or []) <= set(e.tags)
+            if ns == namespace
+            and status in (None, e.status)
+            and set(tags or []) <= set(e.tags)
+            and (types is None or e.type in types)
         ][:limit]
 
     def page_dirty(self, namespace: str, limit: int) -> list[MemoryEntry]:
@@ -298,8 +314,14 @@ class FakeMemoryStore:
         )
         return next(matches, None)
 
-    def apply_synced(self, namespace: str, entry: MemoryEntry, *, synced: bool = True) -> tuple[str, str]:
+    def apply_synced(
+        self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True
+    ) -> tuple[str, str]:
+        from trw_memory.lifecycle.correction import revision_of
+
         self.calls.append(("apply_synced", (namespace, entry.id)))
+        if revision_of(self.rows.get((namespace, entry.id))) != if_revision:
+            return "conflict", f"{entry.id} changed"
         self._write((namespace, entry.id), entry)
         if synced:
             self.synced[(namespace, entry.id)] = self.rows[(namespace, entry.id)].sync_seq

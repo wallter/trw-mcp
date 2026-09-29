@@ -6,6 +6,8 @@ it: the edit-hint collector, the ceremony nudge pool, the AGENTS.md learnings
 section, REVIEW.md and the ``trw://learnings/summary`` resource (lead ruling
 2026-09-23). Each channel below is driven at the function that produces what the
 agent sees, in a project holding one learning, with the switch on and off.
+PRD-CORE-341 deleted the AGENTS.md channel outright: no instruction file carries
+learnings, whatever the switch says (``test_agents_md_link.py``).
 
 ``test_every_reader_call_site_is_classified`` keeps the table honest: it scans
 the source for every call to a learnings reader, so a new call site fails here
@@ -17,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -55,7 +58,12 @@ def _prompt_hook(trw_dir: Path, config: TRWConfig) -> str:
     write_hook_flags(trw_dir, config)
     hook = Path(trw_mcp.__file__).parent / "data" / "hooks" / "user-prompt-submit.sh"
     env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_AUTO_RECALL")}
-    env |= {"CLAUDE_PROJECT_DIR": str(trw_dir.parent), "HOME": str(trw_dir.parent / ".home")}
+    # The hook's filtered read runs under this interpreter against the checkout's daemon (PRD-CORE-333 FR03).
+    env |= {
+        "CLAUDE_PROJECT_DIR": str(trw_dir.parent),
+        "HOME": str(trw_dir.parent / ".home"),
+        "TRW_PYTHON": sys.executable,
+    }
     return subprocess.run(
         ["/bin/sh", str(hook)],
         input=f'{{"prompt":"why does the {TOKEN} pool exhaust","session_id":"s"}}',
@@ -87,12 +95,6 @@ def _nudge_pool(trw_dir: Path, _config: TRWConfig) -> str:
     return str(recall_for_nudge_pool(trw_dir, query=TOKEN))
 
 
-def _agents_md(trw_dir: Path, config: TRWConfig) -> str:
-    from trw_mcp.state.claude_md._agents_md import _inject_learnings_to_agents
-
-    return _inject_learnings_to_agents(trw_dir, config)
-
-
 def _review_md(trw_dir: Path, _config: TRWConfig) -> str:
     from trw_mcp.state.claude_md._sync import generate_review_md
 
@@ -113,7 +115,6 @@ CHANNELS: dict[str, Callable[[Path, TRWConfig], str]] = {
     "edit_hint": _edit_hint,
     "build_check_nudge": _build_check_nudge,
     "nudge_pool": _nudge_pool,
-    "agents_md": _agents_md,
     "review_md": _review_md,
     "summary_resource": _summary_resource,
 }
@@ -176,7 +177,9 @@ def test_recall_off_keeps_learning_content_off_the_channel(
 #: with the reason it delivers no learning content.
 _READER = re.compile(
     r"\b(recall_learnings|collect_learnings|recall_for_\w+|recall_baseline_high_impact|recall_focused"
-    r"|recall_recent_bypass|list_active_learnings|execute_recall|_inject_learnings_to_agents)\("
+    r"|recall_recent_bypass|list_active_learnings|execute_recall)\("
+    # A reader handed to an executor (the pre-edit hint's deadline-bounded recall) is a call too.
+    r"|\.submit\((?:recall_learnings|collect_learnings)\b"
     # An aliased import (``recall_learnings as _recall``) hides the call from the names above.
     r"|\b(recall_learnings|list_active_learnings)\s+as\s+(?!\2\b)\w+"
 )
@@ -190,16 +193,14 @@ CLASSIFIED: dict[str, str] = {
     "state/recall_factories.py": "channels nudge_pool and review_md (the gated factories); session_start",
     "state/_ceremony_nudge_selectors.py": "channel nudge_pool (Watch-out line)",
     "tools/_ceremony_status_nudge.py": "channel nudge_pool (status learning nudge)",
-    "state/claude_md/_agents_md.py": "channel agents_md",
     "state/claude_md/_sync.py": "channel review_md",
     "resources/config.py": "channel summary_resource",
-    "cognitive_scaling/_scout_signals.py": "excluded: counts precedent hits, emits no learning text",
     "state/claude_md/_promotion.py": "excluded: deprecated and uncalled (PRD-CORE-093)",
     "state/_tier_sweep.py": "excluded: tier maintenance, no agent output",
     "state/tiers.py": "excluded: tier maintenance, no agent output",
     "state/analytics/dedup.py": "excluded: dedup metrics",
     "state/analytics/entries.py": "excluded: analytics",
-    "state/claude_md/_review_md.py": "channels agents_md and review_md (aliased; the reader holds the gate)",
+    "state/claude_md/_review_md.py": "channel review_md (aliased; the reader holds the gate)",
     "state/learning_injection.py": "channel edit_hint (aliased; the reader holds the gate)",
     "tools/_recall_impl.py": "channel trw_recall (aliased; the reader holds the gate)",
     "tools/_learn_preflight.py": "excluded: an unused compatibility default, never called",
@@ -261,58 +262,24 @@ def test_the_shared_readers_hold_the_gate_for_an_aliased_call_site(
 def test_switching_recall_off_withdraws_learnings_already_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon
 ) -> None:
-    """An arm that turns recall off must not read what an earlier arm wrote to AGENTS.md or REVIEW.md."""
-    user_text = "# Project notes\n\nKeep this line.\n"
+    """An arm that turns recall off must not read what an earlier arm wrote to REVIEW.md.
+
+    AGENTS.md carries no learnings since PRD-CORE-341, so REVIEW.md is the only
+    written file left to withdraw from.
+    """
     try:
         trw_dir = _project(tmp_path, monkeypatch, memory_daemon)
         root = trw_dir.parent
-        (root / "AGENTS.md").write_text(user_text, encoding="utf-8")
         on = TRWConfig(learning_recall_enabled=True)
         reload_config(on)
-        _agents_md_sync(trw_dir, on)
         _review_md(trw_dir, on)
-        assert TOKEN in (root / "AGENTS.md").read_text(encoding="utf-8"), "non-vacuity: AGENTS.md"
         assert TOKEN in (root / "REVIEW.md").read_text(encoding="utf-8"), "non-vacuity: REVIEW.md"
 
         off = TRWConfig(learning_recall_enabled=False)
         reload_config(off)
         assert _run_session_start_withdraw(off) == []
 
-        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-        assert TOKEN not in agents
-        assert "Key Learnings" not in agents
-        assert agents.startswith(user_text), "user content outside the markers is untouched"
-        assert "<!-- trw:start -->" in agents, "the managed section stays; only its learnings go"
         assert TOKEN not in (root / "REVIEW.md").read_text(encoding="utf-8")
-    finally:
-        reload_config()
-
-
-def test_withdrawal_ignores_a_marker_mentioned_in_user_prose(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon
-) -> None:
-    """Markers match whole lines only (.claude/rules/trw-mcp-python.md §Marker / Sentinel Matching)."""
-    user_text = (
-        "# Project notes\n\nTRW writes between `<!-- trw:start -->` and its end marker.\n\n"
-        "## Key Learnings\n\nOur own learning, kept.\n"
-    )
-    try:
-        trw_dir = _project(tmp_path, monkeypatch, memory_daemon)
-        root = trw_dir.parent
-        (root / "AGENTS.md").write_text(user_text, encoding="utf-8")
-        on = TRWConfig(learning_recall_enabled=True)
-        reload_config(on)
-        _agents_md_sync(trw_dir, on)
-        assert TOKEN in (root / "AGENTS.md").read_text(encoding="utf-8"), "non-vacuity: AGENTS.md"
-
-        off = TRWConfig(learning_recall_enabled=False)
-        reload_config(off)
-        assert _run_session_start_withdraw(off) == []
-
-        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-        assert agents.startswith(user_text), "user prose, including its own Key Learnings, is untouched"
-        assert TOKEN not in agents
-        assert "\n<!-- trw:start -->\n" in agents
     finally:
         reload_config()
 
@@ -325,9 +292,3 @@ def _run_session_start_withdraw(config: TRWConfig) -> list[str]:
     sctx = SessionStartContext(query="", config=config, ctx=None, is_focused=False, results={}, errors=[])
     run_steps([step for step in SESSION_START_STEPS if step.key == "recall_withdraw"], sctx, ceremony)
     return sctx.errors
-
-
-def _agents_md_sync(trw_dir: Path, config: TRWConfig) -> None:
-    from trw_mcp.state.claude_md._agents_md import _sync_agents_md_if_needed
-
-    _sync_agents_md_if_needed(True, config, trw_dir.parent, trw_dir, client="claude-code", force=True)

@@ -58,7 +58,7 @@ _session_id=${TRW_SESSION_ID:-}
 # every hook answers "which run is mine?" the same way.
 #
 # The stdin payload's session_id is passed as the fallback key for the case where
-# hook-env.sh predates FR01 and TRW_SESSION_ID is unset: for a client whose pin
+# this client's hook-env.d/<key>.sh predates FR01 and TRW_SESSION_ID is unset: for a client whose pin
 # key IS its host session id that fallback resolves correctly, and for any other
 # client it simply fails to match, which is the honest unowned outcome.
 _pin_key=$(trw_pin_key "${_host_session_id:-}") || _pin_key=""

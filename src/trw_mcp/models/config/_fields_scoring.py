@@ -21,7 +21,6 @@ class _ScoringFields:
     impact_tier_critical_cap: float = 0.05
     impact_tier_high_cap: float = 0.20
     impact_high_threshold_pct: float = 20.0
-    impact_decay_half_life_days: int = 90
 
     # -- Utility scoring & decay --
 

@@ -243,3 +243,59 @@ async def test_a_lost_waited_response_replays_the_same_pending_items_on_the_next
         # fresh call must recover the SAME still-pending item, not skip it.
         second = await _wait_invoke(client, action="fetch", wait_seconds=1)
     assert first["items"] == second["items"] == [{**receipt, "body": "payload"}]
+
+
+# --- PRD-CORE-322 FR06: trw_inbox status shows the handoff block ----------------------
+
+
+async def test_status_items_carry_the_derived_handoff_block_only_on_requests(policy_scene: PolicyScene) -> None:
+    s = policy_scene
+    add_real_response_middleware(s)  # type: ignore[arg-type]
+
+    async def as_member(client: Any, member: str, name: str, **arguments: Any) -> dict[str, Any]:
+        s.actor(member)
+        result = await client.call_tool(name, arguments, raise_on_error=False)
+        assert not result.is_error, result.content[0].text
+        payload = result.structured_content
+        assert isinstance(payload, dict) and json.loads(result.content[0].text) == payload
+        return payload
+
+    async with Client(s.server) as client:
+        ids = {}
+        for kind in ("request", "reply", "status"):
+            sent = await as_member(
+                client,
+                "impl-1",
+                "trw_send",
+                recipient_member_id="impl-2",
+                request_key=kind,
+                body="secret body",
+                kind=kind,
+            )
+            ids[kind] = sent["receipt"]["message_id"]
+        assert (await as_member(client, "impl-2", "trw_inbox", action="accept", message_ids=[ids["request"]]))[
+            "status"
+        ] == "ok"
+        reported = await as_member(
+            client, "impl-2", "trw_inbox", action="report", message_ids=[ids["request"]], next_read="PRD-CORE-322"
+        )
+        assert reported["status"] == "ok"
+        status = await as_member(client, "impl-1", "trw_inbox", action="status")
+        items = {item["message_id"]: item for item in status["items"]}
+        assert "secret body" not in json.dumps(status) and all("body" not in item for item in items.values())
+        assert all("handoff" not in items[ids[kind]] for kind in ("reply", "status"))
+        request = items[ids["request"]]
+        assert set(request["milestones"]) == {"admitted", "acked", "accepted", "reported"}, "raw facts stay"
+        handoff = request["handoff"]
+        assert (handoff["owner"], handoff["next_read"], handoff["completion"]["state"]) == (
+            "impl-2",
+            "PRD-CORE-322",
+            "reported",
+        )
+        assert handoff["acceptance"] == request["milestones"]["accepted"]
+        assert (await as_member(client, "impl-1", "trw_inbox", action="complete", message_ids=[ids["request"]]))[
+            "status"
+        ] == "ok"
+        status = await as_member(client, "impl-1", "trw_inbox", action="status")
+        verified = next(item["handoff"] for item in status["items"] if item["message_id"] == ids["request"])
+        assert (verified["owner"], verified["completion"]["state"]) == (None, "verified")

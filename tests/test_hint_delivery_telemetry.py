@@ -46,7 +46,7 @@ def _compute(monkeypatch: pytest.MonkeyPatch, repo: Path, *, eligible: bool, fil
     monkeypatch.setenv("TRW_REPO_ROOT", str(repo))
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: repo / ".trw")
     monkeypatch.setattr(beh._sidecar_substrate, "distill_installed", lambda: eligible)
-    monkeypatch.setattr(beh, "_collect_learnings", lambda _fp: [])
+    monkeypatch.setattr(beh, "_collect_learnings", lambda _fp, _root: ([], "ok"))
     return beh.compute_before_edit_hint(file_path=file_path, repo_root=str(repo))
 
 

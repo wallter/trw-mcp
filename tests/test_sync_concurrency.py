@@ -23,6 +23,11 @@ from typing import Any
 import httpx
 import pytest
 
+from tests._contact_support import payload_trw_dir
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
+
 
 def _slow_then_concurrent_handler(delay: float) -> Any:
     """Build an async httpx.MockTransport handler that sleeps before responding.
@@ -61,13 +66,10 @@ async def test_pull_does_not_block_concurrent_coroutine(monkeypatch: pytest.Monk
     # The suite-wide autouse guard turns platform contact off, which makes the
     # pull return before any request. The transport below is mocked, so this
     # test opts back in to reach the slow handler.
-    monkeypatch.setattr(pull, "platform_contact_enabled", lambda: True)
+    monkeypatch.setattr(pull, "platform_contact_enabled", lambda _root: True)
 
     puller = SyncPuller(
-        backend_url="http://test.invalid",
-        api_key="test",
-        timeout=2.0,
-        client_id="sync-test",
+        backend_url="http://test.invalid", api_key="test", timeout=2.0, client_id="sync-test", trw_dir=payload_trw_dir()
     )
 
     # Slow handler: sleeps 1s before responding 200.
@@ -126,6 +128,7 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
         # PRD-SEC-004: this test exercises the real (consented) async push path
         # to prove it yields the event loop; consent must be enabled.
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     async def slow_post(request: httpx.Request) -> httpx.Response:

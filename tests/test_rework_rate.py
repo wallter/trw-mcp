@@ -13,6 +13,8 @@ from structlog.testing import capture_logs
 
 from trw_mcp.scoring.rework_rate import compute_rework_rate
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture()
 def _mock_git_log():

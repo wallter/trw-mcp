@@ -27,6 +27,8 @@ from typing import Any
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
+
 log = structlog.get_logger(__name__)
 
 __all__ = [
@@ -245,10 +247,7 @@ def install_hook_script(
         Dict with keys: installed (bool), path (str), skipped (bool),
         outcome (``"created"`` | ``"updated"`` | ``"preserved"``).
     """
-    hook_dir = target_dir / ".codex" / "hooks"
-    hook_dir.mkdir(parents=True, exist_ok=True)
-
-    hook_path = hook_dir / "trw_post_edit_telemetry.py"
+    hook_path = target_dir / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
     content = generate_hook_script()
     existed = hook_path.exists()
 
@@ -276,7 +275,7 @@ def install_hook_script(
             )
             return {"installed": False, "path": str(hook_path), "skipped": True, "outcome": "preserved"}
 
-    hook_path.write_text(content, encoding="utf-8")
+    write_checkout_file(target_dir, hook_path, content)
 
     log.debug(
         "codex_hook_installed",

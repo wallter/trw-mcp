@@ -5,7 +5,7 @@ required framework files into a target git repository.
 
 ``trw-mcp update-project`` selectively updates framework files (hooks,
 skills, agents, FRAMEWORK.md) while preserving user-customized files
-(config.yaml, learnings, CLAUDE.md user sections).
+(config.yaml, learnings, user content in AGENTS.md).
 """
 
 from __future__ import annotations
@@ -45,13 +45,7 @@ from ._cursor import (
     _write_fresh_mcp as _write_fresh_mcp,
 )
 from ._cursor import (
-    generate_cursor_hooks as generate_cursor_hooks,
-)
-from ._cursor import (
     generate_cursor_mcp_config as generate_cursor_mcp_config,
-)
-from ._cursor import (
-    generate_cursor_rules as generate_cursor_rules,
 )
 from ._init_project import (
     _copy_bundled_data_files as _copy_bundled_data_files,
@@ -91,9 +85,6 @@ from ._opencode import (
 )
 from ._opencode import (
     _get_trw_mcp_entry as _get_trw_mcp_entry,
-)
-from ._opencode import (
-    _parse_jsonc as _parse_jsonc,
 )
 from ._opencode import (
     generate_agents_md as generate_agents_md,
@@ -141,9 +132,6 @@ from ._update_project import (
     _migrate_prefix_predecessors as _migrate_prefix_predecessors,
 )
 from ._update_project import (
-    _minimal_claude_md_trw_block as _minimal_claude_md_trw_block,
-)
-from ._update_project import (
     _read_manifest as _read_manifest,
 )
 from ._update_project import (
@@ -160,9 +148,6 @@ from ._update_project import (
 )
 from ._update_project import (
     _update_always_overwrite_files as _update_always_overwrite_files,
-)
-from ._update_project import (
-    _update_claude_md_trw_section as _update_claude_md_trw_section,
 )
 from ._update_project import (
     _update_codex_artifacts as _update_codex_artifacts,
@@ -222,13 +207,7 @@ from ._utils import (
     _files_identical as _files_identical,
 )
 from ._utils import (
-    _generate_mcp_json as _generate_mcp_json,
-)
-from ._utils import (
     _merge_mcp_json as _merge_mcp_json,
-)
-from ._utils import (
-    _minimal_claude_md as _minimal_claude_md,
 )
 from ._utils import (
     _pip_install_package as _pip_install_package,
@@ -253,9 +232,6 @@ from ._utils import (
 )
 from ._utils import (
     detect_ide as detect_ide,
-)
-from ._utils import (
-    detect_installed_clis as detect_installed_clis,
 )
 from ._utils import (
     resolve_ide_targets as resolve_ide_targets,
@@ -284,7 +260,12 @@ _TRW_DIRS = [
 # for those clients while ``.claude/skills``/``.claude/agents`` (claude-code
 # only) are not. An EXPLICIT selection is gated per-path; a bare
 # ``init-project`` (``ide=None``) still scaffolds every entry (CORE262-13).
-_CLAUDE_SCAFFOLD_DIRS: tuple[str, ...] = (".claude/hooks", ".claude/skills", ".claude/agents")
+#
+# PRD-CORE-301 FR07: ``.claude/hooks`` is not scaffolded. The hook installers
+# (``_init_project._install_hooks``, ``_template_updater._update_hooks``) create
+# it only when some written configuration runs a script from it, so a codex
+# project with Codex hooks off gets no empty ``.claude/hooks`` either.
+_CLAUDE_SCAFFOLD_DIRS: tuple[str, ...] = (".claude/skills", ".claude/agents")
 
 
 def _client_scaffold_dirs(clients: Sequence[str], *, explicit: bool = False) -> list[str]:

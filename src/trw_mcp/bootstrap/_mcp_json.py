@@ -17,6 +17,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 from ._file_ops import ProgressCallback, _result_action_key, read_json_object
 
 logger = structlog.get_logger(__name__)
@@ -120,10 +122,7 @@ def _merge_mcp_json(
         servers["trw"] = trw_entry
         data["mcpServers"] = servers
         try:
-            mcp_path.write_text(
-                json.dumps(data, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            write_checkout_file(target_dir, mcp_path, json.dumps(data, indent=2) + "\n")
             key = _result_action_key(result)
             if existed:
                 result[key].append(str(mcp_path))
@@ -145,7 +144,7 @@ def _merge_mcp_json(
                     tool="trw",
                     config_path=str(mcp_path),
                 )
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
             if on_progress:
@@ -159,29 +158,16 @@ def _merge_mcp_json(
             + "\n"
         )
         try:
-            mcp_path.write_text(content, encoding="utf-8")
+            write_checkout_file(target_dir, mcp_path, content)
             result["created"].append(str(mcp_path))
             if on_progress:
                 on_progress("Created", str(mcp_path))
             logger.info("mcp_config_updated", tool="trw", config_path=str(mcp_path))
-        except OSError as exc:
+        except (OSError, UnsafeWriteError) as exc:
             logger.warning("mcp_config_merge_failed", error=str(exc), path=str(mcp_path))
             result["errors"].append(f"Failed to write {mcp_path}: {exc}")
             if on_progress:
                 on_progress("Error", str(mcp_path))
-
-
-def _generate_mcp_json() -> str:
-    """Generate ``.mcp.json`` pointing to installed trw-mcp.
-
-    Legacy helper kept for backward compatibility. New code uses
-    ``_merge_mcp_json()`` which does smart merging.
-    """
-    # Deferred import to avoid circular dependency with _utils.py
-    from ._utils import _trw_mcp_server_entry
-
-    entry = _trw_mcp_server_entry()
-    return json.dumps({"mcpServers": {"trw": entry}}, indent=2) + "\n"
 
 
 # ---------------------------------------------------------------------------

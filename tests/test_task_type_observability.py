@@ -84,12 +84,3 @@ def test_trw_status_surfaces_task_type_nudge_weights(init_fn) -> None:  # type: 
     # FR04 AC: ceremony weight shifts >= 10pp between coding and research.
     assert cw["ceremony"] - rw["ceremony"] >= 10
     assert research_status["recall_policy"] == "breadth_first"
-
-
-def test_trw_report_model_has_task_type_default() -> None:
-    from trw_mcp.models.report import RunReport
-
-    report = RunReport(run_id="r", task="t", status="active", phase="research", generated_at="now")
-    assert report.task_type == "unknown"
-    report2 = RunReport(run_id="r", task="t", status="active", phase="research", generated_at="now", task_type="coding")
-    assert report2.task_type == "coding"

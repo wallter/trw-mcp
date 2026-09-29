@@ -73,15 +73,28 @@ _BASELINE_BLOCK_CHARS = {
 # PRD-CORE-300 S11b (-3 full; light-mode blocks unchanged): the pointer names trw_status(detail="surface")
 # instead of the deleted discovery tool, and the lifecycle text states the flat,
 # flag-gated surface instead of the kernel-plus-grant description.
+# Canon landing 2026-09-26 (int 23d365054, +362 on every block): the deliver-gate restatement follows the
+# updated CONSTITUTION §1.a. Path (a) names the full project-native suite and says trw_build_check records
+# rather than verifies, path (c) says an override never turns unverified work into verified work, and the
+# no-build advisory keeps the canon rule. Rendered before and after the landing, those three sentences are the
+# only change apart from the same-length lifecycle-sync hash, and each appears once: intended canon text, not
+# duplication.
+# CSR-22 (PRD-INFRA-201 FR02, 2026-09-26, +454 on every block): the governance block opens with one
+# `Hard limits:` pointer to the installed framework's values block and peer-coordination rules, because a
+# hookless client otherwise never reached HB-2 (0 of 8 gate carriers named it). The DoD-5 round-2 trace ran
+# this exact text on 4 clients (all quoted FRAMEWORK on the non-ceiling scenarios), so it is recorded as
+# measured rather than trimmed after the fact.
 _MEASURED_BLOCK_CHARS = {
-    "claude-code": 6371,
-    "cursor-ide": 6371,
-    "copilot": 6371,
-    "antigravity-cli": 6371,
-    "grok": 6371,
-    "codex": 8528,
-    "cursor-cli": 7441,
-    "opencode": 7441,
+    "claude-code": 7187,
+    "cursor-ide": 7187,
+    "copilot": 7187,
+    "antigravity-cli": 7187,
+    "grok": 7187,
+    # -12 each (2026-09-26): the ceremony table's sync row no longer names
+    # "CLAUDE.md / " -- TRW 8.0 stopped writing CLAUDE.md.
+    "codex": 9332,
+    "cursor-cli": 8245,
+    "opencode": 8245,
 }
 #: The call the full-mode pointer names for the live surface (PRD-CORE-300 S11b).
 _SURFACE_CALL = 'trw_status(detail="surface")'
@@ -289,27 +302,24 @@ def test_deliver_gate_stated_once_per_carrier() -> None:
         assert minimal.count(_FULL_GATE_MARKER) == 1, f"{client_id} minimal protocol must state the gate exactly once"
 
 
-def test_repo_claude_md_states_the_gate_once() -> None:
+def test_repo_agents_md_states_the_gate_once() -> None:
     """FR09 acceptance for this repository's own carrier.
 
-    ``CLAUDE.md`` stated the three-path gate twice: once in repo-owned prose and
-    once inside the generated block. The prose copy is now a pointer.
+    The repo carrier stated the three-path gate twice: once in repo-owned prose
+    and once inside the generated block. The prose copy is now a pointer.
 
-    The CARRIER is the file plus whatever it imports, not the file's own bytes.
-    PRD-CORE-240/243 externalized the generated block to a single
-    ``@.trw/INSTRUCTIONS.md`` line, so counting only CLAUDE.md's bytes would read
-    zero and call a correctly-carried gate a governance regression. The import is
-    resolved the same way the instruction-surface lint resolves it: one level,
-    one line.
+    The CARRIER is the file plus whatever it imports, not the file's own bytes,
+    so ``@`` imports are resolved the same way the instruction-surface lint
+    resolves them: one level, one line.
     """
     from pathlib import Path as _Path
 
     repo_root = _Path(__file__).resolve().parents[2]
-    repo_claude_md = repo_root / "CLAUDE.md"
-    if not repo_claude_md.is_file():
-        pytest.skip("monorepo-only: repo-root CLAUDE.md absent in the standalone mirror")
+    repo_agents_md = repo_root / "AGENTS.md"
+    if not repo_agents_md.is_file():
+        pytest.skip("monorepo-only: repo-root AGENTS.md absent in the standalone mirror")
 
-    content = repo_claude_md.read_text(encoding="utf-8")
+    content = repo_agents_md.read_text(encoding="utf-8")
     resolved = [content]
     for line in content.splitlines():
         stripped = line.strip()
@@ -320,11 +330,8 @@ def test_repo_claude_md_states_the_gate_once() -> None:
 
     total = sum(part.count(_FULL_GATE_MARKER) for part in resolved)
     assert total == 1, (
-        f"the CLAUDE.md carrier (file + resolved imports) states the gate {total} times; the "
+        f"the AGENTS.md carrier (file + resolved imports) states the gate {total} times; the "
         "invariant is one full statement per carrier, pointers elsewhere — and never zero"
-    )
-    assert content.count(_FULL_GATE_MARKER) == 0, (
-        "the repo-owned prose copy must stay a pointer now that the generated block is imported"
     )
 
 

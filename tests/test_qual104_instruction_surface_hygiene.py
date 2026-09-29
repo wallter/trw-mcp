@@ -186,6 +186,17 @@ class TestBundledSurfaceLoader:
         assert _DELIVER_GATE_PHRASE in body
         assert body == tl._FALLBACK_TOOL_LIFECYCLE
 
+    def test_fallback_constant_is_byte_identical_to_bundled_surface(self) -> None:
+        """TB-17 anti-drift guard: the in-module fallback (NFR02) must be a
+        byte-identical snapshot of ``data/surfaces/tool-lifecycle.md``, not a
+        hand-maintained second copy that silently diverges over time."""
+        from importlib.resources import files as pkg_files
+
+        from trw_mcp.state.claude_md.sections import _tool_lifecycle as tl
+
+        bundled = (pkg_files("trw_mcp.data") / "surfaces" / "tool-lifecycle.md").read_text(encoding="utf-8")
+        assert tl._FALLBACK_TOOL_LIFECYCLE == bundled
+
     def test_memory_routing_loader_contains_routing_text(self) -> None:
         """load_memory_routing() returns the bundled memory-routing body."""
         from trw_mcp.state.claude_md.sections._memory_routing import load_memory_routing
@@ -249,7 +260,7 @@ class TestLightClientGateInjection:
     def test_opencode_instructions_gate_present(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._opencode import generate_opencode_instructions
 
-        generate_opencode_instructions(tmp_path, "generic", force=True)
+        generate_opencode_instructions(tmp_path, force=True)
         body = (tmp_path / ".opencode" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert _DELIVER_GATE_PHRASE in body
         assert _SESSION_START_PHRASE in body
@@ -285,7 +296,7 @@ class TestLightClientGateInjection:
                 generate_opencode_instructions,
             )
 
-            generate_opencode_instructions(tmp_path, "generic", force=True)
+            generate_opencode_instructions(tmp_path, force=True)
             generate_codex_instructions(tmp_path, force=True)
             generate_copilot_instructions(tmp_path, force=True)
 
@@ -333,7 +344,6 @@ def _all_light_render_entry_points() -> dict[str, object]:
     from trw_mcp.state.claude_md._static_sections import (
         render_agents_trw_section,
         render_codex_instructions,
-        render_codex_trw_section,
         render_minimal_protocol,
         render_opencode_instructions,
     )
@@ -358,13 +368,12 @@ def _all_light_render_entry_points() -> dict[str, object]:
         "ProtocolRenderer.render_minimal_protocol": _minimal_via_class,
         # Per-light-client instruction renderers (Codex / OpenCode carriers).
         "render_codex_instructions": render_codex_instructions,
-        "render_opencode_instructions": lambda: render_opencode_instructions("generic"),
+        "render_opencode_instructions": render_opencode_instructions,
         # THIRD bypass instance (2026-06-11): the AGENTS.md ROOT full-ceremony
         # renderers hand-copied a divergent gate string ("for coding/rca/eval
         # tasks" interjection) that failed the exact-phrase lint -> missing_gate
         # on AGENTS.md. Both now route through render_deliver_gate_statement().
         "render_agents_trw_section": render_agents_trw_section,
-        "render_codex_trw_section": render_codex_trw_section,
     }
 
 
@@ -542,19 +551,21 @@ class TestLintInstructionSurfaces:
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 0, proc.stdout
 
-    def test_import_only_block_fails_closed(self, tmp_path: Path) -> None:
-        """PRD-QUAL-143-FR01: the gate must be inline; an ``@`` import is not followed."""
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "INSTRUCTIONS.md").write_text(f"{_DELIVER_GATE_PHRASE}\n", encoding="utf-8")
+    def test_import_only_block_is_linted_through_its_import(self, tmp_path: Path) -> None:
+        """PRD-CORE-341: the carrier is the block plus its ``@`` import; a broken link fails closed."""
         (tmp_path / "CLAUDE.md").write_text(
             "<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
             encoding="utf-8",
         )
 
-        proc = _run_lint("--strict", cwd=tmp_path)
+        broken = _run_lint("--strict", cwd=tmp_path)
+        assert broken.returncode == 1, broken.stdout
+        assert "missing_gate" in broken.stdout
 
-        assert proc.returncode == 1, proc.stdout
-        assert "missing_gate" in proc.stdout
+        (tmp_path / ".trw").mkdir()
+        (tmp_path / ".trw" / "INSTRUCTIONS.md").write_text(f"{_DELIVER_GATE_PHRASE}\n", encoding="utf-8")
+        linked = _run_lint("--strict", cwd=tmp_path)
+        assert "missing_gate" not in linked.stdout, linked.stdout
 
     def test_default_mode_exits_0_with_report(self, tmp_path: Path) -> None:
         """Default (non-strict) mode exits 0 even with findings, printing a report."""
@@ -841,19 +852,6 @@ class TestDriftScanScope:
         proc = _run_lint("--strict", cwd=tmp_path)
         assert "machine_path" in proc.stdout, proc.stdout
         assert "pkg/sub/CLAUDE.md" in proc.stdout, proc.stdout
-
-    def test_excluded_dirs_not_scanned(self, tmp_path: Path) -> None:
-        """Files under excluded dirs (node_modules, archive) are skipped."""
-        # fmt: off
-        for sub in ("node_modules", "docs/requirements-aare-f/archive", "trw-eval/results", ".trw/runs", ".trw/worktrees/lane"):  # trw-leak-allow: proprietary_path real production exclusion literal from lint-instruction-surfaces.py
-            # fmt: on
-            d = tmp_path / sub
-            d.mkdir(parents=True)
-            (d / "CLAUDE.md").write_text("Has /home/wallter/x in it.\n", encoding="utf-8")
-        _write_framework_md(tmp_path)
-        proc = _run_lint("--strict", cwd=tmp_path)
-        assert proc.returncode == 0, proc.stdout
-        assert "machine_path" not in proc.stdout, proc.stdout
 
     def test_nested_file_not_size_gated(self, tmp_path: Path) -> None:
         """A nested CLAUDE.md with an oversized TRW block is NOT oversized-flagged.

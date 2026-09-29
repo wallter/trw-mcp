@@ -18,11 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.models.config._profiles import _PROFILES
-from trw_mcp.state.claude_md._agents_md import (
-    _INSTRUCTION_SYNC_CLIENT_IDS,
-    _INSTRUCTION_SYNC_EXCLUSIONS,
-    _INSTRUCTION_SYNC_GENERATORS,
-)
+from trw_mcp.state.claude_md._agents_md import _INSTRUCTION_SYNC_CLIENT_IDS, _INSTRUCTION_SYNC_GENERATORS
+from trw_mcp.state.claude_md._instruction_clients import INSTRUCTION_SYNC_EXCLUSIONS as _INSTRUCTION_SYNC_EXCLUSIONS
 
 
 class TestClientCoverageIsTotal:

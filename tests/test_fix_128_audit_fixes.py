@@ -45,40 +45,6 @@ from tests.test_core_247_degraded_mode_hooks import (
 
 __all__ = ["hook_dir"]  # re-exported fixture; silence an unused-import lint
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-
-# The commit this session started from (see git log at session start): the
-# unpatched shell library, used as the "before" half of two red-first
-# comparisons below (rows 1 and 9) so the regression is demonstrated by
-# actually running the old code, not asserted from memory.
-_PRE_FIX_COMMIT = "e74389584d"
-
-
-def _old_lib_text() -> str:
-    """The pre-fix library text, or a skip when this clone cannot reach it.
-
-    The red halves below are only runnable where ``_PRE_FIX_COMMIT`` is still an
-    object in the local history. The deploy reconciles squash local main onto
-    origin/main (``4072622d6`` and its predecessors), which drops the original
-    commits, so a clone made after one of them resolves the SHA to
-    ``fatal: invalid object name`` and every red half died on ``check=True``.
-    The green halves above each call site assert the CURRENT behavior and still
-    run; only the historical comparison is skipped, and the reason says so.
-    """
-    proc = subprocess.run(
-        ["git", "show", f"{_PRE_FIX_COMMIT}:trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh"],
-        cwd=_REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        pytest.skip(
-            f"red half unavailable: pre-fix commit {_PRE_FIX_COMMIT} is not reachable in this clone "
-            f"(history was squashed by a deploy reconcile); the current-behavior assertions above ran"
-        )
-    return proc.stdout
-
 
 def _source_and_run(root: Path, lib: Path, script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -123,35 +89,14 @@ def test_row1_marker_path_rejects_dot_and_leading_dash(tmp_path: Path, hook_dir:
     assert probe.returncode != 0, f"key {bad_key!r} was admitted as a marker path: {probe.stdout!r}"
     assert probe.stdout == "", f"key {bad_key!r} printed a path: {probe.stdout!r}"
 
-    # Red half: the pre-fix library admitted this same key (proves the
-    # assertion above is a real regression test, not a tautology of a
-    # function that always rejects everything).
-    old_lib = tmp_path / f"old-lib-trw-{bad_key!r}.sh"
-    old_lib.write_text(_old_lib_text(), encoding="utf-8")
-    old_probe = _source_and_run(root, old_lib, "trw_degraded_marker_path epoch", env)
-    assert old_probe.returncode == 0, (
-        f"key {bad_key!r} was ALREADY rejected before the fix — this case does not exercise the row 1 regression"
-    )
 
-
-def test_row1_double_dot_was_already_rejected_before_the_fix(tmp_path: Path, hook_dir: Path) -> None:
-    """`..` is excluded by the audit's row 1 title but was NOT actually part of
-    the regression: the pre-fix `*..*` glob already matches and rejects a
-    literal `..` key. Asserted here so the fix's scope is stated precisely
-    rather than implied by the finding's title.
-    """
+def test_row1_double_dot_is_rejected(tmp_path: Path, hook_dir: Path) -> None:
+    """`..` is rejected too (the pre-fix `*..*` glob already rejected it, so it was not part of row 1)."""
     root = _make_project(tmp_path, hook_dir, "row1-dotdot")
     lib = root / ".claude" / "hooks" / "lib-trw.sh"
     env = _env(root)
     env["TRW_SESSION_ID"] = ".."
     assert _source_and_run(root, lib, "trw_degraded_marker_path epoch", env).returncode != 0
-
-    old_lib = tmp_path / "old-lib-trw-dotdot.sh"
-    old_lib.write_text(_old_lib_text(), encoding="utf-8")
-    assert _source_and_run(root, old_lib, "trw_degraded_marker_path epoch", env).returncode != 0, (
-        "'..' was admitted by the pre-fix library -- if this ever starts failing, row 1's scope "
-        "has changed and the docstring above needs updating"
-    )
 
 
 def test_row1_a_well_formed_key_is_still_admitted(tmp_path: Path, hook_dir: Path) -> None:
@@ -485,22 +430,6 @@ def test_row9_no_jq_fallback_does_not_false_positive_on_payload_text(tmp_path: P
     assert "TRW DEGRADED MODE" in result.stdout, (
         "a malformed line whose unescaped TEXT merely mentions event/tool_name/trw_ fields fooled "
         "the no-jq fallback into treating it as a real trw_ tool call"
-    )
-
-    # Red half: run the SAME hostile input through the pre-fix library's
-    # scan primitive directly and confirm it WAS fooled.
-    old_lib = tmp_path / "old-lib-trw-row9.sh"
-    old_lib.write_text(_old_lib_text(), encoding="utf-8")
-    cut = _iso(now - timedelta(seconds=1))
-    old_probe = _source_and_run(
-        root,
-        old_lib,
-        f'_trw_scan_log_for_trw_call "{events_path}" "{cut}"',
-        env,
-    )
-    assert old_probe.returncode == 0, (
-        "the pre-fix awk fallback did NOT match this hostile payload text -- this fixture does "
-        "not exercise the row 9 regression"
     )
 
 

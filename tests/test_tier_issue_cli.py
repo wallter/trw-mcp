@@ -10,6 +10,7 @@ being deleted with them.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -88,7 +89,7 @@ class TestTierIssueCLI:
             tier_command="issue",
             tier="pro",
             issued_to="x@y",
-            expires="2027-01-01",
+            expires=(datetime.now(timezone.utc) + timedelta(days=365)).date().isoformat(),
             trw_dir=str(tmp_path / ".trw"),
             print_only=False,
         )

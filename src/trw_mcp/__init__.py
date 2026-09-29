@@ -83,4 +83,62 @@ def _resolve_version() -> str:
 
 __version__: str = _resolve_version()
 
+# --- Import-surface contract (PRD-CORE-313 FR07) ---------------------------
+# A module path is public when no segment after ``trw_mcp`` starts with an
+# underscore; it is internal when any containing namespace is internal
+# (PEP 8), so only the top-level children below need a classification.
+# ``tests/test_import_surface.py`` fails on any top-level child that is in
+# neither tuple, and on any stale entry.
+
+#: The ONLY modules (with their subtrees) that carry a compatibility promise.
+__public_modules__: tuple[str, ...] = ("trw_mcp.api",)
+
+#: Every other non-underscore top-level child. Importable, but internal: any
+#: release may move, rename or delete them without a deprecation period.
+__internal_modules__: tuple[str, ...] = (
+    "agents",
+    "audit",
+    "bootstrap",
+    "canons",
+    "channels",
+    "cli",
+    "client_profiles",
+    "clients",
+    "code_index",
+    "comms",
+    "data",
+    "dispatch",
+    "evidence_pack",
+    "exceptions",
+    "export",
+    "formation",
+    "framework_deployment",
+    "framework_integrity",
+    "meta_tune",
+    "middleware",
+    "models",
+    "plan",
+    "probe",
+    "profile",
+    "prompts",
+    "release_builder",
+    "resources",
+    "scoring",
+    "security",
+    "server",
+    "services",
+    "shared_server",
+    "startup",
+    "state",
+    "sync",
+    "telemetry",
+    "tendencies",
+    "tools",
+)
+
+#: Internal paths whose import path packaging or the launcher names (the
+#: ``trw-mcp`` console script and ``python -m trw_mcp.server``). The path is
+#: kept; the contents stay internal.
+__entry_modules__: tuple[str, ...] = ("trw_mcp.server", "trw_mcp.shared_server")
+
 __all__ = ["__version__"]

@@ -93,7 +93,6 @@ def format_nudge(template: str, profile: ClientProfile | None) -> str:
 # Constants
 # ---------------------------------------------------------------------------
 
-_HEADER = "--- TRW Session ---"
 _MINIMAL_HEADER = "--- TRW ---"
 
 # Step rationale for next-two-steps projection (FR04, PRD-CORE-084)
@@ -104,26 +103,6 @@ _STEP_RATIONALE: dict[str, str] = {
     "review": "independent verification catches spec drift",
     "deliver": "records completed delivery under existing evidence gates",
 }
-
-
-# ---------------------------------------------------------------------------
-# Urgency-based message selection
-# ---------------------------------------------------------------------------
-
-
-def _select_message_by_urgency(
-    urgency: str,
-    low: str,
-    medium: str,
-    high: str,
-) -> str:
-    """Select a message template based on urgency level.
-
-    Used internally by _select_nudge_message to DRY message selection.
-    """
-    if urgency == "high":
-        return high
-    return medium if urgency == "medium" else low
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +151,8 @@ def _build_check_message(context: NudgeContext, urgency: str) -> str | None:
     """Return the context-reactive message for build-check results."""
     if context.build_passed is False:
         return (
-            "Build failed. If failures reveal a design flaw, revert to PLAN "
-            "— fixing a plan costs less than patching broken code. "
-            "If the work has execution bugs, fix them in-phase and re-run."
+            "Build failed. Design flaw: revert to PLAN (cheaper than patching). Execution bug: fix in-phase and re-run. "
+            "Before fixing: trw_recall(query=<failing test or error>) — a prior session may have solved it."
         )
     if context.build_passed is not True:
         return None
@@ -192,7 +170,8 @@ def _review_message(context: NudgeContext) -> str:
     if context.review_p0_count > 0:
         return (
             "P0 findings detected. A separate agent MUST remediate "
-            "— the reviewer SHALL NOT fix its own findings. "
+            "— the reviewer SHALL NOT fix its own findings; the remediator first runs "
+            "trw_recall(query=<finding topic>). "
             "THEN: re-validate with trw_build_check()."
         )
     return "If the work is complete, use trw_deliver() under existing evidence gates; otherwise preserve material progress with a next-read pointer."
@@ -213,24 +192,11 @@ def _deliver_message(state: CeremonyState) -> str:
     return "Delivery recorded. No new learnings recorded this session."
 
 
-# ---------------------------------------------------------------------------
-# Status line formatting
-# ---------------------------------------------------------------------------
-
-
-# Status-line builders extracted to _nudge_status_lines (PRD-DIST-243 batch 22).
-# Re-exported for back-compat with ceremony_nudge.py imports.
-from trw_mcp.state._nudge_status_lines import (
-    _build_done_next_then_status as _build_done_next_then_status,
-)
 from trw_mcp.state._nudge_status_lines import (
     _build_done_next_then_status_light as _build_done_next_then_status_light,
 )
 from trw_mcp.state._nudge_status_lines import (
     _build_minimal_status_line as _build_minimal_status_line,
-)
-from trw_mcp.state._nudge_status_lines import (
-    _build_status_line as _build_status_line,
 )
 
 # ---------------------------------------------------------------------------
@@ -247,89 +213,3 @@ def _compute_urgency(state: CeremonyState, step: str) -> str:
     if count >= 5:
         return "high"
     return "medium" if count >= 3 else "low"
-
-
-# ---------------------------------------------------------------------------
-# Nudge assembly (FR09, PRD-CORE-084)
-# ---------------------------------------------------------------------------
-
-
-def _assemble_nudge(
-    status_line: str,
-    reactive_msg: str | None,
-    next_then: str | None = None,
-    reversion: str | None = None,
-    budget: int = 600,
-) -> str:
-    """Assemble nudge components within a character budget.
-
-    Priority: status_line (always) > reactive_msg (budget-checked) >
-    next_then (if budget allows) > reversion (if budget allows).
-
-    PRD-CORE-120-FR02: Hard truncation enforced. If the final assembled
-    string exceeds the budget, it is truncated to (budget - 12) characters
-    with `` [truncated]`` appended. The status_line is never truncated --
-    if it alone exceeds budget, it is returned as-is.
-    """
-    _TRUNCATION_MARKER = " [truncated]"
-    _MARKER_LEN = len(_TRUNCATION_MARKER)  # 12
-
-    def _record_budget_exhausted(component: str) -> None:
-        logger.debug(
-            "nudge_skipped",
-            reason="budget_exhausted",
-            pool="assembly",
-            learning_id="",
-            client_id="",
-            component=component,
-        )
-
-    components: list[str] = [status_line]
-
-    # Check remaining budget before adding reactive_msg
-    if reactive_msg:
-        current_len = len(status_line)
-        remaining = budget - current_len - 1  # -1 for the newline separator
-        if remaining > 0:
-            if len(reactive_msg) <= remaining:
-                components.append(reactive_msg)
-            else:
-                # Truncate reactive_msg to fit within budget
-                _record_budget_exhausted("reactive_msg")
-                if remaining > _MARKER_LEN:
-                    components.append(reactive_msg[: remaining - _MARKER_LEN] + _TRUNCATION_MARKER)
-                else:
-                    components.append(reactive_msg[:remaining])
-
-    current = "\n".join(components)
-    if next_then:
-        if len(current) + len(next_then) + 1 <= budget:
-            components.append(next_then)
-            current = "\n".join(components)
-        else:
-            _record_budget_exhausted("next_then")
-
-    if reversion:
-        if len(current) + len(reversion) + 1 <= budget:
-            components.append(reversion)
-        else:
-            _record_budget_exhausted("reversion")
-
-    result = "\n".join(components)
-
-    # PRD-CORE-120-FR02: Hard truncation at budget limit
-    if len(result) > budget:
-        # Status line alone exceeds budget — return as-is (never truncate status)
-        if len(status_line) >= budget:
-            return status_line
-        # Truncate the full result with indicator
-        truncated = result[: budget - _MARKER_LEN] + _TRUNCATION_MARKER
-        logger.debug(
-            "nudge_truncated",
-            pre_truncation_len=len(result),
-            budget=budget,
-            chars_removed=len(result) - len(truncated),
-        )
-        return truncated
-
-    return result

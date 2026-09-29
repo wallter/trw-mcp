@@ -50,7 +50,6 @@ from trw_mcp.models.surface_packs import (
 
 # -- Learning storage --
 DEFAULT_LEARNING_MAX_ENTRIES: int = 500
-DEFAULT_RECALL_RECEIPT_MAX_ENTRIES: int = 1000
 DEFAULT_RECALL_MAX_RESULTS: int = 25
 
 # -- Orchestration --
@@ -85,7 +84,6 @@ COMPACT_TAGS_CAP: int = 10  # Max tags per learning in compact mode
 
 # -- Surface area defaults (PRD-CORE-125) --
 DEFAULT_NUDGE_BUDGET_CHARS: int = 600
-DEFAULT_LEARNING_PREVIEW_CHARS: int = 500
 
 # -- PRD-CORE-218-FR03 capability-pack fixture (derived, NOT a second table) --
 # The pack membership (kernel + the non-kernel packs) has ONE source of truth:

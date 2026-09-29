@@ -91,7 +91,7 @@ class SyncPuller:
         timeout: float = 5.0,
         *,
         client_id: str | None = None,
-        trw_dir: Path | None = None,
+        trw_dir: Path | None,
     ) -> None:
         self._backend_url = backend_url.rstrip("/")
         self._api_key = api_key
@@ -123,7 +123,7 @@ class SyncPuller:
 
         # W38 (7.0.0 security P1): ``platform_contact_enabled: false`` skips
         # this contact entirely — no request is attempted.
-        if not platform_contact_enabled():
+        if not platform_contact_enabled(self._trw_dir):
             logger.info(
                 "sync_pull_skipped",
                 event_type="sync_pull_skipped",
@@ -151,7 +151,7 @@ class SyncPuller:
             # request still proceeds unauthenticated (the backend simply
             # rejects it) rather than being skipped, since no secret is at
             # risk once the header is withheld.
-            headers: dict[str, str] = platform_auth_headers(url, self._api_key)
+            headers: dict[str, str] = platform_auth_headers(url, self._api_key, source_trw_dir=self._trw_dir)
             if etag:
                 headers["If-None-Match"] = f'"{etag}"'
 
@@ -255,7 +255,7 @@ class SyncPuller:
             return TeamMergeResult()
 
         try:
-            from trw_memory.sync.conflict import increment_clock, resolve_conflict
+            from trw_memory.lifecycle.correction import CONFLICT_ATTEMPTS, revision_of
 
             from trw_mcp.state._store_selection import selected_store
 
@@ -278,52 +278,24 @@ class SyncPuller:
                 continue
             local_id = self._local_team_learning_id(source_learning_id)
             try:
-                # Every candidate is namespace-qualified: without that predicate a
-                # second peer emitting the same ``source_learning_id`` into a second
-                # namespace matched the first namespace's row (PRD-CORE-245 P1).
-                existing = store.find_synced(target, source_learning_id, [local_id, source_learning_id])
-                remote_entry = team_learning_to_entry(
-                    self, raw_learning, local_id=existing.id if existing is not None else local_id, namespace=target
-                )
-                if remote_entry is None:
-                    counts["invalid"] += 1
-                    continue
-                if (
-                    existing is not None
-                    and remote_entry.vector_clock
-                    and existing.vector_clock == remote_entry.vector_clock
-                ):
-                    # This revision already landed; merging it again would only append a conflict outcome.
-                    counts["unchanged"] += 1
-                    continue
-                local = existing
-                if local is not None and local.last_synced_at is None:
-                    # An unpushed local edit does not tick the clock; count it here so a
-                    # teammate's revision merges with it instead of replacing it.
-                    local = local.model_copy(
-                        update={"vector_clock": increment_clock(local.vector_clock, _local_node_id())}
+                # B71-90 (PRD-CORE-308): the apply is conditional on the revision the merge read, so a
+                # local edit landing between the two answers ``conflict``; re-read and re-merge.
+                for _attempt in range(CONFLICT_ATTEMPTS):
+                    # Every candidate is namespace-qualified: without that predicate a
+                    # second peer emitting the same ``source_learning_id`` into a second
+                    # namespace matched the first namespace's row (PRD-CORE-245 P1).
+                    existing = store.find_synced(target, source_learning_id, [local_id, source_learning_id])
+                    plan = self._merge_pulled(existing, raw_learning, local_id, target, source_learning_id)
+                    if isinstance(plan, str):  # nothing to write (after a conflict too): counted here
+                        counts[plan] += 1
+                        status, reason = "", ""
+                        break
+                    resolved, remote_won = plan
+                    status, reason = store.apply_synced(
+                        target, resolved, if_revision=revision_of(existing), synced=remote_won
                     )
-                winner = resolve_conflict(local, remote_entry) if local is not None else remote_entry
-                if winner is local:
-                    # The local row already dominates this revision. Re-applying it would mark
-                    # an unpushed local edit synced, so the edit would never be pushed.
-                    counts["unchanged"] += 1
-                    continue
-                # Only the peer's own revision is what the server holds; a merge carries
-                # local content too, so it stays dirty for the next push.
-                remote_won = winner is remote_entry
-                if existing is not None and winner.sync_seq < existing.sync_seq:
-                    # The store writes counter + 1; a revision built from the payload starts
-                    # at 0, which would let this client's next edit of the entry push a lower
-                    # counter than it already pushed, and the backend would call it stale.
-                    winner = winner.model_copy(update={"sync_seq": existing.sync_seq})
-                resolved = self._normalize_team_sync_entry(
-                    winner,
-                    source_learning_id=source_learning_id,
-                    remote_metadata=raw_learning.get("metadata"),
-                    pull_seq=raw_learning.get("sync_seq"),
-                )
-                status, reason = store.apply_synced(target, resolved, synced=remote_won)
+                    if status != "conflict":
+                        break
             except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
                 counts["failed"] += 1
                 logger.warning(
@@ -333,6 +305,8 @@ class SyncPuller:
                     source_learning_id=source_learning_id,
                     exc_info=True,
                 )
+                continue
+            if not status:
                 continue
             if status == "stored":
                 counts["inserted" if existing is None else "merged"] += 1
@@ -380,6 +354,46 @@ class SyncPuller:
             **result.as_log_fields(),
         )
         return result
+
+    def _merge_pulled(
+        self, existing: MemoryEntry | None, raw_learning: dict[str, Any], local_id: str, target: str, source_id: str
+    ) -> tuple[MemoryEntry, bool] | str:
+        """The row to apply for *raw_learning* over *existing* and whether it is the peer's own
+        revision (so it lands synced), or ``invalid`` / ``unchanged`` when nothing is to be written."""
+        from trw_memory.sync.conflict import increment_clock, resolve_conflict
+
+        remote_entry = team_learning_to_entry(
+            self, raw_learning, local_id=existing.id if existing is not None else local_id, namespace=target
+        )
+        if remote_entry is None:
+            return "invalid"
+        if existing is not None and remote_entry.vector_clock and existing.vector_clock == remote_entry.vector_clock:
+            return "unchanged"  # this revision already landed; merging it again would only append a conflict outcome
+        local = existing
+        if local is not None and local.last_synced_at is None:
+            # An unpushed local edit does not tick the clock; count it here so a
+            # teammate's revision merges with it instead of replacing it.
+            local = local.model_copy(update={"vector_clock": increment_clock(local.vector_clock, _local_node_id())})
+        winner = resolve_conflict(local, remote_entry) if local is not None else remote_entry
+        if winner is local:
+            # The local row already dominates this revision. Re-applying it would mark
+            # an unpushed local edit synced, so the edit would never be pushed.
+            return "unchanged"
+        # Only the peer's own revision is what the server holds; a merge carries
+        # local content too, so it stays dirty for the next push.
+        remote_won = winner is remote_entry
+        if existing is not None and winner.sync_seq < existing.sync_seq:
+            # The store writes counter + 1; a revision built from the payload starts
+            # at 0, which would let this client's next edit of the entry push a lower
+            # counter than it already pushed, and the backend would call it stale.
+            winner = winner.model_copy(update={"sync_seq": existing.sync_seq})
+        resolved = self._normalize_team_sync_entry(
+            winner,
+            source_learning_id=source_id,
+            remote_metadata=raw_learning.get("metadata"),
+            pull_seq=raw_learning.get("sync_seq"),
+        )
+        return resolved, remote_won
 
     def _normalize_team_sync_entry(
         self,

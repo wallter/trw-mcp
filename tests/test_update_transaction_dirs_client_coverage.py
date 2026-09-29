@@ -33,7 +33,7 @@ def test_every_client_directory_surface_is_a_transaction_dir(client_id: str) -> 
             # verbatim in _TRANSACTION_FILES, not scanned as a directory.
             continue
         if rel.startswith(".trw/"):
-            # .trw is snapshotted through _MANAGED_TRW_FILES + explicit
+            # .trw is snapshotted through _MANAGED_CANON_FILES + explicit
             # _TRANSACTION_FILES entries, never bulk-scanned as a directory.
             continue
         root = rel.split("/", 1)[0]

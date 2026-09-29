@@ -42,7 +42,7 @@ INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = (
 #: Profiles deliberately handled by another path, each with the reason. This is
 #: the mechanism, not documentation — an entry here is a claim a test checks.
 INSTRUCTION_SYNC_EXCLUSIONS: dict[str, str] = {
-    "claude-code": "CLAUDE.md is written by the carrier path in _profile_dispatcher",
+    "claude-code": "declares instruction_path=AGENTS.md, refreshed by the AGENTS.md write",
     "cursor-cli": "declares instruction_path=AGENTS.md, refreshed by the AGENTS.md write",
     "cursor-ide": "writes .cursor/rules/*.mdc through the bootstrap IDE-target path",
     "grok": "declares instruction_path=AGENTS.md, refreshed by the AGENTS.md write",
@@ -52,23 +52,6 @@ INSTRUCTION_SYNC_EXCLUSIONS: dict[str, str] = {
 def is_instruction_sync_client(client_id: str) -> TypeGuard[InstructionClientId]:
     """Return whether the client has a real instruction-file generator."""
     return client_id in INSTRUCTION_SYNC_CLIENT_IDS
-
-
-def _detect_opencode_model_family(project_root: Path) -> str:
-    """Read ``opencode.json`` and return the detected OpenCode model family."""
-    from trw_mcp.bootstrap._opencode import detect_model_family
-
-    opencode_json_path = project_root / "opencode.json"
-    if not opencode_json_path.exists():
-        return "generic"
-
-    try:
-        import json
-
-        opencode_data = json.loads(opencode_json_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return "generic"
-    return detect_model_family(opencode_data)
 
 
 def _managed_manifest_hashes(project_root: Path) -> dict[str, str] | None:
@@ -107,7 +90,6 @@ def _generate_opencode_instruction_target(
 
     return generate_opencode_instructions(
         project_root,
-        _detect_opencode_model_family(project_root),
         force=force,
         manifest_hashes=manifest_hashes if manifest_hashes is not None else _managed_manifest_hashes(project_root),
     )

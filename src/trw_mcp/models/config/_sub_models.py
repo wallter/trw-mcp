@@ -6,7 +6,7 @@ Each groups related fields for type-narrowed function signatures.
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,7 +16,6 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_LEARNING_MAX_ENTRIES,
     DEFAULT_PARALLELISM_MAX,
     DEFAULT_RECALL_MAX_RESULTS,
-    DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
 from trw_mcp.models.config._fields_dispatch import (
@@ -35,8 +34,6 @@ class BuildConfig(BaseModel):
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: str = "lenient"
     run_auto_close_enabled: bool = True
-    auto_checkpoint_enabled: bool = True
-    auto_checkpoint_tool_interval: int = 25
     auto_checkpoint_pre_compact: bool = True
     # The mutation_* mirror fields were removed under PRD-CORE-291 (slice 2)
     # alongside the flat TRWConfig fields they projected (_fields_build.py):
@@ -63,7 +60,6 @@ class DispatchConfig(BaseModel):
     dispatch_default_read_only: bool = True
     dispatch_tools_exposed: bool = False
     dispatch_child_trw_access: bool = False
-    dispatch_role_client: dict[str, str] = Field(default_factory=dict)
     dispatch_fallback_clients: list[str] = Field(default_factory=list)
     dispatch_default_effort: DispatchEffort | None = None
     dispatch_default_max_turns: int = DEFAULT_DISPATCH_MAX_TURNS
@@ -79,7 +75,6 @@ class MemoryConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
-    recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95
@@ -151,16 +146,6 @@ class TrustConfig(BaseModel):
 
     trust_crawl_boundary: int = 50
     trust_walk_boundary: int = 200
-    trust_walk_sample_rate: float = 0.3
-    trust_security_tags: tuple[str, ...] = (
-        "auth",
-        "secrets",
-        "permissions",
-        "encryption",
-        "oauth",
-        "jwt",
-    )
-    trust_locked: bool = False
 
 
 class ToolsConfig(BaseModel):
@@ -423,48 +408,3 @@ class SecurityConfig(BaseModel):
 
     mcp: MCPSecurityConfig = Field(default_factory=MCPSecurityConfig)
     intent: IntentContractConfig = Field(default_factory=IntentContractConfig)
-
-
-class PhaseTimeCaps(BaseModel):
-    """Phase time cap percentages -- ORC-level time tracking only.
-
-    Convenience accessor for mapping phase names to their target time fractions.
-    NOTE: Framework-documented defaults; not enforced by MCP tools.
-    ORC tracks wall-clock time against these caps at the prompt level.
-    6-phase model: RESEARCH -> PLAN -> IMPLEMENT -> VALIDATE -> REVIEW -> DELIVER.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    research: float = 0.25
-    plan: float = 0.15
-    implement: float = 0.35
-    validate_phase: float = 0.10
-    review: float = 0.10
-    deliver: float = 0.05
-
-    # Maps canonical phase name -> field name; only "validate" differs to avoid
-    # the Pydantic BaseModel reserved-name conflict.
-    _PHASE_FIELDS: ClassVar[dict[str, str]] = {
-        "research": "research",
-        "plan": "plan",
-        "implement": "implement",
-        "validate": "validate_phase",  # field renamed to avoid BaseModel collision
-        "review": "review",
-        "deliver": "deliver",
-    }
-
-    def get_cap(self, phase: str) -> float:
-        """Return the time cap fraction for the given phase.
-
-        Args:
-            phase: Phase name (research, plan, implement, validate, review, deliver).
-
-        Raises:
-            ValueError: If phase is not recognized.
-        """
-        field = self._PHASE_FIELDS.get(phase)
-        if field is None:
-            msg = f"Unknown phase: {phase!r}. Valid: {list(self._PHASE_FIELDS)}"
-            raise ValueError(msg)
-        return float(getattr(self, field))

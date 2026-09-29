@@ -40,6 +40,7 @@ from trw_mcp.comms._endpoints import _reset_process_incarnations_for_test
 from trw_mcp.comms._envelope import Envelope, canonical_bytes
 from trw_mcp.comms._identity import resolve_snapshot
 from trw_mcp.comms._policy import MAX_COUNTER, count_refusal
+from trw_mcp.comms._schema import SCHEMA_VERSION
 from trw_mcp.comms._store import connect, database_path, effective_time, immediate, touch_group_time
 from trw_mcp.models.config import TRWConfig
 
@@ -450,7 +451,7 @@ def _load_frozen_module(relative_path: str, expected_sha256: str) -> Any:
 def test_v3_reader_refuses_a_v4_mailbox_explicitly_and_changes_nothing(scene: SendScene) -> None:
     """PRD-CORE-274 FR16 (Amendment 02) supersedes the FR11-era guarantee that a
     pre-amendment reader accepts a mailbox the new code produced. A v3 reader, loaded
-    from the last v3 commit, must now REFUSE a fresh v4 mailbox with an explicit schema
+    from the last v3 commit, must now REFUSE a fresh current (v4, since PRD-CORE-322 v5) mailbox with an explicit schema
     version error, and the refusal must leave every row intact (no silent migration).
     """
     scene.send("kept", "kept")
@@ -469,7 +470,7 @@ def test_v3_reader_refuses_a_v4_mailbox_explicitly_and_changes_nothing(scene: Se
     try:
         with pytest.raises(frozen_schema.SchemaVersionError):
             frozen_schema.verify(conn)
-        assert conn.execute("SELECT value FROM schema_meta").fetchone()[0] == "4"
+        assert conn.execute("SELECT value FROM schema_meta").fetchone()[0] == str(SCHEMA_VERSION)
         assert conn.execute("SELECT COUNT(*) FROM admissions").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM refusal_counts").fetchone()[0] >= 1
     finally:

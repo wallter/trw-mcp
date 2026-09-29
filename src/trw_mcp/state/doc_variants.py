@@ -39,19 +39,16 @@ import re
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path, PurePosixPath
-from typing import Literal, NamedTuple
+from typing import NamedTuple
 
 from ruamel.yaml import YAML
 
 from trw_mcp.models.config import get_config
-from trw_mcp.state.prd_utils import parse_frontmatter
 
 VARIANT_KINDS: tuple[str, ...] = ("review", "audit", "verdict", "draft", "rewrite", "notes", "summary")
-VariantStatus = Literal["fresh", "stale", "orphaned", "unrecorded"]
 
 _MAX_ROUND = 999
 _MAX_PRODUCER_LEN = 32
-_HEAD_BYTES = 4096  # a variant block is small; frontmatter is read from this head only
 _PRODUCER_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 # A producer may not end in a round-shaped part ("r12" or "peer-r1"): the name
 # x.review-peer-r1.md would then read back as producer "peer", round 1.
@@ -231,17 +228,3 @@ def write_variant(
             handle.write(block + body.rstrip("\n") + "\n")
         return directory / name
     raise VariantLocationError(f"no free round left for {kind}-{producer} of {base.name} (max {_MAX_ROUND})")
-
-
-def variant_status(path: Path) -> VariantStatus:
-    """fresh / stale by the recorded base sha256; orphaned when the base is gone; else unrecorded."""
-    with path.open("rb") as handle:
-        head = handle.read(_HEAD_BYTES).decode("utf-8", errors="replace")
-    block = parse_frontmatter(head).get("variant")
-    if not isinstance(block, dict) or not block.get("base_sha256") or not block.get("base"):
-        return "unrecorded"
-    base = path.parent / str(block["base"])
-    if not base.is_file():
-        return "orphaned"
-    fresh = hashlib.sha256(base.read_bytes()).hexdigest() == block["base_sha256"]
-    return "fresh" if fresh else "stale"

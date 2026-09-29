@@ -11,110 +11,22 @@ from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import patch_update_project_internals
 
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
+
+
+def generate_cursor_rules(target_dir, trw_section, *, force=False):
+    """Test-local: the removed alias delegated to generate_cursor_rules_mdc for cursor-ide."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc
+
+    return generate_cursor_rules_mdc(target_dir, trw_section, client_id="cursor-ide", force=force)
+
 
 @pytest.mark.integration
 class TestCursorBootstrap:
     """FR05+FR06+FR07: Cursor IDE bootstrap — hooks, rules, mcp config."""
 
-    def test_fr05_cursor_hooks_created(self, tmp_path: Path) -> None:
-        """FR05: generate_cursor_hooks creates .cursor/hooks.json with TRW hooks."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        result = generate_cursor_hooks(tmp_path)
-
-        assert ".cursor/hooks.json" in result["created"]
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        assert len(config["hooks"]) == 4
-        events = {h["event"] for h in config["hooks"]}
-        assert "beforeMCPExecution" in events
-        assert "beforeSubmitPrompt" in events
-        assert "afterFileEdit" in events
-        assert "stop" in events
-
-    def test_fr05_cursor_hooks_all_have_trw_descriptions(self, tmp_path: Path) -> None:
-        """FR05: All generated hooks have descriptions starting with 'TRW'."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        generate_cursor_hooks(tmp_path)
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        for hook in config["hooks"]:
-            assert hook["description"].startswith("TRW"), (
-                f"Hook {hook['event']} description does not start with 'TRW': {hook['description']}"
-            )
-
-    def test_fr05_cursor_hooks_smart_merge_preserves_user_hooks(self, tmp_path: Path) -> None:
-        """FR05: Smart merge preserves existing user hooks when file already exists."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        cursor_dir = tmp_path / ".cursor"
-        cursor_dir.mkdir()
-        existing = {"hooks": [{"event": "custom", "command": "echo hi", "description": "User hook"}]}
-        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
-
-        result = generate_cursor_hooks(tmp_path)
-
-        assert ".cursor/hooks.json" in result["updated"]
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        # User hook preserved + 4 TRW hooks = 5 total
-        assert len(config["hooks"]) == 5
-        descriptions = [h["description"] for h in config["hooks"]]
-        assert "User hook" in descriptions
-
-    def test_fr05_cursor_hooks_smart_merge_replaces_trw_hooks(self, tmp_path: Path) -> None:
-        """FR05: Smart merge replaces stale TRW hooks without duplicating them."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        cursor_dir = tmp_path / ".cursor"
-        cursor_dir.mkdir()
-        existing = {
-            "hooks": [
-                {"event": "old", "command": "echo old", "description": "TRW old hook"},
-                {"event": "custom", "command": "echo hi", "description": "User hook"},
-            ]
-        }
-        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
-
-        generate_cursor_hooks(tmp_path)
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        # Old TRW hook removed, 4 new TRW hooks + user hook = 5
-        assert len(config["hooks"]) == 5
-        # Stale TRW hook gone
-        old_events = [h["event"] for h in config["hooks"]]
-        assert "old" not in old_events
-
-    def test_fr05_cursor_hooks_force_overwrites(self, tmp_path: Path) -> None:
-        """FR05: force=True overwrites existing hooks without merging."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        cursor_dir = tmp_path / ".cursor"
-        cursor_dir.mkdir()
-        existing = {"hooks": [{"event": "custom", "command": "echo hi", "description": "User hook"}]}
-        (cursor_dir / "hooks.json").write_text(json.dumps(existing))
-
-        result = generate_cursor_hooks(tmp_path, force=True)
-
-        assert ".cursor/hooks.json" in result["created"]
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        # Only TRW hooks — user hook not preserved
-        assert len(config["hooks"]) == 4
-
-    def test_fr05_cursor_hooks_malformed_json_fallback(self, tmp_path: Path) -> None:
-        """FR05: Malformed existing JSON is gracefully overwritten."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_hooks
-
-        cursor_dir = tmp_path / ".cursor"
-        cursor_dir.mkdir()
-        (cursor_dir / "hooks.json").write_text("not valid json {{")
-
-        result = generate_cursor_hooks(tmp_path)
-
-        assert ".cursor/hooks.json" in result["updated"]
-        config = json.loads((tmp_path / ".cursor" / "hooks.json").read_text())
-        assert len(config["hooks"]) == 4
-
     def test_fr06_cursor_rules_created(self, tmp_path: Path) -> None:
         """FR06: generate_cursor_rules creates .cursor/rules/trw-ceremony.mdc."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_rules
 
         result = generate_cursor_rules(tmp_path, "## TRW Protocol\nContent here")
 
@@ -128,7 +40,6 @@ class TestCursorBootstrap:
 
     def test_fr06_cursor_rules_frontmatter_valid(self, tmp_path: Path) -> None:
         """FR06: Generated rules file has valid MDC frontmatter."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_rules
 
         generate_cursor_rules(tmp_path, "## TRW\nBody")
         content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text()
@@ -139,7 +50,6 @@ class TestCursorBootstrap:
 
     def test_fr06_cursor_rules_under_500_lines(self, tmp_path: Path) -> None:
         """FR06: Generated rules file stays under 500 lines."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_rules
 
         generate_cursor_rules(tmp_path, "Short content")
         content = (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").read_text()
@@ -147,7 +57,6 @@ class TestCursorBootstrap:
 
     def test_fr06_cursor_rules_update_on_existing(self, tmp_path: Path) -> None:
         """FR06: Calling generate_cursor_rules on an existing file reports 'updated'."""
-        from trw_mcp.bootstrap._cursor import generate_cursor_rules
 
         generate_cursor_rules(tmp_path, "First content")
         result = generate_cursor_rules(tmp_path, "Updated content")
@@ -246,24 +155,13 @@ class TestCursorBootstrap:
         config = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
         assert "trw" in config["mcpServers"]
 
-    def test_fr05_fr06_fr07_cursor_dir_auto_created(self, tmp_path: Path) -> None:
-        """FR05+FR06+FR07: .cursor/ directory and subdirs are created automatically."""
+    def test_fr06_fr07_cursor_dir_auto_created(self, tmp_path: Path) -> None:
+        """FR06+FR07: .cursor/ and .cursor/rules/ are created automatically."""
         import shutil as _shutil
 
-        from trw_mcp.bootstrap._cursor import (
-            generate_cursor_hooks,
-            generate_cursor_mcp_config,
-            generate_cursor_rules,
-        )
+        from trw_mcp.bootstrap._cursor import generate_cursor_mcp_config
 
-        # FR05: .cursor/ created by generate_cursor_hooks
-        assert not (tmp_path / ".cursor").exists()
-        generate_cursor_hooks(tmp_path)
-        assert (tmp_path / ".cursor").is_dir()
-        assert (tmp_path / ".cursor" / "hooks.json").exists()
-
-        # FR07: .cursor/ created (or reused) by generate_cursor_mcp_config
-        _shutil.rmtree(tmp_path / ".cursor")
+        # FR07: .cursor/ created by generate_cursor_mcp_config
         assert not (tmp_path / ".cursor").exists()
         generate_cursor_mcp_config(tmp_path)
         assert (tmp_path / ".cursor").is_dir()
@@ -298,7 +196,7 @@ class TestCursorBootstrap:
         assert (tmp_path / ".cursor" / "mcp.json").exists()
         # Claude Code artifacts still present
         assert (tmp_path / ".claude").is_dir()
-        assert (tmp_path / "CLAUDE.md").exists()
+        assert (tmp_path / "AGENTS.md").exists()
 
     def test_fr05_fr07_update_project_cursor_ide(self, tmp_path: Path) -> None:
         """FR05+FR07: update_project with cursor detected updates .cursor/ artifacts."""

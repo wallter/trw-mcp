@@ -11,6 +11,10 @@ import importlib
 import sys
 from unittest.mock import patch
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 
 def test_api_import_no_side_effects() -> None:
     """Importing trw_mcp.api.scoring must NOT call TRWConfig().__init__."""

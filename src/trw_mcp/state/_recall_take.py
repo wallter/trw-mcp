@@ -91,7 +91,13 @@ def take_hits(
                 and (is_wildcard or (row.id, row.namespace) in matched)
             ):
                 taken.append(row)
-        if len(taken) >= cap or len(resolved) >= budget or len(hits) < top_k or top_k >= DEFAULT_LIST_LIMIT:
+        if (
+            len(taken) >= cap
+            or len(resolved) >= budget
+            or len(hits) < top_k
+            or top_k >= DEFAULT_LIST_LIMIT
+            or spec.single_page
+        ):
             break
         top_k = min(top_k * 4, DEFAULT_LIST_LIMIT)
     seen.update(entry.id for entry in taken)

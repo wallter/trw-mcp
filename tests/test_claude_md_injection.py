@@ -165,7 +165,6 @@ class TestBundledTemplateKeysMatchSyncContext:
             "imperative_opener",
             "ceremony_quick_ref",
             "memory_harmonization",
-            "shared_learnings",
             "feedback_reporting",
             "closing_reminder",
         }
@@ -198,10 +197,11 @@ class TestFullSyncNoEmptySectionHeaders:
         (trw_dir / "context").mkdir()
         (trw_dir / "patterns").mkdir()
 
-        target = tmp_path / "CLAUDE.md"
+        (tmp_path / "pkg").mkdir()
+        target = tmp_path / "pkg" / "AGENTS.md"
         target.write_text("# My Project\n\nSome content.\n", encoding="utf-8")
 
-        config = TRWConfig(trw_dir=str(trw_dir))
+        config = TRWConfig(trw_dir=str(trw_dir), sub_claude_md_max_lines=1000)
         reader = FileStateReader()
         llm = MagicMock()
         llm.available = False
@@ -217,8 +217,8 @@ class TestFullSyncNoEmptySectionHeaders:
             from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 
             result = execute_claude_md_sync(
-                scope="root",
-                target_dir=None,
+                scope="sub",
+                target_dir=str(tmp_path / "pkg"),
                 config=config,
                 reader=reader,
                 llm=llm,
@@ -251,10 +251,11 @@ class TestFullSyncNoUnreplacedMarkers:
         (trw_dir / "context").mkdir()
         (trw_dir / "patterns").mkdir()
 
-        target = tmp_path / "CLAUDE.md"
+        (tmp_path / "pkg").mkdir()
+        target = tmp_path / "pkg" / "AGENTS.md"
         target.write_text("# Test\n", encoding="utf-8")
 
-        config = TRWConfig(trw_dir=str(trw_dir))
+        config = TRWConfig(trw_dir=str(trw_dir), sub_claude_md_max_lines=1000)
         reader = FileStateReader()
         llm = MagicMock()
         llm.available = False
@@ -270,8 +271,8 @@ class TestFullSyncNoUnreplacedMarkers:
             from trw_mcp.state.claude_md._sync import execute_claude_md_sync
 
             execute_claude_md_sync(
-                scope="root",
-                target_dir=None,
+                scope="sub",
+                target_dir=str(tmp_path / "pkg"),
                 config=config,
                 reader=reader,
                 llm=llm,
@@ -280,71 +281,6 @@ class TestFullSyncNoUnreplacedMarkers:
         output = target.read_text(encoding="utf-8")
         assert "{{" not in output, f"Unreplaced '{{{{' found in output:\n{output}"
         assert "}}" not in output, f"Unreplaced '}}}}' found in output:\n{output}"
-
-    def test_full_sync_renders_real_shared_learnings(self, tmp_path: Path) -> None:
-        from trw_memory.integrations._backend import create_backend_from_config
-        from trw_memory.models.config import MemoryConfig
-        from trw_memory.models.memory import MemoryEntry
-
-        from trw_mcp.state.persistence import FileStateReader
-
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        (trw_dir / "learnings" / "entries").mkdir(parents=True)
-        (trw_dir / "reflections").mkdir()
-        (trw_dir / "context").mkdir()
-        (trw_dir / "patterns").mkdir()
-
-        target = tmp_path / "CLAUDE.md"
-        target.write_text("# Test\n", encoding="utf-8")
-
-        config = TRWConfig(trw_dir=str(trw_dir))
-        memory_cfg = MemoryConfig(storage_backend="yaml", storage_path=str(tmp_path / ".memory"))
-        reader = FileStateReader()
-        llm = MagicMock()
-        llm.available = False
-
-        with create_backend_from_config(memory_cfg, "project:other") as backend:
-            backend.store(
-                MemoryEntry(
-                    id="shared-1",
-                    content="Cross-project deployment lesson",
-                    detail="Use staged rollouts before schema flips.",
-                    namespace="project:other",
-                    importance=0.9,
-                    cross_validated=True,
-                )
-            )
-
-        with (
-            patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
-            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
-            patch("trw_mcp.state.claude_md._static_sections.MemoryConfig", return_value=memory_cfg),
-            patch("trw_mcp.state.analytics.update_analytics_sync"),
-        ):
-            from trw_mcp.state.claude_md._sync import execute_claude_md_sync
-
-            result = execute_claude_md_sync(
-                scope="root",
-                target_dir=None,
-                config=config,
-                reader=reader,
-                llm=llm,
-            )
-
-        output = target.read_text(encoding="utf-8")
-        assert result["status"] == "synced"
-        assert "## Shared Learnings" in output
-        assert "Cross-project deployment lesson" in output
-        assert "Use staged rollouts before schema flips." in output
-
-
-# ---------------------------------------------------------------------------
-# Test 8: project-local template override must contain all required keys
-# ---------------------------------------------------------------------------
 
 
 class TestProjectLocalTemplateOverrideKeys:

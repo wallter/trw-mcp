@@ -19,6 +19,7 @@ from typing import Final, cast
 import structlog
 from typing_extensions import TypedDict
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._cursor import HookHandlerEntry
@@ -189,8 +190,8 @@ def _write_cli_json(cli_file: Path, payload: object, result: BootstrapFileResult
     a raw path / errno string into higher-level warnings.
     """
     try:
-        cli_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    except OSError:
+        write_checkout_file(cli_file.parents[1], cli_file, json.dumps(payload, indent=2) + "\n")
+    except (OSError, UnsafeWriteError):
         logger.warning("cursor_cli_config_write_failed", path=str(cli_file), reason="unwritable")
         result.setdefault("errors", []).append(".cursor/cli.json could not be written (unwritable path).")
         return False
@@ -324,7 +325,6 @@ def _cursor_cli_trw_section() -> str:
 
 def generate_cursor_cli_agents_md(
     target_dir: Path,
-    trw_section: str,
     *,
     force: bool = False,
 ) -> BootstrapFileResult:
@@ -344,13 +344,15 @@ def generate_cursor_cli_agents_md(
 
     Fresh write: creates AGENTS.md containing only the TRW sentinel block.
 
-    Smart merge: replaces the content between the shared markers with the new
-    ``trw_section`` (cursor-cli's light body). Everything outside is
-    preserved. If no shared block is found, the block is prepended.
+    Smart merge: replaces the content between the shared markers with the
+    PRD-CORE-341 link; the shared body goes to ``.trw/INSTRUCTIONS.md`` through
+    the one renderer every writer uses (``write_instructions_file``), so this
+    installer and ``instructions sync`` never rewrite each other's file.
+    Everything outside is preserved. If no shared block is found, the block is
+    prepended.
 
     Args:
         target_dir: Root of the target repository.
-        trw_section: Rendered TRW instruction content for the sentinel block.
         force: When True, bypass the guard's shrink floors.
 
     Returns:
@@ -361,21 +363,22 @@ def generate_cursor_cli_agents_md(
 
     from trw_mcp.bootstrap._file_ops import _record_write
     from trw_mcp.models.config import get_config
-    from trw_mcp.state.claude_md._parser import (
-        TRW_AUTO_COMMENT,
-        TRW_MARKER_END,
-        TRW_MARKER_START,
-        merge_trw_section,
-    )
+    from trw_mcp.state.claude_md._instructions_link import agents_link_section, write_instructions_file
+    from trw_mcp.state.claude_md._parser import merge_trw_section
 
-    # Client-neutral header: this writer merges into the SAME shared
-    # ``<!-- trw:start -->`` block every other AGENTS.md/CLAUDE.md writer
-    # uses (see docstring above), so AGENTS.md is read by every client that
-    # resolves an AGENTS.md/CLAUDE.md include -- not just cursor-cli.
-    body = f"# TRW Ceremony Protocol\n\n{trw_section}"
-    trw_block = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{body}\n{TRW_MARKER_END}\n"
-
+    # PRD-CORE-341: the protocol goes to .trw/INSTRUCTIONS.md; this writer
+    # merges the SAME two-line link every other AGENTS.md writer uses (see the
+    # docstring above), so the writers never churn one another's block.
     config = get_config()
+    instructions = write_instructions_file(target_dir, config=config)
+    if instructions.refusal is not None:
+        result.setdefault("errors", []).append(
+            f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
+            f"{instructions.refusal['detail']}"
+        )
+        return result
+    trw_block = agents_link_section()
+
     existed = agents_file.exists()
     # max_lines=None: this writer has never enforced a line ceiling (unlike the
     # sync writer's config.max_auto_lines gate in _agents_md.py) -- unifying
@@ -466,6 +469,7 @@ def generate_cursor_cli_hooks(
         hooks_file,
         trw_hooks_body,
         identity_prefix=".cursor/hooks/trw-",
+        root=target_dir,
     )
     result["created"].extend(merge_result.get("created", []))
     result["updated"].extend(merge_result.get("updated", []))

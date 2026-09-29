@@ -2,7 +2,7 @@
 
 PRD-CORE-131: Centralizes all ceremony guidance generation into a single
 ``ProtocolRenderer`` class, replacing hardcoded strings scattered across
-``_static_sections.py`` and ``_opencode_sections.py``.
+``_static_sections.py``.
 
 The renderer is parameterized by ``ClientProfile``, an optional legacy
 ``model_family`` hint, and ``ceremony_mode`` (FULL/MINIMAL/COMPACT). v25 keeps
@@ -60,7 +60,7 @@ class ProtocolRenderer:
         client_profile: ClientProfile | None = None,
         model_family: str = "generic",
         ceremony_mode: CeremonyMode = "FULL",
-        # Legacy compat for _opencode_sections.py which passes platform= directly
+        # Callers without a profile name the client by ``platform``.
         platform: str | None = None,
     ) -> None:
         if client_profile is not None:
@@ -253,56 +253,10 @@ class ProtocolRenderer:
     # ------------------------------------------------------------------
 
     def render_minimal_protocol(self) -> str:
-        """Render a shortened ceremony protocol for local model AGENTS.md.
+        """Render the shortened MINIMAL-mode protocol for a light-mode AGENTS.md (PRD-CORE-131-FR04)."""
+        from trw_mcp.state.claude_md.renderers._minimal import render_minimal_protocol
 
-        PRD-CORE-131-FR04: MINIMAL ceremony mode output.
-        PRD-QUAL-104-FR03: the light-ceremony body MAY omit the full tool table
-        but MUST still emit the session-start mandate and the deliver-gate
-        statement (the file is the only protocol carrier). The gate text is
-        non-negotiable and is present regardless of ceremony/deliver-gate mode.
-
-        P1 audit fix (2026-06-11): the gate language is sourced from the single
-        canonical ``render_deliver_gate_statement()`` (bundled tool-lifecycle
-        derived, FR02/FR04) rather than a hand-copied inline string, so this
-        light-render path can never silently drift gate-less or stale. The loader
-        is imported function-locally to avoid a ``sections`` <-> ``_renderer``
-        module-import cycle.
-        """
-        from trw_mcp.bootstrap._client_integration_appendix import (
-            render_client_integration_appendix,
-        )
-        from trw_mcp.state.claude_md.sections._feedback import render_feedback_reporting
-        from trw_mcp.state.claude_md.sections._memory_routing import render_memory_harmonization
-        from trw_mcp.state.claude_md.sections._tool_lifecycle import (
-            DELEGATION_RULE,
-            render_deliver_gate_statement,
-            render_offline_substitutes,
-        )
-
-        # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: the light-ceremony AGENTS.md is
-        # the only protocol carrier, so it must still ship the transport-loss
-        # retry protocol and the live three-class capability listing.
-        # PRD-QUAL-143-FR01: plus memory routing, feedback and the offline table.
-        appendix = render_client_integration_appendix(self.client_profile.client_id or "agents")
-        return (
-            "TRW tools persist your work across sessions:\n"
-            "- **Start**: call `trw_session_start()` to load prior learnings\n"
-            "- **Accept completed work**: `trw_deliver()` under the delivery gates\n"
-            "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
-            "\n"
-            + DELEGATION_RULE
-            + "\n"
-            + render_memory_harmonization()
-            + render_feedback_reporting(self.client_profile)
-            + "\n"
-            + render_deliver_gate_statement()
-            + "\n"
-            + SESSION_BOUNDARY_TEXT
-            + "\n"
-            + render_offline_substitutes()
-            + "\n"
-            + appendix
-        )
+        return render_minimal_protocol(self.client_profile, SESSION_BOUNDARY_TEXT)
 
     # ------------------------------------------------------------------
     # FR04: Compact protocol (COMPACT mode)
@@ -327,24 +281,3 @@ class ProtocolRenderer:
         from trw_mcp.state.claude_md.renderers._review_and_opencode import render_antigravity_instructions
 
         return render_antigravity_instructions()
-
-    # FR03: OpenCode portable instructions
-    # ------------------------------------------------------------------
-
-    def render_opencode_instructions(self) -> str:
-        """Render instructions for OpenCode .opencode/INSTRUCTIONS.md.
-
-        PRD-CORE-131-FR03: v25 accepts legacy ``model_family`` hints while
-        emitting provider-neutral instructions. Family-specific bodies live in
-        ``renderers/_review_and_opencode.py`` (PRD-CORE-149-FR10); collapsed
-        from four near-identical one-line wrapper methods into one dispatch
-        table (2026-09-04, to make room under the 350-line module ceiling).
-        """
-        from trw_mcp.state.claude_md.renderers import _review_and_opencode as ro
-
-        by_family = {
-            "qwen": ro.render_opencode_qwen,
-            "gpt": ro.render_opencode_gpt,
-            "claude": ro.render_opencode_claude,
-        }
-        return by_family.get(self.model_family, ro.render_opencode_generic)()

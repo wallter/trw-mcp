@@ -42,9 +42,6 @@ from trw_mcp.state.analytics.core import (
     _iter_entry_files as _iter_entry_files,
 )
 from trw_mcp.state.analytics.core import (
-    _safe_float as _safe_float,
-)
-from trw_mcp.state.analytics.core import (
     _safe_int as _safe_int,
 )
 from trw_mcp.state.analytics.core import (
@@ -79,9 +76,6 @@ from trw_mcp.state.analytics.counters import (
 )
 from trw_mcp.state.analytics.counters import (
     _update_core_counters as _update_core_counters,
-)
-from trw_mcp.state.analytics.counters import (
-    detect_tool_sequences as detect_tool_sequences,
 )
 from trw_mcp.state.analytics.counters import (
     find_repeated_operations as find_repeated_operations,
@@ -133,22 +127,10 @@ from trw_mcp.state.analytics.entries import (
     apply_status_update as apply_status_update,
 )
 from trw_mcp.state.analytics.entries import (
-    backfill_source_attribution as backfill_source_attribution,
-)
-from trw_mcp.state.analytics.entries import (
-    extract_learnings_from_llm as extract_learnings_from_llm,
-)
-from trw_mcp.state.analytics.entries import (
     extract_learnings_mechanical as extract_learnings_mechanical,
 )
 from trw_mcp.state.analytics.entries import (
     has_existing_mechanical_learning as has_existing_mechanical_learning,
-)
-from trw_mcp.state.analytics.entries import (
-    has_existing_success_learning as has_existing_success_learning,
-)
-from trw_mcp.state.analytics.entries import (
-    mark_promoted as mark_promoted,
 )
 from trw_mcp.state.analytics.entries import (
     resync_learning_index as resync_learning_index,
@@ -166,11 +148,8 @@ from trw_mcp.state.analytics.entries import (
 __all__ = [
     "apply_status_update",
     "auto_prune_excess_entries",
-    "backfill_source_attribution",
     "compute_jaccard_similarity",
     "compute_reflection_quality",
-    "detect_tool_sequences",
-    "extract_learnings_from_llm",
     "extract_learnings_mechanical",
     "find_duplicate_learnings",
     "find_entry_by_id",
@@ -178,12 +157,10 @@ __all__ = [
     "find_success_patterns",
     "generate_learning_id",
     "has_existing_mechanical_learning",
-    "has_existing_success_learning",
     "infer_topic_tags",
     "is_error_event",
     "is_noise_summary",
     "is_success_event",
-    "mark_promoted",
     "normalize_audit_learning_metadata",
     "resync_learning_index",
     "save_learning_entry",

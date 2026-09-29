@@ -122,14 +122,6 @@ def _matches_inferred_domains(learning: dict[str, object], inferred_domains: set
     return bool(_candidate_domains(learning) & inferred_domains)
 
 
-def _normalized_modified_files(recall_context: object | None) -> list[str]:
-    """Return best-effort normalized modified file paths from recall context."""
-    modified_files = getattr(recall_context, "modified_files", [])
-    if not isinstance(modified_files, list):
-        return []
-    return [str(p).strip().lower() for p in modified_files if str(p).strip()]
-
-
 def _normalize_inferred_domains(raw_domains: object) -> set[str]:
     """Return normalized inferred domains from best-effort recall context data."""
     if not isinstance(raw_domains, (list, tuple, set, frozenset)):

@@ -13,21 +13,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from trw_mcp.framework_deployment import (
-    DEPLOYMENT_RELATIVE_PATH,
-    deploy_framework_generation,
-    rollback_framework_generation,
-)
+from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH, deploy_framework_generation
 
 _FRAMEWORK_RUNTIME_PATH = Path(".trw/frameworks/FRAMEWORK.md")
 _AAREF_RUNTIME_PATH = Path(".trw/frameworks/AARE-F-FRAMEWORK.md")
 _VERSION_PATH = Path(".trw/frameworks/VERSION.yaml")
 _CONFIG_PATH = Path(".trw/config.yaml")
+FORCE_DEPLOY_ENV = "TRW_FRAMEWORK_FORCE_DEPLOY"
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,89 @@ def _framework_body_version(text: str) -> str | None:
 def _aaref_body_version(text: str) -> str | None:
     match = re.search(r"^\*\*Version\*\*:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", text, re.MULTILINE)
     return f"v{match.group(1)}" if match else None
+
+
+def _version_key(version: str | None) -> tuple[int, ...] | None:
+    """Numeric key of a framework version (``v1.2_TRW``) or a package version (``v3.2.1``); None when it does not parse.
+
+    Trailing zero components are insignificant, so ``v1.2`` == ``v1.2.0``. The examples are not the current
+    version on purpose: a literal current version here is a stale copy the next framework bump has to find.
+    """
+    match = re.fullmatch(r"v?([0-9]{1,4}(?:\.[0-9]{1,4})*)(?:_TRW)?", (version or "").strip())
+    if not match:
+        return None
+    parts = [int(part) for part in match.group(1).split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+@dataclass(frozen=True)
+class NewerGeneration:
+    """A deployed generation newer than the running bundle, and where it was read."""
+
+    running: str
+    deployed: str
+    source: str
+
+    @property
+    def nudge(self) -> str:
+        return (
+            f"this trw-mcp ({self.running}) is older than the project's framework ({self.deployed}, "
+            f"from {self.source}); upgrade trw-mcp, or set {FORCE_DEPLOY_ENV}=1 if that value is wrong"
+        )
+
+
+def newer_deployed_generation(
+    target: Path,
+    *,
+    framework_source: str,
+    aaref_source: str,
+) -> NewerGeneration | None:
+    """The newer deployed generation when this bundle is older, else None.
+
+    A running package older than the deployed generation (e.g. an older install
+    launched by another client) must not overwrite it. The running generation is
+    the version the bundled bodies declare; the deployed generation is the
+    highest of the ``VERSION.yaml`` stamp, the deployed body and the config pin,
+    per document. Unparseable versions never report newer (caller keeps its
+    normal behaviour). ``TRW_FRAMEWORK_FORCE_DEPLOY=1`` disables the guard.
+    """
+    if os.environ.get("TRW_FRAMEWORK_FORCE_DEPLOY") == "1":
+        return None
+    target = target.resolve()
+    frameworks = target / ".trw" / "frameworks"
+    texts: dict[str, str] = {}
+    for name in ("VERSION.yaml", "FRAMEWORK.md", "AARE-F-FRAMEWORK.md"):
+        texts[name] = _read_or_log(frameworks / name)
+    config_text = _read_or_log(target / _CONFIG_PATH)
+    for field, running, body_reader, body_name in (
+        ("framework_version", _framework_body_version(framework_source), _framework_body_version, "FRAMEWORK.md"),
+        ("aaref_version", _aaref_body_version(aaref_source), _aaref_body_version, "AARE-F-FRAMEWORK.md"),
+    ):
+        running_key = _version_key(running)
+        if running is None or running_key is None:
+            continue
+        for candidate, source in (
+            (_yaml_scalar(texts["VERSION.yaml"], field), f"VERSION.yaml stamp {field}"),
+            (body_reader(texts[body_name]), f"deployed {body_name} body"),
+            (_yaml_scalar(config_text, field), f"config pin {field} in .trw/config.yaml"),
+        ):
+            key = _version_key(candidate)
+            if candidate is not None and key is not None and key > running_key:
+                return NewerGeneration(running, candidate, source)
+    return None
+
+
+def _read_or_log(path: Path) -> str:
+    """File text, or "" (logged unless simply absent) so the guard degrades visibly."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:  # trw-fail-silent-allow: absent file means no version claim (guard does not fire)
+        return ""
+    except (OSError, UnicodeDecodeError) as exc:  # trw-fail-silent-allow: logged; unreadable means guard cannot fire
+        _LOG.warning("framework downgrade guard could not read %s: %s", path, exc)
+        return ""
 
 
 def _read(path: Path, errors: list[str], label: str) -> str | None:
@@ -298,14 +381,11 @@ def repair_framework_runtime(
     )
 
 
-def rollback_framework_runtime(target: Path, rollback_id: str) -> None:
-    """Restore a receipt-bound complete generation from its retained snapshot."""
-    rollback_framework_generation(target, rollback_id)
-
-
 __all__ = [
+    "FORCE_DEPLOY_ENV",
     "FrameworkIntegrityReport",
+    "NewerGeneration",
     "inspect_framework_runtime",
+    "newer_deployed_generation",
     "repair_framework_runtime",
-    "rollback_framework_runtime",
 ]

@@ -17,13 +17,7 @@ PRD-DIST-2400 §meta-tune.
 
 from __future__ import annotations
 
-from trw_mcp.channels.meta_tune._correlator import (
-    CorrelationEvent,
-    CorrelationResult,
-    adjusted_rate,
-    correlate,
-    load_events,
-)
+from trw_mcp.channels.meta_tune._correlator import CorrelationResult, adjusted_rate, correlate, load_events
 from trw_mcp.channels.meta_tune._stats import (
     ChannelStatEntry,
     ChannelStatsReport,
@@ -34,7 +28,6 @@ from trw_mcp.channels.meta_tune._stats import (
 __all__ = [
     "ChannelStatEntry",
     "ChannelStatsReport",
-    "CorrelationEvent",
     "CorrelationResult",
     "adjusted_rate",
     "compute_channel_stats",

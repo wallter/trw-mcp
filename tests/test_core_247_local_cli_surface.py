@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from tests._memory_fixtures import DaemonCheckout
+from tests._stdio_harness import pinned_server_env
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 
@@ -102,6 +103,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkou
         text=True,
         cwd=str(daemon_checkout.trw_dir.parent),
         check=True,
+        env=pinned_server_env(),
     )
 
     recall = subprocess.run(
@@ -109,6 +111,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkou
         capture_output=True,
         text=True,
         cwd=str(daemon_checkout.trw_dir.parent),
+        env=pinned_server_env(),
     )
     assert recall.returncode == 0, recall.stderr
 
@@ -129,6 +132,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkou
         capture_output=True,
         text=True,
         cwd=str(daemon_checkout.trw_dir.parent),
+        env=pinned_server_env(),
     )
     # An unconfigured backend is a reported result, never a traceback: the CLI
     # inherits submit_feedback's never-raises contract.
@@ -143,6 +147,7 @@ def test_local_usage_lists_recall_and_feedback() -> None:
         [sys.executable, "-m", "trw_mcp.server", "local"],
         capture_output=True,
         text=True,
+        env=pinned_server_env(),
     )
     assert result.returncode == 0
     assert "recall" in result.stdout

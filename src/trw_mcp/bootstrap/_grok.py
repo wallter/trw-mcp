@@ -20,6 +20,7 @@ from typing import cast
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._codex_toml import _toml_dumps
 from trw_mcp.bootstrap._file_ops import _new_result, _record_write
 from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
@@ -91,8 +92,6 @@ def grok_config_names_trw(target_dir: Path) -> bool:
 def generate_grok_config(target_dir: Path, *, force: bool = False) -> BootstrapFileResult:
     """Create or smart-merge ``.grok/config.toml`` with ``[mcp_servers.trw]``."""
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
-    grok_dir = target_dir / ".grok"
-    grok_dir.mkdir(parents=True, exist_ok=True)
     config_path = target_dir / GROK_CONFIG_REL
     existed = config_path.exists()
     existing: dict[str, object] = {}
@@ -121,9 +120,9 @@ def generate_grok_config(target_dir: Path, *, force: bool = False) -> BootstrapF
         # legitimate TOML value it does not know (a datetime, say) raises rather
         # than emitting bad TOML. Report it against the file instead of letting it
         # escape as an unhandled crash through install/update.
-        config_path.write_text(_toml_dumps(merged), encoding="utf-8")
+        write_checkout_file(target_dir, config_path, _toml_dumps(merged))
         _record_write(cast("dict[str, list[str]]", result), GROK_CONFIG_REL, existed=existed)
-    except (OSError, TypeError) as exc:
+    except (OSError, UnsafeWriteError, TypeError) as exc:
         result["errors"].append(f"Failed to write {config_path}: {exc}")
     return result
 
@@ -131,15 +130,8 @@ def generate_grok_config(target_dir: Path, *, force: bool = False) -> BootstrapF
 def generate_grok_agents_md(target_dir: Path, *, force: bool = False) -> dict[str, list[str]]:
     """Write the shared AGENTS.md ceremony block for the grok profile."""
     from trw_mcp.bootstrap._opencode import generate_agents_md
-    from trw_mcp.models.config._profiles import resolve_client_profile
-    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
-    return generate_agents_md(
-        target_dir,
-        render_agents_trw_section(client_profile=resolve_client_profile("grok")),
-        force=force,
-        client_id="grok",
-    )
+    return generate_agents_md(target_dir, force=force, client_id="grok")
 
 
 def install_grok_artifacts(target_dir: Path, force: bool, result: dict[str, list[str]], _: list[str] | None) -> None:

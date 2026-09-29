@@ -14,6 +14,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
+
 logger = structlog.get_logger(__name__)
 
 # FR04 (PRD-FIX-053): Hash file name within .trw/context/
@@ -61,23 +63,14 @@ def _read_stored_hash(trw_dir: Path) -> str | None:
 
 
 def _write_stored_hash(trw_dir: Path, digest: str) -> None:
-    """Write the hash to .trw/context/claude_md_hash.txt."""
-    hash_file = _hash_file_path(trw_dir)
-    try:
-        hash_file.parent.mkdir(parents=True, exist_ok=True)
-        hash_file.write_text(digest, encoding="utf-8")
-    except OSError:
-        logger.debug("claude_md_hash_write_failed", path=str(hash_file))
+    """Write the hash to .trw/context/claude_md_hash.txt, anchored on *trw_dir*.
 
-
-def invalidate_claude_md_hash(trw_dir: Path) -> None:
-    """Delete the stored hash to force re-render on next sync.
-
-    FR04 (PRD-FIX-053): Called by store_learning, update_learning, and
-    auto_prune_excess_entries to ensure the cache never serves stale content.
+    A symlink planted at the hash file or at ``context/`` raises ``UnsafeWriteError`` (PRD-CORE-337 FR08);
+    it is not an ``OSError``, so it propagates to the sync instead of being logged away below.
     """
     hash_file = _hash_file_path(trw_dir)
     try:
-        hash_file.unlink(missing_ok=True)
+        trw_dir.mkdir(parents=True, exist_ok=True)
+        write_checkout_file(trw_dir, hash_file, digest)
     except OSError:
-        logger.debug("claude_md_hash_invalidate_failed", path=str(hash_file))
+        logger.debug("claude_md_hash_write_failed", path=str(hash_file))

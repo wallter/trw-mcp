@@ -2,8 +2,7 @@
 
 Belongs to the ``_opencode.py`` facade. Re-exported there for back-compat.
 
-Three publicly-imported helpers:
-- ``detect_model_family``  — model.lower() → 'qwen' / 'gpt' / 'claude' / 'generic'
+Two publicly-imported helpers:
 - ``generate_opencode_instructions`` — writes .opencode/INSTRUCTIONS.md
 - ``generate_codex_instructions``    — writes .codex/INSTRUCTIONS.md
 
@@ -13,10 +12,8 @@ module under the 350 effective-LOC ceiling.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -90,48 +87,19 @@ def _generate_instructions_file(
     return result
 
 
-def detect_model_family(opencode_json: Mapping[str, Any]) -> str:
-    """Detect model family from opencode.json configuration.
-
-    Reads the 'model' field from opencode.json and returns a model family
-    identifier that can be used to select appropriate instruction content.
-
-    Args:
-        opencode_json: Parsed opencode.json configuration dict.
-
-    Returns:
-        Model family string: 'qwen', 'gpt', 'claude', or 'generic'.
-    """
-    model = opencode_json.get("model", "")
-    if not model:
-        return "generic"
-
-    model_lower = model.lower()
-
-    if "qwen" in model_lower:
-        return "qwen"
-    if "gpt" in model_lower or re.match(r"^o[13](?:$|[-_])", model_lower):
-        return "gpt"
-    if "claude" in model_lower:
-        return "claude"
-    return "generic"
-
-
 def generate_opencode_instructions(
     target_dir: Path,
-    model_family: str,
     *,
     force: bool = False,
     manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    """Generate or update .opencode/INSTRUCTIONS.md with model-specific content.
+    """Generate or update .opencode/INSTRUCTIONS.md (PRD-CORE-301-FR02: shared block plus opencode framing).
 
-    Creates aper-client instruction file with content optimized for the detected
-    model family (qwen, gpt, claude, or generic).
+    Runtime callers: ``_init_project_ide._install_opencode_artifacts`` (init),
+    ``_ide_targets`` (update-project) and ``_instruction_clients`` (instructions sync).
 
     Args:
         target_dir: Target directory for the INSTRUCTIONS.md file.
-        model_family: One of 'qwen', 'gpt', 'claude', or 'generic'.
         force: If True, overwrite existing file.
 
     Returns:
@@ -142,7 +110,7 @@ def generate_opencode_instructions(
     return _generate_instructions_file(
         target_dir,
         relative_path=OPENCODE_INSTRUCTIONS_REL,
-        render_content=lambda: render_opencode_instructions(model_family),
+        render_content=render_opencode_instructions,
         force=force,
         manifest_hashes=manifest_hashes,
         log_event="generate_opencode_instructions",

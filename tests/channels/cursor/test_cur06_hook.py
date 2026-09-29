@@ -19,6 +19,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
+
 _HOOK = (
     Path(__file__).parent.parent.parent.parent
     / "src"
@@ -44,6 +46,7 @@ def _run_hook(
         text=True,
         timeout=timeout,
         env={
+            **daemon_env_passthrough(),
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "TRW_PROJECT_DIR": str(tmp_project),
         },

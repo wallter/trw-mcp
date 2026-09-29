@@ -27,9 +27,6 @@ from trw_mcp.tools._orchestration_phase import (
 from trw_mcp.tools._orchestration_phase import (
     _compute_reversion_metrics as _compute_reversion_metrics,
 )
-from trw_mcp.tools._orchestration_phase import (
-    _compute_wave_progress as _compute_wave_progress,
-)
 
 logger = structlog.get_logger(__name__)
 
@@ -135,6 +132,7 @@ def _log_init_events(
     detection_method: str,
     rationale: str,
     recall_policy: str,
+    target_utc: str | None = None,
 ) -> None:
     """Log the run_init, task_type_detected, and session_start boundary events for trw_init."""
     _events.log_event(
@@ -142,6 +140,9 @@ def _log_init_events(
         "run_init",
         {"task": task_name, "framework": framework_version},
     )
+    if target_utc:
+        # PRD-CORE-338-FR03: one time_target event, written through the same stamping writer.
+        _events.log_event(events_jsonl_path, "time_target", {"target_utc": target_utc})
 
     # PRD-CORE-184-FR05: observability — emit a task_type_detected event so
     # eval campaigns can stratify by task type without parsing run.yaml.
@@ -210,7 +211,11 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     """
     config = get_config()
     from trw_mcp.canons.registry import bundled_manifest_bytes, load_registry
-    from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime
+    from trw_mcp.framework_integrity import (
+        inspect_framework_runtime,
+        newer_deployed_generation,
+        repair_framework_runtime,
+    )
 
     reader = FileStateReader()
     writer = FileStateWriter()
@@ -224,6 +229,17 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     framework_source = _get_bundled_file("framework.md") or ""
     aaref_source = _get_bundled_file("aaref.md") or ""
     registry = load_registry(bundled_manifest_bytes())
+
+    # An older package must never overwrite a newer deployed generation.
+    newer = newer_deployed_generation(trw_dir.parent, framework_source=framework_source, aaref_source=aaref_source)
+    if newer is not None:
+        logger.warning("framework_deploy_skipped_stale_package", running=newer.running, deployed=newer.deployed)
+        return {
+            "status": "skipped_stale_package",
+            "running": newer.running,
+            "deployed": newer.deployed,
+            "nudge": newer.nudge,
+        }
 
     # Skip only when the receipt, body bytes, and pins agree.
     if reader.exists(version_path):

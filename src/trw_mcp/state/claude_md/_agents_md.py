@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state._recall_gate import learnings_injection_allowed
-from trw_mcp.state.analytics.entries import mark_promoted
 from trw_mcp.state.claude_md._agents_md_size_gate import SizeGateMode
 from trw_mcp.state.claude_md._agents_md_size_gate import (
     enforce_size_gate as _enforce_size_gate_impl,
@@ -22,7 +20,7 @@ from trw_mcp.state.claude_md._agents_md_size_gate import (
 from trw_mcp.state.claude_md._instruction_clients import (
     _INSTRUCTION_SYNC_GENERATORS as _INSTRUCTION_SYNC_GENERATORS,
 )
-from trw_mcp.state.claude_md._instruction_clients import INSTRUCTION_SYNC_CLIENT_IDS, INSTRUCTION_SYNC_EXCLUSIONS
+from trw_mcp.state.claude_md._instruction_clients import INSTRUCTION_SYNC_CLIENT_IDS
 from trw_mcp.state.claude_md._instruction_clients import InstructionClientId as InstructionClientId
 from trw_mcp.state.claude_md._instruction_clients import InstructionGeneratorResult as InstructionGeneratorResult
 from trw_mcp.state.claude_md._instruction_clients import InstructionSyncGenerator as InstructionSyncGenerator
@@ -30,35 +28,25 @@ from trw_mcp.state.claude_md._instruction_clients import (
     _managed_manifest_hashes as _managed_manifest_hashes,
 )
 from trw_mcp.state.claude_md._instruction_clients import is_instruction_sync_client as _is_instruction_sync_client
+from trw_mcp.state.claude_md._instructions_link import agents_link_section, write_instructions_file
 
 # Surface-claim + orphan-cleanup helpers live in _orphan_strip (350-eLOC gate).
 # Re-exported so `from ._agents_md import ...` keeps working for the carrier,
 # bootstrap, and the test modules that import through this facade.
 from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_agents_md as _any_client_writes_agents_md
-from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_claude_md as _any_client_writes_claude_md
+from trw_mcp.state.claude_md._orphan_strip import _claude_code_claimed as _claude_code_claimed
 from trw_mcp.state.claude_md._orphan_strip import _strip_trw_section as _strip_trw_section
-from trw_mcp.state.claude_md._orphan_strip import strip_orphaned_claude_md_block as strip_orphaned_claude_md_block
-from trw_mcp.state.claude_md._parser import (
-    TRW_AUTO_COMMENT,
-    TRW_MARKER_END,
-    TRW_MARKER_START,
-    merge_trw_section,
-    render_merged_content,
-)
-from trw_mcp.state.claude_md._review_md import _sanitize_summary
-from trw_mcp.state.claude_md._review_md import recall_learnings as _default_recall
+from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md as retire_legacy_claude_md
+from trw_mcp.state.claude_md._parser import merge_trw_section, render_merged_content
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict
 
 logger = structlog.get_logger(__name__)
 
-RecallFn = Callable[..., list[dict[str, object]]]
-
 # The sync-client registry lives in ``_instruction_clients`` (see its docstring
 # for why it is one readable unit). Re-exported here so importers keep this facade.
 _INSTRUCTION_SYNC_CLIENT_IDS = INSTRUCTION_SYNC_CLIENT_IDS
-_INSTRUCTION_SYNC_EXCLUSIONS = INSTRUCTION_SYNC_EXCLUSIONS
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -89,7 +77,6 @@ class InstructionFileTarget:
 class WriteTargetDecision:
     """Structured sync decision used by ``_sync.py``."""
 
-    write_claude: bool
     write_agents: bool
     instruction_targets: tuple[InstructionFileTarget, ...]
 
@@ -131,9 +118,7 @@ def _recorded_or_detected_ides(project_root: Path) -> tuple[list[str], bool]:
     selection; a detected one is whatever is on the developer's PATH, since
     ``detect_ide`` reports cursor-ide from ``shutil.which("cursor")``. Callers
     that decide what to WRITE must know which they hold — returning the list
-    alone let the caller apply a detection-only carve-out to a recorded list,
-    which put the CLAUDE.md block back on the next sync for a project that had
-    just had it removed.
+    alone let the caller apply a detection-only carve-out to a recorded list.
 
     Thin indirection over the bootstrap helper so this module keeps one import
     point and tests can patch ``detect_ide`` on this facade as before.
@@ -155,7 +140,7 @@ def _determine_write_target_decision(
     project_root: Path,
     scope: str,
 ) -> WriteTargetDecision:
-    """Return the structured write decision for CLAUDE/AGENTS/instruction files."""
+    """Return the structured write decision for AGENTS.md and per-client instruction files."""
     from trw_mcp.models.config._profiles import resolve_client_profile
 
     root_scope = scope == "root"
@@ -166,8 +151,7 @@ def _determine_write_target_decision(
         # for EVERY client (hooks and skills are universal artifacts) — so
         # `trw-mcp instructions sync` with its default client="auto", the call the
         # behavioral protocol tells agents to make at DELIVER, re-derived "this
-        # is a Claude Code project" from our own scaffolding and reinjected the
-        # CLAUDE.md block into codex and opencode projects.
+        # is a Claude Code project" from our own scaffolding.
         detected_ides, from_record = _recorded_or_detected_ides(project_root)
         instruction_targets = _instruction_targets_for_detected_ides(detected_ides) if root_scope else ()
         # PRD-CORE-240-FR04: the profile check is ANDed onto the old condition,
@@ -178,13 +162,16 @@ def _determine_write_target_decision(
         # for. Requiring both keeps this strictly narrower than before, which is
         # all FR04 needs: a withdrawn client now fails the profile check even
         # though it still has an instruction target.
+        # claude-code has no per-client instruction target: AGENTS.md IS its
+        # carrier, so its claim alone admits the AGENTS.md write.
         return WriteTargetDecision(
-            write_claude=_any_client_writes_claude_md(detected_ides, from_record=from_record),
             write_agents=(
                 config.agents_md_enabled
                 and root_scope
-                and bool(instruction_targets)
-                and _any_client_writes_agents_md(detected_ides)
+                and (
+                    _claude_code_claimed(detected_ides, from_record=from_record)
+                    or (bool(instruction_targets) and _any_client_writes_agents_md(detected_ides))
+                )
             ),
             instruction_targets=instruction_targets,
         )
@@ -192,7 +179,6 @@ def _determine_write_target_decision(
     if client == "all":
         instruction_targets = _instruction_targets_from_clients(_INSTRUCTION_SYNC_CLIENT_IDS) if root_scope else ()
         return WriteTargetDecision(
-            write_claude=True,
             write_agents=config.agents_md_enabled and root_scope,
             instruction_targets=instruction_targets,
         )
@@ -200,104 +186,30 @@ def _determine_write_target_decision(
     profile = resolve_client_profile(client)
     instruction_targets = _instruction_targets_from_clients((client,)) if root_scope else ()
     return WriteTargetDecision(
-        write_claude=profile.write_targets.claude_md,
         write_agents=config.agents_md_enabled and root_scope and profile.write_targets.agents_md,
         instruction_targets=instruction_targets,
     )
-
-
-def _determine_write_targets(
-    client: str,
-    config: TRWConfig,
-    project_root: Path,
-    scope: str,
-) -> tuple[bool, bool, str | None]:
-    """Determine whether to write CLAUDE.md and/or AGENTS.md."""
-    from trw_mcp.models.config._profiles import resolve_client_profile
-
-    decision = _determine_write_target_decision(client, config, project_root, scope)
-    if decision.instruction_targets:
-        instruction_path = decision.instruction_targets[0].instruction_path
-    elif client not in ("auto", "all"):
-        instruction_path = resolve_client_profile(client).write_targets.instruction_path
-    else:
-        instruction_path = None
-    return decision.write_claude, decision.write_agents, instruction_path
-
-
-def _inject_learnings_to_agents(
-    trw_dir: Path,
-    config: TRWConfig,
-    recall_fn: RecallFn | None = None,
-    *,
-    dry_run: bool = False,
-) -> str:
-    """Build learning injection string for AGENTS.md or return empty string on error.
-
-    A *dry_run* renders the same bullets but records no promotion (B71-110).
-    """
-    if not learnings_injection_allowed(config, "passive"):
-        return ""
-    _recall = recall_fn if recall_fn is not None else _default_recall
-    try:
-        learning_entries = _recall(
-            trw_dir,
-            min_impact=config.agents_md_learning_min_impact,
-            status="active",
-            max_results=config.agents_md_learning_max,
-        )
-        bullet_lines: list[str] = []
-        for entry in learning_entries:
-            summary = _sanitize_summary(str(entry.get("summary", "")))
-            if not summary:
-                continue
-            bullet_lines.append(f"- {summary}")
-            # PRD-CORE-165 FR-05: a surfaced (actually-injected) learning is
-            # promoted. Skip entries without an id; never let promotion
-            # bookkeeping abort the AGENTS.md injection.
-            learning_id = str(entry.get("id", ""))
-            if not learning_id or dry_run:
-                continue
-            try:
-                mark_promoted(trw_dir, learning_id)
-            except Exception:  # justified: fail-open — promotion bookkeeping must not block injection
-                logger.warning(
-                    "agents_md_mark_promoted_failed",
-                    learning_id=learning_id,
-                    exc_info=True,
-                )
-        if bullet_lines:
-            return "\n## Key Learnings\n\n" + "\n".join(bullet_lines) + "\n"
-    except Exception:  # justified: fail-open — learning injection is optional AGENTS.md enrichment
-        logger.warning("agents_md_learning_injection_failed", exc_info=True)
-    return ""
 
 
 def _sync_agents_md_if_needed(
     write_agents: bool,
     config: TRWConfig,
     project_root: Path,
-    trw_dir: Path,
     client: str = "auto",
-    recall_fn: RecallFn | None = None,
     *,
     force: bool = False,
     dry_run: bool = False,
-) -> tuple[bool, str | None, InstructionWriteVerdict | None]:
-    """Generate and write AGENTS.md if needed.
+) -> tuple[bool, str | None, tuple[InstructionWriteVerdict, ...]]:
+    """Write ``.trw/INSTRUCTIONS.md`` and AGENTS.md's link to it, if needed.
 
-    Returns ``(synced, path, verdict)``. The verdict carries the PRD-FIX-123
-    guard outcome so the dispatcher can report a refusal or a dry-run diff
-    instead of silently claiming success.
+    Returns ``(synced, path, verdicts)``: the instructions-file verdict, then
+    AGENTS.md's when it was attempted. Each carries the PRD-FIX-123 guard
+    outcome so the dispatcher reports a refusal or a dry-run diff instead of
+    silently claiming success. A refused instructions file stops AGENTS.md
+    (PRD-CORE-341-FR03/FR07).
     """
     if not write_agents:
-        return False, None, None
-
-    from trw_mcp.state.claude_md._static_sections import (
-        render_agents_trw_section,
-        render_codex_trw_section,
-        render_minimal_protocol,
-    )
+        return False, None, ()
 
     agents_target = project_root / "AGENTS.md"
     effective_client = client
@@ -306,23 +218,11 @@ def _sync_agents_md_if_needed(
         if "codex" in detected_ides and "opencode" not in detected_ides:
             effective_client = "codex"
 
-    # FR01 (PRD-CORE-135): resolve exposed tools so AGENTS.md only describes
-    # tools the agent can actually call.
-    from trw_mcp.state.claude_md._tool_manifest import resolve_exposed_tools
-
-    exposed = resolve_exposed_tools(mode=config.tool_resolution_mode)
-
-    if effective_client == "codex":
-        agents_body = render_codex_trw_section(exposed_tools=exposed)
-    elif config.effective_ceremony_mode == "light":
-        agents_body = render_minimal_protocol()
-    else:
-        agents_body = render_agents_trw_section(exposed_tools=exposed)
-
-    if config.agents_md_learning_injection:
-        agents_body += _inject_learnings_to_agents(trw_dir, config, recall_fn=recall_fn, dry_run=dry_run)
-
-    agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
+    # PRD-CORE-341: the body goes to the TRW-owned file; AGENTS.md gets the link.
+    instructions = write_instructions_file(project_root, dry_run=dry_run, config=config, client=effective_client)
+    if instructions.refusal is not None:
+        return False, None, (instructions,)
+    agents_section = agents_link_section()
     # PRD-FIX-123-FR07: measure the MERGED total, which is the quantity the
     # writer enforces ``max_auto_lines`` on. Measuring the rendered section alone
     # is why a 104-line section passed this gate and then truncated a 322-line
@@ -340,7 +240,7 @@ def _sync_agents_md_if_needed(
 
     gate_mode = _am._resolve_size_gate_mode(config, project_root)
     if _am._enforce_size_gate(str(agents_target), gate_lines, config.max_auto_lines, gate_mode) is not None:
-        return False, None, None  # block mode: oversize already logged by the gate; abort the write.
+        return False, None, (instructions,)  # block mode: oversize already logged by the gate; abort the write.
 
     verdict = merge_trw_section(
         agents_target,
@@ -351,7 +251,7 @@ def _sync_agents_md_if_needed(
         config=config,
         project_root=project_root,
     )
-    return verdict.written, str(agents_target), verdict
+    return verdict.written, str(agents_target), (instructions, verdict)
 
 
 def _sync_instruction_file_target(
@@ -398,70 +298,3 @@ def _sync_instruction_targets(
 
     primary_path = synced_paths[0] if synced_paths else None
     return bool(synced_paths), primary_path, synced_paths
-
-
-def _migrate_trw_content_from_agents_md(
-    target_dir: Path,
-    config: TRWConfig,
-    *,
-    force: bool = False,
-) -> tuple[bool, str]:
-    """Migrate TRW auto-generated AGENTS.md content to per-client instruction files."""
-    agents_path = target_dir / "AGENTS.md"
-
-    if not agents_path.exists():
-        return False, ""
-
-    content = agents_path.read_text(encoding="utf-8")
-    # Line-anchored even though this path is currently unreachable: a substring
-    # marker scan is the shape that destroyed 705 ROADMAP lines, and dead code
-    # carrying it is a loaded gun for whoever rewires it.
-    from trw_mcp.bootstrap._file_ops import find_marker_line_span
-
-    _start_span = find_marker_line_span(content, TRW_MARKER_START, anchor="start")
-    _end_span = find_marker_line_span(content, TRW_MARKER_END, anchor="end")
-    start_idx = -1 if _start_span is None else _start_span[0]
-    end_idx = -1 if _end_span is None else _end_span[0]
-    if start_idx == -1 or end_idx == -1:
-        return False, ""
-
-    detected_ides = detect_ide(target_dir)
-    instruction_targets = _instruction_targets_for_detected_ides(detected_ides)
-    instruction_paths: list[str] = []
-    for target in instruction_targets:
-        synced, synced_path = _sync_instruction_file_target(target, target_dir, force=force)
-        if not synced or synced_path is None:
-            logger.warning(
-                "agents_md_instruction_migration_failed",
-                client=target.client_id,
-                path=target.instruction_path,
-            )
-            return False, ""
-        instruction_paths.append(synced_path)
-
-    stripped, remaining_content = _strip_trw_section(content)
-    if not stripped:
-        return False, ""
-
-    # PRD-FIX-123-FR06: guarded like every other AGENTS.md writer. No production
-    # caller today (PRD-CORE-240 would wire it) and the note above calls this path
-    # "a loaded gun", so it is guarded NOW; the strip removes only generated bytes,
-    # which the guard's block-delta attribution recognises, so it is never refused.
-    from trw_mcp.bootstrap._file_ops import _new_result
-    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
-
-    strip_result = _new_result()
-    if not guarded_bootstrap_write(
-        agents_path,
-        remaining_content,
-        project_root=target_dir,
-        markers=(TRW_MARKER_START, TRW_MARKER_END),
-        result=strip_result,
-        rel_path=agents_path.name,
-        force=force,
-    ):
-        logger.warning("agents_md_trw_section_removal_failed", errors=strip_result["errors"])
-        return False, ""
-
-    primary_path = instruction_paths[0] if instruction_paths else ""
-    return True, primary_path

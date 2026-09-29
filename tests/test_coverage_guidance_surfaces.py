@@ -55,13 +55,9 @@ def test_packaged_guidance_does_not_invent_coverage_floors() -> None:
 
 
 def test_primary_coverage_workflows_name_the_no_threshold_behavior() -> None:
-    """The two coverage-owning skills must say what to do when no floor exists."""
+    """The coverage-owning skill must say what to do when no floor exists."""
     for relative in (
-        "skills/trw-sprint-finish/SKILL.md",
-        "skills/trw-sprint-init/SKILL.md",
         "skills/trw-test-strategy/SKILL.md",
-        "codex/skills/trw-sprint-finish/SKILL.md",
-        "codex/skills/trw-sprint-init/SKILL.md",
         "codex/skills/trw-test-strategy/SKILL.md",
     ):
         content = _read(relative).lower()

@@ -7,6 +7,9 @@ import pytest
 from trw_mcp.tools._learn_side_effects import _content_policy_reject
 from trw_mcp.tools.learning import _coerce_tags
 
+pytestmark = pytest.mark.unit
+
+
 # --- FR1: tags string coercion -------------------------------------------------
 
 

@@ -101,3 +101,21 @@ def test_symbol_search_prefers_exact_matches_before_fuzzy_matches(tmp_path: Path
     assert response.results[0].symbol_name == "target"
     assert response.results[0].reason.startswith("exact symbol match")
     assert response.results[1].symbol_name == "target_extra"
+
+
+def test_search_mode_vocabulary_no_longer_admits_semantic() -> None:
+    """The response model's mode vocabulary tracks a prior removal.
+
+    PRD-CORE-172 once shipped a ``semantic`` member whose branch read a
+    hardcoded empty chunk collection, so it could never return a result;
+    2.0.0 removed it (UF-031) rather than implementing it. A response could
+    not be built with ``mode="semantic"`` any more; leaving the member in
+    ``SearchMode`` would keep an unconstructible value in the public type,
+    which is how a removed mode gets quietly re-offered.
+    """
+    from typing import get_args
+
+    from trw_mcp.code_index.search import ErrorCode, SearchMode
+
+    assert get_args(SearchMode) == ("lexical",)
+    assert "dependency_missing" not in get_args(ErrorCode)

@@ -243,7 +243,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
             # Minimal env (NOT the full host os.environ): only the per-client
             # allowlist + PYTHONPATH/VIRTUAL_ENV the ``python -m`` import needs. This
             # keeps host secrets out of both the intermediate and the foreign agent.
-            env=build_runner_env(req.client, posture=req.posture, with_trw=req.with_trw),
+            env=build_runner_env(req.client, posture=req.posture, with_trw=req.with_trw, read_only=req.read_only),
         )
     except BaseException:
         try:
@@ -421,25 +421,6 @@ def _kill_job_tree(job: DispatchJob, jobs_dir: Path) -> None:
 
     # Also reach the foreign agent (its own session leader) via the pid sidecar.
     _kill_child_tree(jobs_dir, job.job_id)
-
-
-def cancel_job(job_id: str, *, trw_dir: Path | None = None) -> DispatchJob:
-    """Request verified process-tree cleanup and mark the job cancelled.
-
-    The two best-effort kills are delegated to :func:`_kill_job_tree`. The
-    verified runner timeout-tree-kill is untouched — cancel reach is added purely
-    via the sidecar, not by changing how the runner spawns the child.
-    """
-    jobs_dir = _jobs_dir(trw_dir)
-    job = _load_job(jobs_dir, job_id)
-
-    _kill_job_tree(job, jobs_dir)
-
-    job.status = "cancelled"
-    _persist(job, jobs_dir)
-    _cleanup_on_terminal(jobs_dir, job_id)
-    logger.info("dispatch_job_cancelled", job_id=job_id, pid=job.pid)
-    return job
 
 
 def _sweep_old_jobs(jobs_dir: Path, *, max_age_days: int = _DEFAULT_JOB_MAX_AGE_DAYS) -> None:

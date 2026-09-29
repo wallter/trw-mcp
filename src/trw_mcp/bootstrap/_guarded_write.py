@@ -80,33 +80,4 @@ def guarded_bootstrap_write(
     return False
 
 
-def guarded_claude_md_scaffold_write(
-    claude_md_path: Path,
-    content: str,
-    *,
-    project_root: Path,
-    result: dict[str, list[str]],
-    force: bool,
-) -> bool:
-    """Route a forced CLAUDE.md scaffold rewrite through the guard.
-
-    `_minimal_claude_md()` already embeds the standard trw:start/trw:end
-    markers, so this is a thin ``guarded_bootstrap_write`` call naming them --
-    kept here (rather than inline in ``_init_project.py``) to stay under the
-    350-eLOC gate and to keep every CLAUDE.md/AGENTS.md write behind this one
-    sanctioned indirection.
-    """
-    from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
-
-    return guarded_bootstrap_write(
-        claude_md_path,
-        content,
-        project_root=project_root,
-        markers=(TRW_MARKER_START, TRW_MARKER_END),
-        result=result,
-        rel_path="CLAUDE.md",
-        force=force,
-    )
-
-
-__all__ = ["guarded_bootstrap_write", "guarded_claude_md_scaffold_write"]
+__all__ = ["guarded_bootstrap_write"]

@@ -38,10 +38,17 @@ from trw_mcp.tools._delivery_safety_critical_gate import (
     NOT_DECLARED,
     UNKNOWN_SCOPE,
     find_satisfying_adversarial_receipt,
-    resolve_safety_critical_scope,
     safety_critical_gate_result,
 )
 from trw_mcp.tools._review_manual import handle_manual_mode
+
+
+def resolve_safety_critical_scope(run_path, project_root=None):
+    """Test-local: the removed public wrapper returned ``_resolve_scope(run_path).value``."""
+    from trw_mcp.tools._delivery_safety_critical_gate import _resolve_scope
+
+    return _resolve_scope(run_path).value
+
 
 _BLOCK_KEY = "safety_critical_adversarial_block"
 

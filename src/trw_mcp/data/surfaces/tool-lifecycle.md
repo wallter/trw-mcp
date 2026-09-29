@@ -41,11 +41,11 @@ Delegate only for work that is genuinely independent and parallelizable — a wi
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` reported `tests_passed=true` and `static_checks_clean=true` (or omitted), with a non-zero `test_count` and a non-empty `scope`, **or**
+- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true` (or omitted), a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**
-- (c) an authorized operator/config override is recorded with technical rationale.
+- (c) an authorized operator/config override is recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.
 
 A review-verdict label or free-text reason alone is not an acceptable-failure record.
-Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record.
+Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record; the canon rule above still applies to it.

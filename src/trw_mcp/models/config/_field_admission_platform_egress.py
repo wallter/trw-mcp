@@ -7,8 +7,8 @@ registry grows once per new public field and would otherwise drift past the
 module-size gate each time one is admitted.
 
 One field is admitted: ``platform_contact_enabled``, the operator kill
-switch for both platform-egress contacts (the session-start update check and
-the team-sync pull loop).
+switch for automatic platform egress (the team-sync pull loop; the
+session-start update check it also covered was retired in 8.0.0).
 
 Imports nothing from the rest of ``trw_mcp.models.config`` except the record
 type, so it cannot create an import cycle with ``TRWConfig``.
@@ -26,8 +26,10 @@ PLATFORM_EGRESS_ADMISSIONS: dict[str, ConfigAdmission] = {
         field_name="platform_contact_enabled",
         owner="W38-security-P1",
         consumer=(
-            "trw_mcp.state._platform_trust.platform_contact_enabled, read directly (hard stop, no "
-            "request attempted) by trw_mcp.state.auto_upgrade.check_for_update/_fetch_artifact_info, "
+            "trw_mcp.state._platform_trust.platform_contact_enabled, which vetoes on this field and "
+            "otherwise defers to trw_memory.platform_contact (the live, shared resolution of the same "
+            "key, B71-106/107), read directly (hard stop, no "
+            "request attempted) by "
             "trw_mcp.sync.pull.SyncPuller.pull_intel_state, trw_mcp.sync.push.SyncPusher.push_learnings/"
             "push_outcomes, trw_mcp.telemetry.sender.BatchSender.send, "
             "trw_mcp.telemetry.publisher.publish_learnings, and trw_mcp.telemetry.pipeline."
@@ -39,12 +41,12 @@ PLATFORM_EGRESS_ADMISSIONS: dict[str, ConfigAdmission] = {
         ),
         default_rationale=(
             "Defaults to True: byte-identical behavior for existing installs that already rely on "
-            "the update check or team sync. TRW_PLATFORM_CONTACT_ENABLED=false gives the same "
+            "team sync. TRW_PLATFORM_CONTACT_ENABLED=false gives the same "
             "result without editing config (PRD-CORE-302 W40 folded the old env-only offline switch into it)."
         ),
         interaction_analysis=(
             "A hard stop at every AUTOMATIC platform-egress call site (2026-09-25 sol re-review, "
-            "P1-C round 2 closed the gap): auto_upgrade and pull read it at the START, before any "
+            "P1-C round 2 closed the gap): pull reads it at the START, before any "
             "URL/host resolution; push/sender/publisher/pipeline read it immediately after their "
             "own per-purpose consent gate (learning_sharing_enabled for push/publisher, "
             "platform_telemetry_enabled for sender/pipeline) and before any URL/client is touched — "

@@ -102,7 +102,7 @@ def test_doctor_names_the_migration_while_a_slice_a_token_remains(checkout: Path
     paths = DaemonPaths.resolve()
     paths.token.write_text("an-all-namespace-bearer", encoding="utf-8")
 
-    status, message = memory_daemon_row()
+    status, message = memory_daemon_row(checkout)
 
     assert status == "WARN"
     assert "trw-mcp memory token --migrate" in message

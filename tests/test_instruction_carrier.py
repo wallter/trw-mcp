@@ -4,10 +4,9 @@ The externalization carrier (writing the TRW block into a ``.trw``
 sidecar behind an ``@`` import) is gone — the block is always ``INLINE``
 unless the target is a thin single-source pointer file (``POINTER_SKIP``).
 Covers what remains: file classification (FR03/NFR04), the two-mode
-carrier decision, the shared pointer-skip guard used by both appenders,
-pointer healing (FR06), and the dispatcher integration that reports
-``carrier_mode``/``pointer_skips`` end-to-end (including the cache-hit
-path).
+carrier decision, the shared pointer-skip guard, pointer healing (FR06),
+and the root sync writing claude-code's block into ``.trw/INSTRUCTIONS.md``
+with AGENTS.md holding the link to it (TRW 8.0, PRD-CORE-341).
 """
 
 from __future__ import annotations
@@ -29,6 +28,11 @@ from trw_mcp.state.claude_md._instruction_carrier import (
     heal_pointer,
     pointer_skip_guard,
     resolve_carrier_mode,
+)
+from trw_mcp.state.claude_md._instructions_link import (
+    GENERATED_HEADER_PREFIX,
+    INSTRUCTIONS_RELPATH,
+    LINK_BODY,
 )
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
@@ -163,17 +167,6 @@ class TestPointerSkipGuard:
         assert out == "@AGENTS.md\n"
         assert TRW_MARKER_START not in out
 
-    def test_bootstrap_appender_skips_pointer(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._template_claude_md import _update_claude_md_trw_section
-
-        p = tmp_path / "CLAUDE.md"
-        p.write_text("@AGENTS.md\n", encoding="utf-8")
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-        _update_claude_md_trw_section(p, result)
-        assert p.read_text(encoding="utf-8") == "@AGENTS.md\n"
-        assert str(p) in result["preserved"]
-        assert not result["errors"]
-
     def test_guard_returns_none_for_content(self, tmp_path: Path) -> None:
         p = tmp_path / "CLAUDE.md"
         p.write_text("# Real content here\n\nProse.\n", encoding="utf-8")
@@ -287,85 +280,33 @@ class TestDispatcherIntegration:
         (trw_dir / "context").mkdir(parents=True)
         return trw_dir, tmp_path
 
-    def test_content_claude_md_is_inlined(self, tmp_path: Path) -> None:
+    def test_content_agents_md_gets_the_link_and_the_instructions_file(self, tmp_path: Path) -> None:
+        """TRW 8.0: claude-code's root carrier is AGENTS.md; no CLAUDE.md is written.
+
+        PRD-CORE-341: the block lives in ``.trw/INSTRUCTIONS.md``; AGENTS.md keeps the user's prose and the link.
+        """
         trw_dir, root = self._setup(tmp_path)
-        (root / "CLAUDE.md").write_text("# Project\n\nHuman docs.\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Project\n\nHuman docs.\n", encoding="utf-8")
         cfg = TRWConfig(trw_dir=str(trw_dir))
-        result = _run_claude_sync(cfg, trw_dir, root)
+        _run_claude_sync(cfg, trw_dir, root)
 
-        assert result["carrier_mode"] == "inline"
-        claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
-        assert TRW_MARKER_START in claude
-        assert "# Project" in claude  # user content preserved
-        assert not (root / ".trw" / "INSTRUCTIONS.md").exists()
-
-    def test_pointer_skip_reported(self, tmp_path: Path) -> None:
-        trw_dir, root = self._setup(tmp_path)
-        (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
-        cfg = TRWConfig(trw_dir=str(trw_dir))
-        result = _run_claude_sync(cfg, trw_dir, root)
-
-        assert result["carrier_mode"] == "pointer_skip"  # FR07
-        skips = result["pointer_skips"]
-        assert isinstance(skips, list) and skips and skips[0]["import_targets"] == ["AGENTS.md"]
-        assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"  # un-clobbered
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        assert TRW_MARKER_START in agents
+        assert LINK_BODY in agents
+        assert "# Project" in agents  # user content preserved
+        assert not (root / "CLAUDE.md").exists()
+        instructions = (root / INSTRUCTIONS_RELPATH).read_text(encoding="utf-8")
+        assert instructions.startswith(GENERATED_HEADER_PREFIX)
+        assert "trw_session_start" in instructions
 
     def test_second_sync_is_cache_hit_and_byte_identical(self, tmp_path: Path) -> None:
-        """FR08: a no-op re-sync is a cache hit, byte-identical, and still reports carrier_mode (P1-1/P1-3)."""
+        """FR08: a no-op re-sync is a cache hit and byte-identical."""
         trw_dir, root = self._setup(tmp_path)
-        (root / "CLAUDE.md").write_text("# Project\n\nHuman docs.\n", encoding="utf-8")
+        (root / "AGENTS.md").write_text("# Project\n\nHuman docs.\n", encoding="utf-8")
         cfg = TRWConfig(trw_dir=str(trw_dir))
         _run_claude_sync(cfg, trw_dir, root)
-        claude_1 = (root / "CLAUDE.md").read_text(encoding="utf-8")
+        agents_1 = (root / "AGENTS.md").read_text(encoding="utf-8")
 
         result2 = _run_claude_sync(cfg, trw_dir, root)
         assert result2["status"] == "unchanged"
-        assert result2["carrier_mode"] == "inline"  # FR07 reported on cache hit (P1-1)
-        assert (root / "CLAUDE.md").read_text(encoding="utf-8") == claude_1
-
-    def test_pointer_skip_reported_on_cache_hit(self, tmp_path: Path) -> None:
-        """FR07 P1-1: a pointer is reported as pointer_skip even on the cache-hit path."""
-        trw_dir, root = self._setup(tmp_path)
-        (root / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
-        cfg = TRWConfig(trw_dir=str(trw_dir))
-        _run_claude_sync(cfg, trw_dir, root)
-        result2 = _run_claude_sync(cfg, trw_dir, root)
-        assert result2["status"] == "unchanged"
-        assert result2["carrier_mode"] == "pointer_skip"
-        assert result2["pointer_skips"][0]["import_targets"] == ["AGENTS.md"]
-
-
-# ---------------------------------------------------------------------------
-# FR07 — doctor surface
-# ---------------------------------------------------------------------------
-
-
-class TestDoctorPointerReport:
-    def test_doctor_reports_pointer_as_unclobbered(self, tmp_path: Path) -> None:
-        from trw_mcp.server._subcommands_doctor import _check_instruction_gate
-        from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
-
-        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
-        # AGENTS.md carries the real block with the deliver gate so the check PASSes.
-        (tmp_path / "AGENTS.md").write_text(
-            f"# Agents\n\n{TRW_MARKER_START}\n{DELIVER_GATE_PHRASE} — build check required.\n{TRW_MARKER_END}\n",
-            encoding="utf-8",
-        )
-        result = _check_instruction_gate(tmp_path, TRWConfig(trw_dir=str(tmp_path / ".trw")))
-        assert result.status == "PASS"
-        assert "un-clobbered" in result.message
-        assert "CLAUDE.md" in result.message and "AGENTS.md" in result.message
-
-    def test_doctor_on_clobbered_pointer_not_failed(self, tmp_path: Path) -> None:
-        """P2-5: a CLAUDE.md still carrying a stale block classifies as POINTER (block stripped first), not a gate FAIL."""
-        from trw_mcp.server._subcommands_doctor import _check_instruction_gate
-        from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
-
-        (tmp_path / "CLAUDE.md").write_text(_clobbered_pointer(), encoding="utf-8")
-        (tmp_path / "AGENTS.md").write_text(
-            f"# Agents\n\n{TRW_MARKER_START}\n{DELIVER_GATE_PHRASE} — build check required.\n{TRW_MARKER_END}\n",
-            encoding="utf-8",
-        )
-        result = _check_instruction_gate(tmp_path, TRWConfig(trw_dir=str(tmp_path / ".trw")))
-        assert result.status != "FAIL"
-        assert "un-clobbered" in result.message
+        assert (root / "AGENTS.md").read_text(encoding="utf-8") == agents_1

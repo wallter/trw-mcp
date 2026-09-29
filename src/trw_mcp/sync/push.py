@@ -17,11 +17,13 @@ import structlog
 from pydantic import BaseModel
 from trw_memory.security.pii import anonymize_installation_id, redact_paths
 
-from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled, send_policy
 from trw_mcp.sync.identity import resolve_sync_client_id
 from trw_mcp.telemetry.anonymizer import redact_secrets
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from trw_memory.models.memory import MemoryEntry
 
 logger = structlog.get_logger(__name__)
@@ -107,6 +109,7 @@ class SyncPusher:
         timeout: float = 10.0,
         client_id: str | None = None,
         *,
+        source_trw_dir: Path | None,
         learning_sharing_enabled: bool = False,
         platform_telemetry_enabled: bool = False,
     ) -> None:
@@ -116,6 +119,8 @@ class SyncPusher:
         self._timeout = timeout
         self._client_id = (client_id or "").strip() or resolve_sync_client_id()
         self._project_root = os.getenv("TRW_PROJECT_ROOT", os.getcwd())
+        # The .trw the pushed learnings and outcomes are read from; its policy governs these sends.
+        self._source_trw_dir = source_trw_dir
         # PRD-SEC-004-FR05/FR01: the background sync push is a second off-machine
         # egress path (alongside publisher.py). Learning CONTENT (summary+detail)
         # rides /v1/sync/learnings and is gated by learning_sharing_enabled;
@@ -126,6 +131,11 @@ class SyncPusher:
         # gate in BackendSyncClient._run_one_cycle.
         self._learning_sharing_enabled = learning_sharing_enabled
         self._platform_telemetry_enabled = platform_telemetry_enabled
+
+    @property
+    def source_trw_dir(self) -> Path | None:
+        """The ``.trw`` this pusher's payload is read from, whose send policy governs it."""
+        return self._source_trw_dir
 
     async def push_learnings(self, entries: list[MemoryEntry]) -> PushResult:
         """Batch push learnings to POST /v1/sync/learnings. Never raises.
@@ -144,7 +154,8 @@ class SyncPusher:
         # learning summary/detail leave the machine via background sync, even if
         # a caller hands this pusher dirty entries. Zero off-machine POST when
         # disabled; entries stay locally dirty for a future consented push.
-        if not self._learning_sharing_enabled:
+        policy = send_policy(self._source_trw_dir)  # the payload project's own consent and switch
+        if not (self._learning_sharing_enabled and policy.learning_sharing):
             logger.debug(
                 "sync_push_skipped",
                 reason="learning_sharing_disabled",
@@ -159,7 +170,7 @@ class SyncPusher:
         # between a disabled switch and an unauthenticated POST of learning
         # CONTENT. No request is attempted; entries stay locally dirty for a
         # future consented push, same as the learning_sharing_enabled gate above.
-        if not platform_contact_enabled():
+        if not platform_contact_enabled(self._source_trw_dir):
             logger.debug(
                 "sync_push_skipped",
                 reason="platform_contact_disabled",
@@ -184,6 +195,10 @@ class SyncPusher:
 
         # Batch entries
         for i in range(0, len(entries), self._batch_size):
+            if not platform_contact_enabled(
+                self._source_trw_dir
+            ):  # every request asks (B71-106); unsent entries stay dirty
+                break
             batch = entries[i : i + self._batch_size]
             payload = {
                 "entries": [self._serialize_entry(e) for e in batch],
@@ -201,7 +216,7 @@ class SyncPusher:
                         # docstring. An untrusted backend_url (project-tracked
                         # config) or a disabled platform_contact_enabled
                         # never receives the bearer.
-                        headers=platform_auth_headers(url, self._api_key),
+                        headers=platform_auth_headers(url, self._api_key, source_trw_dir=self._source_trw_dir),
                     )
                     resp.raise_for_status()
                     result = resp.json()
@@ -255,7 +270,8 @@ class SyncPusher:
         # telemetry — defensively gated on platform_telemetry_enabled. Zero
         # off-machine POST when disabled (the documented opt-out flag); pending
         # outcomes remain locally queued for a future consented push.
-        if not self._platform_telemetry_enabled:
+        policy = send_policy(self._source_trw_dir)
+        if not (self._platform_telemetry_enabled and policy.platform_telemetry):
             logger.debug(
                 "sync_push_outcomes_skipped",
                 reason="platform_telemetry_disabled",
@@ -264,7 +280,7 @@ class SyncPusher:
             )
             return PushResult()
 
-        if not platform_contact_enabled():
+        if not platform_contact_enabled(self._source_trw_dir):
             logger.debug(
                 "sync_push_outcomes_skipped",
                 reason="platform_contact_disabled",
@@ -284,6 +300,8 @@ class SyncPusher:
             outcome="start",
         )
         for i in range(0, len(outcomes), self._batch_size):
+            if not platform_contact_enabled(self._source_trw_dir):  # every request asks (B71-106)
+                break
             batch = outcomes[i : i + self._batch_size]
             payload = {
                 "outcomes": batch,
@@ -295,7 +313,7 @@ class SyncPusher:
                     resp = await client.post(
                         url,
                         json=payload,
-                        headers=platform_auth_headers(url, self._api_key),
+                        headers=platform_auth_headers(url, self._api_key, source_trw_dir=self._source_trw_dir),
                     )
                     resp.raise_for_status()
                     result = resp.json()

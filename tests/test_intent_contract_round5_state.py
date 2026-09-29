@@ -31,7 +31,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -45,7 +44,14 @@ from tests._intent_contract_git import (
     seed_contract_repo,
     write,
 )
-from tests._intent_contract_hooks import CONTRACT_REL, EVIDENCE_REL, MARKER_REL, hook_project, make_project
+from tests._intent_contract_hooks import (
+    CONTRACT_REL,
+    EVIDENCE_REL,
+    MARKER_REL,
+    hook_project,
+    hook_pythonpath,
+    make_project,
+)
 from trw_mcp.security.intent_contract._git_run import BlobUnreadable, read_blob
 from trw_mcp.security.intent_contract.enrollment import (
     ENROLLMENT_SCHEMA_VERSION,
@@ -66,9 +72,6 @@ from trw_mcp.security.intent_contract.weaken_edit_detector import (
     detect_staged_weaken,
     record_approval,
 )
-
-_SRC = str(Path(__file__).resolve().parents[1] / "src")
-
 
 # --- F-D: the write path gets the discipline the read path already had --------
 
@@ -326,7 +329,7 @@ def test_ff_a_squatted_evidence_path_reads_as_not_enrolled_on_both_sides(tmp_pat
         [sys.executable, "-m", "trw_mcp.security.intent_contract.enrollment", "status", "--root", str(project)],
         capture_output=True,
         text=True,
-        env={**os.environ, "PYTHONPATH": _SRC},
+        env={**os.environ, "PYTHONPATH": hook_pythonpath()},
         check=False,
         shell=False,
     )
@@ -351,7 +354,9 @@ def blob_stub(tmp_path: Path) -> Path:
     real_git = subprocess.run(["which", "git"], capture_output=True, text=True, check=True, shell=False).stdout.strip()
     stub = stub_dir / "git"
     stub.write_text(
-        f'#!/bin/sh\ncase "$1" in rev-parse) case "$2" in *:*) exit 128;; esac;; esac\nexec {real_git} "$@"\n',
+        # `_git_run` puts `-c core.precomposeunicode=false` before the subcommand: skip that pair to find it.
+        f'#!/bin/sh\nif [ "$1" = -c ]; then sub=$3; arg=$4; else sub=$1; arg=$2; fi\n'
+        f'case "$sub" in rev-parse) case "$arg" in *:*) exit 128;; esac;; esac\nexec {real_git} "$@"\n',
         encoding="utf-8",
     )
     stub.chmod(0o755)

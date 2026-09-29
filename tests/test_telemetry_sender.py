@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from tests._contact_support import payload_trw_dir
 from trw_mcp.telemetry.sender import BatchSender
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,6 +63,7 @@ def _make_sender(
         max_retries=max_retries,
         backoff_base=backoff_base,
         platform_telemetry_enabled=platform_telemetry_enabled,
+        source_trw_dir=payload_trw_dir(),
     )
     return sender, input_path
 
@@ -418,6 +425,7 @@ class TestParallelFanout:
             max_retries=1,
             backoff_base=0.0,
             platform_telemetry_enabled=True,
+            source_trw_dir=payload_trw_dir(),
         )
         _write_events(input_path, [{"event_type": "test"}])
 
@@ -447,6 +455,7 @@ class TestParallelFanout:
             max_retries=1,
             backoff_base=0.0,
             platform_telemetry_enabled=True,
+            source_trw_dir=payload_trw_dir(),
         )
         _write_events(input_path, [{"event_type": "test"}])
 
@@ -472,6 +481,7 @@ class TestParallelFanout:
             max_retries=1,
             backoff_base=0.0,
             platform_telemetry_enabled=True,
+            source_trw_dir=payload_trw_dir(),
         )
         _write_events(input_path, [{"event_type": "test"}])
 

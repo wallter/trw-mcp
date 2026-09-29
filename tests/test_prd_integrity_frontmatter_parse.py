@@ -112,3 +112,53 @@ def test_validate_prd_quality_v2_fails_open_on_malformed(tmp_path: Path) -> None
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- PRD-CORE-338-FR04: time.slices estimates --------------------------------
+
+
+def _frontmatter(**extra: object) -> dict[str, object]:
+    return {"id": "PRD-CORE-999", "title": "t", **extra}
+
+
+def test_time_slices_estimate_block_parses() -> None:
+    from trw_mcp.models.requirements import PRDFrontmatter
+
+    fm = PRDFrontmatter.model_validate(
+        _frontmatter(
+            time={
+                "slices": [
+                    {"id": "S1", "estimate_hours_min": 1, "estimate_hours_max": 2},
+                    {"id": "S2", "estimate_hours_min": 0.5, "estimate_hours_max": 0.5},
+                ]
+            }
+        )
+    )
+    assert fm.time is not None
+    assert [(s.id, s.estimate_hours_min, s.estimate_hours_max) for s in fm.time.slices] == [
+        ("S1", 1.0, 2.0),
+        ("S2", 0.5, 0.5),
+    ]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"id": "S1", "estimate_hours_min": 3, "estimate_hours_max": 2},
+        {"id": "S1", "estimate_hours_min": 0, "estimate_hours_max": 2},
+        {"id": "S1", "estimate_hours_min": 1, "estimate_hours_max": 2, "actual_hours": 3},
+    ],
+)
+def test_time_slices_invalid_estimate_is_rejected(bad: dict[str, object]) -> None:
+    from pydantic import ValidationError
+
+    from trw_mcp.models.requirements import PRDFrontmatter
+
+    with pytest.raises(ValidationError):
+        PRDFrontmatter.model_validate(_frontmatter(time={"slices": [bad]}))
+
+
+def test_prd_without_time_block_parses_unchanged() -> None:
+    from trw_mcp.models.requirements import PRDFrontmatter
+
+    assert PRDFrontmatter.model_validate(_frontmatter()).time is None

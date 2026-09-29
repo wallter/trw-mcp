@@ -56,34 +56,6 @@ from trw_mcp.state.validation.phase_gates_prd import (
 
 logger = structlog.get_logger(__name__)
 
-# Phase input criteria -- prerequisites to enter a phase (PRD-CORE-017-FR04).
-PHASE_INPUT_CRITERIA: dict[str, list[str]] = {
-    "research": [
-        "Run initialized (run.yaml exists)",
-    ],
-    "plan": [
-        "Research synthesis produced",
-        "Run initialized (run.yaml exists)",
-    ],
-    "implement": [
-        "Planning remains an obligation; no plan-file presence or content check",
-        "Wave manifest defined (manifest.yaml)",
-        "PRDs at required status",
-    ],
-    "validate": [
-        "Implementation shards completed",
-        "Output contracts available",
-    ],
-    "review": [
-        "Validation phase passed",
-        "Tests pass",
-    ],
-    "deliver": [
-        "Review completed",
-        "Reflection completed",
-    ],
-}
-
 # Phase exit criteria descriptions (from FRAMEWORK.md sections).
 # Entries without a checker are display-only: nothing in this module enforces
 # most of the strings below against run state, so treat an unimplemented
@@ -119,7 +91,7 @@ PHASE_EXIT_CRITERIA: dict[str, list[str]] = {
         "Final report complete",
         "Artifacts organized",
         "Run state marked complete",
-        "CLAUDE.md synced (claude_md_sync event in events.jsonl)",
+        "Instruction files synced (claude_md_sync event in events.jsonl)",
     ],
 }
 
@@ -206,9 +178,6 @@ def check_phase_exit(
 
 
 from trw_mcp.state.validation._phase_gates_inputs import (
-    _INPUT_CHECKERS,
-)
-from trw_mcp.state.validation._phase_gates_inputs import (
     _check_deliver_input as _check_deliver_input,
 )
 from trw_mcp.state.validation._phase_gates_inputs import (
@@ -223,54 +192,3 @@ from trw_mcp.state.validation._phase_gates_inputs import (
 from trw_mcp.state.validation._phase_gates_inputs import (
     _check_validate_input as _check_validate_input,
 )
-
-
-def check_phase_input(
-    phase: Phase,
-    run_path: Path,
-    config: TRWConfig,
-) -> ValidationResult:
-    """Check input criteria (prerequisites) for entering a framework phase.
-
-    Dispatches to per-phase input checker functions for focused,
-    testable validation logic. When config.strict_input_criteria
-    is True, missing prerequisites are errors; otherwise they are warnings.
-
-    Args:
-        phase: Phase to validate entry into.
-        run_path: Path to the run directory.
-        config: Framework configuration.
-
-    Returns:
-        ValidationResult with pass/fail and any failures.
-    """
-    failures: list[ValidationFailure] = []
-    phase_name = phase.value
-    criteria = PHASE_INPUT_CRITERIA.get(phase_name, [])
-    severity = "error" if config.strict_input_criteria else "warning"
-
-    meta_path = run_path / "meta"
-
-    # Universal: run.yaml must exist -- early return since nothing else can be checked
-    run_yaml = meta_path / "run.yaml"
-    if not run_yaml.exists():
-        failures.append(
-            ValidationFailure(
-                field="run.yaml",
-                rule="run_initialized",
-                message="Run not initialized — run.yaml missing",
-                severity="error",
-            )
-        )
-        return ValidationResult(
-            valid=False,
-            failures=failures,
-            completeness_score=0.0,
-        )
-
-    # Dispatch to per-phase input checker
-    checker = _INPUT_CHECKERS.get(phase_name)
-    if checker is not None:
-        checker(run_path, config, severity, failures)
-
-    return _build_phase_result(failures, criteria, phase_name, "phase_input_checked")

@@ -138,5 +138,7 @@ class TestClaudeMdSyncBehavior:
 
         assert "status" in result
         assert result["status"] in ("success", "synced")
-        assert "learnings_promoted" in result
-        assert isinstance(result["learnings_promoted"], int)
+        assert isinstance(result["patterns_included"], int)
+        assert isinstance(result["total_lines"], int)
+        # PRD-CORE-341-FR01: sync promotes no learnings into instruction files, so the count is gone.
+        assert "learnings_promoted" not in result

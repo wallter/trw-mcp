@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 from typing import cast
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.models.typed_dicts import (
     BootstrapFileResult,
     CodexHookCommand,
@@ -45,9 +46,25 @@ def _trw_hook_group(
     matcher: str | None = None,
     timeout: int | None = None,
 ) -> CodexHookMatcherEntry:
-    """Create a single TRW-managed hook matcher group."""
+    """Create a single TRW-managed hook matcher group.
+
+    ``TRW_HOOK_CLIENT`` is exported ahead of the shared script: codex executes
+    the SAME PHYSICAL FILE claude-code installs (there is no separate
+    `.codex/hooks/*.sh`), so `lib-trw.sh`'s path-derived key would otherwise
+    always resolve "claude" here too, silently handing codex claude-code's
+    nudge policy and session identity. The value is derived with the SAME
+    resolver the hook-env writer uses (`_hook_env_key`) rather than a literal
+    "codex" -- a hand-typed literal silently diverged from the writer's actual
+    key once (sol round 2 P1: it wrote `hook-env.d/github.sh` for copilot
+    while the literal said `copilot`), and nothing would catch a repeat here
+    if codex's own key ever stopped being literally "codex".
+    """
+    from trw_mcp.bootstrap._hook_env import _hook_env_key
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    hook_client_key = _hook_env_key(resolve_client_profile("codex"))
     git_root = "$(git rev-parse --show-toplevel)"
-    command = f'/bin/sh "{git_root}/.claude/hooks/{script_name}"'
+    command = f'TRW_HOOK_CLIENT={hook_client_key} /bin/sh "{git_root}/.claude/hooks/{script_name}"'
     hook_command: CodexHookCommand = {"type": "command", "command": command}
     if status_message is not None:
         hook_command["statusMessage"] = status_message
@@ -180,9 +197,7 @@ def generate_codex_hooks(
 ) -> BootstrapFileResult:
     """Generate `.codex/hooks.json`."""
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
-    codex_dir = target_dir / ".codex"
-    codex_dir.mkdir(parents=True, exist_ok=True)
-    hooks_path = codex_dir / "hooks.json"
+    hooks_path = target_dir / ".codex" / "hooks.json"
     existed = hooks_path.exists()
 
     if existed and not force:
@@ -207,8 +222,8 @@ def generate_codex_hooks(
         payload = _codex_hooks_payload()
 
     try:
-        hooks_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(target_dir, hooks_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    except (OSError, UnsafeWriteError) as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
         return result
     _record_write(cast("dict[str, list[str]]", result), _CODEX_HOOKS_PATH, existed=existed)

@@ -48,12 +48,8 @@ class TestPrefillApplication:
     """Tests for _apply_prefill()."""
 
     def test_input_text_in_background(self) -> None:
-        from trw_mcp.tools.requirements import (
-            _apply_prefill,
-            _extract_prefill,
-            _load_template_body,
-            _substitute_template,
-        )
+        from trw_mcp.tools._prd_template_helpers import _apply_prefill, _load_template_body, _substitute_template
+        from trw_mcp.tools.requirements import _extract_prefill
 
         body = _load_template_body()
         body = _substitute_template(body, "PRD-CORE-001", "Test", "CORE", 1, "P1", 0.7)
@@ -62,11 +58,7 @@ class TestPrefillApplication:
         assert "My feature description here" in result
 
     def test_file_refs_in_section6(self) -> None:
-        from trw_mcp.tools.requirements import (
-            _apply_prefill,
-            _load_template_body,
-            _substitute_template,
-        )
+        from trw_mcp.tools._prd_template_helpers import _apply_prefill, _load_template_body, _substitute_template
 
         body = _load_template_body()
         body = _substitute_template(body, "PRD-CORE-001", "Test", "CORE", 1, "P1", 0.7)
@@ -75,11 +67,7 @@ class TestPrefillApplication:
         assert "`tools/requirements.py`" in result
 
     def test_prd_deps_in_section10(self) -> None:
-        from trw_mcp.tools.requirements import (
-            _apply_prefill,
-            _load_template_body,
-            _substitute_template,
-        )
+        from trw_mcp.tools._prd_template_helpers import _apply_prefill, _load_template_body, _substitute_template
 
         body = _load_template_body()
         body = _substitute_template(body, "PRD-CORE-001", "Test", "CORE", 1, "P1", 0.7)

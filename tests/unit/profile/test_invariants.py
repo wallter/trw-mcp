@@ -17,6 +17,8 @@ from trw_mcp.profile import (
     run_invariants,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_invariant_deliver_required() -> None:
     """FR-9 (a): phase_enabled_set without DELIVER is a violation."""

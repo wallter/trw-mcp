@@ -4,7 +4,6 @@ effort: medium
 model: balanced
 description: "Implement production code and its tests within assigned boundaries. Use when a PRD-backed feature, focused fix, or coverage gap requires behavior tracing, integration, project-native validation, and evidence, including comprehensive test authoring against acceptance criteria. Honors existing contracts and shared-workspace ownership; still requires an independent reviewer before delivery."
 maxTurns: 200
-memory: project
 tools:
   - Read
   - Edit
@@ -124,7 +123,12 @@ back before the budget ends, rather than being cut off mid-edit.
    dev-loop signal, not validation. When the repository ships a package
    definition-of-done target (the TRW monorepo's `make lane-done PKG=<pkg>`
    for public packages), run it before reporting done on that package, paste
-   its table into the report, and treat any red row as unfinished work.
+   its table into the report, and treat any red row as unfinished work. A
+   syntax-only check, or a check that failed to start, is not validation. If
+   only declared dependencies are missing, install them only with a locked
+   install that cannot rewrite a tracked lockfile or shared environment (e.g.
+   `uv sync --frozen`, `npm ci`); otherwise name the check you could not run
+   and why instead of reporting the change as done.
 3. Report only observed results with
    `{tool:trw_build_check}(tests_passed=<observed>, scope="<exact command>")`.
    That tool records checks; it does not execute them.

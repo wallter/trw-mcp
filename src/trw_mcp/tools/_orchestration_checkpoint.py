@@ -9,10 +9,15 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import CheckpointEventDataDict, CheckpointRecordDict
+from trw_mcp.state._decision_queue import record_decision
+from trw_mcp.state._factory_experiment import check as check_factory_gate
+from trw_mcp.state._factory_experiment import is_factory_message
+from trw_mcp.state._factory_receipt_gate import factory_payload_refusal, unresolved_receipts
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._no_active_run import is_no_active_run, no_active_run_remedy
-from trw_mcp.state._paths import TRWCallContext, resolve_run_path
+from trw_mcp.state._paths import TRWCallContext, resolve_run_path, resolve_trw_dir
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
-from trw_mcp.tools._orchestration_lifecycle import _update_wave_status
+from trw_mcp.tools._orchestration_time import checkpoint_time_fields, utc_now
 
 logger = structlog.get_logger(__name__)
 _events = FileEventLogger(FileStateWriter())
@@ -25,6 +30,24 @@ EMPTY_MESSAGE_REASON = "empty_message"
 
 #: Remedy for :data:`EMPTY_MESSAGE_REASON`, phrased as the one executable fix.
 EMPTY_MESSAGE_REMEDY = "Remedy: pass message=<what you completed and what is next> — it is the resume point."
+
+#: PRD-CORE-329-FR01: refusal reason when ``blocked_decision`` is missing
+#: ``question`` or ``why_unreachable``. Checked ahead of run resolution and
+#: the ordinary checkpoint write, same as :data:`EMPTY_MESSAGE_REASON` — no
+#: partial record (neither the checkpoint nor the decision) is ever written.
+BLOCKED_DECISION_INVALID_REASON = "blocked_decision_invalid"
+BLOCKED_DECISION_INVALID_REMEDY = "Remedy: blocked_decision needs non-empty question and why_unreachable."
+
+
+def _invalid_blocked_decision(blocked_decision: dict[str, object] | None) -> bool:
+    """True when *blocked_decision* is present but fails FR01's shape check."""
+    if blocked_decision is None:
+        return False
+    question = blocked_decision.get("question")
+    why_unreachable = blocked_decision.get("why_unreachable")
+    return not (isinstance(question, str) and question.strip()) or not (
+        isinstance(why_unreachable, str) and why_unreachable.strip()
+    )
 
 
 def _not_recorded(
@@ -68,9 +91,10 @@ def execute_checkpoint(
     run_path: str | None,
     message: str,
     shard_id: str | None,
-    wave_id: str | None,
     *,
     context: TRWCallContext | None = None,
+    blocked_decision: dict[str, object] | None = None,
+    slice_done: str = "",
 ) -> dict[str, object]:
     """Persist checkpoint state and return the base response payload.
 
@@ -78,11 +102,16 @@ def execute_checkpoint(
         context: Optional :class:`TRWCallContext` (PRD-CORE-141 FR03).  When
             provided, ``resolve_run_path`` is ctx-aware — no-pin sessions never
             hijack another session's run.
+        blocked_decision: PRD-CORE-329 FR01 — ``{question, options,
+            why_unreachable}``. Validated before any write; on success, one
+            record is appended to the project-level decision queue after the
+            ordinary checkpoint write succeeds.
 
     Returns:
         A payload whose ``recorded`` flag is ``True`` when the checkpoint was
         appended, or the :func:`_not_recorded` payload when the caller has no
-        resolvable run (PRD-CORE-233 FR02) or supplied no message.
+        resolvable run (PRD-CORE-233 FR02), supplied no message, or supplied
+        an invalid ``blocked_decision``.
     """
     # Precondition, checked before ANY resolution or write: the message is the
     # entire payload of a checkpoint. ``trw_checkpoint()`` with no arguments used
@@ -92,6 +121,41 @@ def execute_checkpoint(
     # zero-write guarantee holds even for a caller that also has no run.
     if not message.strip():
         return _not_recorded(context, reason=EMPTY_MESSAGE_REASON, remedy=EMPTY_MESSAGE_REMEDY)
+    # PRD-CORE-340-FR11/FR12: a recognized factory transition is refused before any resolution or
+    # write unless the experiment is enabled and in time. Ordinary messages never reach the gate.
+    if is_factory_message(message):
+        gate = check_factory_gate()
+        if not gate.enabled:
+            return _not_recorded(context, reason=gate.reason or "factory_disabled", remedy=f"Remedy: {gate.message}")
+        if slice_done.strip():
+            # PRD-CORE-340-FR04: factory START/READY/USED supersede slice_done; refused before any write.
+            refused = _not_recorded(
+                context,
+                reason="factory_slice_done_conflict",
+                remedy="Factory START/READY/USED supersede slice_done; record the slice in the factory attempt instead.",
+            )
+            refused["error_type"] = "factory_slice_done_conflict"
+            return refused
+        # FACTORY-START-VALIDATE: a malformed payload (no attempt, unknown kind or key, the reader's own schema
+        # violations) never enters the append-only journal. Zero I/O, so it sits with the other refusals.
+        if (problem := factory_payload_refusal(message)) is not None:
+            invalid = _not_recorded(
+                context,
+                reason="factory_payload_invalid",
+                remedy=f"Factory payload refused: {problem}. Fix the key and record it again; nothing was written.",
+            )
+            invalid["error_type"] = "factory_payload_invalid"
+            return invalid
+    # Same zero-I/O precondition ordering for FR01: an invalid blocked_decision
+    # refuses the WHOLE call, including the ordinary checkpoint write — a
+    # caller cannot get a half-recorded state (checkpoint written, decision
+    # silently dropped) by supplying a malformed dict.
+    if _invalid_blocked_decision(blocked_decision):
+        return _not_recorded(
+            context,
+            reason=BLOCKED_DECISION_INVALID_REASON,
+            remedy=BLOCKED_DECISION_INVALID_REMEDY,
+        )
 
     reader = FileStateReader()
     writer = FileStateWriter()
@@ -107,8 +171,23 @@ def execute_checkpoint(
         return _not_recorded(context, reason="no_active_run", remedy=no_active_run_remedy())
     meta_path = resolved_path / "meta"
 
+    # FACTORY-READY-RECEIPT-RESOLVE: a READY/USED naming a receipt that does not exist is refused
+    # before the write (the journal is append-only, so a placeholder id could never be repaired).
+    if is_factory_message(message) and (unresolved := unresolved_receipts(resolved_path, message)):
+        refused = _not_recorded(
+            context,
+            reason="factory_receipt_unresolved",
+            remedy=(
+                f"Unresolved receipt(s): {', '.join(unresolved)}. Record the receipt first (trw_build_check returns "
+                "build_receipt_id; a verifier's receipt id comes from `receipt verify`), then checkpoint with that id."
+            ),
+        )
+        refused["error_type"] = "factory_receipt_unresolved"
+        return refused
+
     state_data = reader.read_yaml(meta_path / "run.yaml")
-    ts = datetime.now(timezone.utc).isoformat()
+    machine_now = utc_now()
+    ts = machine_now.isoformat()
 
     checkpoint: CheckpointRecordDict = {
         "ts": ts,
@@ -117,8 +196,6 @@ def execute_checkpoint(
     }
     if shard_id:
         checkpoint["shard_id"] = shard_id
-    if wave_id:
-        checkpoint["wave_id"] = wave_id
 
     writer.append_jsonl(
         meta_path / "checkpoints.jsonl",
@@ -128,22 +205,19 @@ def execute_checkpoint(
     event_data: CheckpointEventDataDict = {"message": message}
     if shard_id:
         event_data["shard_id"] = shard_id
-    if wave_id:
-        event_data["wave_id"] = wave_id
+    if slice_done.strip():
+        # PRD-CORE-338-FR03: the first event per id is the slice's completion time.
+        event_data["slice_done"] = slice_done.strip()
     _events.log_event(
         meta_path / "events.jsonl",
         "checkpoint",
         cast("dict[str, object]", event_data),
     )
 
-    if wave_id:
-        _update_wave_status(reader, writer, meta_path, wave_id, ts, message)
-
     logger.info(
         "checkpoint_ok",
         run_id=str(state_data.get("run_id", "")),
         message=message[:80],
-        wave_id=wave_id,
     )
     # Truncated echo: the caller already has its own message; the full text is
     # persisted in checkpoints.jsonl. Echoing it back verbatim doubled the
@@ -156,6 +230,24 @@ def execute_checkpoint(
         "status": "checkpoint_created",
         "message": message if len(message) <= 120 else message[:120] + "…",
     }
-    if wave_id:
-        result["wave_id"] = wave_id
+    # PRD-CORE-338-FR06: adds keys only for a mis-stamped message or a tracked run (NFR02).
+    result.update(
+        checkpoint_time_fields(
+            state_data,
+            message,
+            machine_now,
+            lambda: read_jsonl_resilient(meta_path / "events.jsonl"),
+        )
+    )
+    if blocked_decision is not None:
+        raw_options = blocked_decision.get("options")
+        options = list(raw_options) if isinstance(raw_options, list) else []
+        decision_id = record_decision(
+            resolve_trw_dir(),
+            run_path=str(resolved_path),
+            question=str(blocked_decision.get("question", "")),
+            options=[str(opt) for opt in options],
+            why_unreachable=str(blocked_decision.get("why_unreachable", "")),
+        )
+        result["blocked_decision_id"] = decision_id
     return result

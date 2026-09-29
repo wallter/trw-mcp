@@ -11,8 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._test_telemetry_publisher_support import _make_config, _make_learning, _write_learning
 from trw_mcp.telemetry.publisher import publish_learnings
+
+# A real send needs a payload project: its policy is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 def _setup_entries(tmp_path: Path) -> Path:

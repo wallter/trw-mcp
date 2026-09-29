@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.models.tool_summaries import TOOL_SUMMARIES
 from trw_mcp.state.claude_md._tool_manifest import (
-    TOOL_DESCRIPTIONS,
     check_instruction_tool_parity,
     validate_instruction_manifest,
 )
@@ -42,7 +42,7 @@ class TestValidateInstructionManifest:
     def test_all_tools_exposed(self) -> None:
         """No mismatches when everything is in the exposed set."""
         text = "trw_learn trw_deliver trw_session_start"
-        exposed = set(TOOL_DESCRIPTIONS)
+        exposed = set(TOOL_SUMMARIES)
         assert validate_instruction_manifest(text, exposed) == []
 
 

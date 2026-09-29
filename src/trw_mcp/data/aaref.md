@@ -1,11 +1,11 @@
 # AI-Augmented Requirements Engineering Framework (AARE-F)
 
-**Version**: 3.2.1
-**Last Updated**: 2026-07-27
+**Version**: 3.3.0
+**Last Updated**: 2026-09-26
 **Purpose**: Project-agnostic framework for engineering requirements with AI assistance — truthful, verifiable, and aligned to current requirements-engineering standards.
-**Research Basis**: ISO/IEC/IEEE 29148:2018 (confirmed current in 2024 and marked for revision in 2026), INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), requirements-engineering V&V practice, and TRW's empirical findings (eval iterations and the PRD-audit corpus).
+**Research Basis**: ISO/IEC/IEEE 29148:2018 (confirmed current in 2024 and marked for revision in 2026), INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), requirements-engineering V&V practice, and TRW's internal PRD-audit and eval experience (practitioner experience, not an independently published study).
 
-> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v27.4_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
+> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (its version is in its own header) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
 
 > **Operative summary (read this even under context pressure).** Verified closure is §6.2: risk-appropriate independent review + requirement-matched verification evidence + status truthfulness + recorded project-native validation. A delivery override may ship known risk, but it does not make the requirement verified. The validator score (§5 of the full AARE-F reference) is a drafting aid, not a verdict (§0). The anti-patterns that actually ship defects are A1 (existence ≠ wiring), A3 (`implemented` over stubs), and A4 (self-review only) — check them at evidence design, status update, and reviewer assignment respectively (§7). A PRD without acceptance criteria and declared verification methods is not ready to implement (§9).
 
@@ -36,7 +36,7 @@ Read this before using any threshold or score below.
 | **P3** | **Human Authority** | AI accelerates drafting, analysis, and review. Humans set policy, delegation bounds, and residual-risk authority; automation may approve or deliver only inside those explicit bounds, with human override preserved. Oversight is authority, not a rubber stamp. |
 | **P4** | **Risk-Based Rigor** | Effort, proof, and review scale with consequence. Not all requirements deserve equal ceremony. |
 | **P5** | **Verification by Construction** | Every requirement declares a feasible verification method, evidence artifact, and pass condition while it is authored. Automate machine-observable behavior; use analysis, inspection, or demonstration when those methods fit the requirement better. |
-| **P6** | **Evidence Over Assertion** | Quality is demonstrated with artifacts (tests, diffs, traces, independent review), never asserted. Uncertainty is preserved, not averaged away. (TRW PRD-audit corpus; eval governance findings.) |
+| **P6** | **Evidence Over Assertion** | Quality is demonstrated with artifacts (tests, diffs, traces, independent review), never asserted. Uncertainty is preserved, not averaged away. |
 
 These mirror FRAMEWORK.md's execution principles (Evidence > assertion; Prevention > detection; External checks > self-belief). AARE-F applies them to the *requirement* artifact specifically.
 
@@ -195,7 +195,7 @@ Apply the stricter of requirement risk and FRAMEWORK.md execution tier.
 
 #### C8: AI Guardrails & Safety — [partial]
 **Minimal set**: input sanitizer (prompt-injection detection) · output filter (harmful-content / PII) · tool allowlist · token/cost budgets · immutable audit log · periodic adversarial testing.
-**OWASP focus**: for agent-executed workflows treat the **Top 10 for Agentic Applications 2026** (published Dec 2025) as primary — goal hijack, tool misuse, identity/privilege abuse, memory/context poisoning, excessive agency — alongside the LLM Applications 2025 edition. Cite the edition you target; prevalence figures are edition- and context-specific — don't quote a bare percentage.
+**OWASP focus**: for agent-executed workflows treat the **Top 10 for Agentic Applications 2026** (published Dec 2025) as primary — goal hijack, tool misuse, identity/privilege abuse, memory/context poisoning — alongside the LLM Applications 2025 edition (which includes excessive agency, LLM06:2025). Cite the edition you target; prevalence figures are edition- and context-specific — don't quote a bare percentage.
 **Requirement-level guardrail**: a requirement that directs an agent to read external content (files, URLs, retrieval results, tool outputs) SHOULD carry an injection-resistance acceptance criterion — indirect injection through content is the production exploit class.
 
 ### Execution Layer
@@ -233,7 +233,7 @@ Roles are logical, not a mandate for multiple agents: humans, independent sessio
 |-------|--------|
 | Pre-commit | schema validity, required fields, ID uniqueness |
 | CI | structure + traceability + (target) executable-AC pass-rate; conflict checking is a target until C10 has an automated gate |
-| Delivery | approval recorded, audit log, rollback path, requirement-matched evidence, and **wiring verified** for public behavior — a surface marked `implemented` has ≥1 behavior-proven consumer or an explicit seam entry with owner + expiry. Existence without consumption is A1 at architecture scale. |
+| Delivery | approval recorded, audit log, rollback path, requirement-matched evidence, and **wiring verified** for public behavior — a surface marked `implemented` has ≥1 behavior-proven consumer. An explicit seam entry with owner + expiry discloses an unwired surface (delivered ≠ wired) but does not satisfy this gate. Existence without consumption is A1 at architecture scale. |
 
 **Reference status**: versioned PRDs and several schema/consistency checks are live. Consumer/wiring analysis is advisory v1: presence can satisfy some checks without proving behavior, a seam can suppress warnings broadly, and expiry is not a universal delivery gate. Treat “wiring verified” as the required target state, not a claim that current tooling enforces it fully.
 
@@ -308,8 +308,8 @@ The first group is classic RE; the second (A1–A5) is the set TRW has learned t
 
 | # | Truthfulness Anti-Pattern | Check when | Why text scoring misses it | Mitigation (the gate that catches it) |
 |---|---------------------------|------------|----------------------------|----------------------------------------|
-| **A1** | **Existence ≠ wiring** | writing/reviewing evidence; declaring a surface done | `grep_present`/symbol checks prove a name exists, not that the computed value reaches the output. Real bugs shipped green: an estimate computed then dropped (`estimate=None`); loaded priors silently discarded. | For implemented behavior, assert output *values* on the real path; use the declared method for non-behavioral requirements; require a behavior-proven consumer or disclosed seam for every new public surface (C7). |
-| **A2** | **Mock-depth blindness** | judging coverage claims | 90%+ coverage with all-green tests can mock away the unit under test; published industrial reports find AI-written tests can score very low on mutation testing despite high coverage. | Forbid mocking the primary unit under test; require an integration test on a real (in-memory) path; sampled mutation testing (§2.5). |
+| **A1** | **Existence ≠ wiring** | writing/reviewing evidence; declaring a surface done | `grep_present`/symbol checks prove a name exists, not that the computed value reaches the output. Examples: a value computed and then dropped before it reaches the response; loaded configuration silently discarded. | For implemented behavior, assert output *values* on the real path; use the declared method for non-behavioral requirements; require a behavior-proven consumer for every new public surface before it counts as done; a disclosed seam records the gap (delivered ≠ wired) and does not close the requirement (C7). |
+| **A2** | **Mock-depth blindness** | judging coverage claims | High coverage with all-green tests can still mock away the unit under test; coverage measures what ran, not whether an assertion would catch a changed behaviour (mutation testing measures that). | Forbid mocking the primary unit under test; require an integration test on a real (in-memory) path; sampled mutation testing (§2.5). |
 | **A3** | **`implemented` over stubs** | updating any status field | A status field is text; nothing in the score checks runtime completeness. Audits repeatedly find `status: implemented` with non-empty `stubs[]`. | Enforce: `status: implemented` ⇒ functionally live, `stubs: []`; verify in review/CI, not by reading the claim. |
 | **A4** | **Self-review only** | assigning review | The author's tests validate the author's implementation, not the spec; a same-trajectory reviewer inherits the same blind spots. | When risk/tier requires independence, give the reviewer the spec, diff, and evidence but not the author's private trajectory; use focused lenses (correctness / security / evidence / integration). |
 | **A5** | **Score-gaming** | reading a validator score | More file refs, more headings, more prose raise the number without raising quality. | Read the §0 operating rule; weight implementation-readiness over density; require A1/A4 evidence regardless of score. |
@@ -421,7 +421,7 @@ Keep mutable inventory out of this portable canon; source, Make targets, and the
 
 ## 11. Relationship to FRAMEWORK.md
 
-| | AARE-F (this doc) | FRAMEWORK.md (`v27.4_TRW`) |
+| | AARE-F (this doc) | FRAMEWORK.md (its version is in its own header) |
 |---|---|---|
 | Governs | the **specification** (requirement/PRD quality, traceability, verification) | the **execution** (phases, gates, formations, persistence, learning) |
 | Key artifact | the PRD | the run (phases + checkpoints + evidence) |
@@ -454,6 +454,8 @@ Use them together: AARE-F says *what good looks like and how to prove it*; FRAME
 | 3.0.0 | 2026-05-31 | **Truthfulness + SOTA reconciliation**: removed residual project contamination and unsourced effectiveness numbers (67%/96%/100%/+28%/+13.2%); replaced fixed confidence-% bands with calibration-first guidance; added the Requirement Quality Standard (EARS + ISO 29148 + INCOSE GtWR v4 + smells + executable ACs); added §0 "what this is/isn't" and the live quality model (real 4-dimension risk-scaled validator); added truthfulness anti-patterns A1–A5; added Specification Primacy (P1) and Evidence-over-Assertion (P6); clarified relationship to FRAMEWORK.md; per-component live/partial/guide status; single-source/sync mandate. |
 | **3.1.0** | **2026-06-10** | **Operational sharpening** (research-grounded refinement run): operative summary front-loaded; EARS/Given-When-Then layering (§2.1); ISO 29148 revision note (§2.2); smell-weight evidence update — RE 2025 (§2.4); agent-authored-test caveat + sampled mutation testing (§2.5); autonomous-loop oversight (C2); reviewer iteration policy + NFR-specialized dialectical review for Critical sets (C5); delivered≠wired consumer/seam check (C7); OWASP agentic edition + injection-resistance ACs (C8); false-completion rate metric + verifier identity (C9); A1–A5 "check when" column; implementation-start gate + adoption sequence + portable lifecycle naming (§9); principle citations (P1/P6); risk_level override location (§8). |
 | **3.2.0** | **2026-07-09** | **Verification-method, portability, and executable-contract correction**: verification now selects test, analysis, inspection, or demonstration; automated real-path tests remain required for machine-observable implemented behavior unless infeasible. Added typed requirement→AC→method→evidence→pass-condition mappings, risk-aware validator enforcement, measured-traceability output, and one byte-identical template source. Reconciled risk-tier review, human authority, and delivery overrides; reframed C5 as role separation; downgraded C7/wiring enforcement to partial; removed stale recipes/counts/client examples and corrected OWASP naming plus source/runtime sync scope. |
+| 3.2.1 | 2026-07-27 | Version stamp moved in squash commit `7fca33363` (2026-08-04); the change content is not recoverable from history (row reconstructed 2026-09-25). |
+| 3.3.0 | 2026-09-26 | **Normative:** C7 Delivery — a disclosed seam or backlog entry no longer satisfies the delivery gate (ISS-064). Citations and internal-experience labels made honest (ISS-050); the hardcoded FRAMEWORK version was removed (ISS-053). |
 
 ---
 
@@ -510,5 +512,5 @@ An execution plan bridges requirements to implementation through behavior-sized 
 
 ---
 
-*AARE-F v3.2.0 — AI-Augmented Requirements Engineering Framework (Portable Edition)*
-*Truthful · Standards-Aligned · Implementation-Reconciled · Last Updated: 2026-07-09*
+*AARE-F — AI-Augmented Requirements Engineering Framework (Portable Edition); version and date: see the header*
+*Truthful · Standards-Aligned · Implementation-Reconciled*

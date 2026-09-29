@@ -2,19 +2,15 @@
 
 Belongs to the ``trw_mcp.profile`` package facade. Re-exported there.
 
-Two stable content-hashes are derived from a resolved composition:
+``surface_snapshot_id`` is a stable content-hash of a resolved composition:
+SHA-256 over the PERSISTENT layers (defaults, org, domain, task-type, client)
+so H4 (meta-proposer) can aggregate outcomes across sessions that share a
+persistent surface (FR-13 rationale).
 
-* ``surface_snapshot_id`` — SHA-256 over the PERSISTENT layers only
-  (defaults, org, domain, task-type, client). Session pins are excluded so
-  H4 (meta-proposer) can aggregate outcomes across sessions that share a
-  persistent surface (FR-13 rationale).
-* ``session_override_hash`` — SHA-256 over the session layer's overrides
-  only. Empty layer → empty-content hash.
-
-Determinism (NFR-7): both hashes serialize with canonical JSON
+Determinism (NFR-7): the hash serializes with canonical JSON
 (``sort_keys=True``, no whitespace) so identical layer content produces an
-identical id across processes and OSes. The id is prefixed (``surf_`` /
-``sess_``) for legibility in telemetry streams.
+identical id across processes and OSes. The id is prefixed (``surf_``) for
+legibility in telemetry streams.
 """
 
 from __future__ import annotations
@@ -49,7 +45,7 @@ def compute_surface_snapshot_id(layers: list[ProfileLayer]) -> str:
 
     Layers are ordered canonically by name (not list position) so two
     compositions with the same persistent content hash identically regardless
-    of how the caller ordered them. The session layer is excluded.
+    of how the caller ordered them.
     """
     contributions: list[tuple[str, dict[str, object]]] = []
     for layer in layers:
@@ -64,21 +60,6 @@ def compute_surface_snapshot_id(layers: list[ProfileLayer]) -> str:
     return f"surf_{digest}"
 
 
-def compute_session_override_hash(layers: list[ProfileLayer]) -> str:
-    """Hash the SESSION layer overrides into a stable ``sess_`` id (FR-13).
-
-    Returns the empty-content hash when no session layer contributed.
-    """
-    session_dump: dict[str, object] = {}
-    for layer in layers:
-        if layer.name == "session":
-            session_dump = _overrides_dump(layer)
-            break
-    digest = hashlib.sha256(_canonical_json(session_dump).encode("utf-8")).hexdigest()
-    return f"sess_{digest}"
-
-
 __all__ = [
-    "compute_session_override_hash",
     "compute_surface_snapshot_id",
 ]

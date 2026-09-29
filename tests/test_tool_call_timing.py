@@ -148,6 +148,24 @@ class TestUsdCostEstimate:
             0.005 + 0.025, abs=1e-9
         )
 
+    def test_sonnet_5_5_has_its_own_row(self) -> None:
+        """Sonnet 5.5 shares Sonnet 5's $2/$10 sticker, so price alone can't prove the row
+        exists — a deleted ``claude-sonnet-5-5`` key would still price it correctly via the
+        `claude-sonnet-5` prefix match. Assert the MATCHED KEY, not just the resulting price.
+        """
+        from trw_mcp.models.config import match_model_family
+        from trw_mcp.telemetry._tool_call_pricing import _load_pricing
+
+        table = _load_pricing()
+        models = table["models"]
+        for spelling in ("claude-sonnet-5-5", "anthropic.claude-sonnet-5-5", "claude-sonnet-5-5[1m]"):
+            assert match_model_family(spelling, models) == "claude-sonnet-5-5", spelling
+            usd = _usd_cost_estimate(model_id=spelling, input_tokens=1000, output_tokens=1000)
+            assert usd == pytest.approx(0.002 + 0.010, abs=1e-9), spelling
+        assert _usd_cost_estimate(model_id="claude-sonnet-5", input_tokens=1000, output_tokens=1000) == pytest.approx(
+            0.002 + 0.010, abs=1e-9
+        )
+
     def test_near_miss_id_does_not_inherit_a_shorter_family(self) -> None:
         assert _usd_cost_estimate(model_id="claude-opus-4-80", input_tokens=1000, output_tokens=1000) == 0.0
 

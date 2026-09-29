@@ -37,3 +37,32 @@ def test_extra_authority_fields_do_not_reach_admission(scene: SendScene) -> None
     with pytest.raises(ValidationError):
         scene.send(sender_member_id="impl-2")
     assert scene.rows("SELECT charge FROM groups") == [(0,)]
+
+
+@pytest.mark.parametrize(
+    ("pointer", "valid"),
+    [
+        ("", False),  # 0 bytes
+        ("x", True),  # 1 byte
+        ("x" * 512, True),
+        ("x" * 513, False),
+        ("é" * 256, True),  # 512 UTF-8 bytes, 256 characters
+        ("é" * 256 + "x", False),  # 513 bytes: the bound is bytes, not characters
+        ("a\nb", False),
+        ("a\rb", False),
+        ("a\x1bb", False),  # ESC: terminal escape sequences
+        ("a‮b", False),  # bidi override (Cf)
+        ("a⁦b", False),  # bidi isolate (Cf)
+        ("a​b", False),  # zero-width space (Cf)
+        ("wt@abc forged line", False),  # line separator (Zl): not C*, still a line break
+        ("a b", False),  # paragraph separator (Zp)
+        ("branch worker-3/core-322 @ 76a2010, see docs/x.md", True),  # plain spaces are data
+        (None, False),
+        (7, False),
+    ],
+)
+def test_next_read_is_bounded_printable_data(pointer: object, valid: bool) -> None:
+    """PRD-CORE-322 NFR02: 1..512 UTF-8 bytes, no control, format or line-break character."""
+    from trw_mcp.comms._envelope import valid_next_read
+
+    assert valid_next_read(pointer) is valid

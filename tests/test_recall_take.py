@@ -74,6 +74,28 @@ def test_a_valid_row_behind_many_refused_ones_is_found() -> None:
     assert asked == [2, 8, 32]
 
 
+def test_single_page_never_grows_past_the_first_page() -> None:
+    """HINT-RECALL-BUDGET: ``spec.single_page`` takes exactly one page even when it is full and empty-handed.
+
+    Same shape as ``test_a_valid_row_behind_many_refused_ones_is_found`` (a kept
+    row sits behind many refused ones and a normal recall would grow ``top_k``
+    to reach it), but with ``single_page=True`` the growth never happens: one
+    page is read, it comes up empty, and the call stops there.
+    """
+    refused = [_row(f"L-r{index}", status="obsolete") for index in range(10)]
+    page = [*refused, _row("L-kept")]
+    asked: list[int] = []
+
+    def read(k: int) -> list[MemoryEntry]:
+        asked.append(k)
+        return page[:k]
+
+    shown = take_hits(read, _spec(query="row", top_k=2, single_page=True), cap=1, seen=set())
+
+    assert shown == []
+    assert asked == [2]  # a growing recall over the same page would ask [2, 8, 32]
+
+
 def test_a_store_of_refused_rows_stops_within_the_lookup_budget() -> None:
     lookups: list[str] = []
 

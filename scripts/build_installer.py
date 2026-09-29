@@ -24,7 +24,6 @@ import sys
 import zipfile
 from pathlib import Path
 
-
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -82,15 +81,12 @@ def _refuse_proprietary_wheel(wheel_path: Path) -> None:
     the dist-info METADATA ``Name:`` so a renamed/re-tagged wheel cannot
     slip past the guard.
     """
-    matched = next(
-        (p for p in _PROPRIETARY_WHEEL_PREFIXES if wheel_path.name.startswith(p)), None
-    )
+    matched = next((p for p in _PROPRIETARY_WHEEL_PREFIXES if wheel_path.name.startswith(p)), None)
     if matched is None and _wheel_metadata_name(wheel_path) in _PROPRIETARY_DIST_NAMES:
         matched = _wheel_metadata_name(wheel_path)
     if matched is not None:
         print(
-            f"ERROR: refusing to embed proprietary wheel into public installer: "
-            f"{wheel_path.name}",
+            f"ERROR: refusing to embed proprietary wheel into public installer: {wheel_path.name}",
             file=sys.stderr,
         )
         print(
@@ -122,7 +118,7 @@ def extract_version(wheel_path: Path) -> str:
 
 def _format_b64_for_python(b64: str, line_width: int = 76) -> str:
     """Wrap base64 string into comment-prefixed lines for Python embedding."""
-    return "\n".join(f"# {b64[i:i+line_width]}" for i in range(0, len(b64), line_width))
+    return "\n".join(f"# {b64[i : i + line_width]}" for i in range(0, len(b64), line_width))
 
 
 def _read_template(template_path: Path) -> str:
@@ -200,9 +196,7 @@ def _normalize_for_drift(text: str) -> str:
     lines = text.splitlines()
     out: list[str] = []
     in_wheel_block = False
-    field_assign = re.compile(
-        r'^(' + "|".join(re.escape(f) for f in DRIFT_SUBSTITUTION_FIELDS) + r') = ".*"$'
-    )
+    field_assign = re.compile(r"^(" + "|".join(re.escape(f) for f in DRIFT_SUBSTITUTION_FIELDS) + r') = ".*"$')
     marker_re = re.compile(r"^# (__[A-Z_]+__)$")
     # The module docstring carries a "Version: <value>" line ({{VERSION}} in the
     # template, the build version in dist) — a substitution field, not logic.
@@ -274,10 +268,7 @@ def verify_dist_matches_template(
 
     drifted = _drifted_symbols(template_text, dist_text)
     detail = f" (drifted symbols: {', '.join(drifted)})" if drifted else ""
-    message = (
-        "DRIFT: dist/install-trw.py is stale vs install-trw.template.py "
-        f"— run 'make installer'{detail}"
-    )
+    message = f"DRIFT: dist/install-trw.py is stale vs install-trw.template.py — run 'make installer'{detail}"
     return 1, message, drifted
 
 
@@ -345,18 +336,24 @@ def build_installer(
     wheel_path: Path | None = None,
     memory_wheel_path: Path | None = None,
     fmt: str = DEFAULT_FORMAT,
+    out_dir: Path | None = None,
 ) -> Path:
     """Build the self-contained installer script.
 
     Args:
-        wheel_path: Path to trw-mcp wheel. Auto-finds latest if None.
-        memory_wheel_path: Path to trw-memory wheel. Auto-finds latest if None.
+        wheel_path: Path to trw-mcp wheel. Auto-finds latest in ``out_dir`` if None.
+        memory_wheel_path: Path to trw-memory wheel. Auto-finds latest in ``out_dir`` if None.
         fmt: Output format — "py" (Python).
+        out_dir: Directory to search for auto-found wheels and to write the
+            installer into. Defaults to ``dist/`` under the package root
+            (``DIST_DIR``). Skip-audit D5: lets tests build into a tmp dir
+            instead of the tracked ``dist/`` tree.
 
     Returns:
         Path to the generated installer.
     """
     template_path, output_name = TEMPLATES[fmt]
+    dist_dir = out_dir if out_dir is not None else DIST_DIR
 
     if not template_path.exists():
         print(f"ERROR: Template not found: {template_path}", file=sys.stderr)
@@ -365,7 +362,7 @@ def build_installer(
 
     # Find wheels
     if wheel_path is None:
-        wheel_path = find_latest_wheel(DIST_DIR, "trw_mcp-*.whl", "trw-mcp")
+        wheel_path = find_latest_wheel(dist_dir, "trw_mcp-*.whl", "trw-mcp")
     elif not wheel_path.exists():
         print(f"ERROR: Wheel not found: {wheel_path}", file=sys.stderr)
         sys.exit(1)
@@ -377,7 +374,7 @@ def build_installer(
     print(f"Version:            {version}")
 
     if memory_wheel_path is None:
-        memory_wheel_path = find_latest_wheel(DIST_DIR, "trw_memory-*.whl", "trw-memory")
+        memory_wheel_path = find_latest_wheel(dist_dir, "trw_memory-*.whl", "trw-memory")
     elif not memory_wheel_path.exists():
         print(f"ERROR: Memory wheel not found: {memory_wheel_path}", file=sys.stderr)
         sys.exit(1)
@@ -424,8 +421,8 @@ def build_installer(
     _assert_checksums_substituted(output)
 
     # Write output
-    DIST_DIR.mkdir(exist_ok=True)
-    output_path = DIST_DIR / output_name
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    output_path = dist_dir / output_name
     output_path.write_text(output, encoding="utf-8")
 
     # Make executable
@@ -499,20 +496,37 @@ def main() -> None:
         description="Build self-contained TRW installer from template + wheels",
     )
     parser.add_argument(
-        "--wheel", type=Path, default=None,
+        "--wheel",
+        type=Path,
+        default=None,
         help="Path to trw-mcp .whl file (default: latest in dist/)",
     )
     parser.add_argument(
-        "--memory-wheel", type=Path, default=None,
+        "--memory-wheel",
+        type=Path,
+        default=None,
         help="Path to trw-memory .whl file (default: latest in dist/)",
     )
     parser.add_argument(
-        "--format", choices=["py"], default=DEFAULT_FORMAT,
+        "--format",
+        choices=["py"],
+        default=DEFAULT_FORMAT,
         help="Output format (default: py)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help=(
+            "Directory to search for auto-found wheels and to write the "
+            "installer into (default: dist/ under the trw-mcp package root). "
+            "Skip-audit D5: lets a test build into a tmp dir instead of the "
+            "tracked dist/ tree."
+        ),
     )
     args = parser.parse_args()
 
-    output = build_installer(args.wheel, args.memory_wheel, args.format)
+    output = build_installer(args.wheel, args.memory_wheel, args.format, out_dir=args.out)
     print(f"\nDone! Distribute: {output}")
 
 

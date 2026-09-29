@@ -426,16 +426,3 @@ class TestStructlogNudgeTelemetry:
         assert any(
             event.get("event") == "nudge_skipped" and event.get("reason") == "density_suppressed" for event in captured
         )
-
-    def test_nudge_skipped_budget_exhausted_reason(self) -> None:
-        """FR07: omitted/truncated content records a bounded budget reason."""
-        import structlog
-
-        from trw_mcp.state._nudge_messages import _assemble_nudge
-
-        with structlog.testing.capture_logs() as captured:
-            rendered = _assemble_nudge("status", "X" * 500, next_then="next", budget=60)
-        assert len(rendered) <= 60
-        assert any(
-            event.get("event") == "nudge_skipped" and event.get("reason") == "budget_exhausted" for event in captured
-        )

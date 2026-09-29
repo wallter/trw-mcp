@@ -39,22 +39,81 @@ trap 'exit 0' EXIT
 
 _repo="${TRW_PROJECT_DIR:-$(pwd)}"
 
-# --- Resolve Python (same contract as lib-distill-hint.sh) ---
-_python_path_file="${_repo}/.trw/channels/cc03-python.txt"
-_py=""
-if [ -f "$_python_path_file" ]; then
-    _candidate=$(cat "$_python_path_file" 2>/dev/null) || _candidate=""
-    if [ -n "$_candidate" ] && [ -x "$_candidate" ]; then
-        _py="$_candidate"
+# _trw_pc_unavailable: the maintenance cannot run here. Say so LOUDLY -- one line
+# on stderr, which `git commit` shows, and one `python_unavailable=1` event in the
+# hook log -- then exit 0 (PRD-FIX-156 s2). Before, this path was silent: the
+# sweep "ran" under an interpreter that could not import trw_mcp (L-7zca). The
+# log line is a fixed constant (no path in it), appended only when no component
+# of its path is a symlink.
+_trw_pc_unavailable() {
+    printf 'trw post-commit: maintenance skipped: %s. Run `trw-mcp update-project` to record the interpreter in .trw/channels/cc03-python.txt.\n' "$1" >&2 || true
+    _pc_dir="${_repo}/.trw/context"
+    if [ ! -L "${_repo}/.trw" ] && [ ! -L "$_pc_dir" ] && [ ! -L "$_pc_dir/hook-executions.log" ] \
+        && mkdir -p "$_pc_dir" 2>/dev/null; then
+        printf '%s event=PostCommit matcher=post-commit exit=0 duration=0s python_unavailable=1\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" >> "$_pc_dir/hook-executions.log" 2>/dev/null || true
     fi
-fi
-if [ -z "$_py" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        _py="python3"
+    exit 0
+}
+
+# --- Resolve Python: a copy of lib-distill-hint.sh's function, which this
+# script cannot source (it installs to .trw/hooks, apart from every client lib) ---
+_get_python_path() {
+    # Usage: _get_python_path <project_dir>
+    # PRD-FIX-155: the one interpreter resolution order, byte-identical in every
+    # bundled hook that starts Python (a test pins the copies). First hit wins:
+    #   1. <project_dir>/.trw/channels/cc03-python.txt, which init-project and
+    #      update-project fill with the interpreter that runs trw-mcp
+    #   2. the interpreter in the shebang of `command -v trw-mcp`
+    #   3. <project_dir>/.venv/bin/python
+    #   4. worktree fallback: in a linked git worktree, .trw is per-worktree and
+    #      untracked (steps 1 and 3 above never see it), so fall back to the
+    #      MAIN worktree's pointer, then its .venv, resolved via
+    #      `git rev-parse --git-common-dir` (one cheap call, only reached
+    #      here; a git error or non-worktree checkout just falls through)
+    #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
+        _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
+        [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
+        _trw_py=${_trw_py#\#!}
+        _trw_py=${_trw_py%% *}
+        case "${_trw_py##*/}" in python*) ;; *) _trw_py="" ;; esac
+        [ -x "$_trw_py" ] || _trw_py="$1/.venv/bin/python"
+    fi
+    if [ ! -x "$_trw_py" ]; then
+        _trw_common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _trw_common=""
+        if [ -n "$_trw_common" ]; then
+            _trw_main=$(dirname "$_trw_common")
+            _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
+        fi
+    fi
+    if [ -x "$_trw_py" ]; then
+        printf '%s' "$_trw_py"
+    elif command -v python3 >/dev/null 2>&1; then
+        printf 'python3'
     else
-        exit 0
+        return 1
     fi
-fi
+}
+_py=$(_get_python_path "$_repo") || _trw_pc_unavailable "no Python interpreter found"
+# One foreground probe that imports the worker's own entry module (so a missing
+# dependency such as structlog shows here, not in the silent detached worker).
+# A watchdog bounds it at 5 s, escalating to SIGKILL for a process that ignores
+# SIGTERM, so an interpreter that hangs cannot hold `git commit`; a killed probe
+# counts as unavailable.
+"$_py" -c 'import trw_mcp.tools._post_commit' >/dev/null 2>&1 &
+_probe_pid=$!
+( sleep 5; kill -TERM "$_probe_pid"; sleep 1; kill -KILL "$_probe_pid" ) >/dev/null 2>&1 &
+_probe_watch=$!
+_probe_rc=0
+wait "$_probe_pid" || _probe_rc=$?
+kill -TERM "$_probe_watch" 2>/dev/null || true
+# Reap the killed watchdog so the shell never prints "Terminated: 15" for it on
+# every commit.
+wait "$_probe_watch" 2>/dev/null || true
+[ "$_probe_rc" -eq 0 ] || _trw_pc_unavailable "$_py cannot import trw_mcp"
 
 # The repo root reaches Python through the ENVIRONMENT, never through source
 # interpolation — a repo path containing quotes or newlines must not be able to
@@ -79,17 +138,24 @@ _head=$(git -C "$_repo" rev-parse HEAD 2>/dev/null) || _head=""
 # TRW_POST_COMMIT_SYNC=1 runs in the foreground so a caller can observe the
 # receipt deterministically (used by the installer wiring test). Unset — the
 # normal path — detaches so `git commit` never waits.
+#
+# MEMORY_DAEMON_AUTOSTART=false (PRD-CORE-310 FR04): the sweep uses a memory
+# daemon that is already serving and never starts one. A commit with no session
+# open used to leave a daemon holding the store and a model for its idle window,
+# one per HOME a commit ran under (19 leaked from the test suite alone, B71-105).
 
 if [ "${TRW_POST_COMMIT_SYNC:-}" = "1" ]; then
     TRW_POST_COMMIT_REPO="$_repo" \
     TRW_POST_COMMIT_HEAD="$_head" \
     PYTHONDONTWRITEBYTECODE=1 \
+    MEMORY_DAEMON_AUTOSTART=false \
     "$_py" -c "$_TRW_PROGRAM" >/dev/null 2>&1 || true
 else
     (
         TRW_POST_COMMIT_REPO="$_repo" \
         TRW_POST_COMMIT_HEAD="$_head" \
         PYTHONDONTWRITEBYTECODE=1 \
+        MEMORY_DAEMON_AUTOSTART=false \
         "$_py" -c "$_TRW_PROGRAM" >/dev/null 2>&1
     ) &
 fi

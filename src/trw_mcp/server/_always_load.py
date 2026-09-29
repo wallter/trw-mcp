@@ -35,11 +35,14 @@ is skipped and logged, and joins the floor the moment it registers.
 
 Flag-gated, outside the kernel:
 
-* ``trw_assess`` (``assess_enabled``), ``trw_send`` and ``trw_inbox``
-  (``comms_enabled``) — loaded up front only when the flag is on. A project
-  that opted into the advisory judge or a formation wants them used, and a
-  deferred tool was the reason two lanes gave for not reaching for the judge.
-  With the flag off they stay deferred, so no install pays for them unasked.
+* ``trw_assess`` (on whenever ``_assess_enablement.assess_surfaced`` says so), ``trw_send`` and ``trw_inbox``
+  (``comms_enabled``) — always carry the key. A project that opted into the
+  advisory judge or a formation wants them used, and a deferred tool was the
+  reason two lanes gave for not reaching for the judge. With the flag off the
+  surface mask (``middleware/surface_authority.py``) does not list them, so the
+  key costs nothing; the mask alone decides visibility. Marking them only when
+  their flag was on AT BOOT went stale: a flag turned on mid-session
+  (PRD-CORE-305-FR04) surfaced the tool deferred until the server restarted.
 * ``trw_dispatch`` — NEVER loaded up front, whatever ``dispatch_tools_exposed``
   says. It spawns other agents; reaching it should cost a deliberate search.
 
@@ -78,31 +81,27 @@ ALWAYS_LOAD_TOOLS: Final[frozenset[str]] = frozenset(POST_CUT_KERNEL)
 #: Flag-gated tools that are never loaded up front, whatever their flag says.
 NEVER_ALWAYS_LOAD: Final[frozenset[str]] = frozenset({"trw_dispatch"})
 
-#: tool -> config flag: loaded up front only while that flag is true.
+#: tool -> the config flag that surfaces it. Always marked; the surface mask
+#: hides it while the flag is off.
 FLAG_GATED_ALWAYS_LOAD: Final[Mapping[str, str]] = {
     tool: flag for tool, flag in POST_CUT_FLAGGED.items() if tool not in NEVER_ALWAYS_LOAD
 }
 
-#: The config flags the boot path must read (see ``server/_tools.py``).
-GATING_FLAGS: Final[frozenset[str]] = frozenset(FLAG_GATED_ALWAYS_LOAD.values())
+
+def always_load_names() -> frozenset[str]:
+    """The kernel floor plus every flag-gated tool except ``NEVER_ALWAYS_LOAD``."""
+    return ALWAYS_LOAD_TOOLS | frozenset(FLAG_GATED_ALWAYS_LOAD)
 
 
-def always_load_names(flags: Mapping[str, bool]) -> frozenset[str]:
-    """The kernel floor plus each flag-gated tool whose flag is on in *flags*."""
-    return ALWAYS_LOAD_TOOLS | {tool for tool, flag in FLAG_GATED_ALWAYS_LOAD.items() if flags.get(flag, False)}
-
-
-async def apply_always_load_meta(server: FastMCP, *, flags: Mapping[str, bool] | None = None) -> tuple[str, ...]:
-    """Mark the kernel floor, plus each flag-gated tool whose flag is on, as always-loaded.
-
-    *flags* maps a config flag name (``assess_enabled``, ``comms_enabled``) to
-    its value; a missing flag counts as off.
+async def apply_always_load_meta(server: FastMCP) -> tuple[str, ...]:
+    """Mark the kernel floor and the flag-gated tools (never ``trw_dispatch``) as always-loaded.
 
     Mutates the registered tool objects in place. That is intentional and safe
     here, and only here: ``get_tool`` returns the registry singleton, so the
     assignment is process-permanent (learning L-MZ6J). This runs exactly once at
-    boot with a config-derived set, which is the one shape where permanence is the goal
-    — a per-request mutation of the same objects would be a leak.
+    boot with a fixed, config-independent set, which is the one shape where
+    permanence is the goal — a per-request mutation of the same objects would be
+    a leak.
 
     Fail-open per tool: a name that does not resolve is logged and skipped, so a
     rename or a gated registrar can never brick startup.
@@ -114,7 +113,7 @@ async def apply_always_load_meta(server: FastMCP, *, flags: Mapping[str, bool] |
     applied: list[str] = []
     missing: list[str] = []
 
-    for name in sorted(always_load_names(flags or {})):
+    for name in sorted(always_load_names()):
         tool: Any = None
         try:
             tool = await server.get_tool(name)
@@ -140,7 +139,6 @@ __all__ = [
     "ALWAYS_LOAD_META_KEY",
     "ALWAYS_LOAD_TOOLS",
     "FLAG_GATED_ALWAYS_LOAD",
-    "GATING_FLAGS",
     "NEVER_ALWAYS_LOAD",
     "always_load_names",
     "apply_always_load_meta",

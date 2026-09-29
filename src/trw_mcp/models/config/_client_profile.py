@@ -112,12 +112,10 @@ class WriteTargets(BaseModel):
     PRECEDENCE: ClassVar[tuple[tuple[str, str], ...]] = (
         ("cursor_rules", ".cursor/rules/"),
         ("copilot_instructions", ".github/copilot-instructions.md"),
-        ("claude_md", "CLAUDE.md"),
         ("antigravitycli_md", "ANTIGRAVITY.md"),
     )
     DEFAULT_LABEL: ClassVar[str] = "AGENTS.md"
 
-    claude_md: bool = False
     agents_md: bool = False
     # ``agents_md_primary`` was removed 2026-07-28 (PRD-QUAL-131-FR06): zero
     # production readers. The fact it encoded -- that AGENTS.md is cursor-cli's
@@ -229,8 +227,9 @@ class ClientProfile(BaseModel):
     def config_dir(self) -> str:
         """PRD-CORE-149 FR06: client config directory.
 
-        Defaults to the parent directory of ``write_targets.instruction_path``
-        (e.g., ``.claude`` for ``.claude/INSTRUCTIONS.md``). Returns ``.trw``
+        ``.claude`` for claude-code; otherwise the parent directory of
+        ``write_targets.instruction_path`` (e.g., ``.github`` for
+        ``.github/copilot-instructions.md``). Returns ``.trw``
         when no instruction path is configured -- the TRW state directory is
         the universal fallback.
 
@@ -239,6 +238,10 @@ class ClientProfile(BaseModel):
         an attribute of ``ClientProfile`` (resolves the Pyright false-positive
         on ``_nudge_messages.py`` accessing ``profile.config_dir``).
         """
+        if self.client_id == "claude-code":
+            # Its carrier is the root AGENTS.md, but its hooks and hook-env key
+            # live under ``.claude``.
+            return ".claude"
         path = self.write_targets.instruction_path
         if not path:
             return ".trw"

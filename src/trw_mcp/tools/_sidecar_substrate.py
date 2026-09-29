@@ -22,12 +22,17 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from trw_mcp.tools._sidecar_ancestry import AncestorSidecar, GitReader
 
 SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
 DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
+#: The only artifact an ancestor may answer for: it carries one hint per target.
+ANCESTOR_ARTIFACT: str = "before-edit-batch"
 
 
 def distill_installed() -> bool:
@@ -84,6 +89,12 @@ SidecarEnvelopeStatus = Literal[
 ]
 CurrentSidecarStatus = Literal[
     "hint_available",
+    # hint_sidecar_ancestor_enabled: a proven-ancestor sidecar, served "as of" its sha.
+    "hint_available_stale",
+    # hint_sidecar_ancestor_enabled: sidecars exist, none a proven ancestor within the bound.
+    "sidecar_too_far_behind",
+    # hint_sidecar_ancestor_enabled: git could not prove ancestry or list the changes since.
+    "sidecar_diff_failed",
     "sidecar_missing",
     "sidecar_malformed",
     "schema_mismatch",
@@ -112,6 +123,8 @@ class SidecarLoadResult:
     action: str | None
     sidecar_path: str | None
     sidecar_sha: str | None
+    #: The envelope's ``dirty_paths`` exactly as read (unvalidated), set only on ``ok``.
+    dirty_paths: object = None
 
 
 @dataclass(frozen=True)
@@ -125,6 +138,10 @@ class CurrentSidecarResult:
     sidecar_path: str | None = None
     sidecar_sha: str | None = None
     sidecar_existed: bool = False
+    #: Set only with ``hint_available_stale``: the ancestor that answered.
+    ancestor: AncestorSidecar | None = None
+    #: The resolved repository root, for callers that ask git a follow-up question.
+    repo_root: Path | None = None
 
 
 def resolve_repo_root(repo_root: str | None) -> Path | None:
@@ -305,6 +322,7 @@ def load_sidecar_with_sha_check(
         action=None,
         sidecar_path=sidecar_path_str,
         sidecar_sha=expected_sha,
+        dirty_paths=envelope.get("dirty_paths"),
     )
 
 
@@ -315,8 +333,20 @@ def resolve_current_sidecar(
     feature: str,
     artifact_name: str,
     cli_remediation: str | None,
+    ancestor_bound: int | None = None,
+    git_reader: GitReader | None = None,
+    persist_ancestry: bool = True,
 ) -> CurrentSidecarResult:
-    """Resolve and load one tier-gated, SHA-pinned distill sidecar."""
+    """Resolve and load one tier-gated, SHA-pinned distill sidecar.
+
+    ``ancestor_bound`` is ``hint_sidecar_max_commits_behind`` when the caller's
+    ``hint_sidecar_ancestor_enabled`` is on, else None. When set and no
+    exact-HEAD artifact exists, the nearest proven-ancestor batch sidecar
+    within that many commits answers as ``hint_available_stale``. None keeps
+    the exact-HEAD-only lookup unchanged. ``git_reader`` is the test seam.
+    ``persist_ancestry=False`` (the reviewer role) computes ancestry in memory
+    and writes no cache file.
+    """
     resolved_repo_root = resolve_repo_root(repo_root)
     if resolved_repo_root is None:
         return CurrentSidecarResult(
@@ -352,6 +382,20 @@ def resolve_current_sidecar(
     resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
     sidecar_path = resolved_cache_dir / f"{artifact_name}-{git_sha}.json"
     sidecar_existed = sidecar_path.exists()
+    if ancestor_bound is not None and artifact_name != ANCESTOR_ARTIFACT:
+        raise ValueError(f"ancestor_bound applies only to {ANCESTOR_ARTIFACT!r}, not {artifact_name!r}")
+    if ancestor_bound is not None and not sidecar_existed:
+        search_dir = Path(cache_dir) if cache_dir is not None else None
+        return _resolve_ancestor(
+            repo_root=resolved_repo_root,
+            search_dir=search_dir,
+            head=git_sha,
+            tier=gate.tier,
+            bound=ancestor_bound,
+            git_reader=git_reader,
+            cli_remediation=cli_remediation,
+            persist=persist_ancestry,
+        )
     load = load_sidecar_with_sha_check(
         sidecar_path,
         expected_sha=git_sha,
@@ -365,10 +409,84 @@ def resolve_current_sidecar(
         sidecar_path=load.sidecar_path,
         sidecar_sha=load.sidecar_sha,
         sidecar_existed=sidecar_existed,
+        repo_root=resolved_repo_root,
     )
 
 
+def _resolve_ancestor(
+    *,
+    repo_root: Path,
+    search_dir: Path | None,
+    head: str,
+    tier: str,
+    bound: int,
+    git_reader: GitReader | None,
+    cli_remediation: str | None,
+    persist: bool,
+) -> CurrentSidecarResult:
+    """No exact-HEAD artifact: answer from the nearest proven-ancestor batch sidecar, or say why not."""
+    from trw_mcp.tools import _sidecar_ancestry as ancestry
+
+    cache_dir = search_dir or ancestry.shared_cache_dir(repo_root, DEFAULT_CACHE_DIR_REL)
+    git = git_reader or ancestry.SubprocessGitReader(repo_root)
+    run = f"run: {cli_remediation}" if cli_remediation else _NO_PRODUCER_ACTION
+    try:
+        outcome = ancestry.find_ancestor_sidecar(cache_dir, head, git=git, max_commits_behind=bound, persist=persist)
+    except ancestry.GitReadError as err:
+        outcome = ancestry.AncestryOutcome(status="git_failed", reason=str(err))
+    base = CurrentSidecarResult(
+        tier=tier, payload=None, status="sidecar_missing", sidecar_sha=head, repo_root=repo_root
+    )
+    if outcome.status == "no_candidates":
+        return replace(base, action=f"Run: {cli_remediation}" if cli_remediation else _NO_PRODUCER_ACTION)
+    if outcome.status == "git_failed":
+        return replace(
+            base,
+            status="sidecar_diff_failed",
+            action=f"Could not compare cached sidecars with HEAD ({outcome.reason}); learnings only ({ancestry.FLAG_DISABLE})",
+        )
+    if outcome.status == "too_far_behind" or outcome.ancestor is None:
+        nearest = outcome.nearest_commits_behind
+        where = (
+            "no cached sidecar is an ancestor of HEAD"
+            if nearest is None
+            else f"the nearest is {nearest} commits behind"
+        )
+        return replace(
+            base,
+            status="sidecar_too_far_behind",
+            action=f"No sidecar within hint_sidecar_max_commits_behind={bound} ({where}); {run} ({ancestry.FLAG_DISABLE})",
+        )
+    return _load_ancestor(base, outcome.ancestor, cli_remediation)
+
+
+def _load_ancestor(
+    base: CurrentSidecarResult, ancestor: AncestorSidecar, cli_remediation: str | None
+) -> CurrentSidecarResult:
+    """Validate the chosen ancestor's envelope; a corrupt file is ``sidecar_malformed``, never "missing"."""
+    from trw_mcp.tools._sidecar_ancestry import parse_dirty_paths
+
+    load = load_sidecar_with_sha_check(ancestor.path, expected_sha=ancestor.sha, cli_remediation=cli_remediation)
+    located = replace(base, sidecar_path=str(ancestor.path), sidecar_existed=True)
+    if load.status == "ok":
+        dirty = parse_dirty_paths(load.dirty_paths)
+        if dirty is None:
+            action = f"Sidecar dirty_paths is not a list of paths; rebuild {ancestor.path.name}"
+            return replace(located, status="sidecar_malformed", action=action)
+        fresh = ancestor.commits_behind == 0
+        return replace(
+            located,
+            payload=load.payload,
+            status="hint_available" if fresh else "hint_available_stale",
+            sidecar_sha=ancestor.sha,
+            ancestor=None if fresh else replace(ancestor, dirty_paths=dirty),
+        )
+    status: CurrentSidecarStatus = "sidecar_malformed" if load.status == "sidecar_missing" else load.status
+    return replace(located, status=status, action=load.action)
+
+
 __all__ = [
+    "ANCESTOR_ARTIFACT",
     "DEFAULT_CACHE_DIR_REL",
     "SCHEMA_VERSION_ACCEPTED",
     "TIER_REMEDIATION_URL",

@@ -126,7 +126,9 @@ def test_runner_refused_timeout_has_bounded_drain(monkeypatch, sender):
     # and again when PRD-CORE-281 added ``with_trw``. ``**_`` would absorb the
     # next such addition, but it would also stop this stub from catching a
     # genuine signature drift, which is why the keywords stay explicit.)
-    monkeypatch.setattr(_runner, "build_subprocess_env", lambda client, *, posture="default", with_trw=False: {})
+    monkeypatch.setattr(
+        _runner, "build_subprocess_env", lambda client, *, posture="default", with_trw=False, read_only=False: {}
+    )
     unconfined_off_darwin(monkeypatch)
     result = _runner.dispatch(DispatchRequest(client="agy", prompt="x", timeout_s=1))
     assert result.timed_out

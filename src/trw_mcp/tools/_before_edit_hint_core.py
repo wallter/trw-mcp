@@ -15,10 +15,12 @@ without a sidecar.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import concurrent.futures
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
 from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
 
@@ -27,7 +29,10 @@ from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
 # compatibility with callers that still import from this module.
 from trw_mcp.tools import _sidecar_substrate
 from trw_mcp.tools._learnings_collector import LearningSummary
-from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus
+from trw_mcp.tools._sidecar_substrate import CurrentSidecarResult, CurrentSidecarStatus
+
+if TYPE_CHECKING:
+    from trw_mcp.tools._sidecar_ancestry import GitReader
 
 _logger = structlog.get_logger(__name__)
 
@@ -35,7 +40,7 @@ _logger = structlog.get_logger(__name__)
 # the two drifted in the first place.
 _SCHEMA_VERSION_ACCEPTED: str = _sidecar_substrate.SCHEMA_VERSION_ACCEPTED
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
-_ARTIFACT_NAME_BATCH: str = "before-edit-batch"
+_ARTIFACT_NAME_BATCH: str = _sidecar_substrate.ANCESTOR_ARTIFACT
 _TIER_FEATURE: str = DISTILL_SIDECAR_FEATURE
 
 #: Statuses in which the substrate returned BEFORE consulting any artifact, so
@@ -49,6 +54,14 @@ _NO_ARTIFACT_CONSULTED: frozenset[str] = frozenset({"tier_required", "no_repo_ro
 #: substrate's closed set, so a new shared status arrives here automatically.
 BeforeEditHintStatus = CurrentSidecarStatus | Literal["target_not_in_sidecar"]
 
+#: Statuses that carry a sidecar hint and record as tier T2. The edit hooks
+#: import this rather than re-spelling it.
+T2_STATUSES: frozenset[str] = frozenset({"hint_available", "hint_available_stale"})
+
+#: The single-file statuses a batch refusal may replace: only "nothing here",
+#: never a more specific finding about an artifact that does exist.
+_BATCH_REFUSALS: frozenset[str] = frozenset({"sidecar_too_far_behind", "sidecar_diff_failed", "sidecar_malformed"})
+
 #: Statuses in which the entitlement gate never ran, so "was this edit
 #: eligible?" has no answer. ``tier_required`` means checked-and-denied;
 #: ``no_repo_root`` means the substrate returned before reaching the gate.
@@ -56,6 +69,40 @@ BeforeEditHintStatus = CurrentSidecarStatus | Literal["target_not_in_sidecar"]
 #: telemetry that no check ever made — the same defect as the ``stale_sha``
 #: mislabel this module was migrated to fix.
 _ELIGIBILITY_UNDETERMINED: frozenset[str] = frozenset({"tier_required", "no_repo_root"})
+
+
+#: PRD-DIST-2482 FR02 mirror. ``ok``: read, 1+ cited; ``none_cited``: read, 0
+#: cited; ``daemon_unavailable`` and ``page_cap_reached`` mean the lesson check
+#: could not finish, so an empty ``lessons`` list proves nothing.
+LessonsStatus = Literal["ok", "none_cited", "daemon_unavailable", "page_cap_reached"]
+
+
+#: HINT-RECALL-BUDGET: whether the T1 learnings half of the hint (``_collect_learnings``)
+#: finished inside ``hint_recall_deadline_ms``. ``recall_timeout`` means the recall was
+#: abandoned and ``learnings`` is empty by construction, not because nothing matched;
+#: the T2 sidecar half of the hint is unaffected either way.
+LearningsRecallStatus = Literal["ok", "recall_timeout"]
+
+
+class EditLessonPayload(BaseModel):
+    """Mirror of trw-distill ``EditLesson``: a distilled lesson whose evidence cites the file.
+
+    ``extra="ignore"`` (not ``"forbid"``): this is the READ side of the
+    cross-package contract, and trw-distill is versioned independently of
+    trw-mcp. A newer trw-distill adding an additive field to this shape must
+    not make an older trw-mcp report ``sidecar_malformed`` and drop the whole
+    hint over a field it never needed — see the parent docstring's IP-boundary
+    note. Known fields still validate strictly (a wrong type on a KNOWN field
+    is still malformed); only unrecognized keys are dropped, and the caller
+    logs their names once per parse via ``_log_ignored_fields`` so drift stays
+    visible without failing the read.
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="ignore")
+
+    id: str = Field(min_length=1)
+    sha: str
+    summary: str = Field(max_length=160)
 
 
 class BeforeYouEditHintPayload(BaseModel):
@@ -66,9 +113,12 @@ class BeforeYouEditHintPayload(BaseModel):
     the envelope contract. If trw-distill bumps the envelope
     schema_version, the tool returns ``schema_mismatch`` until this
     mirror is updated.
+
+    ``extra="ignore"``: see :class:`EditLessonPayload` — same read-side
+    forward-compatibility rationale applies at the top level.
     """
 
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+    model_config = ConfigDict(strict=True, frozen=True, extra="ignore")
 
     # Constraints mirror the trw-distill source; parity-checked by
     # scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05).
@@ -80,6 +130,22 @@ class BeforeYouEditHintPayload(BaseModel):
     co_change_neighbors: list[str] = Field(default_factory=list)
     hotspot_warnings: list[str] = Field(default_factory=list)
     risk_score: float | None = None
+    lessons: list[EditLessonPayload] = Field(default_factory=list, max_length=2)
+    lessons_status: LessonsStatus | None = None
+
+
+class SidecarAsOf(BaseModel):
+    """Provenance of a ``hint_available_stale`` hint: the ancestor sidecar it came from.
+
+    ``target_changed`` records whether the target differs from that snapshot;
+    when it does, the content-dependent fields were dropped before validation.
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+
+    sidecar_sha: str
+    commits_behind: int = Field(ge=1)
+    target_changed: bool
 
 
 class BeforeEditHintResult(BaseModel):
@@ -101,6 +167,19 @@ class BeforeEditHintResult(BaseModel):
     distill_sidecar_sha: str | None = None
     learnings: list[LearningSummary] = Field(default_factory=list)
     learnings_count: int = 0
+    learnings_status: LearningsRecallStatus = "ok"
+    distill_as_of: SidecarAsOf | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_as_of(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Leave ``distill_as_of`` and an ``ok`` ``learnings_status`` out, so every other result dumps as before.
+
+        Both are advisory: each response key is paid on every hint, so a field appears only when it
+        carries signal (a stale hint's as-of, a recall that timed out).
+        """
+        data: dict[str, Any] = handler(self)
+        absent = {"distill_as_of": self.distill_as_of is None, "learnings_status": self.learnings_status == "ok"}
+        return {key: value for key, value in data.items() if not absent.get(key, False)}
 
 
 def _cli_remediation(file_path: str) -> str:
@@ -120,6 +199,30 @@ def _batch_miss_action(file_path: str) -> str:
         f"Batch sidecar does not cover {file_path!r} (it covers the files the last commit touched) — "
         f"run: {_cli_remediation(file_path)}"
     )
+
+
+def _log_ignored_fields(payload: dict[str, Any], known_fields: frozenset[str], *, shape: str) -> None:
+    """Log (once per parse) any top-level keys ``model_validate`` will silently drop.
+
+    ``extra="ignore"`` on the mirror models makes forward-compat additive
+    fields harmless, but silent drift is still drift — this keeps it visible
+    in the logs without failing the read. One info line per call, naming every
+    ignored field, rather than one line per field.
+    """
+    extra = sorted(set(payload) - known_fields)
+    if extra:
+        _logger.info("before_edit_hint.sidecar_extra_fields_ignored", shape=shape, fields=extra)
+
+
+def _log_lesson_extra_fields(payload: dict[str, Any]) -> None:
+    """Same as :func:`_log_ignored_fields` but for each entry of ``payload["lessons"]``."""
+    lessons = payload.get("lessons")
+    if not isinstance(lessons, list):
+        return
+    known = frozenset(EditLessonPayload.model_fields)
+    for entry in lessons:
+        if isinstance(entry, dict):
+            _log_ignored_fields(entry, known, shape="lesson")
 
 
 def _select_distill_hint(
@@ -153,6 +256,8 @@ def _select_distill_hint(
             f"{file_path!r} — run: trw-distill self-improve before-edit "
             f"--repo . --file {file_path} --persist-sidecar",
         )
+    _log_ignored_fields(payload, frozenset(BeforeYouEditHintPayload.model_fields), shape="hint")
+    _log_lesson_extra_fields(payload)
     try:
         hint = BeforeYouEditHintPayload.model_validate(payload)
     except Exception:
@@ -164,11 +269,10 @@ def _select_distill_hint(
     return (hint, "hint_available", None)
 
 
-def _select_from_batch(
-    payload: Any,
-    file_path: str,
-) -> tuple[BeforeYouEditHintPayload | None, Literal["hint_available", "sidecar_malformed", "target_not_in_sidecar"]]:
-    """Pick this file's hint out of an already-loaded ``before-edit-batch`` payload.
+def _find_batch_entry(
+    payload: Any, keys: tuple[str, ...]
+) -> dict[str, Any] | Literal["sidecar_malformed", "target_not_in_sidecar"]:
+    """This file's entry in an already-loaded ``before-edit-batch`` payload, or why there is none.
 
     NEVER raises. The two negative statuses are kept apart deliberately: "the
     batch does not mention this file" and "the batch mentions it but the entry
@@ -176,48 +280,118 @@ def _select_from_batch(
     into the first would report a schema break as an absent target.
     """
     if not isinstance(payload, dict):
-        return (None, "sidecar_malformed")
+        return "sidecar_malformed"
     hints = payload.get("hints")
     if not isinstance(hints, list):
-        return (None, "sidecar_malformed")
+        return "sidecar_malformed"
     for entry in hints:
-        if not isinstance(entry, dict) or entry.get("target_path") != file_path:
-            continue
-        try:
-            return (BeforeYouEditHintPayload.model_validate(entry), "hint_available")
-        except Exception:
-            return (None, "sidecar_malformed")
-    return (None, "target_not_in_sidecar")
+        if isinstance(entry, dict) and entry.get("target_path") in keys:
+            return entry
+    return "target_not_in_sidecar"
 
 
-def _collect_learnings(file_path: str) -> list[LearningSummary]:
-    """c749 (PRD-DIST-2002): delegate to shared collector.
+_BatchPick = tuple[BeforeYouEditHintPayload | None, BeforeEditHintStatus, "SidecarAsOf | None", str | None]
 
-    Preserves c746 backward compat (same signature, same semantics) by
-    wrapping the shared `_learnings_collector.collect_learnings` with
-    `build_file_queries`.
+
+def _select_from_batch(
+    batch: CurrentSidecarResult,
+    keys: tuple[str, ...],
+    git_reader: GitReader | None,
+) -> _BatchPick:
+    """Pick this file's hint out of a loaded batch: ``(hint, status, as_of, action)``.
+
+    A stale entry is reduced per field first. Its target counts as changed
+    when the diff since the sidecar names it, when the builder recorded it in
+    the envelope's ``dirty_paths``, or when ``git status`` shows it
+    staged, unstaged or untracked (asked every time, never cached); a git
+    failure there is ``sidecar_diff_failed``, and no hint is shown.
     """
+    from trw_mcp.tools import _sidecar_ancestry as ancestry
+
+    found = _find_batch_entry(batch.payload, keys)
+    if isinstance(found, str):
+        return (None, found, None, None)
+    ancestor = batch.ancestor
+    as_of: SidecarAsOf | None = None
+    if batch.status == "hint_available_stale" and ancestor is not None and batch.repo_root is not None:
+        target = str(found["target_path"])
+        git = git_reader or ancestry.SubprocessGitReader(batch.repo_root)
+        try:
+            changed = target in ancestor.changed or target in ancestor.dirty_paths or git.worktree_changed(target)
+        except ancestry.GitReadError as err:
+            action = (
+                f"Could not check {target!r} against the working tree ({err}); learnings only ({ancestry.FLAG_DISABLE})"
+            )
+            return (None, "sidecar_diff_failed", None, action)
+        found = ancestry.filter_stale_entry(found, changed=ancestor.changed, target_changed=changed)
+        as_of = SidecarAsOf(sidecar_sha=ancestor.sha, commits_behind=ancestor.commits_behind, target_changed=changed)
+    _log_ignored_fields(found, frozenset(BeforeYouEditHintPayload.model_fields), shape="hint")
+    _log_lesson_extra_fields(found)
+    try:
+        hint = BeforeYouEditHintPayload.model_validate(found)
+    except Exception:
+        return (None, "sidecar_malformed", None, None)
+    return (hint, batch.status, as_of, None)
+
+
+def _collect_learnings(file_path: str, repo_root: str | None) -> tuple[list[LearningSummary], LearningsRecallStatus]:
+    """The shared collector over ``[path, basename]``, lessons anchored to the file first.
+
+    PRD-CORE-332 FR06/FR08: the anchored recall uses the file's repo-relative
+    path; a path outside the root or through a symlink gets the text queries only.
+
+    HINT-RECALL-BUDGET: runs single-paged (``single_page=True`` — no
+    ``take_hits`` growth loop) on a worker thread bounded by
+    ``hint_recall_deadline_ms``. A recall over the daemon socket can run well
+    past a hook's PreToolUse budget (measured: 4.76s of a 5.98s hint against a
+    2522-entry store); past the deadline this returns ``([], "recall_timeout")``
+    without waiting on the worker, so the T2 sidecar half of the hint is never
+    held hostage by a slow T1 recall. The abandoned worker is not joined or
+    cancelled out from under the daemon's own event loop — it runs to
+    completion on its own and its result is simply discarded, so nothing hangs
+    and no extra daemon connection is opened either way (raise
+    ``hint_recall_deadline_ms`` in ``.trw/config.yaml`` to wait longer).
+    """
+    from trw_mcp.models.config import get_config
     from trw_mcp.tools._learnings_collector import (
         build_file_queries,
         collect_learnings,
     )
 
-    return collect_learnings(build_file_queries(file_path))
+    queries = build_file_queries(file_path)
+    anchor_file = _anchor_key(file_path, repo_root)
+    deadline_s = get_config().hint_recall_deadline_ms / 1000.0
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="hint-recall-budget")
+    future = executor.submit(collect_learnings, queries, anchor_file=anchor_file, single_page=True)
+    try:
+        learnings = future.result(timeout=deadline_s)
+    except concurrent.futures.TimeoutError:
+        future.cancel()  # best-effort; the recall already in flight is abandoned, not force-stopped
+        _logger.info(
+            "before_edit_hint.recall_timeout",
+            file_path=file_path,
+            deadline_ms=get_config().hint_recall_deadline_ms,
+            disable="raise hint_recall_deadline_ms in .trw/config.yaml",
+        )
+        return [], "recall_timeout"
+    finally:
+        executor.shutdown(wait=False)
+    return learnings, "ok"
 
 
-def _repo_relative_path(file_path: str) -> str | None:
-    """POSIX path of *file_path* relative to the project root, or None outside it.
+def _under_root(file_path: str, repo_root: str | None) -> tuple[Path, str] | None:
+    """The root *file_path* lies under and its POSIX path relative to it, or None outside it.
 
     Lexical (``normpath``) rather than ``resolve()``: the file may not exist
-    yet, and a symlink inside the repo is still the path the agent edits. The
-    root is tried as given and resolved, so /var vs /private/var still matches.
+    yet. Only the root is also tried resolved, so /var vs /private/var still
+    matches. *repo_root* wins over the ambient project root when given.
     """
     import os
-    from pathlib import Path
 
     from trw_mcp.state._paths import resolve_project_root
 
-    root = resolve_project_root()
+    root = Path(repo_root) if repo_root else resolve_project_root()
     candidate = Path(file_path)
     if not candidate.is_absolute():
         candidate = root / candidate
@@ -225,8 +399,39 @@ def _repo_relative_path(file_path: str) -> str | None:
     for base in (root, root.resolve()):
         if normalized.is_relative_to(base):
             relative = normalized.relative_to(base).as_posix()
-            return relative if relative not in ("", ".") else None
+            return (base, relative) if relative not in ("", ".") else None
     return None
+
+
+def _repo_relative_path(file_path: str) -> str | None:
+    """POSIX path of *file_path* relative to the project root, or None outside it.
+
+    A symlink inside the repo is still the path the agent edits, so exposure
+    rows keep it; only the anchor key (:func:`_anchor_key`) refuses one.
+    """
+    found = _under_root(file_path, None)
+    return found[1] if found else None
+
+
+def _anchor_key(file_path: str, repo_root: str | None) -> str | None:
+    """The repo-relative path anchors are matched on, or None when no anchored lookup may run (FR08).
+
+    None outside the root, and when the path or any existing parent below the
+    root is a symlink: an anchor names the path it was written against, and a
+    link would match a lesson about a different file. One ``lstat`` per component.
+    """
+    import os
+
+    found = _under_root(file_path, repo_root)
+    if found is None:
+        _logger.debug("anchor_lookup_skipped", reason="outside_root")
+        return None
+    base, relative = found
+    parts = relative.split("/")
+    if any(os.path.islink(base.joinpath(*parts[:depth])) for depth in range(1, len(parts) + 1)):
+        _logger.debug("anchor_lookup_skipped", reason="symlink")
+        return None
+    return relative
 
 
 def _record_exposure(file_path: str, learnings: list[LearningSummary]) -> None:
@@ -268,21 +473,55 @@ def _record_exposure(file_path: str, learnings: list[LearningSummary]) -> None:
         _logger.debug("before_edit_exposure_record_failed", exc_info=True)
 
 
+def _request_sidecar_rebuild(batch: CurrentSidecarResult, cache_dir: str | None, distill_status: str) -> str | None:
+    """Request a detached sidecar rebuild when the batch lookup says one is due (``hint_sidecar_auto_refresh_enabled``).
+
+    Runs after every part of the hint is computed and does not change the
+    ``distill_hint``/``distill_status`` payload — the request spawns and
+    returns without waiting. Returns replacement ``distill_action`` TEXT only
+    when this request spawned a rebuild for a missing/too-far-behind sidecar
+    (2026-09-27 audit touchpoint #5): the agent must not also be told to run
+    the same command manually. ``None`` otherwise, including any failure to ask.
+    The spawn-module import stays lazy (this module's import-budget docstring).
+    """
+    try:
+        from trw_mcp.tools._distill_spawn import _NO_USABLE_SIDECAR, request_rebuild_if_due
+
+        spawned = request_rebuild_if_due(batch, cache_dir=cache_dir, trigger="hint").status == "spawned"
+        if spawned and distill_status in _NO_USABLE_SIDECAR:
+            return "A sidecar rebuild was requested; T2 hints follow once it finishes."
+    except Exception:  # trw-fail-silent-allow: the hint never depends on the rebuild request; DEBUG is the record
+        _logger.debug(
+            "sidecar_rebuild_request_failed",
+            exc_info=True,
+            disable="disable with hint_sidecar_auto_refresh_enabled: false in .trw/config.yaml",
+        )
+    return None
+
+
 def compute_before_edit_hint(
     *,
     file_path: str,
     repo_root: str | None = None,
     cache_dir: str | None = None,
+    git_reader: GitReader | None = None,
 ) -> BeforeEditHintResult:
     """Pure-Python entry point for ``trw_code(mode="hint")``, the edit hooks and tests.
 
     Under the reviewer role it writes nothing: no delivery telemetry and no
-    exposure rows (PRD-CORE-300-FR12).
+    exposure rows (PRD-CORE-300-FR12). With ``hint_sidecar_ancestor_enabled``
+    on, a missing exact-HEAD batch sidecar falls back to the nearest proven
+    ancestor (``hint_available_stale`` plus ``distill_as_of``). ``git_reader``
+    is the test seam for that path's git questions. With
+    ``hint_sidecar_auto_refresh_enabled`` on, a batch lookup that finds no
+    usable sidecar, or one too far behind, requests a detached rebuild after
+    the hint is computed; the result is the same either way.
     """
+    from trw_mcp.models.config import get_config
     from trw_mcp.state._surface_role import reviewer_role_active
 
     reviewer = reviewer_role_active()
-    learnings = _collect_learnings(file_path)
+    learnings, learnings_status = _collect_learnings(file_path, repo_root)
 
     # Repo root, entitlement gate, HEAD sha, envelope + schema + sha checks all
     # come from the shared substrate. Its status vocabulary distinguishes the
@@ -308,6 +547,9 @@ def compute_before_edit_hint(
     distill_status: BeforeEditHintStatus = sidecar.status
     distill_action: str | None = sidecar.action
     distill_sidecar_path: str | None = sidecar.sidecar_path
+    distill_sidecar_sha: str | None = sidecar.sidecar_sha
+    distill_as_of: SidecarAsOf | None = None
+    batch: CurrentSidecarResult | None = None
     if sidecar.status == "hint_available":
         distill_hint, distill_status, distill_action = _select_distill_hint(sidecar.payload, file_path)
 
@@ -319,23 +561,41 @@ def compute_before_edit_hint(
     # docstring listed batch consumption as deferred v1 scope; without it the
     # producer fix would have written artifacts nothing reads.
     if distill_status != "hint_available" and sidecar.status not in _NO_ARTIFACT_CONSULTED:
+        config = get_config()
+        ancestor_on = config.hint_sidecar_ancestor_enabled
         batch = _sidecar_substrate.resolve_current_sidecar(
             repo_root=repo_root,
             cache_dir=cache_dir,
             feature=_TIER_FEATURE,
             artifact_name=_ARTIFACT_NAME_BATCH,
             cli_remediation=_cli_remediation(file_path),
+            ancestor_bound=config.hint_sidecar_max_commits_behind if ancestor_on else None,
+            git_reader=git_reader,
+            persist_ancestry=not reviewer,
         )
-        if batch.status == "hint_available":
-            batch_hint, batch_status = _select_from_batch(batch.payload, file_path)
+        if batch.status in T2_STATUSES:
+            # Batch entries are keyed repo-relative; the edit hooks pass the
+            # absolute path. Matching both is part of the flagged read path.
+            relative = _under_root(file_path, str(batch.repo_root)) if ancestor_on and batch.repo_root else None
+            keys = (file_path, relative[1]) if relative else (file_path,)
+            batch_hint, batch_status, batch_as_of, batch_action = _select_from_batch(batch, keys, git_reader)
             # Only ADOPT the batch outcome — never let a batch miss overwrite a
             # more specific single-file finding with a vaguer one. A batch that
             # cannot answer leaves the single-file status exactly as it was.
             if batch_hint is not None or distill_status == "sidecar_missing":
                 distill_hint = batch_hint
                 distill_status = batch_status
-                distill_action = None if batch_hint is not None else _batch_miss_action(file_path)
+                distill_action = batch_action or (None if batch_hint is not None else _batch_miss_action(file_path))
                 distill_sidecar_path = batch.sidecar_path
+                distill_as_of = batch_as_of
+                if batch_hint is not None:
+                    distill_sidecar_sha = batch.sidecar_sha
+        elif ancestor_on and batch.status in _BATCH_REFUSALS and distill_status == "sidecar_missing":
+            # A more specific "why no hint" than the single-file miss it
+            # replaces. Flag off never adopts one, so its output stays as it was.
+            distill_status = batch.status
+            distill_action = batch.action
+            distill_sidecar_path = batch.sidecar_path
 
     # PRD-CORE-231-FR01: record every ELIGIBLE edit in durable telemetry.
     # "Eligible" == the entitlement gate ran AND allowed the feature. Misses are
@@ -347,14 +607,23 @@ def compute_before_edit_hint(
     if distill_status not in _ELIGIBILITY_UNDETERMINED and not reviewer:
         from trw_mcp.channels._distill_telemetry import emit_hint_delivered
 
+        staleness: dict[str, Any] = {}
+        if distill_as_of is not None:
+            staleness = {
+                "sidecar_commits_behind": distill_as_of.commits_behind,
+                "target_changed_since_sidecar": distill_as_of.target_changed,
+            }
         emit_hint_delivered(
-            tier="T2" if distill_status == "hint_available" else sidecar.tier,
+            tier="T2" if distill_status in T2_STATUSES else sidecar.tier,
             distill_status=distill_status,
             file_path=file_path,
+            **staleness,
         )
 
     if not reviewer:
         _record_exposure(file_path, learnings)
+    if batch is not None:
+        distill_action = _request_sidecar_rebuild(batch, cache_dir, distill_status) or distill_action
 
     return BeforeEditHintResult(
         file_path=file_path,
@@ -367,17 +636,22 @@ def compute_before_edit_hint(
         # operator can tell a single-file hit from a batch hit, and it costs no
         # extra response field.
         distill_sidecar_path=distill_sidecar_path,
-        distill_sidecar_sha=sidecar.sidecar_sha,
+        distill_sidecar_sha=distill_sidecar_sha,
         learnings=learnings,
         learnings_count=len(learnings),
+        learnings_status=learnings_status,
+        distill_as_of=distill_as_of,
     )
 
 
 __all__ = [
+    "T2_STATUSES",
     "BeforeEditHintResult",
     "BeforeEditHintStatus",
     "BeforeYouEditHintPayload",
     "CurrentSidecarStatus",
     "LearningSummary",
+    "LearningsRecallStatus",
+    "SidecarAsOf",
     "compute_before_edit_hint",
 ]

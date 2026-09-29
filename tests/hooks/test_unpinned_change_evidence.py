@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
 import trw_mcp.tools._delivery_helpers  # noqa: F401  (import-cycle order guard)
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
@@ -45,6 +46,7 @@ def _run_hook(project_root: Path, tool: str, file_path: str, hook: Path = _BUNDL
         capture_output=True,
         text=True,
         env={
+            **daemon_env_passthrough(),
             "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
             "CLAUDE_PROJECT_DIR": str(project_root),
             "TRW_SESSION_ID": _SESSION,

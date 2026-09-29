@@ -93,6 +93,12 @@ from trw_mcp.tools._deliver_gate_selfcomputed import (
 from trw_mcp.tools._deliver_gate_selfcomputed import (
     log_unused_override_intent as _log_unused_override_intent,
 )
+from trw_mcp.tools._deliver_requirement_drift import (
+    apply_requirement_drift_gate,
+    compute_requirement_drift,
+    drift_blocks_task,
+    drift_warning,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -272,6 +278,12 @@ def evaluate_delivery_gates(
     with journal_step("S23"):
         _persist_decision_set(resolved_run, decision_set)
     typed_gate_result: Mapping[str, object] = decision_set.project_public_keys()
+    # PRD-CORE-321: computed once, here, before any gate can return, so the drift
+    # report and its advisory reach the response even when a gate blocks.
+    results["requirement_drift"] = drift = compute_requirement_drift(resolved_run)
+    drift_blocks = drift_blocks_task(resolved_run)
+    if drift_text := drift_warning(drift, drift_blocks):
+        results["requirement_drift_warning"] = drift_text
 
     if _evaluate_no_escape(typed_gate_result, results, errors):
         return True
@@ -304,6 +316,12 @@ def evaluate_delivery_gates(
     # Deleting this call is the FR11 rollback lever and turns its gate test red.
     if _evaluate_formation(
         results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, call_ctx=call_ctx
+    ):
+        return True
+    # PRD-CORE-321-FR05: the drift gate reuses the report above (no recompute), under
+    # the same PRD-CORE-191 override contract. Deleting this call returns to warn-only.
+    if apply_requirement_drift_gate(
+        drift, drift_blocks, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
         return True
     _log_unused_override_intent(allow_unverified, unverified_reason, resolved_run)

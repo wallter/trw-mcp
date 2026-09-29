@@ -1,16 +1,17 @@
 """Tests for the W38 (7.0.0 security P1) shared platform-egress trust gate.
 
 Covers the ONE decision point every platform-egress call site
-(``state/auto_upgrade.py``, ``sync/pull.py``, ``sync/push.py``,
+(``sync/pull.py``, ``sync/push.py``,
 ``tools/submit_feedback.py``, ``telemetry/sender.py``,
 ``telemetry/publisher.py``, ``telemetry/pipeline.py``) uses:
 
   - ``trusted_platform_hosts`` sources ONLY the default host, USER-level
-    ``~/.trw/config.yaml``, and env — never a project's tracked config.
+    ``~/.trw/config.yaml``, and env — never a project's tracked config
+    (trw-memory's implementation, which ``platform_auth_headers`` uses).
   - ``bearer_allowed_for`` — the scheme/host floor.
   - ``platform_contact_enabled`` — the config-field switch
-    that disables BOTH the update check and the team-sync pull loop, and the
-    24h update-check throttle.
+    that disables the team-sync pull loop (the update check it also gated was
+    retired in 8.0.0).
   - ``platform_auth_headers`` — the ONE function that builds an
     ``Authorization`` header (P1-C, pre-7.0.0-freeze release verify): a
     census test below fails if any other module under ``trw_mcp/src`` builds
@@ -27,17 +28,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
-
-from trw_mcp.models.config import TRWConfig, _reset_config
-from trw_mcp.state._platform_trust import (
+from trw_memory.sync._remote_common import (
     DEFAULT_TRUSTED_PLATFORM_HOST,
     bearer_allowed_for,
-    platform_auth_headers,
-    platform_contact_enabled,
     trusted_platform_hosts,
 )
 
+from tests._contact_support import payload_trw_dir
+from trw_mcp.models.config import TRWConfig, _reset_config
+from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+
 from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 # ---------------------------------------------------------------------------
 # trusted_platform_hosts — allowlist sourcing
@@ -121,17 +125,17 @@ class TestBearerAllowedFor:
 class TestPlatformContactEnabled:
     def test_enabled_by_default(self) -> None:
         _reset_config(TRWConfig())
-        assert platform_contact_enabled() is True
+        assert platform_contact_enabled(payload_trw_dir()) is True
 
     def test_config_switch_disables(self) -> None:
         _reset_config(TRWConfig(platform_contact_enabled=False))
-        assert platform_contact_enabled() is False
+        assert platform_contact_enabled(payload_trw_dir()) is False
 
     def test_a_leftover_trw_offline_is_not_a_second_switch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRD-CORE-302 W40: the config field is the one contact switch."""
         _reset_config(TRWConfig(platform_contact_enabled=True))
         monkeypatch.setenv("TRW_OFFLINE", "1")
-        assert platform_contact_enabled() is True
+        assert platform_contact_enabled(payload_trw_dir()) is True
 
 
 # ---------------------------------------------------------------------------
@@ -140,20 +144,13 @@ class TestPlatformContactEnabled:
 
 
 class TestSwitchDisablesBothContacts:
-    def test_update_check_makes_no_request_when_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.state.auto_upgrade import check_for_update
-
-        _reset_config(TRWConfig(platform_url="https://api.trwframework.com", platform_contact_enabled=False))
-        with patch("httpx.Client") as mock_client_cls:
-            result = check_for_update()
-        mock_client_cls.assert_not_called()
-        assert result["available"] is False
-
     async def test_pull_makes_no_request_when_disabled(self) -> None:
         from trw_mcp.sync.pull import SyncPuller
 
         _reset_config(TRWConfig(platform_contact_enabled=False))
-        puller = SyncPuller(backend_url="https://api.trwframework.com", api_key="key", client_id="c")
+        puller = SyncPuller(
+            backend_url="https://api.trwframework.com", api_key="key", client_id="c", trw_dir=payload_trw_dir()
+        )
         with patch("httpx.AsyncClient") as mock_client_cls:
             result = await puller.pull_intel_state()
         mock_client_cls.assert_not_called()
@@ -170,7 +167,7 @@ async def test_pull_withholds_bearer_from_untrusted_host(backend_url: str) -> No
     from trw_mcp.sync.pull import SyncPuller
 
     _reset_config(TRWConfig())
-    puller = SyncPuller(backend_url=backend_url, api_key="secret-key", client_id="c")
+    puller = SyncPuller(backend_url=backend_url, api_key="secret-key", client_id="c", trw_dir=payload_trw_dir())
 
     response = MagicMock()
     response.status_code = 200
@@ -196,7 +193,9 @@ async def test_pull_attaches_bearer_to_trusted_https_host() -> None:
     from trw_mcp.sync.pull import SyncPuller
 
     _reset_config(TRWConfig())
-    puller = SyncPuller(backend_url="https://api.trwframework.com", api_key="secret-key", client_id="c")
+    puller = SyncPuller(
+        backend_url="https://api.trwframework.com", api_key="secret-key", client_id="c", trw_dir=payload_trw_dir()
+    )
 
     response = MagicMock()
     response.status_code = 200
@@ -217,71 +216,28 @@ async def test_pull_attaches_bearer_to_trusted_https_host() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 24h update-check throttle
-# ---------------------------------------------------------------------------
-
-
-class TestUpdateCheckThrottle:
-    def test_second_call_within_window_serves_cached_result_without_a_new_request(self) -> None:
-        from trw_mcp.state.auto_upgrade import check_for_update
-
-        _reset_config(TRWConfig(platform_url="https://api.trwframework.com"))
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = {"version": "1.2.3"}
-        client = MagicMock()
-        client.get.return_value = response
-        client.__enter__.return_value = client
-        client.__exit__.return_value = False
-
-        with patch("httpx.Client", return_value=client) as mock_client_cls:
-            first = check_for_update()
-            second = check_for_update()
-
-        assert mock_client_cls.call_count == 1
-        assert first == second
-
-    def test_call_after_window_expiry_makes_a_new_request(self) -> None:
-        from trw_mcp.state import auto_upgrade
-        from trw_mcp.state.auto_upgrade import check_for_update
-
-        _reset_config(TRWConfig(platform_url="https://api.trwframework.com"))
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = {"version": "1.2.3"}
-        client = MagicMock()
-        client.get.return_value = response
-        client.__enter__.return_value = client
-        client.__exit__.return_value = False
-
-        with patch("httpx.Client", return_value=client) as mock_client_cls:
-            check_for_update()
-            # Simulate the throttle window having elapsed.
-            auto_upgrade._last_check_monotonic -= auto_upgrade._VERSION_CACHE_HOURS * 3600 + 1
-            check_for_update()
-
-        assert mock_client_cls.call_count == 2
-
-
-# ---------------------------------------------------------------------------
 # platform_auth_headers — the ONE bearer-attach chokepoint (P1-C)
 # ---------------------------------------------------------------------------
 
 
 class TestPlatformAuthHeaders:
     def test_empty_api_key_yields_no_header(self) -> None:
-        assert platform_auth_headers("https://api.trwframework.com", "") == {}
+        assert platform_auth_headers("https://api.trwframework.com", "", source_trw_dir=payload_trw_dir()) == {}
 
     def test_untrusted_host_yields_no_header(self) -> None:
-        assert platform_auth_headers("https://evil.example", "secret") == {}
+        assert platform_auth_headers("https://evil.example", "secret", source_trw_dir=payload_trw_dir()) == {}
 
     def test_trusted_host_yields_bearer_header(self) -> None:
-        assert platform_auth_headers("https://api.trwframework.com", "secret") == {"Authorization": "Bearer secret"}
+        assert platform_auth_headers("https://api.trwframework.com", "secret", source_trw_dir=payload_trw_dir()) == {
+            "Authorization": "Bearer secret"
+        }
 
     def test_contact_disabled_yields_no_header_even_for_trusted_host(self) -> None:
         _reset_config(TRWConfig(platform_contact_enabled=False))
         try:
-            assert platform_auth_headers("https://api.trwframework.com", "secret") == {}
+            assert (
+                platform_auth_headers("https://api.trwframework.com", "secret", source_trw_dir=payload_trw_dir()) == {}
+            )
         finally:
             _reset_config(TRWConfig())
 
@@ -302,6 +258,7 @@ async def test_sync_push_withholds_bearer_from_untrusted_backend() -> None:
         api_key="secret-key",
         client_id="c",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     class _Entry:
@@ -343,6 +300,7 @@ def test_submit_feedback_withholds_bearer_from_untrusted_backend() -> None:
             backend_url="https://evil.example",
             api_key="secret-key",
             payload={"category": "feedback", "subject": "s", "message": "message body here"},
+            source_trw_dir=payload_trw_dir(),
         )
 
     _, kwargs = mock_client.post.call_args
@@ -357,6 +315,7 @@ def test_telemetry_sender_withholds_bearer_from_untrusted_url() -> None:
         platform_api_key="secret-key",
         input_path=Path("/dev/null"),
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     response = MagicMock()
@@ -416,6 +375,13 @@ _CENSUS_EXEMPTIONS = {
     # distinct credential and threat model from TRW_PLATFORM_API_KEY /
     # MemoryConfig.platform_url, which is what this census guards.
     "trw-memory/src/trw_memory/decisions/_jev_http.py",
+    # The shared trw-mcp daemon, its proxy and admin client, and its load
+    # script: a per-user random token minted into a 0600 file, sent only to the
+    # daemon's own loopback socket -- never TRW_PLATFORM_API_KEY.
+    "trw-mcp/src/trw_mcp/shared_server/_ops.py",
+    "trw-mcp/src/trw_mcp/shared_server/_proxy.py",
+    "trw-mcp/src/trw_mcp/shared_server/_server.py",
+    "scripts/shared_mcp_load.py",
 }
 
 
@@ -572,6 +538,7 @@ async def test_sync_push_learnings_makes_no_request_when_contact_disabled() -> N
         api_key="secret",
         client_id="c",
         learning_sharing_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
 
     class _Entry:
@@ -595,6 +562,7 @@ async def test_sync_push_outcomes_makes_no_request_when_contact_disabled() -> No
         api_key="secret",
         client_id="c",
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     with patch("httpx.AsyncClient") as mock_client_cls:
         result = await pusher.push_outcomes([{"outcome": "x"}])
@@ -611,6 +579,7 @@ def test_telemetry_sender_makes_no_request_when_contact_disabled() -> None:
         platform_api_key="secret",
         input_path=Path("/dev/null"),
         platform_telemetry_enabled=True,
+        source_trw_dir=payload_trw_dir(),
     )
     with patch("httpx.Client") as mock_client_cls:
         result = sender.send()
@@ -645,8 +614,8 @@ def test_telemetry_pipeline_flush_makes_no_request_when_contact_disabled(pipelin
         )
     )
     pipeline = pipeline_cls()  # type: ignore[operator]
-    pipeline._queue.append({"tool": "x"})
     pipeline._writer = MagicMock()
+    pipeline.enqueue({"tool": "x"})  # stamped with the payload project's .trw
     with patch("httpx.Client") as mock_client_cls:
         result = pipeline.flush_now()
     mock_client_cls.assert_not_called()
@@ -677,14 +646,14 @@ def test_remote_recall_sends_nothing_when_contact_disabled_in_yaml(monkeypatch: 
     trw_dir.mkdir(parents=True, exist_ok=True)
     (trw_dir / "config.yaml").write_text("platform_contact_enabled: false\n", encoding="utf-8")
     _reset_config()
-    assert platform_contact_enabled() is False
+    assert platform_contact_enabled(payload_trw_dir()) is False
     _remote_recall_fetches(monkeypatch).assert_not_called()
 
 
 def test_remote_recall_sends_nothing_when_contact_disabled_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRW_PLATFORM_CONTACT_ENABLED", "false")
     _reset_config()
-    assert platform_contact_enabled() is False
+    assert platform_contact_enabled(payload_trw_dir()) is False
     _remote_recall_fetches(monkeypatch).assert_not_called()
 
 
@@ -701,7 +670,9 @@ def test_feedback_sends_nothing_when_contact_disabled() -> None:
     _reset_config(TRWConfig(platform_contact_enabled=False))
     payload = cast("Any", {"kind": "bug", "title": "t", "body": "b", "metadata": {}})
     with patch("httpx.Client") as mock_client_cls:
-        result = submit_feedback_via_http(backend_url="https://api.trwframework.com", api_key="k", payload=payload)
+        result = submit_feedback_via_http(
+            backend_url="https://api.trwframework.com", api_key="k", payload=payload, source_trw_dir=payload_trw_dir()
+        )
     mock_client_cls.assert_not_called()
     assert not result.success
     assert "platform_contact_enabled" in result.error
@@ -715,7 +686,7 @@ def test_feedback_sends_nothing_when_contact_disabled() -> None:
 
 #: Modules whose outbound requests must be stopped by ``platform_contact_enabled()``.
 _CONTACT_GATED = {
-    "state/auto_upgrade.py",
+    "sync/backup.py",
     "sync/pull.py",
     "sync/push.py",
     "telemetry/pipeline.py",
@@ -726,13 +697,21 @@ _CONTACT_GATED = {
 }
 #: Modules outside the switch, each with the reason.
 _CONTACT_EXEMPT = {
+    "shared_server/_ops.py": "the shared daemon's admin client: the loopback socket this user's daemon bound",
+    "shared_server/_proxy.py": "the stdio proxy forwards to the shared daemon on a loopback socket",
+    "shared_server/_server.py": "the shared daemon's own loopback health and drain calls",
     "cli/auth.py": "`trw-mcp auth login`: the operator types it, with the URL to log in to",
     "clients/llm.py": "a local Ollama or the Anthropic SDK, not the TRW platform",
     "server/_doctor_backend_connectivity.py": "`trw-mcp doctor` probes an explicitly configured backend_url only",
     "server/_subcommands_release.py": "`trw-mcp release --push` with an operator-supplied --backend-url",
+    "_outbound_http.py": (
+        "PRD-SEC-021 FR04/FR05 shared https-or-loopback + httpx.Client(follow_redirects=False) helper -- "
+        "reused by the three already-exempt call sites above; carries no independent contact decision of "
+        "its own (it never decides WHICH host to contact, only whether a given URL is trusted enough to reach)"
+    ),
 }
 _OUTBOUND_ATTRS = {"Client", "AsyncClient", "get", "post", "put", "patch", "delete", "request", "stream"}
-_OUTBOUND_NAMES = {"urlopen", "fetch_shared_memories"}
+_OUTBOUND_NAMES = {"urlopen", "fetch_shared_memories", "outbound_http_client"}
 
 
 def _opens_a_connection(tree: ast.AST) -> bool:

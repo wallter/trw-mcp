@@ -14,11 +14,6 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-# Named caps for list truncation (not user-tunable)
-CLAUDEMD_LEARNING_CAP = 10
-CLAUDEMD_PATTERN_CAP = 5
-BEHAVIORAL_PROTOCOL_CAP = 12
-
 
 class CeremonyTool(NamedTuple):
     """A lifecycle-critical MCP tool with usage guidance."""
@@ -110,7 +105,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "DELIVER",
         "trw-mcp instructions sync",
         "At delivery",
-        "Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights",
+        "Refreshes the client's instruction file (AGENTS.md / etc.) so every future session starts with your best insights",
         "trw-mcp instructions sync",
     ),
     CeremonyTool(

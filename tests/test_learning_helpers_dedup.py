@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from trw_memory.lifecycle.correction import LearningPatch
 
 from tests._learning_helpers_test_support import _CFG, set_project_root  # noqa: F401
 from tests._memory_fixtures import DaemonCheckout
 from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import LearningParams, check_and_handle_dedup
+
+
+def resolve_entry_path(entries_dir, entry_id, reader, *, trw_dir=None):
+    """Test-local: the removed wrapper returned resolve_entry_file's path."""
+    from trw_mcp.state._entry_paths import resolve_entry_file
+
+    resolved = resolve_entry_file(entries_dir, entry_id, reader, trw_dir=trw_dir)
+    return None if resolved is None else resolved[0]
+
+
+def _store_holding(entry_id: str):  # type: ignore[no-untyped-def]
+    """Route the merge's store read and write to a fake holding the survivor's row."""
+    store = FakeMemoryStore()
+    store.put("Existing learning", "default", {"entry_id": entry_id})
+    return patch("trw_mcp.state._store_selection.selected_store", return_value=(store, "default"))
 
 
 class TestCheckAndHandleDedup:
@@ -135,6 +152,7 @@ class TestCheckAndHandleDedup:
             patch(
                 "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
+            _store_holding(mock_dedup.existing_id),
         ):
             result = check_and_handle_dedup(
                 LearningParams(
@@ -198,6 +216,7 @@ class TestCheckAndHandleDedup:
             patch(
                 "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
+            _store_holding(mock_dedup.existing_id),
         ):
             result = check_and_handle_dedup(
                 LearningParams(
@@ -258,6 +277,7 @@ class TestCheckAndHandleDedup:
             patch(
                 "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
+            _store_holding(mock_dedup.existing_id),
         ):
             result = check_and_handle_dedup(
                 LearningParams(
@@ -309,7 +329,17 @@ class TestCheckAndHandleDedup:
         mock_dedup.existing_id = "L-existing030"
         mock_dedup.similarity = 0.89
         store = FakeMemoryStore()
-        store.put("Existing learning", "default", {"entry_id": "L-existing030"})
+        # The store's row matches its sidecar: the merge folds into the row (PRD-CORE-308).
+        store.put("Existing learning", "default", {"entry_id": "L-existing030", "detail": "short detail"})
+        store.correct(
+            "L-existing030",
+            LearningPatch(
+                tags=["existing"],
+                evidence=["existing-evidence"],
+                impact=0.6,
+                assertions=[{"type": "grep_present", "pattern": "old", "target": "**/*.py"}],
+            ),
+        )
 
         with (
             patch("trw_mcp.state.dedup.dedup_verdict", return_value=mock_dedup),
@@ -531,7 +561,6 @@ class TestBoundedMergeResolution:
 
     def test_resolve_entry_path_refuses_a_file_carrying_a_different_id(self, tmp_path: Path) -> None:
         """The computed candidate is accepted only when it PROVES the id."""
-        from trw_mcp.state._entry_paths import resolve_entry_path
 
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
@@ -595,7 +624,15 @@ def _merge_setup(tmp_path: Path, store: FakeMemoryStore) -> Path:
     return entries_dir
 
 
-def _learn_duplicate(tmp_path: Path, entries_dir: Path, store: FakeMemoryStore, learning_id: str, writer=None):  # type: ignore[no-untyped-def]
+def _learn_duplicate(  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+    entries_dir: Path,
+    store: FakeMemoryStore,
+    learning_id: str,
+    writer=None,
+    evidence: list[str] | None = None,
+    detail: str = "a longer restatement of the survivor",
+):
     verdict = MagicMock(action="merge", existing_id="L-survivor", similarity=0.9)
     with (
         patch("trw_mcp.state.dedup.dedup_verdict", return_value=verdict),
@@ -605,10 +642,10 @@ def _learn_duplicate(tmp_path: Path, entries_dir: Path, store: FakeMemoryStore, 
         return check_and_handle_dedup(
             LearningParams(
                 summary="Survivor",
-                detail="a longer restatement of the survivor",
+                detail=detail,
                 learning_id=learning_id,
                 tags=[],
-                evidence=[],
+                evidence=evidence or [],
                 impact=0.5,
                 source_type="agent",
                 source_identity="",
@@ -632,10 +669,98 @@ def test_a_retried_merge_after_a_failure_counts_the_duplicate_once(tmp_path: Pat
         "the sidecar changed although the merge failed"
     )
 
-    result = _learn_duplicate(tmp_path, entries_dir, store, "L-attempt2")
+    # The journal replays an accepted learning under its own id.
+    result = _learn_duplicate(tmp_path, entries_dir, store, "L-attempt1")
 
     assert result is not None and result["status"] == "merged"
     merged = store.get("L-survivor")
     assert merged is not None and merged.recurrence == 2
-    assert merged.merged_from == ["L-attempt2"]
+    assert merged.merged_from == ["L-attempt1"]
     assert FileStateReader().read_yaml(entries_dir / "existing.yaml")["recurrence"] == 2
+
+
+def test_a_merge_the_sidecar_missed_is_kept_by_the_next_merge(tmp_path: Path) -> None:
+    """B71-12: the store took a merge whose sidecar write failed; the next merge folds into the store's row."""
+
+    store = FakeMemoryStore()
+    entries_dir = _merge_setup(tmp_path, store)
+    earlier = LearningPatch(detail="short\n\nearlier", evidence=["e-earlier"], recurrence=2, merged_from=["L-earlier"])
+    assert store.correct("L-survivor", earlier)["status"] == "updated"
+
+    assert _learn_duplicate(tmp_path, entries_dir, store, "L-next", evidence=["e-next"])["status"] == "merged"
+
+    merged = store.get("L-survivor")
+    assert merged is not None
+    assert (merged.recurrence, merged.merged_from) == (3, ["L-earlier", "L-next"])
+    assert merged.evidence == ["e-earlier", "e-next"]
+    assert "earlier" in merged.detail
+    sidecar = FileStateReader().read_yaml(entries_dir / "existing.yaml")
+    assert (sidecar["recurrence"], sidecar["merged_from"]) == (3, ["L-earlier", "L-next"])
+
+
+class _InterleavingStore(FakeMemoryStore):
+    """Runs a second writer's whole merge after the first writer read its base but before it wrote."""
+
+    def __init__(self, second: Callable[[], object]) -> None:
+        super().__init__()
+        self.second: Callable[[], object] | None = second
+
+    def correct(self, learning_id, patch):  # type: ignore[no-untyped-def]
+        second, self.second = self.second, None
+        if second is not None:
+            second()
+        return super().correct(learning_id, patch)
+
+
+def test_two_merges_into_one_survivor_both_land(tmp_path: Path) -> None:
+    """B71-12: writer B commits between writer A's read and A's write; neither merge is lost."""
+    results: list[object] = []
+    store = _InterleavingStore(
+        lambda: results.append(
+            _learn_duplicate(tmp_path, entries_dir, store, "L-b", evidence=["e-b"], detail="B says")
+        ),
+    )
+    entries_dir = _merge_setup(tmp_path, store)
+
+    first = _learn_duplicate(tmp_path, entries_dir, store, "L-a", evidence=["e-a"], detail="A says more")
+
+    assert first is not None and first["status"] == "merged"
+    assert results and results[0]["status"] == "merged"  # type: ignore[index]
+    merged = store.get("L-survivor")
+    assert merged is not None
+    assert (merged.recurrence, sorted(merged.merged_from)) == (3, ["L-a", "L-b"])
+    assert sorted(merged.evidence) == ["e-a", "e-b"]
+    assert "A says more" in merged.detail and "B says" in merged.detail
+    sidecar = FileStateReader().read_yaml(entries_dir / "existing.yaml")
+    assert sorted(sidecar["merged_from"]) == ["L-a", "L-b"]
+
+
+class _AcceptThenInterleaveStore(FakeMemoryStore):
+    """After the first writer's correction is accepted, runs a second writer's whole merge (its sidecar too)."""
+
+    def __init__(self, second: Callable[[], object]) -> None:
+        super().__init__()
+        self.second: Callable[[], object] | None = second
+
+    def correct(self, learning_id, patch):  # type: ignore[no-untyped-def]
+        result = super().correct(learning_id, patch)
+        second, self.second = self.second, None
+        if second is not None:
+            second()
+        return result
+
+
+def test_the_sidecar_written_last_is_the_latest_row(tmp_path: Path) -> None:
+    """A accepted, B accepted, B's sidecar written, then A's: the sidecar must not regress to A's body."""
+    store = _AcceptThenInterleaveStore(
+        lambda: _learn_duplicate(tmp_path, entries_dir, store, "L-b", evidence=["e-b"]),
+    )
+    entries_dir = _merge_setup(tmp_path, store)
+
+    assert _learn_duplicate(tmp_path, entries_dir, store, "L-a", evidence=["e-a"])["status"] == "merged"
+
+    row = store.get("L-survivor")
+    assert row is not None and sorted(row.merged_from) == ["L-a", "L-b"]
+    sidecar = FileStateReader().read_yaml(entries_dir / "existing.yaml")
+    assert (sidecar["recurrence"], sorted(sidecar["merged_from"])) == (row.recurrence, ["L-a", "L-b"])
+    assert sorted(sidecar["evidence"]) == ["e-a", "e-b"]

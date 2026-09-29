@@ -3,34 +3,11 @@
 from __future__ import annotations
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
-from trw_mcp.client_profiles.markdown import render_matrix_page, render_quick_reference_table
 
+# The matrix/quick-reference renderer parity tests moved with the renderer to
+# scripts/tests/test_render_client_profile_docs.py (PRD-CORE-313 FR05).
 DOC_ROOT = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "docs"
 OVERVIEW_DOC = DOC_ROOT / "CLIENT-PROFILES.md"
-MATRIX_DOC = DOC_ROOT / "client-profiles" / "matrix.md"
-
-
-def _extract_table(doc_text: str, heading: str) -> str:
-    lines = doc_text.splitlines()
-    start = lines.index(heading)
-    table_lines: list[str] = []
-    for line in lines[start + 1 :]:
-        if table_lines and not line.startswith("|"):
-            break
-        if line.startswith("|"):
-            table_lines.append(line)
-    return "\n".join(table_lines)
-
-
-@requires_monorepo
-def test_generated_matrix_doc_matches_renderer() -> None:
-    assert MATRIX_DOC.read_text(encoding="utf-8") == render_matrix_page()
-
-
-@requires_monorepo
-def test_overview_quick_reference_matches_renderer() -> None:
-    overview = OVERVIEW_DOC.read_text(encoding="utf-8")
-    assert _extract_table(overview, "## Quick Reference") == render_quick_reference_table()
 
 
 @requires_monorepo
@@ -286,80 +263,8 @@ def test_prd_core_218_nfr03() -> None:
         assert "trw_claude_md_sync" not in advertised
 
 
-# --------------------------------------------------------------------------- #
-# PRD-CORE-266-FR07: the dispatch capability table is generated, not written
-# --------------------------------------------------------------------------- #
-
-from trw_mcp.client_profiles.markdown import render_dispatch_targets_table
-from trw_mcp.dispatch._client_specs import CLIENT_SPECS
-
-
-def _table_row_ids(table: str) -> list[str]:
-    """First cell of every body row, with the backticks stripped."""
-    lines = [ln for ln in table.splitlines() if ln.startswith("|")]
-    return [ln.split("|")[1].strip().strip("`") for ln in lines[2:]]
-
-
-def test_dispatch_targets_table_matches_the_registry() -> None:
-    table = render_dispatch_targets_table()
-    assert _table_row_ids(table) == list(CLIENT_SPECS)
-
-
-@requires_monorepo
-def test_generated_matrix_page_carries_the_dispatch_targets_section() -> None:
-    doc = MATRIX_DOC.read_text(encoding="utf-8")
-    assert "## Dispatch Targets" in doc
-    assert _extract_table(doc, "## Dispatch Targets") == render_dispatch_targets_table()
-
-
-def test_dispatch_table_renders_the_verification_method_and_date_for_every_row() -> None:
-    # The column that makes the table worth generating: a capability with no
-    # recorded provenance is the failure mode PRD-CORE-266 exists to remove.
-    table = render_dispatch_targets_table()
-    for spec in CLIENT_SPECS.values():
-        row = next(ln for ln in table.splitlines() if ln.startswith(f"| `{spec.client_id}` "))
-        assert spec.verification.method in row
-        assert spec.verification.verified_at.isoformat() in row
-
-
-def test_dispatch_table_reports_sandbox_as_a_tri_state_not_on_off() -> None:
-    table = render_dispatch_targets_table()
-    assert "available_default_off" in table
-    assert "| enforced |" in table
-    copilot_row = next(ln for ln in table.splitlines() if ln.startswith("| `copilot` "))
-    assert "available_default_off" in copilot_row
-
-
-def test_dispatch_table_distinguishes_an_absent_profile_from_a_false_agent_surface() -> None:
-    grok_row = next(ln for ln in render_dispatch_targets_table().splitlines() if ln.startswith("| `grok` "))
-    cursor_row = next(ln for ln in render_dispatch_targets_table().splitlines() if ln.startswith("| `cursor-cli` "))
-    assert "| on |" in grok_row
-    assert "| executable |" in grok_row
-    assert "| off |" in cursor_row
-
-
-def test_adding_a_registry_entry_grows_the_table_by_exactly_one_row(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from datetime import date
-
-    from trw_mcp.dispatch import _client_specs as specs
-
-    before = len(_table_row_ids(render_dispatch_targets_table()))
-    synthetic = specs.ClientSpec(
-        client_id="synthetic-cli",
-        binary="synthetic-cli",
-        base_argv=("synthetic-cli",),
-        version_argv=("--version",),
-        output_shape="trailing_text",
-        sub_agents="unknown",
-        sandbox="none",
-        verification=specs.ClientVerification(
-            method="primary_source", evidence="synthetic fixture", verified_at=date(2026, 9, 5)
-        ),
-    )
-    monkeypatch.setitem(specs.CLIENT_SPECS, "synthetic-cli", synthetic)
-    rows = _table_row_ids(render_dispatch_targets_table())
-    assert len(rows) == before + 1
-    assert rows[-1] == "synthetic-cli"
+# PRD-CORE-266-FR07: the dispatch-targets renderer tests moved with the renderer to
+# scripts/tests/test_render_client_profile_docs.py (PRD-CORE-313 FR05).
 
 
 @requires_monorepo

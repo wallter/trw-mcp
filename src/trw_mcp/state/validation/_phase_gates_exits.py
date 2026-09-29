@@ -151,7 +151,7 @@ def _check_review_exit(
                 ValidationFailure(
                     field="reflection",
                     rule="reflection_required",
-                    message="Reflection not completed — call trw_reflect() before advancing past REVIEW",
+                    message="Reflection not recorded yet — trw_deliver() records it once its delivery gates pass",
                     severity="warning",
                 )
             )

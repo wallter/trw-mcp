@@ -4,15 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_STATUS_ORDER: dict[str, int] = {
-    "done": 0,
-    "implemented": 0,
-    "merged": 1,
-    "approved": 2,
-    "review": 3,
-    "draft": 4,
-    "deprecated": 5,
-}
 _DONE_STATUSES = frozenset({"done", "implemented"})
 _REVIEW_STATUSES = frozenset({"review", "approved"})
 

@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
+from tests._contact_support import payload_trw_dir
+from tests._httpx_mock_support import _mock_httpx_client, _mock_httpx_response
 from tests._telemetry_pipeline_support import (  # noqa: F401
     _make_event,
     _make_fake_cfg,
@@ -23,6 +24,9 @@ from tests._telemetry_pipeline_support import (  # noqa: F401
     make_configured_pipeline,
     pipeline_cls,
 )
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 class TestPipelineGate:
@@ -132,6 +136,7 @@ class TestSenderGate:
             max_retries=1,
             backoff_base=0.0,
             platform_telemetry_enabled=enabled,
+            source_trw_dir=payload_trw_dir(),
         ), input_path
 
     def test_send_respects_telemetry_disabled(self, tmp_path: Path) -> None:

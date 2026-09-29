@@ -19,6 +19,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 from trw_mcp.channels._telemetry import append_channel_event
 
@@ -90,13 +91,12 @@ def generate_vscode_mcp_config(
         "errors": [],
     }
 
-    vscode_dir = target_dir / ".vscode"
-    mcp_json_path = vscode_dir / "mcp.json"
+    mcp_json_path = target_dir / ".vscode" / "mcp.json"
 
     # Acquire lock (NFR05)
     lock_path = target_dir / ".trw" / "channels" / "copilot-vscode-mcp-config.lock"
     try:
-        lock = ChannelLock(lock_path)
+        lock = ChannelLock(lock_path, root=target_dir)
         lock.__enter__()
     except ChannelLockSkip:
         log.debug(
@@ -109,7 +109,6 @@ def generate_vscode_mcp_config(
     try:
         return _generate_under_lock(
             target_dir=target_dir,
-            vscode_dir=vscode_dir,
             mcp_json_path=mcp_json_path,
             force=force,
             result=result,
@@ -132,14 +131,11 @@ def generate_vscode_mcp_config(
 def _generate_under_lock(
     *,
     target_dir: Path,
-    vscode_dir: Path,
     mcp_json_path: Path,
     force: bool,
     result: dict[str, list[str]],
 ) -> dict[str, list[str]]:
     """Execute the merge logic while the channel lock is held."""
-    vscode_dir.mkdir(parents=True, exist_ok=True)
-
     # Read existing file if present
     if mcp_json_path.exists():
         try:
@@ -184,7 +180,7 @@ def _generate_under_lock(
     # sort_keys=True for byte-stable output (P2-12)
     new_text = json.dumps(new_data, indent=2, sort_keys=True) + "\n"
 
-    mcp_json_path.write_text(new_text, encoding="utf-8")
+    write_checkout_file(target_dir, mcp_json_path, new_text)
 
     _emit_event("push_write", "written")
 

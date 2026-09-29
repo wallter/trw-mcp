@@ -8,6 +8,14 @@ from pathlib import Path
 
 import pytest
 
+
+def generate_cursor_rules(target_dir, trw_section, *, force=False):
+    """Test-local: the removed alias delegated to generate_cursor_rules_mdc for cursor-ide."""
+    from trw_mcp.bootstrap._cursor import generate_cursor_rules_mdc
+
+    return generate_cursor_rules_mdc(target_dir, trw_section, client_id="cursor-ide", force=force)
+
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -247,24 +255,10 @@ def test_cursor_rules_mdc_force_overwriting_existing_still_reports_updated(
     assert ".cursor/rules/trw-ceremony.mdc" not in result.get("created", [])
 
 
-@pytest.mark.integration
-def test_cursor_rules_alias_delegates_to_mdc(tmp_path: Path) -> None:
-    """generate_cursor_rules (alias) produces the same output as generate_cursor_rules_mdc."""
-    from trw_mcp.bootstrap._cursor import generate_cursor_rules
-
-    result = generate_cursor_rules(tmp_path, "alias content")
-    rules_file = tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc"
-
-    assert rules_file.is_file()
-    assert "alias content" in rules_file.read_text(encoding="utf-8")
-    assert ".cursor/rules/trw-ceremony.mdc" in result.get("created", [])
-
-
 @pytest.mark.parametrize(
     "relative_path",
     [
         "trw-mcp/src/trw_mcp/bootstrap/_cursor.py",
-        "trw-mcp/src/trw_mcp/bootstrap/_config_templates.py",
         "trw-mcp/src/trw_mcp/state/claude_md/_templates.py",
         "trw-mcp/src/trw_mcp/state/claude_md/_renderer.py",
         # The example moved out of TypingTerminal.tsx into its sibling data module

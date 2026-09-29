@@ -33,7 +33,6 @@ class _StubDispatchConfig:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s: int = 600
         self.dispatch_default_read_only: bool = True
-        self.dispatch_role_client: dict[str, str] = {}
         for key, value in overrides.items():
             setattr(self, key, value)
 
@@ -102,38 +101,12 @@ def test_explicit_client_overrides_default(monkeypatch: pytest.MonkeyPatch) -> N
     assert getattr(captured["req"], "client") == "codex"
 
 
-def test_role_default_client_used_when_no_explicit_or_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = _StubDispatchConfig(
-        dispatch_default_client=None,
-        dispatch_role_client={"adversarial-audit": "codex"},
-    )
+def test_a_role_does_not_pick_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DISPATCH-SIMPLIFY: without --client, the configured default runs whatever the role."""
+    cfg = _StubDispatchConfig(dispatch_default_client="claude")
     captured = _install(monkeypatch, cfg)
     with pytest.raises(SystemExit):
         run_dispatch(_ns(client=None, role="adversarial-audit"))
-    assert getattr(captured["req"], "client") == "codex"
-
-
-def test_role_client_overrides_set_default_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A role-specific mapping must beat a SET default_client — otherwise
-    # role_client is unreachable (default_client defaults to "codex").
-    cfg = _StubDispatchConfig(
-        dispatch_default_client="claude",
-        dispatch_role_client={"adversarial-audit": "codex"},
-    )
-    captured = _install(monkeypatch, cfg)
-    with pytest.raises(SystemExit):
-        run_dispatch(_ns(client=None, role="adversarial-audit"))
-    assert getattr(captured["req"], "client") == "codex"
-
-
-def test_explicit_client_beats_role_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Explicit --client is the strongest signal, above any role mapping.
-    cfg = _StubDispatchConfig(dispatch_role_client={"adversarial-audit": "codex"})
-    captured = _install(monkeypatch, cfg)
-    with pytest.raises(SystemExit):
-        run_dispatch(_ns(client="claude", role="adversarial-audit"))
     assert getattr(captured["req"], "client") == "claude"
 
 

@@ -12,21 +12,12 @@ the sibling ``_distribution.py`` deep module.
 
 from __future__ import annotations
 
-import math
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 import trw_memory.lifecycle.scoring as _unified_scoring
 from trw_memory.lifecycle._utility_params import UtilityParams
 
-from trw_mcp.models.typed_dicts import LearningEntryDict
-from trw_mcp.scoring._utils import (
-    _IMPACT_DECAY_FLOOR,
-    _LN2,
-    TRWConfig,
-    _ensure_utc,
-    get_config,
-    safe_float,
-)
+from trw_mcp.scoring._utils import TRWConfig, get_config
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
 
@@ -110,67 +101,8 @@ def entry_utility(
 
 # --- Ebbinghaus decay for impact scores (PRD-CORE-034) ---
 
-
-def apply_impact_decay(
-    entries: list[LearningEntryDict],
-    half_life_days: int | None = None,
-) -> None:
-    """Apply exponential impact decay to stale learnings **in-place** (PRD-CORE-034-FR03).
-
-    For each entry, reads ``last_accessed`` (or ``created``) date and computes
-    days since that date.  If days_since exceeds ``half_life_days``, the impact
-    is decayed using an exponential formula:
-
-        new_impact = impact * exp(-ln(2) * (days_since - half_life_days) / half_life_days)
-
-    The result is clamped to [0.1, 1.0].  This is a batch operation intended
-    to be called during ``trw_deliver``.
-
-    Args:
-        entries: List of learning entry dicts.  Modified **in-place**.
-        half_life_days: Days before decay starts.  Defaults to config value.
-    """
-    cfg: TRWConfig = get_config()
-    effective_half_life = half_life_days if half_life_days is not None else cfg.impact_decay_half_life_days
-    now = datetime.now(timezone.utc)
-
-    for entry in entries:
-        impact = safe_float(entry, "impact", 0.5)
-
-        # Find the best date to measure staleness from
-        ref_date_str = ""
-        for field in ("last_accessed_at", "last_accessed", "created"):
-            raw = str(entry.get(field, ""))
-            if raw and raw != "None":
-                ref_date_str = raw
-                break
-
-        if not ref_date_str:
-            continue
-
-        try:
-            ref_dt = _ensure_utc(datetime.fromisoformat(ref_date_str.replace("Z", "+00:00")))
-        except ValueError:
-            continue
-
-        days_since = max(0, (now - ref_dt).days)
-
-        if days_since <= effective_half_life:
-            continue  # Not stale yet
-
-        # Exponential decay: exp(-ln(2) * excess_days / half_life)
-        excess = days_since - effective_half_life
-        decay_factor = math.exp(-_LN2 * excess / max(effective_half_life, 1))
-        new_impact = impact * decay_factor
-
-        # Clamp to [_IMPACT_DECAY_FLOOR, 1.0]
-        new_impact = max(_IMPACT_DECAY_FLOOR, min(1.0, new_impact))
-        entry["impact"] = round(new_impact, 4)
-
-
 __all__ = [
     "_days_since_access",
-    "apply_impact_decay",
     "entry_utility",
     "utility_params_for",
 ]

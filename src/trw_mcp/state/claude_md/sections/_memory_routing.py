@@ -19,7 +19,7 @@ from typing import NamedTuple
 import structlog
 
 # PRD-CORE-149-FR01: resolve mutable dependencies (``get_config``, ``time``,
-# ``yaml``, ``FileStateReader``, ``MemoryConfig``, ``list_org_shared_entries``)
+# ``yaml``, ``FileStateReader``)
 # through the ``_static_sections`` facade so legacy ``monkeypatch.setattr(
 # _static_sections, name, ...)`` patches continue to work after decomposition.
 import trw_mcp.state.claude_md._static_sections as _facade
@@ -101,11 +101,6 @@ def load_memory_routing() -> str:
         _logger.warning("memory_routing_surface_load_failed", exc_info=True)
         return _FALLBACK_MEMORY_ROUTING
     return body
-
-
-def bundled_memory_routing_hash_prefix() -> str:
-    """Return the sha256 first-12-hex prefix of the loaded memory-routing body."""
-    return hashlib.sha256(load_memory_routing().encode("utf-8")).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -277,30 +272,3 @@ def render_memory_harmonization() -> str:
         f"{policy.rstrip()}\n\n"
         f"Recorded TRW analytics: {scale_claim} (counts, not evidence of benefit).\n\n"
     )
-
-
-def render_shared_learnings() -> str:
-    """Render top cross-validated org learnings when sibling projects exist."""
-    try:
-        entries = _facade.list_org_shared_entries(
-            _facade.MemoryConfig(),
-            "project:default",
-            min_importance=0.7,
-            limit=5,
-        )
-    except Exception:  # justified: fail-open — graph backend may not be available
-        _logger.debug("shared_learnings_unavailable", exc_info=True)
-        return ""
-
-    if not entries:
-        return ""
-
-    lines = [
-        "## Shared Learnings",
-        "",
-    ]
-    for entry in entries:
-        summary = entry.detail.splitlines()[0].strip() if entry.detail.strip() else entry.content
-        lines.append(f"- **{entry.content}** — {summary}")
-    lines.append("")
-    return "\n".join(lines)

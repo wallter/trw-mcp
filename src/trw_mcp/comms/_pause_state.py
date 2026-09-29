@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from trw_mcp.comms._identity import CallerBinding, CallerSnapshot
 
 _logger = structlog.get_logger(__name__)
-PAUSED_STATES = frozenset({"paused", "paused_acked"})
 #: The pause reason is orchestrator-authored; a member sees at most this much of it.
 REASON_MAX_CHARS = 200
 
@@ -89,4 +88,4 @@ def ack(binding: CallerBinding, pause_id: str | None) -> dict[str, Any]:
     return {"status": "ok", "pause_id": pause_id, "acked": True, "already": not recorded}
 
 
-__all__ = ["PAUSED_STATES", "REASON_MAX_CHARS", "ack", "active_pause", "member_state", "send_refusal"]
+__all__ = ["REASON_MAX_CHARS", "ack", "active_pause", "member_state", "send_refusal"]

@@ -169,7 +169,7 @@ def test_update_post_phases_dispatches_registry_before_distill_channels(tmp_path
             "trw_mcp.bootstrap._claude_code_distill_channels.install_claude_code_distill_channels",
             side_effect=lambda *_args, **_kwargs: calls.append("claude") or {},
         ),
-        patch.object(update_mod, "_rewrite_hook_env_for_primary_profile"),
+        patch.object(update_mod, "_rewrite_hook_env_for_installed_profiles"),
         patch.object(update_mod, "_write_manifest"),
         patch.object(update_mod, "_verify_installation"),
     ):

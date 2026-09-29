@@ -17,11 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from trw_mcp.channels._manifest_models import (
-    DISTILL_MARKER_KEYS,
-    MARKER_REGISTRY,
-    ChannelEntry,
-)
+from trw_mcp.channels._manifest_models import ChannelEntry
 
 log = structlog.get_logger(__name__)
 
@@ -38,10 +34,6 @@ class ManifestValidationError(ValueError):
 
 class ManifestMissingError(FileNotFoundError):
     """Raised when manifest.yaml does not exist at the given path."""
-
-
-class MarkerCollisionError(ValueError):
-    """Raised when a new channel entry's markers collide with existing ones."""
 
 
 # ---------------------------------------------------------------------------
@@ -291,59 +283,3 @@ def auto_recreate_empty(path: Path, *, log_path: Path | None = None, reason: str
         outcome="auto_recreated_empty",
         manifest_path=str(path),
     )
-
-
-def check_marker_collisions(target_file: Path, entry: ChannelEntry) -> None:
-    """Scan *target_file* for TRW marker strings that would collide with *entry*.
-
-    Skips aspirational channels (FR16).
-
-    A collision occurs when a distill-channel marker string belonging to a
-    DIFFERENT channel is already present in *target_file*.  The entry's own
-    configured markers (``entry.markers.start`` and ``entry.markers.end``) are
-    excluded from the check — finding them in the file is expected on re-install,
-    not a conflict.
-
-    MED-7 fix: generic ceremony markers (``<!-- trw:start -->`` /
-    ``<!-- trw:end -->``) are intentionally excluded from the collision scope.
-    CLAUDE.md and AGENTS.md files always contain these markers as part of the
-    standard TRW bootstrap; treating them as collisions would produce
-    false-positives on every standard deployment.  Only distill-channel–specific
-    markers (DISTILL_MARKER_KEYS) are checked.
-
-    Raises:
-        MarkerCollisionError: listing each colliding foreign marker string found.
-    """
-    # Use the string value in case use_enum_values serialized it
-    status_val = entry.status
-    if status_val == "aspirational":
-        return
-
-    if not target_file.exists():
-        return
-
-    content = target_file.read_text(encoding="utf-8")
-
-    # Collect this entry's own markers so we can exclude them from the check.
-    if isinstance(entry.markers, dict):
-        own_start = entry.markers.get("start", "")
-        own_end = entry.markers.get("end", "")
-    else:
-        own_start = entry.markers.start
-        own_end = entry.markers.end
-
-    own_markers: frozenset[str] = frozenset(m for m in (own_start, own_end) if m)
-
-    # Check only distill-channel marker strings (ceremony markers excluded —
-    # see MED-7 rationale in the docstring).  Exclude the entry's own markers.
-    foreign_markers = [
-        MARKER_REGISTRY[k] for k in DISTILL_MARKER_KEYS if MARKER_REGISTRY[k] and MARKER_REGISTRY[k] not in own_markers
-    ]
-
-    collisions: list[str] = []
-    for marker in foreign_markers:
-        if marker in content and marker not in collisions:
-            collisions.append(marker)
-
-    if collisions:
-        raise MarkerCollisionError(f"Marker collision in {target_file}: {collisions!r}")

@@ -24,15 +24,39 @@ _READ_ONLY_CONTRACT = (
     "specific recommendation. End with a one-line overall verdict."
 )
 
+#: The adversarial audit's blocking rule and output contract. A review samples a few
+#: findings from a large pool, so without a rule for what blocks, fix-and-review loops
+#: never converge. The JSON labels below are a parsed contract: tooling that judges a
+#: review reads them, so a change here is a breaking change for those readers.
+_BLOCK_RULE = (
+    "Blocking rule: a finding BLOCKS only when all three hold: (1) it is new in the change "
+    "under review; (2) a default install or configuration reaches it, or it defeats a "
+    "documented control; (3) it causes data loss, data leaving the machine without consent, "
+    "a cross-tenant or remote exploit, a security or privacy bypass, or a crash on a default "
+    "path. Every other finding is a known issue to record, not a blocker: report it, labelled "
+    "as such. A blocking finding must name the reachable path (file:line), the consequence "
+    "and a reproduction.\n\n"
+    "After your prose, give every finding in one fenced ```json block: "
+    '{"findings": [{"title": "...", "severity": "P0|P1|P2", "path": "file:line", '
+    '"consequence": "...", "repro": "...", "new": true|false, '
+    '"reach": "default_path|documented_control|opt_in|misconfiguration", '
+    '"harm": "data_loss|egress|remote_exploit|security_bypass|default_crash|none", '
+    '"class": "A-G or a new class name", '
+    '"integration": "wired|isolated|not_applicable|unknown"}]} '
+    "(PRD-CORE-320: for a finding about a completed capability, name whether its "
+    'verification reached a real production caller; use "unknown" when you could not tell) '
+    "(an empty list when you found nothing; null for a field you could not establish). "
+    "Your last line must be exactly `VERDICT: PASS` (no finding meets the blocking rule) or "
+    "`VERDICT: FAIL`, with nothing after it."
+)
+
 
 @dataclass(frozen=True)
 class RoleSpec:
-    """What a dispatch role is: its policy-table task class, its preamble, and the
-    variant kind its output is written as (PRD-CORE-299-FR04)."""
+    """What a dispatch role is: its policy-table task class and its preamble (a preset; DISPATCH-SIMPLIFY)."""
 
     task_class: str
     preamble: str
-    artifact_kind: str
 
 
 #: Review and planning run at the review row (``medium``), an adversarial /
@@ -44,7 +68,6 @@ ROLE_TABLE: dict[str, RoleSpec] = {
         "Focus: code correctness, edge cases, error handling, test quality, and "
         "whether the change does what it claims. Flag bugs, missing validation, "
         "and tests that assert existence rather than behavior.",
-        "review",
     ),
     "design-audit": RoleSpec(
         "review",
@@ -52,7 +75,6 @@ ROLE_TABLE: dict[str, RoleSpec] = {
         "Focus: API/interface design, naming, cohesion, coupling, and DRY. Flag "
         "leaky abstractions, shallow modules, and duplicated logic that should be "
         "a shared source of truth.",
-        "audit",
     ),
     "architectural-audit": RoleSpec(
         "review",
@@ -60,15 +82,23 @@ ROLE_TABLE: dict[str, RoleSpec] = {
         "Focus: system-level structure — module boundaries, dependency direction, "
         "data flow, failure modes, and scalability. Flag boundary violations, "
         "hidden coupling, and single points of failure.",
-        "audit",
     ),
     "adversarial-audit": RoleSpec(
         "security",
         f"{_READ_ONLY_CONTRACT}\n\n"
         "Focus: actively try to break the work. Hunt for security holes, injection "
         "vectors, race conditions, unhandled inputs, and incorrect assumptions. "
-        "Assume the author is wrong until the code proves otherwise.",
-        "audit",
+        "Assume the author is wrong until the code proves otherwise.\n\n"
+        f"{_BLOCK_RULE}",
+    ),
+    "plan": RoleSpec(
+        "plan",
+        "You are an independent planner. Operate STRICTLY read-only: do NOT edit, "
+        "create, or delete any files, and do NOT run mutating commands. Produce an "
+        "ordered implementation plan: concrete steps with file locations, risks, and "
+        "how to verify each step, and give each risk a severity (P0 = blocking, "
+        "P1 = significant, P2 = minor). Flag anything in the request that is ambiguous or "
+        "wrong before planning around it.",
     ),
 }
 

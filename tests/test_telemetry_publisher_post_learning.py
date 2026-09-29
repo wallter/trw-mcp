@@ -5,9 +5,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
-from tests._auto_upgrade_test_support import _mock_httpx_client, _mock_httpx_response
+from tests._contact_support import payload_trw_dir
+from tests._httpx_mock_support import _mock_httpx_client, _mock_httpx_response
 from trw_mcp.telemetry.publisher import _post_learning
+
+# A real send needs a governing project: its switch is read from that project's .trw.
+pytestmark = pytest.mark.usefixtures("governing_project")
 
 
 class TestPostLearning:
@@ -16,7 +21,7 @@ class TestPostLearning:
         client = _mock_httpx_client(_mock_httpx_response(status_code=200))
 
         with patch("httpx.Client", return_value=client):
-            result = _post_learning("https://api.example.com", {"summary": "test"})
+            result = _post_learning("https://api.example.com", {"summary": "test"}, source_trw_dir=payload_trw_dir())
 
         assert result is True
 
@@ -28,7 +33,7 @@ class TestPostLearning:
         client.__exit__.return_value = False
 
         with patch("httpx.Client", return_value=client):
-            result = _post_learning("https://api.example.com", {"summary": "test"})
+            result = _post_learning("https://api.example.com", {"summary": "test"}, source_trw_dir=payload_trw_dir())
 
         assert result is False
 
@@ -37,7 +42,7 @@ class TestPostLearning:
         client = _mock_httpx_client(_mock_httpx_response(status_code=201))
 
         with patch("httpx.Client", return_value=client):
-            _post_learning("https://api.example.com/", {"summary": "test"})
+            _post_learning("https://api.example.com/", {"summary": "test"}, source_trw_dir=payload_trw_dir())
 
         assert client.post.call_args.args[0] == "https://api.example.com/v1/learnings"
 
@@ -48,6 +53,6 @@ class TestPostLearning:
         )
 
         with patch("httpx.Client", return_value=client):
-            result = _post_learning("https://api.example.com", {"summary": "test"})
+            result = _post_learning("https://api.example.com", {"summary": "test"}, source_trw_dir=payload_trw_dir())
 
         assert result is False

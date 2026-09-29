@@ -26,7 +26,7 @@ from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.phase import update_run_phase
-from trw_mcp.state.validation.phase_gates import check_phase_exit, check_phase_input
+from trw_mcp.state.validation.phase_gates import check_phase_exit
 
 _GATE_EVENT = "phase_exit_gate_unmet"
 
@@ -110,8 +110,6 @@ class TestStrictBlocks:
 
         # The phase was NOT advanced — still at 'plan'.
         assert _current_phase(run_path) == "plan"
-        inputs = check_phase_input(Phase.IMPLEMENT, run_path, TRWConfig(phase_gate_enforcement="strict"))
-        assert any(f.rule == "prd_exists" and f.severity == "error" for f in inputs.failures)
 
 
 class TestValidTransitionPasses:
@@ -132,16 +130,6 @@ class TestValidTransitionPasses:
             (reports / "plan.md").write_text(plan_content)
         (run_path / "shards").mkdir()
         (run_path / "shards" / "manifest.yaml").write_text("shards: []\n")
-        inputs = check_phase_input(
-            Phase.IMPLEMENT,
-            run_path,
-            TRWConfig(
-                phase_gate_enforcement=mode,
-                strict_input_criteria=True,
-            ),
-        )
-        assert inputs.valid, inputs.failures
-        assert all(f.rule != "plan_exists" for f in inputs.failures)
 
         structlog.configure(
             processors=[structlog.testing.LogCapture()],

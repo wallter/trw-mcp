@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 Verdict = Literal["supports", "refutes", "inconclusive"]
 
@@ -70,75 +70,16 @@ class ProbeResult(BaseModel):
     cache_hit: bool = False
 
 
-class ProbeAssumption(BaseModel):
-    """A plan-branch assumption a probe can be linked to (FR-05).
-
-    ``polarity`` declares the claim direction so contradiction detection
-    (FR-06) uses a declared polarity function, not a substring match.
-    ``probe_result_ref`` is filled in post-probe by the verdict write-back.
-    """
-
-    hypothesis_id: str
-    claim: str
-    priority: str = "P1"
-    polarity: Literal["positive", "negative"] = "positive"
-    probe_result_ref: str | None = None
-
-
-class AssumptionSet(BaseModel):
-    """A plan's set of probe-linked assumptions (FR-05 A2).
-
-    Holds the ``assumptions[]`` block a plan branch declares. ``hypothesis_id``
-    is the linkage key the harness writes verdicts back to, so it MUST be
-    unique within a plan — a duplicate would make verdict write-back ambiguous
-    (two assumptions claiming the same id). The validator raises
-    ``ValidationError`` on any duplicate (FR-05 Assertion A2).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    assumptions: list[ProbeAssumption] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _reject_duplicate_hypothesis_ids(self) -> AssumptionSet:
-        """FR-05 A2: a duplicate ``hypothesis_id`` within a plan is invalid."""
-        seen: set[str] = set()
-        for assumption in self.assumptions:
-            hid = assumption.hypothesis_id
-            if hid in seen:
-                raise ValueError(
-                    f"duplicate hypothesis_id {hid!r} in plan assumptions; "
-                    "each hypothesis_id must be unique for verdict write-back"
-                )
-            seen.add(hid)
-        return self
-
-
-class DissentEntry(BaseModel):
-    """Dissent Ledger record of a probe-vs-claim contradiction (FR-06)."""
-
-    hypothesis_id: str
-    claim: str
-    probe_verdict: Verdict
-    probe_evidence_ref: str
-    ts: datetime = Field(default_factory=_utc_now)
-
-
 class ProbeBudgetStatus(BaseModel):
     """Read-only budget snapshot printed by ``trw-mcp probe budget`` (FR-10)."""
 
     used: int = Field(ge=0)
     remaining: int = Field(ge=0)
     total: int = Field(ge=0)
-    planning_mode: str
     by_hypothesis_id: dict[str, int] = Field(default_factory=dict)
-    by_mode: dict[str, int] = Field(default_factory=dict)
 
 
 __all__ = [
-    "AssumptionSet",
-    "DissentEntry",
-    "ProbeAssumption",
     "ProbeBudgetStatus",
     "ProbeEvidence",
     "ProbeResult",

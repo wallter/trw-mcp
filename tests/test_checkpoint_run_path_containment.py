@@ -79,7 +79,7 @@ def test_escaping_run_path_refused_before_write(isolated_project: Path, tmp_path
     before_project = _snapshot(isolated_project)
 
     with pytest.raises(StateError, match="escapes project root"):
-        execute_checkpoint(str(outside), "exfiltrate", None, None, context=_ctx("nfr03"))
+        execute_checkpoint(str(outside), "exfiltrate", None, context=_ctx("nfr03"))
 
     assert _snapshot(outside) == before_outside
     assert _snapshot(isolated_project) == before_project
@@ -134,7 +134,7 @@ def test_escaping_run_path_is_not_softened_into_a_not_recorded_result(
     outside.mkdir(parents=True)
 
     with pytest.raises(StateError):
-        execute_checkpoint(str(outside), "quiet failure?", None, None, context=_ctx("nfr03-soft"))
+        execute_checkpoint(str(outside), "quiet failure?", None, context=_ctx("nfr03-soft"))
 
 
 def test_in_project_run_path_still_resolves(isolated_project: Path) -> None:

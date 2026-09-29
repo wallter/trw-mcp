@@ -75,7 +75,7 @@ def reconcile_typed_results(
     problems: a diagnosis must not misstate the fault, and evidence must never
     be invented in either direction.
     """
-    from trw_mcp.tools._evidence_writers import COMMAND_RESULT_EXAMPLE, REQUIRED_BUILD_COMMAND_IDS
+    from trw_mcp.tools._command_results import COMMAND_RESULT_EXAMPLE, REQUIRED_BUILD_COMMAND_IDS
 
     by_id = {item.command_id: item for item in typed_results}
     missing = [command_id for command_id in REQUIRED_BUILD_COMMAND_IDS if command_id not in by_id]

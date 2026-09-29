@@ -1,4 +1,4 @@
-"""Tests for CLAUDE.md sync behavior, LLM flags, and atomic writes."""
+"""Tests for instruction-file sync behavior, LLM flags, and atomic writes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import pytest
 
 from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import _get_tools, instructions_sync_fn, no_machine_wide_ide_detection  # noqa: F401
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -51,19 +50,19 @@ class TestTrwClaudeMdSync:
         # Sync
         result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
-        # CORE-093: learning promotion removed — learnings_promoted always 0
-        assert result["learnings_promoted"] == 0
+        # PRD-CORE-341: sync reports no promotion count; no learning reaches an instruction file
+        assert "learnings_promoted" not in result
 
-        # Verify CLAUDE.md was created with static behavioral protocol
-        claude_md = tmp_path / "CLAUDE.md"
+        # Verify AGENTS.md was created with static behavioral protocol
+        claude_md = tmp_path / "AGENTS.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content, content[:800]
         assert "trw:end" in content
 
     def test_preserves_existing_content(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        # Create existing CLAUDE.md
-        claude_md = tmp_path / "CLAUDE.md"
+        # Create existing AGENTS.md
+        claude_md = tmp_path / "AGENTS.md"
         claude_md.write_text("# My Project\n\nExisting content.\n", encoding="utf-8")
 
         tools = _get_tools()
@@ -80,7 +79,7 @@ class TestTrwClaudeMdSync:
         assert "trw:start" in content  # Added
 
     def test_replaces_existing_trw_section(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         claude_md.write_text(
             "# Project\n\n<!-- trw:start -->\nOld content\n<!-- trw:end -->\n\n# Other section\n",
             encoding="utf-8",
@@ -101,12 +100,12 @@ class TestTrwClaudeMdSync:
         assert "Other section" in content  # Preserved
 
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        """Sub-scope sync writes to target_dir/CLAUDE.md."""
+        """Sub-scope sync writes to target_dir/AGENTS.md."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
             summary="Sub scope learning test",
-            detail="For sub-scope CLAUDE.md",
+            detail="For sub-scope AGENTS.md",
             impact=0.9,
         )
 
@@ -119,7 +118,7 @@ class TestTrwClaudeMdSync:
         )
         assert result["scope"] == "sub"
 
-        sub_claude_md = sub_dir / "CLAUDE.md"
+        sub_claude_md = sub_dir / "AGENTS.md"
         assert sub_claude_md.exists(), str(result)[:3000]
         content = sub_claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content, content[:800]
@@ -134,7 +133,7 @@ class TestTrwClaudeMdSync:
 
         tools = _get_tools()
 
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         long_content = "\n".join(f"Line {i}" for i in range(300))
         claude_md.write_text(long_content, encoding="utf-8")
 
@@ -143,8 +142,8 @@ class TestTrwClaudeMdSync:
             detail="Trigger sync",
             impact=0.9,
         )
-        with pytest.raises(StateError, match="will not truncate"):
-            instructions_sync_fn(scope="root")
+        result = instructions_sync_fn(scope="root")
+        assert result["agents_md_synced"] is False, result
 
         # The user's content is byte-identical after the refusal.
         assert claude_md.read_text(encoding="utf-8") == long_content
@@ -194,10 +193,10 @@ class TestTrwClaudeMdSyncLLM:
         result = instructions_sync_fn(scope="root")
         assert result["status"] == "synced"
         assert result["llm_used"] is False
-        # CORE-093: learning promotion removed
-        assert result["learnings_promoted"] == 0
+        # PRD-CORE-341: sync reports no promotion count
+        assert "learnings_promoted" not in result
 
-        claude_md = tmp_path / "CLAUDE.md"
+        claude_md = tmp_path / "AGENTS.md"
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content, content[:800]
 
@@ -217,7 +216,7 @@ class TestClaudeMdSyncAtomicWrite:
     """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""
 
     def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        """instructions sync uses _writer.write_text for CLAUDE.md."""
+        """instructions sync uses _writer.write_text for AGENTS.md."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -244,7 +243,7 @@ class TestClaudeMdSyncLateResolve:
     and section renderers must read ``trw_mcp.state._paths.resolve_project_root``
     /``resolve_trw_dir`` at call time, NOT a copy captured at import. If they
     captured the binding at import, monkeypatching the source module would not
-    redirect the write and a sync would pollute the real repo CLAUDE.md.
+    redirect the write and a sync would pollute the real repo AGENTS.md.
     """
 
     def test_sync_honours_paths_source_patch_only(
@@ -271,7 +270,7 @@ class TestClaudeMdSyncLateResolve:
         result = instructions_sync_fn(scope="root")
 
         assert result["status"] == "synced"
-        written = target_root / "CLAUDE.md"
+        written = target_root / "AGENTS.md"
         assert written.exists()
         assert "trw:start" in written.read_text(encoding="utf-8")
         # The path reported by the tool reflects the late-resolved root.

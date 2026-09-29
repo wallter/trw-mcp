@@ -8,7 +8,7 @@ Hosts the constants + private helpers that walk bundled data, repo-root
 governing documents, and roll them up into ``SurfaceArtifact`` records:
 
 - Constants: ``_HASH_ALGO``, ``_COMPONENTS``, ``_REPO_ROOT_ARTIFACTS``,
-  ``_SUB_CLAUDE_GLOBS``, ``_FRAMEWORK_VERSION_FALLBACK``,
+  ``_SUB_AGENTS_GLOBS``, ``_FRAMEWORK_VERSION_FALLBACK``,
   ``_PACKAGE_NAME``, ``_DATA_PACKAGE``
 - Helpers: ``_hash_file``, ``_iter_files``, ``_component_rollup``,
   ``_resolve_data_root``, ``_package_version``, ``_framework_version``,
@@ -54,23 +54,23 @@ _COMPONENTS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("config", "", ("behavioral_protocol.yaml", "semantic_checks.yaml", "settings.json")),
 )
 
-#: Repo-root governing artifacts (PRD-HPO-MEAS-001 FR-1): root CLAUDE.md,
-#: FRAMEWORK.md, and any sub-CLAUDE.md files discovered under the repo
+#: Repo-root governing artifacts (PRD-HPO-MEAS-001 FR-1): root AGENTS.md,
+#: FRAMEWORK.md, and any sub-AGENTS.md files discovered under the repo
 #: tree. These are the primary governing documents every agent reads; a
 #: surface-identity registry that misses them cannot correlate prompt
 #: changes with outcome deltas.
 _REPO_ROOT_ARTIFACTS: Final[tuple[tuple[str, str], ...]] = (
-    ("claude_md_root", "CLAUDE.md"),
+    ("agents_md_root", "AGENTS.md"),
     ("framework_md", ".trw/frameworks/FRAMEWORK.md"),
 )
 
-#: Glob patterns (relative to repo root) for sub-CLAUDE.md discovery.
+#: Glob patterns (relative to repo root) for sub-AGENTS.md discovery.
 #: Scoped to package source trees to bound walk depth and skip vendor dirs.
-_SUB_CLAUDE_GLOBS: Final[tuple[str, ...]] = (
-    "trw-mcp/src/**/CLAUDE.md",
-    "trw-mcp/tests/CLAUDE.md",
-    "trw-memory/src/**/CLAUDE.md",
-    "docs/**/CLAUDE.md",
+_SUB_AGENTS_GLOBS: Final[tuple[str, ...]] = (
+    "trw-mcp/src/**/AGENTS.md",
+    "trw-mcp/tests/AGENTS.md",
+    "trw-memory/src/**/AGENTS.md",
+    "docs/**/AGENTS.md",
 )
 
 
@@ -218,7 +218,7 @@ def _artifacts_snapshot_id(
 def _resolve_repo_root() -> Path | None:
     """Resolve the monorepo root by walking up from the package directory.
 
-    Returns the first parent containing both ``CLAUDE.md`` and a ``.trw``
+    Returns the first parent containing both ``AGENTS.md`` and a ``.trw``
     directory, or ``None`` if no match. This is best-effort — callers are
     expected to pass an explicit ``repo_root`` when running outside the
     repository (PyPI install, Docker distribution).
@@ -229,15 +229,15 @@ def _resolve_repo_root() -> Path | None:
         return None
     if data_root is None:
         return None
-    # Walk up from trw_mcp/data/ looking for a CLAUDE.md + .trw/ pair.
+    # Walk up from trw_mcp/data/ looking for an AGENTS.md + .trw/ pair.
     for parent in [data_root, *data_root.parents]:
-        if (parent / "CLAUDE.md").is_file() and (parent / ".trw").is_dir():
+        if (parent / "AGENTS.md").is_file() and (parent / ".trw").is_dir():
             return parent
     return None
 
 
 def _discover_repo_artifacts(repo_root: Path | None, *, version: str, now: datetime) -> list[SurfaceArtifact]:
-    """Discover repo-root governing artifacts (CLAUDE.md, FRAMEWORK.md, sub-CLAUDE.md)."""
+    """Discover repo-root governing artifacts (AGENTS.md, FRAMEWORK.md, sub-AGENTS.md)."""
     from trw_mcp.telemetry.artifact_registry import SurfaceArtifact as _SurfaceArtifact
 
     if repo_root is None or not repo_root.exists():
@@ -259,10 +259,10 @@ def _discover_repo_artifacts(repo_root: Path | None, *, version: str, now: datet
                 )
             )
 
-    # Sub-CLAUDE.md discovery (bounded by explicit glob set so we don't
+    # Sub-AGENTS.md discovery (bounded by explicit glob set so we don't
     # walk node_modules / venvs / .git).
     seen: set[Path] = set()
-    for pat in _SUB_CLAUDE_GLOBS:
+    for pat in _SUB_AGENTS_GLOBS:
         for hit in repo_root.glob(pat):
             if hit.is_file():
                 seen.add(hit.resolve())
@@ -274,7 +274,7 @@ def _discover_repo_artifacts(repo_root: Path | None, *, version: str, now: datet
             rel_path = f.as_posix()
         out.append(
             _SurfaceArtifact(
-                surface_id=f"sub_claude_md:{rel_path}",
+                surface_id=f"sub_agents_md:{rel_path}",
                 content_hash=digest,
                 version=version,
                 discovered_at=now,

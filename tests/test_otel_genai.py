@@ -22,6 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 
 class _RecordingSpan:
     """Minimal recording stand-in for an OTel Span."""

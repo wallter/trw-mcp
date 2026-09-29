@@ -13,6 +13,11 @@ scripts living in that same directory, so a codex-only or copilot-only
 project used to receive the full claude-code hook set (14 hooks + 2 helper
 libs) though it registers only 5 of them. That unconditional unwired copy is
 what this file pins down as fixed.
+
+Codex registers its 5 only when the project turns Codex hooks on
+(``[features].hooks``); without it codex runs none, so none ship
+(PRD-CORE-301 FR07). The codex fixtures here turn the feature on so the
+closure they pin is non-empty.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from trw_mcp.bootstrap._hook_closure import (
 from trw_mcp.bootstrap._utils import _DATA_DIR
 from trw_mcp.bootstrap._version_manifest import _read_manifest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_memory_daemon")]
 
 _HOOKS_SOURCE = _DATA_DIR / "hooks"
 
@@ -62,10 +67,19 @@ _CLAUDE_CODE_ONLY_HOOKS = frozenset(
 )
 
 
+def _enable_codex_hooks(repo: Path) -> Path:
+    """Turn Codex hooks on the way a user does, in ``.codex/config.toml``."""
+    (repo / ".codex").mkdir(exist_ok=True)
+    (repo / ".codex" / "config.toml").write_text("[features]\nhooks = true\n", encoding="utf-8")
+    return repo
+
+
 def _init(tmp_path: Path, ide: str) -> Path:
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / ".git").mkdir()
+    if ide == "codex":
+        _enable_codex_hooks(repo)
     result = init_project(repo, ide=ide)
     assert not result["errors"], result["errors"]
     return repo
@@ -81,6 +95,14 @@ class TestFreshInitDeploysExactlyTheClosure:
         names = _hook_names(repo)
         assert names == _SHARED_MINIMAL_HOOKS | {"lib-trw.sh"}
         assert not names & _CLAUDE_CODE_ONLY_HOOKS, "codex-only install shipped a claude-code-only hook"
+
+    def test_codex_without_hooks_feature_ships_no_hook(self, tmp_path: Path) -> None:
+        """PRD-CORE-301 FR07: codex runs no .claude/hooks script unless its hooks feature is on."""
+        repo = tmp_path / "proj"
+        (repo / ".git").mkdir(parents=True)
+        result = init_project(repo, ide="codex")
+        assert not result["errors"], result["errors"]
+        assert _hook_names(repo) == set()
 
     def test_copilot_only_ships_only_its_closure(self, tmp_path: Path) -> None:
         repo = _init(tmp_path, "copilot")
@@ -101,14 +123,17 @@ class TestFreshInitDeploysExactlyTheClosure:
 
 
 class TestHelperHasNoFakeRegistration:
-    def test_lib_trw_is_never_itself_a_registered_script(self) -> None:
+    def test_lib_trw_is_never_itself_a_registered_script(self, tmp_path: Path) -> None:
         """lib-trw.sh earns its place by being SOURCED, not by any client registering it directly."""
+        repo = _enable_codex_hooks(tmp_path)
         for clients in (["claude-code"], ["codex"], ["copilot"]):
-            assert "lib-trw.sh" not in registered_hook_scripts_for_clients(clients)
-            assert "lib-intent-guard.sh" not in registered_hook_scripts_for_clients(clients)
+            registered = registered_hook_scripts_for_clients(clients, repo)
+            assert registered, clients
+            assert "lib-trw.sh" not in registered
+            assert "lib-intent-guard.sh" not in registered
 
-    def test_lib_trw_is_present_only_via_the_sourcing_closure(self) -> None:
-        deployable = deployable_hook_files(["codex"], _HOOKS_SOURCE)
+    def test_lib_trw_is_present_only_via_the_sourcing_closure(self, tmp_path: Path) -> None:
+        deployable = deployable_hook_files(["codex"], _HOOKS_SOURCE, _enable_codex_hooks(tmp_path))
         assert "lib-trw.sh" in deployable, "codex's registered hooks source lib-trw.sh; it must still deploy"
         assert "lib-intent-guard.sh" not in deployable, "nothing codex registers sources lib-intent-guard.sh"
 
@@ -139,7 +164,7 @@ class TestUpdateNarrowsClientSetSweepsUnwiredCopies:
         narrowed = original.replace('"claude-code"', '"codex"').replace("- claude-code", "- codex")
         assert narrowed != original, "fixture did not actually narrow target_platforms"
         config_path.write_text(narrowed, encoding="utf-8")
-        return repo
+        return _enable_codex_hooks(repo)
 
     def test_unedited_unwired_copy_is_removed_on_narrowing_update(self, tmp_path: Path) -> None:
         repo = self._claude_code_project_with_narrowed_record(tmp_path)

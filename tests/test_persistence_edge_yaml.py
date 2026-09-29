@@ -10,6 +10,13 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
+def _new_yaml():
+    """Test-local: the removed alias of _roundtrip_yaml."""
+    from trw_mcp.state._persistence_helpers import _roundtrip_yaml
+
+    return _roundtrip_yaml()
+
+
 class TestReadYamlMalformedSyntax:
     """read_yaml wraps YAML syntax errors as StateError."""
 
@@ -165,21 +172,18 @@ class TestNewYamlConfiguration:
 
     def test_flow_style_disabled(self) -> None:
         """_new_yaml sets default_flow_style to False."""
-        from trw_mcp.state.persistence import _new_yaml
 
         yml = _new_yaml()
         assert yml.default_flow_style is False
 
     def test_preserve_quotes_enabled(self) -> None:
         """_new_yaml sets preserve_quotes to True."""
-        from trw_mcp.state.persistence import _new_yaml
 
         yml = _new_yaml()
         assert yml.preserve_quotes is True
 
     def test_each_call_returns_new_instance(self) -> None:
         """_new_yaml returns a fresh instance every call (thread safety)."""
-        from trw_mcp.state.persistence import _new_yaml
 
         yml1 = _new_yaml()
         yml2 = _new_yaml()

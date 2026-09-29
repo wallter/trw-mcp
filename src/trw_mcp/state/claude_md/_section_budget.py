@@ -10,7 +10,7 @@ protect.
 
 The rule this module owns: **TRW may shrink its own section to fit; it may never
 shrink the user's.** When the merged result overflows the budget, the sub-scope
-section collapses to a pointer at the repository-root ``CLAUDE.md`` — the carrier
+section collapses to a pointer at the repository-root ``AGENTS.md`` — the carrier
 the client already loads alongside a nested file, so nothing an agent needs is
 lost, only duplicated. If the pointer form still overflows, the excess is user
 content and :func:`~trw_mcp.state.claude_md._write_guard.guarded_instruction_write`
@@ -47,7 +47,7 @@ SUB_SCOPE = "sub"
 _POINTER_BODY = (
     "**Call `trw_session_start()` before your first edit in this directory** — it loads prior "
     "learnings and recovers any active run. The full TRW protocol (tool lifecycle, memory routing, "
-    "deliver gate) is carried by the repository-root `CLAUDE.md`, which your client loads alongside "
+    "deliver gate) is carried by the repository-root `AGENTS.md`, which your client loads alongside "
     'this file; call `trw_status(detail="surface")` for the live tool surface and `trw_status()` '
     "for the phase you are in."
 )

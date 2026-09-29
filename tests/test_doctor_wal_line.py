@@ -17,6 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_user_memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

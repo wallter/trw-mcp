@@ -342,23 +342,6 @@ def test_the_lean_lineage_probe_follows_the_record_from_a_worktree(wt: WorktreeS
     assert _hint.pin_lineage(pin_key="pin-b", formation_id="release-train", member_id="impl-1") is None
 
 
-def test_a_member_bound_at_the_main_root_records_only_its_own_worktree(wt: WorktreeScene) -> None:
-    """Lane B's helper path: the record's member comes from the binding, never from an argument."""
-    from trw_mcp.comms import record_own_worktree
-
-    wt.at(wt.main, "pin-a")  # impl-1, bound at the main root
-    assert record_own_worktree(wt.worktree) == {"status": "ok", "member_id": "impl-1", "revision": 1}
-    record = worktree_record(wt.fixture.trw_dir, wt.worktree)
-    assert record is not None and record.member_id == "impl-1"
-
-    other = _repo(wt.main.parent / "elsewhere")
-    assert record_own_worktree(other)["reason"] == "worktree_not_linked_here"
-    wt.at(wt.worktree, "pin-b")  # a caller inside a linked worktree cannot write records
-    assert record_own_worktree(wt.worktree)["reason"] == "not_main_root"
-    wt.at(wt.main, "pin-unknown")
-    assert record_own_worktree(wt.worktree)["status"] == "refused"
-
-
 def test_a_worktree_client_announces_first_is_admitted_and_exchanges_messages(
     tmp_path: Path, comms_server: FastMCP, monkeypatch: pytest.MonkeyPatch
 ) -> None:

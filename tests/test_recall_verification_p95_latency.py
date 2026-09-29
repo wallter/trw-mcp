@@ -25,7 +25,6 @@ def forbid_work(monkeypatch):
 
     monkeypatch.setattr("trw_memory.lifecycle.verification_pass.run_verification_pass", forbidden)
     monkeypatch.setattr("trw_memory.lifecycle.verification_pass.persist_verification_outcome", forbidden)
-    monkeypatch.setattr("trw_mcp.tools._verification_cache.warm_verified_verdict", forbidden)
 
 
 def _build_evidence_entries(tmp_path: Path) -> list[dict]:

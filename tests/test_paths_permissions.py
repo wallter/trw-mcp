@@ -29,28 +29,11 @@ def test_harden_dir_mode_is_0700(tmp_path: Path) -> None:
     assert mode == 0o700
 
 
-@_POSIX_ONLY
-def test_harden_secret_file_mode_is_0600(tmp_path: Path) -> None:
-    f = tmp_path / "memory.db"
-    f.write_bytes(b"")
-    _paths_permissions.harden_secret_file_mode(f)
-    mode = stat.S_IMODE(os.stat(f).st_mode)
-    assert mode == 0o600
-
-
 def test_harden_dir_creates_when_requested(tmp_path: Path) -> None:
     d = tmp_path / "nested" / "memory"
     assert not d.exists()
     _paths_permissions.harden_dir_mode(d, create=True)
     assert d.is_dir()
-
-
-def test_harden_secret_file_missing_is_noop(tmp_path: Path) -> None:
-    """A missing secret file is a no-op (best-effort, never raises)."""
-    f = tmp_path / "does-not-exist.db"
-    # Must not raise.
-    _paths_permissions.harden_secret_file_mode(f)
-    assert not f.exists()
 
 
 def test_harden_dir_chmod_failure_warns_and_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

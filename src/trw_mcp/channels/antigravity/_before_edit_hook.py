@@ -30,21 +30,20 @@ from typing import Any
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
 log = structlog.get_logger(__name__)
 
 __all__ = [
-    "AG03_CHANNEL_ID",
     "AG03_HOOKS_PATH",
     "HOOK_SCRIPT_CONTENT",
     "generate_hook_script",
     "install_before_edit_hook",
 ]
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-AG03_CHANNEL_ID = "ag-03-before-edit-hook"
 AG03_HOOKS_PATH = ".antigravitycli/hooks.json"
 _AG03_HOOK_SCRIPT_PATH = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
 
@@ -270,9 +269,8 @@ def install_before_edit_hook(
         }
 
     try:
-        hook_script_path.parent.mkdir(parents=True, exist_ok=True)
-        hook_script_path.write_text(content, encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(target_dir, hook_script_path, content)
+    except (OSError, UnsafeWriteError) as exc:
         log.warning(
             "ag03_hook_script_write_failed",
             path=str(hook_script_path),
@@ -315,9 +313,8 @@ def install_before_edit_hook(
     merged = _merge_hooks_json(existing, hook_entry, event_key=_PRE_TOOL_USE_EVENT)
 
     try:
-        hooks_json_path.parent.mkdir(parents=True, exist_ok=True)
-        hooks_json_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
+        write_checkout_file(target_dir, hooks_json_path, json.dumps(merged, indent=2) + "\n")
+    except (OSError, UnsafeWriteError) as exc:
         log.warning(
             "ag03_hooks_json_write_failed",
             path=str(hooks_json_path),

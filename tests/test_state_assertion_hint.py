@@ -7,11 +7,8 @@ from datetime import timedelta
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.tools._state_assertion_hint import (
-    STATE_ASSERTION_MARKERS,
-    propose_validity_window,
-    validity_window_nudge,
-)
+from trw_mcp.tools._state_assertion_hint import _MARKER_PHRASES as STATE_ASSERTION_MARKERS
+from trw_mcp.tools._state_assertion_hint import propose_validity_window, validity_window_nudge
 
 _TTL = TRWConfig().state_learning_default_ttl_days
 

@@ -68,7 +68,7 @@ class TestExplorerAgentContent:
         assert "model" in fm or "model: haiku" in content
         assert "maxTurns" in fm or "maxTurns: 20" in content
         assert "effort" in fm or "effort: medium" in content
-        assert "memory" in fm or "memory: project" in content
+        assert "memory" not in fm, "trw_learn/trw_recall is the one durable agent memory (8.0)"
         assert "permissionMode" in fm or "permissionMode: default" in content
 
     def test_allowed_tools_listed(self) -> None:
@@ -126,6 +126,14 @@ class TestExplorerAgentContent:
         content = get_explorer_agent_content()
         assert len(content.encode("utf-8")) <= EXPLORER_QUOTA_BYTES
 
+    def test_documents_the_distill_cli_query_and_rca_verbs(self) -> None:
+        """2026-09-27 audit (touchpoint #1): no deployed surface named these verbs."""
+        content = get_explorer_agent_content()
+        assert "trw-distill query" in content
+        assert "trw-distill rca" in content
+        assert "--json" in content
+        assert "query deps" in content, "a failing test should suggest query deps FIRST"
+
 
 class TestInstallCc05Subagent:
     def test_installs_to_correct_path(self, tmp_path: Path) -> None:
@@ -157,14 +165,25 @@ class TestInstallCc05Subagent:
         install_cc05_subagent(repo)
         assert (repo / ".claude" / "agents").is_dir()
 
-    def test_install_when_content_differs_returns_true(self, tmp_path: Path) -> None:
-        """If existing content differs, returns True (updated)."""
+    def test_install_keeps_user_edited_content(self, tmp_path: Path) -> None:
+        """CC05-EXPLORER-OVERWRITES-EDITS: bytes that are not TRW's render survive; returns False."""
         install_cc05_subagent(tmp_path)
         target = tmp_path / EXPLORER_AGENT_RELPATH
-        # Modify the file to simulate an old version
         target.write_text("old content\n", encoding="utf-8")
         result = install_cc05_subagent(tmp_path)
-        assert result is True
+        assert result is False
+        assert target.read_text(encoding="utf-8") == "old content\n"
+
+    def test_install_refreshes_recorded_previous_render(self, tmp_path: Path) -> None:
+        """Bytes matching the recorded manifest hash are TRW's last write: refreshed."""
+        import hashlib
+
+        target = tmp_path / EXPLORER_AGENT_RELPATH
+        target.parent.mkdir(parents=True)
+        target.write_text("previous render\n", encoding="utf-8")
+        recorded = {EXPLORER_AGENT_RELPATH: hashlib.sha256(b"previous render\n").hexdigest()}
+        assert install_cc05_subagent(tmp_path, manifest_hashes=recorded) is True
+        assert target.read_text(encoding="utf-8") == get_explorer_agent_content()
 
     def test_quota_warning_emitted_when_oversized(self, tmp_path: Path) -> None:
         """Covers quota warning log path (line 152) when content exceeds EXPLORER_QUOTA_BYTES."""

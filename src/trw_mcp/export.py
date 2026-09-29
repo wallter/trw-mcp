@@ -11,9 +11,6 @@ import contextlib
 import csv
 import io
 import json
-import os
-from collections.abc import Generator
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -21,7 +18,7 @@ from typing import cast
 import structlog
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig, reload_config
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import (
     ExportAnalyticsSection,
     ExportMetadata,
@@ -31,6 +28,7 @@ from trw_mcp.models.typed_dicts import (
     LearningEntryDict,
 )
 from trw_mcp.state._helpers import load_project_config as _load_project_config
+from trw_mcp.state._project_root_binding import project_bound
 from trw_mcp.state.analytics import (
     compute_jaccard_similarity,
     compute_reflection_quality,
@@ -41,22 +39,6 @@ from trw_mcp.state.analytics.report import scan_all_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
-
-
-@contextmanager
-def temp_project_root(target_dir: Path) -> Generator[None, None, None]:
-    """Temporarily override TRW_PROJECT_ROOT and reset config on exit."""
-    old_root = os.environ.get("TRW_PROJECT_ROOT")
-    try:
-        os.environ["TRW_PROJECT_ROOT"] = str(target_dir)
-        reload_config()
-        yield
-    finally:
-        if old_root is not None:
-            os.environ["TRW_PROJECT_ROOT"] = old_root
-        else:
-            os.environ.pop("TRW_PROJECT_ROOT", None)
-        reload_config()
 
 
 def _collect_learnings(
@@ -146,8 +128,8 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
 
 
 def _collect_runs(target_dir: Path) -> ExportRunsSection:
-    """Collect all run analytics via scan_all_runs (with env override)."""
-    with temp_project_root(target_dir):
+    """Collect all run analytics via scan_all_runs, bound to *target_dir*."""
+    with project_bound(target_dir):
         return scan_all_runs()
 
 
@@ -168,7 +150,7 @@ def _collect_analytics(
 
     # Reflection quality
     try:
-        with temp_project_root(target_dir):
+        with project_bound(target_dir):
             analytics["reflection_quality"] = compute_reflection_quality(trw_dir)
     except (OSError, RuntimeError, StateError, ValueError, TypeError, ZeroDivisionError):
         logger.debug("reflection_quality_compute_failed", exc_info=True)
@@ -256,6 +238,7 @@ def _parse_import_source(
         raw = json.loads(source_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         logger.debug("import_parse_error", error=str(exc))
+        # trw-fail-silent-allow: parse failure already logged with the error above.
         return None, None
 
     source_entries: object = None
@@ -420,7 +403,7 @@ def import_learnings(
         imported += 1
 
     if not dry_run and imported > 0:
-        with temp_project_root(target_dir):
+        with project_bound(target_dir):
             resync_learning_index(trw_dir)
 
     return {

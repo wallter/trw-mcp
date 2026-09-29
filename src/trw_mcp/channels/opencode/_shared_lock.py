@@ -56,4 +56,4 @@ def agents_md_lock(repo_root: Path, *, timeout_ms: int = 4000) -> ChannelLock:
         ChannelLockSkip: If the lock cannot be acquired within *timeout_ms*.
     """
     lock_path: Path = repo_root / AGENTS_MD_LOCK_PATH
-    return ChannelLock(lock_path, timeout_ms=timeout_ms)
+    return ChannelLock(lock_path, timeout_ms=timeout_ms, root=repo_root)

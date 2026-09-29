@@ -8,6 +8,12 @@ from __future__ import annotations
 from trw_memory.models.memory import MemoryEntry
 from trw_memory.retrieval.bm25 import bm25_search
 from trw_memory.retrieval.fusion import rrf_fuse
+from trw_memory.retrieval.lexical import bounded_query
+
+
+def _bounded(tokens: list[str]) -> str:
+    """One normalisation for both sides of the dense-evidence match: join the tokens, then bound."""
+    return bounded_query(" ".join(tokens).lower())
 
 
 def query_relevance(matches: list[dict[str, object]], query_tokens: list[str]) -> list[float]:
@@ -18,7 +24,10 @@ def query_relevance(matches: list[dict[str, object]], query_tokens: list[str]) -
     """
     from trw_mcp.state._recall_signals import current_recall_signals
 
-    query = " ".join(query_tokens).lower()
+    # PRD-CORE-318 FR03 (B71-78): the trw-memory retrieval legs' cap, before the split.
+    # A quoted phrase past MAX_QUERY_TERMS loses its closing quote and reads as
+    # separate terms, exactly as it does in trw-memory's FTS leg.
+    query = _bounded(query_tokens)
     query_tokens = query.split()
     # Positions are request-local IDs: colliding persisted IDs cannot alias the
     # lexical corpus or evidence, including across namespace/source boundaries.
@@ -50,7 +59,7 @@ def query_relevance(matches: list[dict[str, object]], query_tokens: list[str]) -
     signals = current_recall_signals()
     observed = (
         [(str(i), signals.get(row)) for i, row in enumerate(matches)]
-        if signals is not None and signals.query.lower().split() == query_tokens
+        if signals is not None and _bounded(signals.query.split()).split() == query_tokens
         else []
     )
     spaces = {signal.embedding_space for _, signal in observed if signal is not None}

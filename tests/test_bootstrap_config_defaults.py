@@ -10,10 +10,11 @@ pytest.importorskip("trw_memory.daemon")
 
 from trw_memory.daemon import DaemonPaths
 from trw_memory.daemon._grants import CHECKOUT_TOKEN_RELPATH, granted_namespaces
+from trw_memory.security._runtime_canary import _seeded_canary
 
 from trw_mcp.state._store_migration import _pin
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_memory_daemon")]
 
 
 #: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
@@ -152,7 +153,7 @@ def _store_with_data(root: Path, *, canary_only: bool = False) -> None:
 
     store = SQLiteBackend(root / ".trw" / "memory" / "memory.db")
     try:
-        store.store(MemoryEntry(id="C-1", content="decoy", namespace="default", metadata={"system_canary": "true"}))
+        store.store(_seeded_canary("canary-001"))  # the store's own canary, as the seeder writes it
         if not canary_only:
             store.store(MemoryEntry(id="L-1", content="a learning", namespace="default"))
     finally:

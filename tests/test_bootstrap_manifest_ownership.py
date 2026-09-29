@@ -23,9 +23,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from trw_memory.daemon import DaemonPaths
+from trw_memory.daemon import client as daemon_client
+from trw_memory.daemon._spawn import SpawnedDaemon
+from trw_memory.testing.daemon_reaper import reap_daemons_under, stop_spawned
 
-from tests._daemon_reaper import reap_daemons_under
 from trw_mcp.bootstrap import init_project, update_project
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 # ---------------------------------------------------------------------------
 # Surfaces
@@ -150,15 +155,34 @@ def two_run_project(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[
     Module-scoped because the observation is per-run, not per-surface: a shared
     pair of runs is exactly the situation the defect occurs in, and rebuilding a
     full multi-client install per surface would cost minutes for no extra signal.
+
+    Deliberately NOT under ``no_memory_daemon`` (a module-scoped fixture runs before
+    the function-scoped one anyway): this is the deliberately kept unpatched
+    init -> update -> update run that reaches the real memory-daemon autostart, so a
+    regression in that path still surfaces. Every other bootstrap module opts in.
     """
     root = tmp_path_factory.mktemp("two-run")
-    repo = _init_all_clients(root)
-    edits = _apply_user_edits(repo)
-    first = update_project(repo)
-    assert not first["errors"], first["errors"]
-    second = update_project(repo)
-    assert not second["errors"], second["errors"]
-    yield repo, edits
+    spawned: list[SpawnedDaemon] = []
+    real_spawn = daemon_client.start_daemon_detached
+
+    def recording(paths: DaemonPaths) -> SpawnedDaemon:  # non-raising: the spawn is the point of this fixture
+        spawned.append(real_spawn(paths))
+        return spawned[-1]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(daemon_client, "start_daemon_detached", recording)
+        repo = _init_all_clients(root)
+        edits = _apply_user_edits(repo)
+        first = update_project(repo)
+        assert not first["errors"], first["errors"]
+        second = update_project(repo)
+        assert not second["errors"], second["errors"]
+    try:
+        # Lead condition 3: this run must really reach the daemon autostart, or it proves nothing.
+        assert spawned, "kept integration run: update_project never reached the real memory-daemon autostart"
+        yield repo, edits
+    finally:
+        stop_spawned(spawned)  # by spawn handle: no discovery file or process scan needed
     # update_project auto-starts a daemon from inside this module fixture, before any
     # per-test reap or spawn recorder exists; it runs with its cwd under ``root``.
     reap_daemons_under(root, wait=True, by_process=True)
@@ -825,7 +849,12 @@ class TestOpencodeDistillWriteFailure:
         result = update_project(repo, ide="opencode")
 
         assert any("trw-before-edit.md not written" in error for error in result["errors"]), result["errors"]
-        assert _snapshot_tree(repo) == before
+        # The sync that ran inside the rolled-back transaction still counted itself in the
+        # runtime analytics file; like every live .trw record, the rollback leaves it alone.
+        # Everything else, the sync cache (claude_md_hash.txt) included, is back as it was.
+        telemetry = (".trw/context/analytics.yaml", ".trw/context/analytics.yaml.lock")
+        after = {rel: body for rel, body in _snapshot_tree(repo).items() if rel not in telemetry}
+        assert after == {rel: body for rel, body in before.items() if rel not in telemetry}
 
 
 class TestManifestRecordsPackages:

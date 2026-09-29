@@ -1,16 +1,18 @@
 """PRD-FIX-124: auto-recall scoring, tunables, deadline and fail-open behaviour.
 
 Every behavioural assertion here drives the REAL hook script as a subprocess
-(FR10). There is no Python reimplementation of the scorer to test against: the
-shipped ``user-prompt-submit.sh`` is the only implementation, and a test that
-restated its formula in Python would pass while the hook was broken — which is
-precisely the state this PRD found the mechanism in.
+(FR10), which runs the real scorer (``trw_mcp.state._auto_recall_hook``) against a
+fixture store (see ``_auto_recall_hook_harness``). There is no reimplementation of
+the scorer to test against, and a test that restated its formula in Python would
+pass while the hook was broken — which is precisely the state this PRD found the
+mechanism in.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +24,7 @@ from tests._auto_recall_hook_harness import (
     _HOOK_PATHS,
     _copy_hook_to_temp,
     _run_hook,
+    fixture_store_python,
 )
 from tests._layout import PACKAGE_ROOT, requires_local_timing, requires_monorepo
 from tests._timing import assert_budget
@@ -74,7 +77,7 @@ def test_score_uses_learning_summary_and_tags(tmp_path: Path) -> None:
 
 
 def test_reads_block_sequence_tags(tmp_path: Path) -> None:
-    """FR02: a ``tags:`` block sequence parses to exactly those strings.
+    """FR02: a learning's stored tags are part of its token set.
 
     Proven behaviourally rather than by inspecting a parser: a prompt built only
     from the tag strings fires, and the same prompt against an otherwise
@@ -174,9 +177,11 @@ def test_default_threshold_is_recalibrated(hook_path: Path) -> None:
 
     assert TRWConfig().auto_recall_min_score == 0.35
     assert OrchestrationConfig().auto_recall_min_score == 0.35
+    from trw_mcp.state import _auto_recall_hook
+
     content = hook_path.read_text(encoding="utf-8")
     assert '_auto_recall_min_score="0.35"' in content
-    assert "DEFAULT_MIN_SCORE = 0.35" in content
+    assert _auto_recall_hook.DEFAULT_MIN_SCORE == 0.35
 
 
 def test_threshold_is_bounded_to_the_unit_interval() -> None:
@@ -260,39 +265,22 @@ def test_scan_cap_reads_config_yaml(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-#: Forced deadline for the FR08 cases. Sized with margin at both ends against
-#: the measured cost of the filler corpus below: comfortably longer than the
-#: pre-scan glob (so the scan always starts) and comfortably shorter than a full
-#: pass (so it always expires mid-scan).
-_FORCED_DEADLINE_NS = 40_000_000
+#: Forced scan deadline for the FR08 cases (TRW_TEST_RECALL_TIMEOUT_NS, read by the
+#: fixture store). The clock starts once the rows are in hand, so the first row is
+#: scanned well inside it, and a full pass over the filler takes far longer.
+_FORCED_DEADLINE_NS = 5_000_000
 _DEADLINE_FILLER = 3000
 
 
 def _filler(count: int) -> list[dict[str, Any]]:
-    """Entries that are expensive to parse and match nothing in the prompt."""
+    """Entries that are expensive to tokenize and match nothing in the prompt."""
     return [
-        {
-            "learning_id": f"L-filler-{i}",
-            "status": "active",
-            "summary": "unrelated filler wording " * 80,
-            "file_stem": f"zzz-{i:05d}",
-        }
+        {"learning_id": f"L-filler-{i}", "status": "active", "summary": "unrelated filler wording " * 80}
         for i in range(count)
     ]
 
 
-def _hook_with_deadline(source_hook: Path, target: Path, timeout_ns: int) -> Path:
-    """Write a copy of the real hook whose only edit is the deadline constant.
-
-    The scan path, the scorer and the emission loop are byte-for-byte the
-    shipped ones; forcing the deadline is the only way to observe a mid-scan
-    expiry deterministically.
-    """
-    content = source_hook.read_text(encoding="utf-8")
-    assert "TIMEOUT_NS = 500_000_000" in content
-    target.write_text(content.replace("TIMEOUT_NS = 500_000_000", f"TIMEOUT_NS = {timeout_ns}"), encoding="utf-8")
-    target.chmod(0o755)
-    return target
+_DEADLINE_ENV = {"TRW_TEST_RECALL_TIMEOUT_NS": str(_FORCED_DEADLINE_NS)}
 
 
 #: Bounded retries absorb a scheduler stall between process start and the
@@ -318,16 +306,12 @@ def test_deadline_emits_best_so_far(tmp_path: Path) -> None:
     """
 
     def _attempt(index: int) -> tuple[dict[str, Any], str]:
-        staging = tmp_path / f"staging-{index}"
-        staging.mkdir(parents=True, exist_ok=True)
-        slow_hook = _hook_with_deadline(_BUNDLED_HOOK, staging / "user-prompt-submit.sh", _FORCED_DEADLINE_NS)
-
         result = _run_hook(
             tmp_path / f"deadline-{index}",
-            slow_hook,
+            _BUNDLED_HOOK,
             prompt="alembic procrastinate schema apply",
             phase="implement",
-            # "aaa-match" sorts first, so the match is always inside the prefix
+            # The match is the store's first row, so it is always inside the prefix
             # the scan gets through; the expensive filler behind it guarantees
             # the deadline expires before the scan can finish.
             learnings=[
@@ -335,10 +319,10 @@ def test_deadline_emits_best_so_far(tmp_path: Path) -> None:
                     "learning_id": "L-early-match",
                     "status": "active",
                     "summary": "alembic procrastinate schema apply is a separate step",
-                    "file_stem": "aaa-match",
                 },
                 *_filler(_DEADLINE_FILLER),
             ],
+            env_overrides=_DEADLINE_ENV,
         )
         return _diagnostic(result.project_root), result.stdout
 
@@ -368,16 +352,13 @@ def test_deadline_emits_best_so_far(tmp_path: Path) -> None:
 
 def test_deadline_before_any_match_is_silent(tmp_path: Path) -> None:
     """FR08: with no above-threshold match accumulated, stdout stays empty."""
-    staging = tmp_path / "staging-empty"
-    staging.mkdir(parents=True, exist_ok=True)
-    slow_hook = _hook_with_deadline(_BUNDLED_HOOK, staging / "user-prompt-submit.sh", _FORCED_DEADLINE_NS)
-
     result = _run_hook(
         tmp_path / "deadline-empty",
-        slow_hook,
+        _BUNDLED_HOOK,
         prompt="alembic procrastinate schema apply",
         phase="done",
         learnings=list(_filler(_DEADLINE_FILLER)),
+        env_overrides=_DEADLINE_ENV,
     )
 
     assert result.stdout == ""
@@ -385,12 +366,12 @@ def test_deadline_before_any_match_is_silent(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# FR12 — the mirror's status field is the candidate gate
+# FR12 — the stored status is the candidate gate
 # --------------------------------------------------------------------------
 
 
-def test_obsolete_status_in_mirror_excludes_entry(tmp_path: Path) -> None:
-    """FR12: an entry whose MIRRORED status is obsolete is never a candidate,
+def test_obsolete_status_excludes_entry(tmp_path: Path) -> None:
+    """FR12: an entry whose stored status is obsolete is never a candidate,
     even when it is the best lexical match in the store."""
     result = _run_hook(
         tmp_path / "obsolete",
@@ -458,7 +439,6 @@ def _scoring_budget_attempts(tmp_path: Path) -> tuple[list[dict[str, str]], dict
             "status": "active",
             "summary": f"entry {i} about assorted engineering topics and their gotchas",
             "tags": ["performance", "scan", f"topic-{i % 40}"],
-            "file_stem": f"perf-{i:05d}",
         }
         for i in range(10_000)
     ]
@@ -507,51 +487,45 @@ def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("case", "env_overrides", "entry_body"),
+    ("case", "env_overrides", "learnings"),
     [
-        ("malformed_yaml", None, "id: [unclosed\nstatus: active\nsummary: \x00\x01 broken\n"),
-        ("scalar_tags", None, 'id: "L-scalar"\nstatus: active\nsummary: "wal reset"\ntags: notalist\n'),
-        ("empty_summary", None, 'id: "L-empty"\nstatus: active\nsummary: ""\n'),
-        ("bad_threshold", {"TRW_AUTO_RECALL_MIN_SCORE": "abc"}, 'id: "L-ok"\nstatus: active\nsummary: "wal reset"\n'),
-        ("negative_cap", {"TRW_AUTO_RECALL_SCAN_CAP": "-1"}, 'id: "L-ok"\nstatus: active\nsummary: "wal reset"\n'),
+        ("empty_summary", None, [{"learning_id": "L-empty", "status": "active", "summary": ""}]),
+        (
+            "bad_threshold",
+            {"TRW_AUTO_RECALL_MIN_SCORE": "abc"},
+            [{"learning_id": "L-ok", "status": "active", "summary": "wal reset"}],
+        ),
+        (
+            "negative_cap",
+            {"TRW_AUTO_RECALL_SCAN_CAP": "-1"},
+            [{"learning_id": "L-ok", "status": "active", "summary": "wal reset"}],
+        ),
     ],
 )
 def test_fail_open_on_corrupt_inputs(
-    tmp_path: Path, case: str, env_overrides: dict[str, str] | None, entry_body: str
+    tmp_path: Path, case: str, env_overrides: dict[str, str] | None, learnings: list[dict[str, Any]]
 ) -> None:
     """NFR02: every corrupt input exits 0 and never blocks the prompt."""
-    project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path / case, _BUNDLED_HOOK)
-    (entries_dir / "entry.yaml").write_text(entry_body, encoding="utf-8")
-
-    env = os.environ.copy()
-    env.update(
-        {
-            "TRW_PROJECT_ROOT": str(project_root),
-            "TRW_TEST_PHASE": "implement",
-            "TRW_HOOK_LOG": str(project_root / "hook.log"),
-        }
-    )
-    if env_overrides:
-        env.update(env_overrides)
-
-    completed = subprocess.run(
-        ["sh", str(hook_path)],
-        input=json.dumps({"prompt": "totally unrelated sourdough baking question"}),
-        text=True,
-        capture_output=True,
-        cwd=project_root,
-        env=env,
-        check=False,
+    result = _run_hook(
+        tmp_path / case,
+        _BUNDLED_HOOK,
+        prompt="totally unrelated sourdough baking question",
+        phase="implement",
+        learnings=learnings,
+        env_overrides=env_overrides,
     )
 
-    assert completed.returncode == 0
-    assert "TRW RECALL:" not in completed.stdout
+    assert result.returncode == 0
+    assert "TRW RECALL:" not in result.stdout
 
 
-def test_fail_open_when_entries_directory_is_absent(tmp_path: Path) -> None:
-    """NFR02: an absent entries directory exits 0 with no recall output."""
-    project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path / "no-entries", _BUNDLED_HOOK)
-    entries_dir.rmdir()
+def test_fails_closed_when_the_store_is_unreachable(tmp_path: Path) -> None:
+    """PRD-CORE-333 FR03: no reachable store means no recall -- never the unfiltered mirror."""
+    project_root, hook_path, rows_file = _copy_hook_to_temp(tmp_path / "no-store", _BUNDLED_HOOK)
+    rows_file.unlink()
+    mirror = project_root / ".trw" / "learnings" / "entries"
+    mirror.mkdir(parents=True)
+    (mirror / "L-mirror.yaml").write_text('id: "L-mirror"\nstatus: active\nsummary: "wal reset corruption recovery"\n')
 
     completed = subprocess.run(
         ["sh", str(hook_path)],
@@ -564,12 +538,51 @@ def test_fail_open_when_entries_directory_is_absent(tmp_path: Path) -> None:
             "TRW_PROJECT_ROOT": str(project_root),
             "TRW_TEST_PHASE": "implement",
             "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            "TRW_PYTHON": str(fixture_store_python(project_root)),
         },
         check=False,
     )
 
     assert completed.returncode == 0
     assert "TRW RECALL:" not in completed.stdout
+    assert _diagnostic(project_root)["decision"] == "store_unavailable"
+
+
+def test_records_no_interpreter_when_trw_mcp_is_not_installed(tmp_path: Path) -> None:
+    """FR05: with no interpreter that can run the filtered read, one record still says why."""
+    project_root, hook_path, _rows = _copy_hook_to_temp(tmp_path / "no-python", _BUNDLED_HOOK)
+    # A PATH holding every system tool except a Python (and jq, which the hook prefers for JSON).
+    bin_dir = tmp_path / "bin-no-python"
+    bin_dir.mkdir()
+    for directory in ("/bin", "/usr/bin"):
+        for tool in os.listdir(directory):
+            if not tool.startswith("python") and tool != "trw-mcp" and not (bin_dir / tool).exists():
+                (bin_dir / tool).symlink_to(Path(directory) / tool)
+    jq = shutil.which("jq")
+    if jq is None:
+        pytest.skip("jq is required to parse the prompt without a Python")
+    if not (bin_dir / "jq").exists():
+        (bin_dir / "jq").symlink_to(jq)
+    completed = subprocess.run(
+        ["sh", str(hook_path)],
+        input=json.dumps({"prompt": "wal reset corruption recovery"}),
+        text=True,
+        capture_output=True,
+        cwd=project_root,
+        env={
+            **os.environ,
+            "TRW_PROJECT_ROOT": str(project_root),
+            "TRW_TEST_PHASE": "implement",
+            "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            "TRW_PYTHON": "",
+            "PATH": str(bin_dir),
+        },
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "TRW RECALL:" not in completed.stdout
+    assert _diagnostic(project_root)["decision"] == "no_interpreter"
 
 
 def test_diagnostic_line_omits_prompt_text(tmp_path: Path) -> None:
@@ -585,7 +598,6 @@ def test_diagnostic_line_omits_prompt_text(tmp_path: Path) -> None:
                 "learning_id": "L-deploy",
                 "status": "active",
                 "summary": "deploy production token rotation is manual",
-                "detail_text": "a detail body that must never be logged",
             },
         ],
     )
@@ -593,7 +605,6 @@ def test_diagnostic_line_omits_prompt_text(tmp_path: Path) -> None:
     log = (result.project_root / "hook.log").read_text(encoding="utf-8")
     assert secret not in log
     assert secret not in result.stderr
-    assert "a detail body that must never be logged" not in log
     diagnostic = _diagnostic(result.project_root)
     assert set(diagnostic) == {
         "event",
@@ -626,8 +637,8 @@ def test_no_keywords_still_records_a_decision(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
 def test_hook_opens_no_sqlite_handle(hook_path: Path) -> None:
-    """NFR05: the hook never touches the memory database, so it cannot contend
-    for a SQLite lock with a live MCP process."""
+    """NFR05: the hook never opens the memory database itself (it cannot contend for a
+    SQLite lock with a live MCP process): its one read goes through the store's daemon."""
     content = hook_path.read_text(encoding="utf-8")
     assert "sqlite3" not in content
     assert "memory.db" not in content
@@ -647,7 +658,6 @@ def test_token_budget_is_enforced(tmp_path: Path) -> None:
                 "learning_id": f"L-big-{i}",
                 "status": "active",
                 "summary": "alembic procrastinate schema apply migration ordering",
-                "file_stem": f"big-{i}",
             }
             for i in range(3)
         ],

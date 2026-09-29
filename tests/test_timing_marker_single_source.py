@@ -45,9 +45,6 @@ CORRECTNESS_DEADLINES: dict[str, str] = {
     "scripts/test_suite_lock.py::test_stale_lock_reclaimed_within_poll_interval": (
         "a dead holder's lock is reclaimed on the next poll instead of blocking every later suite; 2 s is a hang detector"
     ),
-    "test_bootstrap_claude_md_sync_split.py::TestClaudeMdSyncTimeoutFix::test_sync_timeout_returns_promptly": (
-        "the sync must give up instead of hanging; 10 s is a hang detector"
-    ),
     "comms/test_two_stdio_members.py::test_bounded_wait_on_one_real_process_observes_a_message_sent_by_another": (
         "the message must arrive before the wait's own deadline, not by exhausting it"
     ),
@@ -65,6 +62,9 @@ CORRECTNESS_DEADLINES: dict[str, str] = {
     ),
     "test_heartbeat_and_adopt.py::test_heartbeat_returns_stale_after_ts": (
         "date arithmetic tolerance on a computed staleness, not a measured duration"
+    ),
+    "test_install_bounds_daemon_waits.py::test_a_stuck_daemon_does_not_hang_the_update": (
+        "a stuck daemon exhausts the install's shared budget instead of hanging the update; budget + 5 s is a hang detector"
     ),
     "test_installer_process_subprocess.py::TestDetectInstalledExtras::test_uses_short_timeout": (
         "the short probe timeout is applied instead of the 120 s default"
@@ -89,6 +89,12 @@ CORRECTNESS_DEADLINES: dict[str, str] = {
     ),
     "trw-memory/test_daemon_offload.py::test_shutdown_is_bounded_when_a_worker_will_not_stop": (
         "shutdown returns even when a worker refuses to stop"
+    ),
+    "comms/test_schema_deadline.py::test_verify_interrupts_past_deadline": (
+        "verify() interrupts at an already-expired deadline instead of scanning the whole backlog"
+    ),
+    "trw-memory/test_client_graph_close.py::test_close_bounds_a_large_backlog_and_nothing_in_it_writes_after": (
+        "close() bounds its drain instead of hanging on a large pending backlog"
     ),
 }
 
@@ -322,7 +328,7 @@ def test_smoke_budget() -> None:
 # giving the inner one first say. The package-wide --timeout=120 default is a hang detector, not
 # this test's contract: under parallel host load a full nested `python -m pytest` boot (imports,
 # conftest, collection) can legitimately take longer than 120 s without hanging.
-def test_marked_set_is_selected_and_executed_with_ci_unset(ci: bool, expected: str) -> None:
+def test_marked_set_is_selected_and_executed_with_ci_unset(ci: bool, expected: str, tmp_path: Path) -> None:
     env = {
         k: v
         for k, v in os.environ.items()
@@ -342,6 +348,7 @@ def test_marked_set_is_selected_and_executed_with_ci_unset(ci: bool, expected: s
             MARKER,
             "-n",
             "0",
+            f"--basetemp={tmp_path / 'inner-basetemp'}",  # else the child leaves pytest-of-<user> in TMPDIR (FR09)
             f"{Path(__file__).name}::test_smoke_budget",
         ],
         cwd=Path(__file__).parent,

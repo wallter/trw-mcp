@@ -40,9 +40,6 @@ from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTION_LINE_RE as _ASSERTION_LINE_RE,
 )
 from trw_mcp.state.validation._prd_scoring_counts import (
-    _ASSERTION_RE as _ASSERTION_RE,
-)
-from trw_mcp.state.validation._prd_scoring_counts import (
     _ASSERTIONS_HEADING_RE as _ASSERTIONS_HEADING_RE,
 )
 from trw_mcp.state.validation._prd_scoring_counts import (
@@ -82,9 +79,6 @@ from trw_mcp.state.validation._prd_scoring_grounding import (
     grounding_penalty_once as grounding_penalty_once,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
-    _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
-)
-from trw_mcp.state.validation._prd_scoring_parsing import (
     _HEADING_RE as _HEADING_RE,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
@@ -98,9 +92,6 @@ from trw_mcp.state.validation._prd_scoring_parsing import (
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _REQUIREMENT_LINE_RE as _REQUIREMENT_LINE_RE,
-)
-from trw_mcp.state.validation._prd_scoring_parsing import (
-    _SECTION_WEIGHTS as _SECTION_WEIGHTS,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _SUBHEADING_RE as _SUBHEADING_RE,
@@ -140,9 +131,6 @@ from trw_mcp.state.validation._prd_scoring_traceability import (
 )
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _IMPL_REF_RE as _IMPL_REF_RE,
-)
-from trw_mcp.state.validation._prd_scoring_traceability import (
-    _KNOWN_TEST_PATTERNS as _KNOWN_TEST_PATTERNS,
 )
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _TEST_REF_RE as _TEST_REF_RE,

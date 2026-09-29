@@ -23,7 +23,7 @@ _analytics     — RunAnalysisResult, AggregateMetrics, AnalyticsReport, etc.
 _delivery      — TrustIncrementResult, TelemetryStepResult, PublishLearningsResult, etc.
 _audit         — AuditReport, AuditLearningsResult, etc.
 _dashboard     — CeremonyTrendResult, CoverageTrendResult, ReviewTrendResult, etc.
-_orchestration — TrwStatusDict, WaveProgressDict, CheckpointRecordDict, etc.
+_orchestration — TrwStatusDict, CheckpointRecordDict, etc.
 _trust         — TrustLevelResult, HumanReviewResult
 _export        — ExportSummary, ExportMetadata, SyncIndexMdResult, etc.
 _dedup         — DedupHandleResult
@@ -40,8 +40,6 @@ from trw_mcp.models.typed_dicts._analytics import (
     AggregateMetrics,
     AnalyticsReport,
     CeremonyTrendItem,
-    ImpactDistributionResult,
-    ImpactTierInfo,
     RunAnalysisResult,
     TierDistribution,
     TierMetrics,
@@ -69,38 +67,22 @@ from trw_mcp.models.typed_dicts._bootstrap import (
     BootstrapFileResult,
 )
 
-# _build
-from trw_mcp.models.typed_dicts._build import (
-    ApiFuzzResult,
-    MypyResultDict,
-    NpmAuditResult,
-    PipAuditResult,
-    PytestResultDict,
-)
-
 # _ceremony
 from trw_mcp.models.typed_dicts._ceremony import (
     AutoMaintenanceDict,
-    CeremonyApproveResult,
-    CeremonyClassStatusDict,
     CeremonyFeedbackEntry,
-    CeremonyRevertResult,
     CeremonyScoreResult,
-    CeremonyStatusResult,
     ClaudeMdSyncResultDict,
     ComplianceArtifactsDict,
     DeliveryGatesDict,
     EscalationResult,
-    FinalizeRunResult,
     MovedCheckoutCandidateDict,
     MovedCheckoutDict,
     OpenHandoffDict,
     OpenHandoffItemDict,
     ReconciledLocalWritesDict,
-    ReductionProposalDict,
     ReflectResultDict,
     SessionRecallExtrasDict,
-    TierCeremonyScoreResult,
     TrwAdoptRunResultDict,
     TrwHeartbeatResultDict,
 )
@@ -120,12 +102,7 @@ from trw_mcp.models.typed_dicts._codex import (
 )
 
 # _dashboard
-from trw_mcp.models.typed_dicts._dashboard import (
-    CeremonyTrendResult,
-    CoverageTrendResult,
-    DegradationAlertResult,
-    ReviewTrendResult,
-)
+from trw_mcp.models.typed_dicts._dashboard import ReviewTrendResult
 
 # _dedup
 from trw_mcp.models.typed_dicts._dedup import (
@@ -153,7 +130,6 @@ from trw_mcp.models.typed_dicts._delivery import (
 from trw_mcp.models.typed_dicts._export import (
     ExportAnalyticsSection,
     ExportMetadata,
-    ExportPatternsSection,
     ExportRunsSection,
     ExportSummary,
     ImportLearningsResult,
@@ -168,14 +144,6 @@ from trw_mcp.models.typed_dicts._learning import (
     PruneCandidateDict,
 )
 
-# _mutations
-from trw_mcp.models.typed_dicts._mutations import (
-    MutationCheckResult,
-    MutationSkippedResult,
-    ParseMutmutResultDict,
-    SurvivingMutantDict,
-)
-
 # _opencode
 from trw_mcp.models.typed_dicts._opencode import (
     OpencodeConfig,
@@ -188,15 +156,10 @@ from trw_mcp.models.typed_dicts._orchestration import (
     CheckpointEventDataDict,
     CheckpointRecordDict,
     DeliverGateScanDict,
-    DeployFrameworksVersionDataDict,
     StatusReflectionDict,
     StatusReversionLatestDict,
     StatusReversionMetricsDict,
-    TrwInitConfigDataDict,
     TrwStatusDict,
-    WaveDetailDict,
-    WaveProgressDict,
-    WaveShardCountsDict,
 )
 
 # _review
@@ -207,33 +170,23 @@ from trw_mcp.models.typed_dicts._review import (
     MultiReviewerAnalysisResult,
     ReconcileReviewResult,
     ReviewFindingDict,
-    ReviewModeResult,
     ReviewResultBase,
-)
-
-# _telemetry
-from trw_mcp.models.typed_dicts._telemetry import (
-    RemoteSharedLearningDict,
 )
 
 # _tools
 from trw_mcp.models.typed_dicts._tools import (
     BuildCheckResultDict,
-    CheckpointResultDict,
+    CapabilityIntegrationRow,
     Degradation,
     DeliverResultDict,
-    KnowledgeSyncResultDict,
     LearnResultDict,
     PreCompactResultDict,
     RecallResultDict,
+    RequirementDriftEntry,
+    RequirementDriftFinding,
+    RequirementDriftReport,
     RunStatusDict,
     SessionStartResultDict,
-)
-
-# _trust
-from trw_mcp.models.typed_dicts._trust import (
-    HumanReviewResult,
-    TrustLevelResult,
 )
 
 # _validation
@@ -247,14 +200,9 @@ from trw_mcp.models.typed_dicts._validation import (
     ValidationFailureDict,
 )
 
-# Backward-compat alias: LearnResult was merged into LearnResultDict (PRD-CORE-080).
-# Consumers that import `LearnResult` continue to work unchanged.
-LearnResult = LearnResultDict
-
 __all__ = [
     "AggregateMetrics",
     "AnalyticsReport",
-    "ApiFuzzResult",
     "AuditCeremonyComplianceResult",
     "AuditDuplicatePairDict",
     "AuditDuplicatesResult",
@@ -274,6 +222,7 @@ __all__ = [
     "BatchSendResult",
     "BootstrapFileResult",
     "BuildCheckResultDict",
+    "CapabilityIntegrationRow",
     "CodexConfigDict",
     "CodexFeaturesConfig",
     "CodexHookCommand",
@@ -282,25 +231,17 @@ __all__ = [
     "CodexMcpServerEntry",
     "CodexSkillConfigEntry",
     "CodexSkillsConfig",
-    "CeremonyApproveResult",
-    "CeremonyClassStatusDict",
     "CeremonyFeedbackEntry",
     "CeremonyFeedbackStepResult",
-    "CeremonyRevertResult",
     "CeremonyScoreResult",
-    "CeremonyStatusResult",
     "CeremonyTrendItem",
-    "CeremonyTrendResult",
     "CheckpointEventDataDict",
     "CheckpointRecordDict",
-    "CheckpointResultDict",
     "ClaudeMdSyncResultDict",
     "ComplianceArtifactsDict",
-    "CoverageTrendResult",
     "CrossModelReviewResult",
     "DedupHandleResult",
     "Degradation",
-    "DegradationAlertResult",
     "DeliverGateScanDict",
     "DeliverResultDict",
     "DeliveryGatesDict",
@@ -309,37 +250,23 @@ __all__ = [
     "OpenHandoffDict",
     "OpenHandoffItemDict",
     "ReconciledLocalWritesDict",
-    "DeployFrameworksVersionDataDict",
     "DimensionScoreDict",
     "EscalationResult",
     "ExportAnalyticsSection",
     "ExportMetadata",
-    "ExportPatternsSection",
     "ExportRunsSection",
     "ExportSummary",
-    "FinalizeRunResult",
-    "HumanReviewResult",
-    "ImpactDistributionResult",
-    "ImpactTierInfo",
     "ImportLearningsResult",
     "ImprovementSuggestionDict",
     "IndexSyncResult",
-    "KnowledgeSyncResultDict",
-    "LearnResult",  # backward-compat alias for LearnResultDict
     "LearnResultDict",
     "LearningEntryCompactDict",
     "LearningEntryDict",
     "ManualReviewResult",
     "MultiReviewerAnalysisResult",
-    "MutationCheckResult",
-    "MutationSkippedResult",
-    "MypyResultDict",
-    "NpmAuditResult",
     "OpencodeConfig",
     "OpencodeServerEntry",
     "OpencodeTemplateDict",
-    "ParseMutmutResultDict",
-    "PipAuditResult",
     "PrdCreateResultDict",
     "PrdFrontmatterDict",
     "PreCompactResultDict",
@@ -347,15 +274,14 @@ __all__ = [
     "PruneCandidateDict",
     "PublishLearningsResult",
     "PublishResult",
-    "PytestResultDict",
     "RecallResultDict",
+    "RequirementDriftEntry",
+    "RequirementDriftFinding",
+    "RequirementDriftReport",
     "ReworkMetricsResult",
     "ReconcileReviewResult",
-    "ReductionProposalDict",
     "ReflectResultDict",
-    "RemoteSharedLearningDict",
     "ReviewFindingDict",
-    "ReviewModeResult",
     "ReviewResultBase",
     "ReviewTrendResult",
     "RoadmapSyncResult",
@@ -368,10 +294,8 @@ __all__ = [
     "StatusReversionLatestDict",
     "StatusReversionMetricsDict",
     "StepResultBase",
-    "SurvivingMutantDict",
     "SyncIndexMdResult",
     "TelemetryStepResult",
-    "TierCeremonyScoreResult",
     "TierDistribution",
     "TierMetrics",
     "MemoryDecayStepResult",
@@ -379,12 +303,7 @@ __all__ = [
     "TrustIncrementResult",
     "TrwAdoptRunResultDict",
     "TrwHeartbeatResultDict",
-    "TrustLevelResult",
-    "TrwInitConfigDataDict",
     "TrwStatusDict",
     "ValidateResultDict",
     "ValidationFailureDict",
-    "WaveDetailDict",
-    "WaveProgressDict",
-    "WaveShardCountsDict",
 ]

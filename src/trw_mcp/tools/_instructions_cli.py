@@ -39,7 +39,7 @@ def add_instructions_subcommands(subparsers: argparse._SubParsersAction[argparse
     sync.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report a unified diff for CLAUDE.md/AGENTS.md; write nothing (per-client carriers and REVIEW.md are not previewed)",
+        help="Report a unified diff for AGENTS.md; write nothing (per-client carriers and REVIEW.md are not previewed)",
     )
     sync.add_argument("--force", action="store_true", help="Write even if the guard detects content loss")
     sync.add_argument("--json", dest="as_json", action="store_true")

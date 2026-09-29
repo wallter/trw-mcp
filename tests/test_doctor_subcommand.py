@@ -25,6 +25,8 @@ from trw_mcp.server._subcommands_doctor import (
     _run_doctor,
 )
 
+pytestmark = pytest.mark.usefixtures("stub_cli_version_probes")
+
 
 def _make_config(target: Path, *, client_id: str = "claude-code", backend_url: str = "") -> TRWConfig:
     """Build a TRWConfig with a known client profile + backend_url for the doctor."""
@@ -166,6 +168,7 @@ def test_run_doctor_does_not_crash_on_malformed_target_config(
 # ── FR-03: MCP server smoke (import only) ────────────────────────────────────
 
 
+@pytest.mark.smoke
 def test_mcp_import_check_pass(tmp_path: Path) -> None:
     """The FastMCP app imports cleanly in the test env -> PASS."""
     results = _doctor_core(tmp_path, _make_config(tmp_path))
@@ -173,6 +176,7 @@ def test_mcp_import_check_pass(tmp_path: Path) -> None:
     assert mcp.status == "PASS"
 
 
+@pytest.mark.smoke
 def test_mcp_import_check_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An import failure is reported as FAIL with the exception message, not raised."""
 
@@ -313,17 +317,17 @@ def _gated_block(include_gate: bool) -> str:
 
 def test_instruction_gate_missing_fail(tmp_path: Path) -> None:
     """A TRW block missing the deliver-gate phrase FAILs the instruction check."""
-    (tmp_path / "CLAUDE.md").write_text(_gated_block(include_gate=False), encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text(_gated_block(include_gate=False), encoding="utf-8")
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     instr = _status_of(results, "instruction")
     assert instr.status == "FAIL"
-    assert "CLAUDE.md" in instr.message
+    assert "AGENTS.md" in instr.message
     assert "deliver-gate" in instr.message.lower()
     assert _overall_status(results) == "fail"
 
 
 def test_instruction_gate_present_pass(tmp_path: Path) -> None:
-    (tmp_path / "CLAUDE.md").write_text(_gated_block(include_gate=True), encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text(_gated_block(include_gate=True), encoding="utf-8")
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     instr = _status_of(results, "instruction")
     assert instr.status == "PASS"
@@ -609,7 +613,7 @@ class TestInstructionGateReadsTheInlineBlock:
     """
 
     def test_inline_gate_passes(self, tmp_path: Path) -> None:
-        (tmp_path / "CLAUDE.md").write_text(
+        (tmp_path / "AGENTS.md").write_text(
             "# Project\n\n<!-- trw:start -->\nDo NOT call `trw_deliver` unless\n<!-- trw:end -->\n",
             encoding="utf-8",
         )
@@ -622,7 +626,7 @@ class TestInstructionGateReadsTheInlineBlock:
         trw = tmp_path / ".trw"
         trw.mkdir()
         (trw / "INSTRUCTIONS.md").write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
-        (tmp_path / "CLAUDE.md").write_text(
+        (tmp_path / "AGENTS.md").write_text(
             "# Project\n\nUser prose.\n\n<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
             encoding="utf-8",
         )
@@ -630,14 +634,14 @@ class TestInstructionGateReadsTheInlineBlock:
         result = doctor._check_instruction_gate(tmp_path, TRWConfig())
 
         assert result.status == "FAIL"
-        assert "CLAUDE.md" in result.message
+        assert "AGENTS.md" in result.message
 
     def test_import_escaping_the_project_is_not_followed(self, tmp_path: Path) -> None:
         """A traversal import must not be read, and must not satisfy the gate."""
         outside = tmp_path.parent / "outside-gate.md"
         outside.write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
         try:
-            (tmp_path / "CLAUDE.md").write_text(
+            (tmp_path / "AGENTS.md").write_text(
                 f"# Project\n\nUser prose.\n\n<!-- trw:start -->\n@../{outside.name}\n<!-- trw:end -->\n",
                 encoding="utf-8",
             )
@@ -656,6 +660,14 @@ class TestInstructionSurfaceDerivation:
     six, so ANTIGRAVITY.md was never inspected and an antigravity-cli project
     with a broken surface reported PASS.
     """
+
+    def test_every_profile_carrier_is_scanned(self) -> None:
+        """Regression (DOCTOR-CURSOR-IDE-CARRIER-UNSCANNED): each builtin profile's own carrier is scanned."""
+        from trw_mcp.models.config._profiles import builtin_client_ids, resolve_client_profile
+
+        scanned = set(doctor._instruction_surfaces())
+        for cid in builtin_client_ids():
+            assert resolve_client_profile(cid).write_targets.instruction_path in scanned, cid
 
     def test_every_root_registry_surface_is_scanned_or_excluded(self) -> None:
         from trw_mcp.client_profiles.catalog import _ROOT_INSTRUCTION_SURFACES
@@ -719,3 +731,16 @@ class TestMcpSecurityRow:
         results = _doctor_core(tmp_path, _make_config(tmp_path))
         row = _status_of(results, "mcp_security")
         assert row.status == "PASS"
+
+
+def test_the_cli_version_stub_answers_the_doctor_probe(
+    stub_cli_version_probes: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-vacuity for the opt-in stub: a wrong patch target would silently fall back to real probes."""
+    from trw_mcp.server import _doctor_environment
+
+    monkeypatch.setattr(_doctor_environment.shutil, "which", lambda name: f"/stub/bin/{name}")
+    status, message = _doctor_environment.claude_code_version_row(timeout_s=1)
+    assert stub_cli_version_probes == ["claude"]
+    assert status == "PASS"
+    assert "99.0.0" in message

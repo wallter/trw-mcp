@@ -26,7 +26,6 @@ from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_
 
 class _Cfg:
     dispatch_default_client = "codex"
-    dispatch_role_client: dict[str, str] = {}
     dispatch_enabled_clients = ["agy", "grok", "codex"]
     dispatch_default_models: dict[str, str] = {}
     dispatch_default_timeout_s = 60
@@ -55,6 +54,7 @@ def test_resolve_dispatch_request_refuses_reviewer_posture(client: str) -> None:
             isolate=True,
             use_pty=False,
             posture="reviewer",
+            require_posture=True,  # best effort otherwise (DISPATCH-SIMPLIFY)
             dispatch_cfg=_Cfg(),
         )
     assert exc.value.exit_code == 2

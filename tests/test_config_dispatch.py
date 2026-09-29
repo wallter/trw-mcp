@@ -41,7 +41,7 @@ def test_default_dispatch_config_has_documented_defaults() -> None:
     assert cfg.dispatch_default_models == {}
     assert cfg.dispatch_default_timeout_s == 600
     assert cfg.dispatch_default_read_only is True
-    assert cfg.dispatch_role_client == {}
+    assert not hasattr(cfg, "dispatch_role_client"), "retired (DISPATCH-SIMPLIFY)"
 
 
 def test_projection_copies_non_default_values() -> None:
@@ -57,7 +57,6 @@ def test_projection_copies_non_default_values() -> None:
         dispatch_default_read_only=False,
         dispatch_default_models={"codex": "gpt-5.5"},
         dispatch_enabled_clients=["codex"],
-        dispatch_role_client={"adversarial-audit": "claude"},
     )
     sub = cfg.dispatch
     assert sub.dispatch_default_client == "claude"
@@ -65,7 +64,6 @@ def test_projection_copies_non_default_values() -> None:
     assert sub.dispatch_default_read_only is False
     assert sub.dispatch_default_models == {"codex": "gpt-5.5"}
     assert sub.dispatch_enabled_clients == ["codex"]
-    assert sub.dispatch_role_client == {"adversarial-audit": "claude"}
 
 
 def test_dispatch_default_timeout_must_be_positive() -> None:

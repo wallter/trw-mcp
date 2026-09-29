@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import structlog
 
 from trw_mcp.exceptions import StateError
@@ -11,91 +9,11 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import (
     StatusReversionLatestDict,
     StatusReversionMetricsDict,
-    WaveDetailDict,
-    WaveProgressDict,
-    WaveShardCountsDict,
 )
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
-
-
-def _compute_wave_progress(
-    wave_data: dict[str, object],
-    run_path: Path,
-) -> WaveProgressDict | None:
-    """Compute wave-level and shard-level progress summary."""
-    reader = FileStateReader()
-    waves_raw = wave_data.get("waves", [])
-    if not isinstance(waves_raw, list) or not waves_raw:
-        return None
-
-    shard_statuses: dict[str, str] = {}
-    shard_manifest_path = run_path / "shards" / "manifest.yaml"
-    if shard_manifest_path.exists():
-        try:
-            shard_data = reader.read_yaml(shard_manifest_path)
-            raw_shards = shard_data.get("shards", [])
-            if isinstance(raw_shards, list):
-                for shard in raw_shards:
-                    if isinstance(shard, dict):
-                        shard_id = str(shard.get("id", ""))
-                        shard_statuses[shard_id] = str(shard.get("status", "pending"))
-        except (StateError, OSError, ValueError, TypeError):
-            logger.debug("shard_manifest_load_failed", exc_info=True)
-
-    completed_waves = 0
-    active_wave: int | None = None
-    wave_details: list[WaveDetailDict] = []
-
-    for wave in waves_raw:
-        if not isinstance(wave, dict):
-            continue
-        wave_num = int(wave.get("wave", 0))
-        wave_status = str(wave.get("status", "pending"))
-        wave_shard_ids = wave.get("shards", [])
-        if not isinstance(wave_shard_ids, list):
-            wave_shard_ids = []
-
-        counts: dict[str, int] = {
-            "complete": 0,
-            "active": 0,
-            "pending": 0,
-            "failed": 0,
-            "partial": 0,
-        }
-        for shard_id in wave_shard_ids:
-            status = shard_statuses.get(str(shard_id), "pending")
-            if status in counts:
-                counts[status] += 1
-
-        if wave_status in ("complete", "partial"):
-            completed_waves += 1
-        elif wave_status == "active" or counts["active"] > 0:
-            active_wave = wave_num
-
-        wave_details.append(
-            WaveDetailDict(
-                wave=wave_num,
-                status=wave_status,
-                shards=WaveShardCountsDict(
-                    total=len(wave_shard_ids),
-                    complete=counts["complete"],
-                    active=counts["active"],
-                    pending=counts["pending"],
-                    failed=counts["failed"],
-                    partial=counts["partial"],
-                ),
-            )
-        )
-
-    return {
-        "total_waves": len(waves_raw),
-        "completed_waves": completed_waves,
-        "active_wave": active_wave,
-        "wave_details": wave_details,
-    }
 
 
 def _compute_reversion_metrics(
@@ -140,46 +58,6 @@ def _compute_reversion_metrics(
         "classification": classification,
         "latest": latest,
     }
-
-
-def evaluate_run_currentness(
-    run_deployed_fingerprint: str | None,
-    run_process_fingerprint: str | None,
-    *,
-    current_deployed_fingerprint: str | None,
-    current_process_fingerprint: str | None,
-) -> tuple[str, list[str]]:
-    """Return ``(currentness, reasons)`` comparing a run to the live generation/process.
-
-    PRD-INFRA-164 FR08 truth table (currentness is a stable ``Currentness`` value):
-
-    - a legacy run without a stamp, or any missing/unresolvable layer, is
-      ``unknown`` — absence NEVER returns current/green (NFR07);
-    - a run/deployment or deployment/process digest difference is ``stale`` and
-      the reason names the differing layer;
-    - only an exact three-way match is ``current``.
-    """
-    from trw_mcp.canons.fingerprint import Currentness
-
-    reasons: list[str] = []
-    # Any absent authoritative layer => unknown (never current).
-    if run_deployed_fingerprint is None or run_process_fingerprint is None:
-        reasons.append("run predates canon-fingerprint stamping or stamp is incomplete")
-        return Currentness.UNKNOWN.value, reasons
-    if current_deployed_fingerprint is None:
-        reasons.append("current deployed canon generation is unavailable/malformed")
-        return Currentness.UNKNOWN.value, reasons
-    if current_process_fingerprint is None:
-        reasons.append("connected process fingerprint is unavailable (reconnect/restart to attest)")
-        return Currentness.UNKNOWN.value, reasons
-    # All layers known: compare.
-    if run_deployed_fingerprint != current_deployed_fingerprint:
-        reasons.append("deployed canon generation moved since this run was initialized")
-        return Currentness.STALE.value, reasons
-    if run_process_fingerprint != current_process_fingerprint:
-        reasons.append("connected process changed/restarted since this run was initialized")
-        return Currentness.STALE.value, reasons
-    return Currentness.CURRENT.value, reasons
 
 
 def _check_framework_version_staleness(run_framework: str) -> str | None:

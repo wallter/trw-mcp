@@ -9,21 +9,19 @@ Named exports (PRD-CORE-136-FR02):
   generate_cursor_hook_scripts    NEW:  copy bundled data/hooks/cursor/<name> → .cursor/hooks/
   build_cursor_hook_config        NEW:  returns {"version":1,"hooks":events_map}
   smart_merge_cursor_json         NEW:  idempotent JSON merge keyed on command prefix
-
-Legacy exports (kept for backward compat):
-  generate_cursor_hooks           FR05: old hook-list style; still wired in _ide_targets.py
 """
 
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Final
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._file_ops import read_json_object
+from trw_mcp.bootstrap._safe_remove import safe_remove
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
@@ -34,17 +32,6 @@ logger = structlog.get_logger(__name__)
 
 _DATA_DIR = Path(__file__).parent.parent / "data"
 _CURSOR_HOOKS_DATA_DIR = _DATA_DIR / "hooks" / "cursor"
-
-
-# Cursor-config TypedDicts extracted to _cursor_models (PRD-DIST-243 batch 11).
-# Re-exported here for backward compatibility with sibling bootstrap modules
-# (_cursor_cli.py, _cursor_ide.py) that import HookHandlerEntry via this facade.
-from trw_mcp.bootstrap._cursor_models import (
-    CursorHookEntry as CursorHookEntry,
-)
-from trw_mcp.bootstrap._cursor_models import (
-    CursorHooksConfig as CursorHooksConfig,
-)
 from trw_mcp.bootstrap._cursor_models import (
     CursorHooksV1Config as CursorHooksV1Config,
 )
@@ -88,125 +75,10 @@ def _get_trw_mcp_entry_cursor(target_dir: Path | None = None) -> CursorServerEnt
     return {"command": command, "args": []}
 
 
-def _write_fresh_mcp(path: Path, trw_entry: CursorServerEntry) -> None:
+def _write_fresh_mcp(target_dir: Path, path: Path, trw_entry: CursorServerEntry) -> None:
     """Write a fresh .cursor/mcp.json with only the TRW server entry."""
     config: CursorMcpConfig = {"mcpServers": {"trw": trw_entry}}
-    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# FR05: Cursor Hook Adapter
-# ---------------------------------------------------------------------------
-
-
-def generate_cursor_hooks(
-    target_dir: Path,
-    *,
-    force: bool = False,
-) -> BootstrapFileResult:
-    """Generate .cursor/hooks.json with TRW hook configurations (FR05).
-
-    Cursor supports hook events for IDE lifecycle integration. TRW uses 4:
-    - beforeMCPExecution: Advisory tool ordering enforcement (non-blocking)
-    - beforeSubmitPrompt: Phase-aware protocol injection
-    - afterFileEdit: File modification tracking reminder
-    - stop: Advisory ceremony warning (non-blocking)
-
-    If the file already exists and ``force`` is False, performs a smart merge:
-    preserves user hooks while adding/replacing TRW hooks (identified by
-    description prefix "TRW").
-
-    Returns dict with 'created'/'updated'/'preserved' lists.
-    """
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    hooks_dir = target_dir / ".cursor"
-    hooks_dir.mkdir(parents=True, exist_ok=True)
-    hooks_file = hooks_dir / "hooks.json"
-
-    trw_hooks: list[CursorHookEntry] = [
-        {
-            "event": "beforeMCPExecution",
-            "command": "bash -c 'echo \"TRW: Ensure trw_session_start() is called before other trw_* tools for full context.\"'",
-            "description": "TRW MCP tool ordering advisory",
-        },
-        {
-            "event": "beforeSubmitPrompt",
-            "command": "bash -c 'echo \"TRW: Load prior learnings with trw_session_start() for full context.\"'",
-            "description": "TRW ceremony protocol injection",
-        },
-        {
-            "event": "afterFileEdit",
-            "command": "bash -c 'echo \"TRW: File modified — checkpoint saves progress.\"'",
-            "description": "TRW file modification tracking",
-        },
-        {
-            "event": "stop",
-            "command": "bash -c 'echo \"TRW: Call trw_deliver() to persist learnings for future sessions.\"'",
-            "description": "TRW delivery reminder (advisory)",
-        },
-    ]
-
-    if hooks_file.exists() and not force:
-        # Smart merge: preserve user hooks, add/replace TRW hooks.
-        # ``read_json_object`` is the shared bootstrap seam: it returns ``None``
-        # (fail open) for an unreadable / non-UTF-8 / malformed / non-object
-        # file, logging only a content-free structural diagnostic so a hooks.json
-        # that happens to hold secrets never lands in logs. A ``None`` here means
-        # "no usable prior config" → overwrite with a fresh TRW-only document.
-        existing = read_json_object(hooks_file, context="cursor_hooks")
-        if existing is None:
-            hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
-        else:
-            raw_hooks = existing.get("hooks", [])
-            existing_hooks = raw_hooks if isinstance(raw_hooks, list) else []
-            # Remove existing TRW hooks (identified by description prefix);
-            # tolerate non-dict list entries from a hand-edited file.
-            non_trw = [
-                h
-                for h in existing_hooks
-                if not (isinstance(h, dict) and str(h.get("description", "")).startswith("TRW"))
-            ]
-            existing["hooks"] = non_trw + trw_hooks
-            hooks_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-        result["updated"].append(".cursor/hooks.json")
-    else:
-        hooks_file.write_text(json.dumps({"hooks": trw_hooks}, indent=2) + "\n", encoding="utf-8")
-        result["created"].append(".cursor/hooks.json")
-
-    logger.debug(
-        "generate_cursor_hooks",
-        created=result["created"],
-        updated=result["updated"],
-    )
-    return result
-
-
-# ---------------------------------------------------------------------------
-# FR06: Cursor Rules Generation
-# ---------------------------------------------------------------------------
-
-
-def generate_cursor_rules(
-    target_dir: Path,
-    trw_section: str,
-    *,
-    force: bool = False,
-) -> BootstrapFileResult:
-    """Backward-compat alias for generate_cursor_rules_mdc (FR06).
-
-    Thin wrapper — delegates to the canonical ``generate_cursor_rules_mdc``
-    with ``client_id="cursor-ide"``.  Kept for one release to avoid breaking
-    callers that import this name directly (e.g. _ide_targets.py).
-
-    Args:
-        target_dir: Root of the target git repository.
-        trw_section: Content to embed between the MDC frontmatter and end of file.
-        force: When True, overwrite unconditionally.
-
-    Returns:
-        Dict with 'created'/'updated'/'preserved' lists.
-    """
-    return generate_cursor_rules_mdc(target_dir, trw_section, client_id="cursor-ide", force=force)
+    write_checkout_file(target_dir, path, json.dumps(config, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -232,9 +104,7 @@ def generate_cursor_mcp_config(
         Dict with 'created'/'updated'/'preserved' lists.
     """
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    cursor_dir = target_dir / ".cursor"
-    cursor_dir.mkdir(parents=True, exist_ok=True)
-    mcp_file = cursor_dir / "mcp.json"
+    mcp_file = target_dir / ".cursor" / "mcp.json"
 
     trw_entry = _get_trw_mcp_entry_cursor(target_dir)
 
@@ -246,16 +116,16 @@ def generate_cursor_mcp_config(
         # covering the cases the old ``try`` block let crash.
         existing = read_json_object(mcp_file, context="cursor_mcp")
         if existing is None:
-            _write_fresh_mcp(mcp_file, trw_entry)
+            _write_fresh_mcp(target_dir, mcp_file, trw_entry)
         else:
             raw_servers = existing.get("mcpServers", {})
             servers = raw_servers if isinstance(raw_servers, dict) else {}
             servers["trw"] = trw_entry
             existing["mcpServers"] = servers
-            mcp_file.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+            write_checkout_file(target_dir, mcp_file, json.dumps(existing, indent=2) + "\n")
         result["updated"].append(".cursor/mcp.json")
     else:
-        _write_fresh_mcp(mcp_file, trw_entry)
+        _write_fresh_mcp(target_dir, mcp_file, trw_entry)
         result["created"].append(".cursor/mcp.json")
 
     logger.debug(
@@ -399,9 +269,7 @@ def generate_cursor_rules_mdc(
         ``preserved`` (see the downgrade guard below).
     """
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    rules_dir = target_dir / ".cursor" / "rules"
-    rules_dir.mkdir(parents=True, exist_ok=True)
-    rules_file = rules_dir / "trw-ceremony.mdc"
+    rules_file = target_dir / ".cursor" / "rules" / "trw-ceremony.mdc"
 
     appendix = _CURSOR_IDE_APPENDIX if client_id == "cursor-ide" else ""
     content = cursor_rules_mdc_body(trw_section, client_id)
@@ -433,7 +301,7 @@ def generate_cursor_rules_mdc(
         )
         return result
 
-    rules_file.write_text(content, encoding="utf-8")
+    write_checkout_file(target_dir, rules_file, content)
 
     if existed:
         result["updated"].append(".cursor/rules/trw-ceremony.mdc")
@@ -537,7 +405,12 @@ def generate_cursor_skills_mirror(
         dst = dest_root / name
         existed = dst.exists()
         if existed and force:
-            shutil.rmtree(dst)
+            # ``force`` discards local EDITS (documented), never a symlink's target: a
+            # symlinked ``.cursor/skills`` (or parent) would send rmtree outside the checkout.
+            if refusal := safe_remove(dst, target_dir):
+                logger.warning("cursor_skill_force_refused", path=f".cursor/skills/{name}", reason=refusal)
+                result["preserved"].append(f".cursor/skills/{name}")
+                continue
             existed = False
         dst.mkdir(parents=True, exist_ok=True)
 
@@ -548,10 +421,9 @@ def generate_cursor_skills_mirror(
                 logger.info("cursor_skill_user_modified", path=rel)
                 continue
             try:
-                dest_file.parent.mkdir(parents=True, exist_ok=True)
-                dest_file.write_bytes(incoming)
+                write_checkout_file(target_dir, dest_file, incoming)
                 wrote_any = True
-            except OSError:
+            except (OSError, UnsafeWriteError):
                 logger.warning("cursor_skill_write_failed", path=rel)
 
         rel_dir = f".cursor/skills/{name}"

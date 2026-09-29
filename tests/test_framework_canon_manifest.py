@@ -10,7 +10,9 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _REPO_ROOT / "trw-mcp/src/trw_mcp/data/framework_canons.json"
 
-if not (_REPO_ROOT / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only canon mirror manifest", allow_module_level=True)
 
 
@@ -96,7 +98,6 @@ def test_runtime_instruction_surfaces_point_at_the_one_framework_document() -> N
     surfaces = (
         "trw-mcp/src/trw_mcp/data/messages/messages.yaml",
         "trw-mcp/src/trw_mcp/data/hooks/session-start.sh",
-        "trw-mcp/src/trw_mcp/data/hooks/post-compact.sh",
         "trw-mcp/src/trw_mcp/data/claude_code/loop.md",
         "trw-mcp/src/trw_mcp/server/_app.py",
     )

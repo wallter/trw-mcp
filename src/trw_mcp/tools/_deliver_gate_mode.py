@@ -28,11 +28,15 @@ evidence or the record — it can never wedge a session.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import DeliveryGatesDict
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +47,35 @@ logger = structlog.get_logger(__name__)
 # gate's strength no longer depends on the task-type heuristic being right
 # (PRD-CORE-246-FR03).
 _BUILD_ARTIFACT_TASK_TYPES: frozenset[str] = frozenset({"coding", "rca", "eval"})
+
+
+def gate_mode_blocks_task(config: TRWConfig, task_type: str) -> bool:
+    """True when deliver_gate_mode resolves to a block posture for this task_type.
+
+    Runtime callers: ``trw_mcp.tools._prd_transition_gate.evaluate_transition_gate``
+    (PRD-CORE-213) and ``trw_mcp.tools._deliver_requirement_drift.drift_blocks_task``
+    (PRD-CORE-321 FR05), both reached from ``trw_deliver`` through
+    ``evaluate_delivery_gates``. Moved here from ``_prd_transition_gate`` so both
+    gates read the one rule next to the ``_BUILD_ARTIFACT_TASK_TYPES`` it uses.
+
+    Soundness scope: proves the configured mode (the per-task-type override map
+    first, then ``deliver_gate_mode``) is ``block_coding``/``block_all`` and the
+    task type is build-bearing (coding/rca/eval). It is NOT the build gate's
+    predicate: PRD-CORE-246-FR03 widened ``resolve_deliver_gate_decision`` to
+    also block on recorded file modifications, so the build gate fires for a
+    docs | research | planning | unknown run that changed code while this rule
+    does not. The narrower scope is deliberate: both callers key on a claim
+    (a PRD ``->implemented`` transition, a change to approved requirements) that
+    only a build-bearing regime makes (PRD-CORE-246-FR09).
+
+    ``deliver_gate_mode`` is read straight off the config, never through
+    ``getattr(config, "deliver_gate_mode", "advisory")``, whose fallback
+    contradicted the field's real default of ``block_coding``: a gate must not
+    carry a second, weaker copy of a policy default.
+    """
+    overrides = config.deliver_gate_task_type_overrides or {}
+    mode = str(overrides.get(task_type, config.deliver_gate_mode))
+    return mode in {"block_coding", "block_all"} and task_type in _BUILD_ARTIFACT_TASK_TYPES
 
 
 def count_session_changed_files(

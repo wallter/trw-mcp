@@ -52,7 +52,7 @@ RETIRED_PROFILE_KEYS: dict[str, str] = {
 }
 
 #: The persistent layer names that contribute to ``surface_snapshot_id``
-#: (FR-13 / §7.2.1). ``session`` is intentionally excluded.
+#: (FR-13 / §7.2.1).
 PERSISTENT_LAYER_NAMES: tuple[str, ...] = (
     "defaults",
     "org",
@@ -61,15 +61,13 @@ PERSISTENT_LAYER_NAMES: tuple[str, ...] = (
     "client",
 )
 
-#: The canonical 6-layer composition order (FR-2). ``client`` is most-local
-#: and applied last so transport concerns are not overridable by a session
-#: pin or a task-type layer.
+#: The canonical composition order (FR-2). ``client`` is most-local and
+#: applied last so transport concerns are not overridable by a task-type layer.
 LAYER_ORDER: tuple[str, ...] = (
     "defaults",
     "org",
     "domain",
     "task-type",
-    "session",
     "client",
 )
 
@@ -201,9 +199,8 @@ class ResolvedProfile(BaseModel):
 
     ``profile`` is the effective (merged) surface. ``layers_applied`` lists
     the names of layers that actually contributed at least one field, in
-    composition order. ``surface_snapshot_id`` hashes only the persistent
-    layers (FR-13); ``session_override_hash`` carries the session-layer delta
-    separately. ``attribution`` maps each field name to its origin chain.
+    composition order. ``surface_snapshot_id`` hashes the persistent layers
+    (FR-13). ``attribution`` maps each field name to its origin chain.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -211,7 +208,6 @@ class ResolvedProfile(BaseModel):
     profile: Profile
     layers_applied: list[str] = Field(default_factory=list)
     surface_snapshot_id: str = ""
-    session_override_hash: str = ""
     attribution: dict[str, LayerAttribution] = Field(default_factory=dict)
 
 

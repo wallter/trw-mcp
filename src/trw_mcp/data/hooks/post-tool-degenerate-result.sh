@@ -45,13 +45,14 @@
 # date: .trw/compliance/degenerate-result-calibration.json
 # (regenerate with scripts/measure_degenerate_result_calibration.py).
 #
-# jq IS REQUIRED, and its absence is silence rather than a second parser. All
-# three shape rules are shape tests over a structured field, and a sed
-# approximation of "render this JSON value to text" would be a DIFFERENT
-# classifier wearing the same name — the two-path shape that has produced
-# fail-open defects in this hooks directory before. NFR02 asks for exactly this:
-# absent jq produces no advisory and exit 0. The size rule's OVERSIZED-BY-CAP
-# branch is the one deliberate exception to "jq or nothing" — see below.
+# A JSON PARSER IS REQUIRED: jq, else python3 (PRD-FIX-156-FR04). All three
+# shape rules are shape tests over a structured field, and a sed approximation of
+# "render this JSON value to text" would be a DIFFERENT classifier wearing the
+# same name — the two-path shape that has produced fail-open defects in this
+# hooks directory before. The python3 half of `_json_string_leaves` (lib-trw.sh)
+# is the same walk, held to jq's output by tests/hooks/test_json_get_parity.py.
+# With neither parser the hook logs jq_unavailable=1 and stays silent (NFR02).
+# The size rule's OVERSIZED-BY-CAP branch needs no parser — see below.
 #
 # NFR03: no payload-derived text is ever interpolated into a command, an eval, or
 # a filename, and both advisory lines are fixed constants — so a hostile tool
@@ -65,8 +66,6 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
 init_hook_timer
-
-command -v jq >/dev/null 2>&1 || exit 0
 
 # --- typed tunables, all through the one accessor (FR10 + PRD-INFRA-194-FR04) -
 # No numeric literal for any of these appears below; the defaults live beside the
@@ -168,7 +167,7 @@ _dr_emit() {
   fi
 }
 
-_SIZE_LINE="This tool output is large (over the configured size threshold) — prefer narrower queries or summarise before reusing it."
+_SIZE_LINE="[TRW] This tool output is large (over the configured size threshold); a narrower query or a summary would be easier to reuse."
 
 # --- the payload, read under the byte cap (NFR03) ----------------------------
 # `head -c` is not POSIX, so its availability is probed rather than assumed; the
@@ -209,15 +208,18 @@ if [ "$_payload_len" -ge "$_max_bytes" ] 2>/dev/null; then
   exit 0
 fi
 
-# Malformed JSON is silence, not an error (NFR02).
-printf '%s' "$_payload" | jq -e . >/dev/null 2>&1 || exit 0
+if ! _trw_has_json_parser; then
+  log_hook_execution "PostToolUse:degenerate-result" "unparsed" "0" "jq_unavailable=1"
+  exit 0
+fi
 
 # Render tool_response to text WHATEVER its shape: a string renders to itself, an
 # object to its string leaves. That is deliberately generic — clients disagree
 # about the shape (`{"stdout":…,"stderr":…}` for one tool, `{"file":{…}}` for
 # another) and hard-coding one client's field names would make rule 1 answer
-# "not empty" for every result of every other shape.
-_rendered=$(printf '%s' "$_payload" | jq -r '.tool_response // "" | [.. | strings] | join("\n")' 2>/dev/null) || exit 0
+# "not empty" for every result of every other shape. A payload that is not a JSON
+# object is silence, not an error (NFR02): the reader fails and the hook exits.
+_rendered=$(printf '%s' "$_payload" | _json_string_leaves tool_response) || exit 0
 _tool=$(printf '%s' "$_payload" | _json_get --strings .tool_name) || _tool=''
 _command=$(printf '%s' "$_payload" | _json_get --strings .tool_input.command) || _command=''
 
@@ -300,7 +302,7 @@ _size_line=''
 
 if [ -n "$_shape" ]; then
   if _dr_gate "$_state_dir/degenerate-advisory-$_safe_key.state" "$_cooldown" "$_shape"; then
-    _shape_line="This result does not distinguish 'absent' from 'could not look' — confirm before concluding."
+    _shape_line="[TRW] This result does not distinguish 'absent' from 'could not look' — worth confirming either way."
   fi
 fi
 

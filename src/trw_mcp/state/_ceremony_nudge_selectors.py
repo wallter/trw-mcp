@@ -320,4 +320,5 @@ def select_contextual_nudge_content(
         return clipped, learning_id, target_label
     except Exception:  # justified: fail-open -- recall issues must not break ceremony status
         logger.debug("select_contextual_nudge_content_failed", exc_info=True)
+        # trw-fail-silent-allow: recall failure already logged above.
         return None, None, None

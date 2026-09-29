@@ -29,12 +29,41 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._profiles import _PROFILES
+from trw_mcp.server._doctor_checks_registry import CHECKS as _CHECKS
+
+# The four noqa-F401 _check_* imports below are referenced only via globals()[...]
+# in _doctor_core's dispatch loop (test-monkeypatch indirection), same as every
+# _check_* function defined directly in this file -- they are imported instead, to
+# keep the 350-eLOC gate, so the module-level binding is the only use ruff can't see.
+from trw_mcp.server._doctor_hint_delivery import (
+    hint_delivery_row as _hint_delivery_row,
+)
+from trw_mcp.server._doctor_hint_hub import (
+    check_hint_hub as _check_hint_hub,  # noqa: F401
+)
+from trw_mcp.server._doctor_hook_channel import (
+    check_hook_channel as _check_hook_channel,  # noqa: F401
+)
 from trw_mcp.server._doctor_instruction_gate import (
     _GATE_SCAN_EXCLUSIONS as _GATE_SCAN_EXCLUSIONS,
 )
 from trw_mcp.server._doctor_instruction_gate import (
     _instruction_surfaces as _instruction_surfaces,
 )
+from trw_mcp.server._doctor_launcher_divergence import (
+    check_launcher_divergence as _check_launcher_divergence,  # noqa: F401
+)
+from trw_mcp.server._doctor_retired_artifacts import (
+    check_retired_artifacts as _check_retired_artifacts,  # noqa: F401
+)
+
+# Split into a sibling for the 350-effective-LOC module-size gate
+# (PRD-CORE-311-FR07 made room for the new ``sync_health`` row below); the
+# facade re-export keeps `_run_doctor` and every test's existing import path
+# (`from trw_mcp.server._subcommands_doctor import _resolve_target_config`)
+# working unchanged.
+from trw_mcp.server._doctor_target_config import resolve_target_config as _resolve_target_config
+from trw_mcp.shared_server._doctor import check_shared_mcp as _check_shared_mcp  # noqa: F401
 
 # FR-07: re-exported so callers/tests can assert doctor consumes the canonical
 # deliver-gate phrase rather than a hardcoded copy — never duplicate the value.
@@ -272,6 +301,14 @@ def _check_memory_backend(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("memory_backend", cast("DoctorStatus", status), message)
 
 
+def _check_memory_ledger_sample(target: Path, config: TRWConfig) -> CheckResult:
+    """PRD-CORE-334 FR04: advisory ``memory-ledger-sample`` row, the namespace's exact decision count."""
+    from trw_mcp.server._doctor_memory_store import memory_ledger_row
+
+    status, message = memory_ledger_row(target, config)
+    return CheckResult("memory-ledger-sample", cast("DoctorStatus", status), message)
+
+
 # ── PRD-CORE-248-FR06: WAL size, live writers, last-checkpoint age ───────────
 
 
@@ -294,10 +331,25 @@ def _check_memory_wal(target: Path, config: TRWConfig) -> CheckResult:
     return CheckResult("memory_wal", cast("DoctorStatus", status), message)
 
 
+# ── learning L-LhQe: a leftover pre-fix per-namespace warm.db orphan ──────────
+
+
+def _check_memory_warm_legacy(target: Path, config: TRWConfig) -> CheckResult:
+    """Report a leftover legacy per-namespace ``warm.db``, never deleting it.
+
+    Delegates to the ``_doctor_memory_warm_legacy`` sibling (same shape as
+    ``_check_memory_wal``, kept out of this file for the module-size gate).
+    """
+    from trw_mcp.server._doctor_memory_warm_legacy import memory_warm_legacy_row
+
+    status, message = memory_warm_legacy_row(target, config)
+    return CheckResult("memory_warm_legacy", cast("DoctorStatus", status), message)
+
+
 # ── PRD-CORE-253-FR03: loopback memory-daemon reachability ───────────────────
 
 
-def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
+def _check_memory_daemon(target: Path, _config: TRWConfig) -> CheckResult:
     """Report the user-space memory daemon's reachability, pid, uptime and store.
 
     Delegates to the ``_doctor_memory_daemon`` sibling (kept out of this file
@@ -306,7 +358,7 @@ def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
     """
     from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
 
-    status, message = memory_daemon_row()
+    status, message = memory_daemon_row(target)
     return CheckResult("memory_daemon", cast("DoctorStatus", status), message)
 
 
@@ -436,6 +488,14 @@ def _check_agent_parity(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("agent_parity", cast("DoctorStatus", status), message, data=tuple(rows))
 
 
+def _check_dispatch_credentials(_target: Path, _config: TRWConfig) -> CheckResult:
+    """Each OAuth dispatch client's login state, expiry and credential lock, as metadata (PRD-CORE-304-FR04)."""
+    from trw_mcp.dispatch._credentials import credential_report
+
+    status, message, rows = credential_report()
+    return CheckResult("dispatch_credentials", cast("DoctorStatus", status), message, data=tuple(rows))
+
+
 def _check_formation_readiness(_target: Path, config: TRWConfig) -> CheckResult:
     """Report per-client dispatch readiness: verification, binary, live version."""
     from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
@@ -492,11 +552,16 @@ def _check_stray_servers(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("stray_servers", *stray_servers_row(target))
 
 
+def _check_hook_python(target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_hook_python import hook_python_row
+
+    return CheckResult("hook_python", *hook_python_row(target))
+
+
 def _check_jev(target: Path, config: TRWConfig) -> CheckResult:
     from trw_mcp.server._doctor_jev import jev_row
 
-    status, message = jev_row(target, config)
-    return CheckResult("jev", cast("DoctorStatus", status), message)
+    return CheckResult("jev", *jev_row(target, config))
 
 
 # ── PRD-FIX-149-FR07: doctor cannot silently disagree with version-status ────
@@ -531,14 +596,9 @@ def _check_mcp_security(target: Path, _config: TRWConfig) -> CheckResult:
         status = compute_security_status(events_dir=target / ".trw" / "context").model_dump()
     except Exception as exc:  # justified: doctor checks are fail-open isolated
         return CheckResult("mcp_security", "FAIL", f"check raised: {exc}")
-    anomalies = status.get("recent_anomalies") or []
-    quarantined = status.get("quarantined_servers") or []
-    if anomalies or quarantined:
-        return CheckResult(
-            "mcp_security",
-            "WARN",
-            f"{len(anomalies)} recent anomaly(ies), {len(quarantined)} quarantined server(s)",
-        )
+    n_anom, n_quar = len(status.get("recent_anomalies") or []), len(status.get("quarantined_servers") or [])
+    if n_anom or n_quar:
+        return CheckResult("mcp_security", "WARN", f"{n_anom} recent anomaly(ies), {n_quar} quarantined server(s)")
     return CheckResult("mcp_security", "PASS", "no recent anomalies, no quarantined servers")
 
 
@@ -546,60 +606,57 @@ def _check_pipeline_health(target: Path, config: TRWConfig) -> CheckResult:
     """WARN when the compounding-pipeline health surface reports a degraded signal."""
     from trw_mcp.server._doctor_pipeline_health import pipeline_health_row
 
-    status, message = pipeline_health_row(target, config)
-    return CheckResult("pipeline_health", cast("DoctorStatus", status), message)
+    return CheckResult("pipeline_health", *pipeline_health_row(target, config))
+
+
+def _check_distill(target: Path, config: TRWConfig) -> CheckResult:
+    """trw-distill install state; never FAILs (optional, proprietary; 2026-09-26 audit)."""
+    from trw_mcp.server._doctor_distill import distill_row
+
+    return CheckResult("distill", *distill_row(target, config))
+
+
+def _check_distill_ingest(target: Path, config: TRWConfig) -> CheckResult:
+    """Last incremental-ingest preflight outcome; never FAILs (2026-09-27 audit)."""
+    from trw_mcp.server._doctor_distill_ingest import distill_ingest_row
+
+    return CheckResult("distill_ingest", *distill_ingest_row(target, config))
+
+
+def _check_trw_trash(target: Path, config: TRWConfig) -> CheckResult:
+    """Size of ``.trw/trash`` (backups TRW never deletes itself); read-only."""
+    from trw_mcp.server._doctor_trash import trash_row
+
+    return CheckResult("trw_trash", *trash_row(target, config))
+
+
+def _check_hint_delivery(target: Path, config: TRWConfig) -> CheckResult:
+    """RECORDED pre-edit hint tiers/fallback share; HINT-DELIVERY-CANARY. Never FAILs."""
+    return CheckResult("hint_delivery", *_hint_delivery_row(target, config))
+
+
+def _check_sync_health(target: Path, config: TRWConfig) -> CheckResult:
+    """WARN on a degraded sync push, SKIP when unreadable/absent, else PASS.
+
+    Delegates to the ``_doctor_sync_health`` sibling, which wraps the EXISTING
+    ``step_sync_health`` read unchanged (PRD-CORE-311-FR07) -- no new
+    detection, only a new surface.
+    """
+    from trw_mcp.server._doctor_sync_health import sync_health_row
+
+    # step_sync_health reads <trw_dir>/sync-state.json, so it gets the .trw directory, not the project root.
+    status, message = sync_health_row(target / ".trw", config)
+    return CheckResult("sync_health", cast("DoctorStatus", status), message)
 
 
 # ── Catalogue + orchestration ────────────────────────────────────────────────
 
 _CheckFn = Callable[[Path, TRWConfig], CheckResult]
 
-# (check row name, module-level function name). The function is resolved from the
-# module globals at run time so test monkeypatches on the named check functions
-# take effect (test-monkeypatch indirection).
-_CHECKS: tuple[tuple[str, str], ...] = (
-    ("python_version", "_check_python_version"),
-    ("config", "_check_config"),
-    ("mcp_import", "_check_mcp_import"),
-    ("profile", "_check_profile"),
-    ("instruction_surface", "_check_instruction_gate"),
-    ("trw_dir", "_check_trw_dir"),
-    ("framework_integrity", "_check_framework_integrity"),
-    # PRD-CORE-248 FR06: memory_wal runs BEFORE memory_backend. The backend
-    # check opens the store, and opening a SQLite store checkpoints and rewrites
-    # its WAL — so a WAL row placed after it would report the state the
-    # diagnostic itself produced, not the state the operator came to see.
-    ("memory_wal", "_check_memory_wal"),
-    ("memory_backend", "_check_memory_backend"),
-    ("memory_daemon", "_check_memory_daemon"),
-    ("embedding_egress", "_check_embedding_egress"),
-    ("backend_connectivity", "_check_backend_connectivity"),
-    ("installer_flag_advisory", "_check_installer_flag_advisory"),
-    ("stubs", "_check_stubs"),
-    ("agent_parity", "_check_agent_parity"),
-    ("antigravity_mcp", "_check_antigravity_mcp"),
-    ("tendencies_xref", "_check_tendencies_xref"),
-    # PRD-CORE-266-FR06: appended LAST so every pre-existing row keeps its
-    # position — the doctor's row order is asserted by its own tests and relied
-    # on by operator habit; it is the later of the two subprocess-spawning checks.
-    ("formation_readiness", "_check_formation_readiness"),
-    # PRD-INFRA-189 FR02/FR05: appended after it for the same reason.
-    ("gnu_timeout", "_check_gnu_timeout"),
-    ("foreign_client_paths", "_check_foreign_client_paths"),
-    # PRD-FIX-149 FR07: appended last for the same reason as the two rows above.
-    ("version_status", "_check_version_status_compatible"),
-    ("jev", "_check_jev"),
-    # PLAN.md §3b item 3: appended last for the same reason.
-    ("retrieval", "_check_retrieval"),
-    ("stray_servers", "_check_stray_servers"),
-    ("claude_code_version", "_check_claude_code_version"),
-    # PRD-CORE-300 slice S3a: appended last for the same reason as the rows
-    # above — reports the same status `trw-mcp telemetry security` does, now
-    # that its former MCP-tool form is retired.
-    ("mcp_security", "_check_mcp_security"),
-    # PRD-CORE-300-FR05 slice S3b: appended last for the same reason as the rows above.
-    ("pipeline_health", "_check_pipeline_health"),
-)
+# _CHECKS itself is imported above from _doctor_checks_registry.py (pure data,
+# extracted to keep this file under its 350 effective-LOC gate); the named
+# functions still resolve against THIS module's globals at run time
+# (test-monkeypatch indirection is unaffected by where the tuple lives).
 
 
 def _doctor_core(target: Path, config: TRWConfig) -> list[CheckResult]:
@@ -621,67 +678,27 @@ def _doctor_core(target: Path, config: TRWConfig) -> list[CheckResult]:
     return results
 
 
+# ── PRD-CORE-316 P3: checkout-access race-loser fd count ─────────────────────
+
+
+def _check_checkout_access(_target: Path, _config: TRWConfig) -> CheckResult:
+    """Report the checkout-access pinned-fd cache's race-loser descriptor count.
+
+    Delegates to the ``_doctor_checkout_access`` sibling (kept out of this file for the
+    module-size gate). Always PASS: the count is diagnostic, not a defect signal.
+    """
+    from trw_mcp.server._doctor_checkout_access import checkout_access_row
+
+    status, message = checkout_access_row()
+    return CheckResult("checkout_access", cast("DoctorStatus", status), message)
+
+
 def _format_human(results: list[CheckResult], overall: str) -> str:
     glyph = {"PASS": "PASS", "WARN": "WARN", "FAIL": "FAIL", "SKIP": "SKIP"}
     lines = [f"[{glyph[r.status]}] {r.name}: {r.message}" for r in results]
     lines.append("")
     lines.append(f"doctor: {overall.upper()} ({len(results)} checks)")
     return "\n".join(lines)
-
-
-def _resolve_target_config(target: Path) -> TRWConfig:
-    """Build the config the TARGET project records, not this process's defaults.
-
-    ``TRWConfig()`` is the bare constructor: field defaults only, never the
-    target's ``.trw/config.yaml``. Every row reading ``target_platforms`` or
-    ``client_profile`` off it therefore printed ``claude-code`` for a codex
-    project — the identical answer it would print for a project that recorded
-    nothing at all, which makes the row unable to be wrong and unable to be
-    right (PRD-CORE-262-FR05).
-
-    Detection never enters this: ``target_platforms`` is the durable record the
-    init path itself wrote, and directory presence cannot distinguish TRW's own
-    scaffold from the user's.
-
-    The cascade is not re-implemented here. It is
-    :func:`~trw_mcp.models.config._loader.resolve_config_overrides`, the same
-    function production builds from, because a hand-rolled copy had already
-    drifted: this one dropped ``platform_api_key`` (correctly) but never
-    re-resolved it from ``credentials.yaml``, and it omitted both the
-    ``~/.trw/config.yaml`` layer and the ``TRW_*`` exclusion that preserves
-    ``env > file`` precedence. So the doctor resolved a ``config.yaml`` value
-    wherever an env var shadowed it and the live server resolved the env value
-    — a row measuring against a setting the operator did not choose, which is
-    the PRD-CORE-262-FR05 defect this docstring cites as its own justification.
-
-    CORE262-10: ``_read_yaml_overrides`` documents "never raises" but does not
-    honor that contract -- ``FileStateReader.read_yaml`` raises ``StateError``
-    on malformed YAML (or a non-mapping top level), and nothing here caught
-    it. ``_run_doctor`` calls this function BEFORE ``_doctor_core``'s per-check
-    exception isolation even starts, so a malformed target ``config.yaml``
-    used to abort the whole ``doctor`` invocation before a single row printed
-    -- not even the ``config: FAIL`` row this exact input is supposed to
-    produce. Falling back to ``TRWConfig()`` here is safe: ``_check_config``
-    re-parses the same file independently and reports the parse failure as
-    its own FAIL row.
-    """
-    from trw_mcp.exceptions import StateError
-    from trw_mcp.models.config._loader import apply_platform_meta_tune_gate, resolve_config_overrides
-
-    try:
-        overrides = resolve_config_overrides(target / ".trw" / "config.yaml")
-    except StateError:
-        logger.warning("doctor_target_config_unreadable", path=str(target / ".trw" / "config.yaml"), exc_info=True)
-        return TRWConfig()
-    if not overrides:
-        return TRWConfig()
-    try:
-        # PRD-FIX-137-FR03: the doctor reports the config the server would RUN
-        # with, so the non-Linux meta-tune override applies here as well.
-        return apply_platform_meta_tune_gate(TRWConfig(**overrides))  # type: ignore[arg-type]
-    except Exception:  # justified: an invalid config.yaml is _check_config's verdict, not this row's
-        logger.warning("doctor_target_config_invalid", path=str(target / ".trw" / "config.yaml"))
-        return TRWConfig()
 
 
 def _run_doctor(args: argparse.Namespace) -> None:

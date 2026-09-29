@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pytest
 from trw_memory.models.memory import MemoryEntry
@@ -236,3 +237,191 @@ def test_execute_recall_omits_validity_kwargs_by_default() -> None:
     )
     assert "as_of" not in captured
     assert "include_superseded" not in captured
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-326: provenance keys on the default trw_recall stub, asserted on
+# what the served entrypoint (execute_recall) returns.
+# ---------------------------------------------------------------------------
+
+
+def _served_stubs(rows: list[dict[str, object]], *, home: str = "project:test") -> list[dict[str, object]]:
+    """The stubs ``execute_recall`` returns when its store yields exactly *rows*, in order.
+
+    *home* is the checkout's pinned ``project_namespace``.
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    result = execute_recall(
+        query="widget",
+        trw_dir=Path("/nonexistent"),
+        config=get_config().model_copy(update={"project_namespace": home}),
+        track=False,
+        _adapter_recall=lambda *_a, **_k: [dict(row) for row in rows],
+        _rank_by_utility=lambda items, *a, **k: list(items),
+    )
+    return cast("list[dict[str, object]]", result["learnings"])
+
+
+_PROVENANCE_KEYS = {"source", "scope", "superseded_by"}
+
+
+@pytest.mark.parametrize("source_type", ["human", "tool", "consolidated", "team_sync", "company_sync"])
+def test_non_default_source_is_surfaced(source_type: str) -> None:
+    """FR01: a non-default stored source is read off the default stub, with no ids=[...] call."""
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule", "source_type": source_type}])
+
+    assert served == {"id": "L-1", "claim": "widget rule", "source": source_type}
+
+
+@pytest.mark.parametrize("row_extra", [{"source_type": "agent"}, {}], ids=["agent", "missing"])
+def test_default_source_carries_no_source_key(row_extra: dict[str, object]) -> None:
+    """FR01: the stored default ``agent`` (or no key at all) adds no byte to the stub."""
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule", **row_extra}])
+
+    assert served == {"id": "L-1", "claim": "widget rule"}
+
+
+def test_remote_row_carries_no_provenance_keys() -> None:
+    """FR01/Non-Goals: a shared row's peer-asserted fields are never presented as provenance."""
+    remote = {
+        "id": "R-1",
+        "summary": "[shared] widget rule",
+        "source": "shared",
+        "source_type": "human",
+        "namespace": "team:core",
+        "superseded": True,
+        "invalidated_by": "L-9f8e7d6c",
+    }
+    [served] = _served_stubs([remote])
+
+    assert served == {"id": "R-1", "claim": "[shared] widget rule"}
+
+
+def test_legacy_row_renders_without_provenance_keys() -> None:
+    """NFR03: a row missing every read key renders, and carries none of the three keys."""
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule"}])
+
+    assert _PROVENANCE_KEYS.isdisjoint(served)
+
+
+def test_provenance_stub_does_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NFR02: the stub reads only keys already on the row: no file, socket or subprocess."""
+    import builtins
+    import socket
+    import subprocess
+
+    from trw_mcp.tools._recall_presenter import stub
+
+    def _refuse(*_a: object, **_k: object) -> None:
+        raise AssertionError("stub(provenance=True) performed I/O")
+
+    for owner, name in ((builtins, "open"), (socket, "socket"), (subprocess, "Popen")):
+        monkeypatch.setattr(owner, name, _refuse)
+    row = {"id": "L-1", "summary": "s", "source_type": "human", "namespace": "team:core", "superseded": True}
+
+    assert stub({**row, "invalidated_by": "L-2"}, provenance=True)["source"] == "human"
+
+
+def test_non_default_namespace_is_surfaced(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """FR02, end to end: a user-tier row names its scope; a row in ``default`` does not."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._tier_routing import USER_NAMESPACE
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    _store(fake_memory_store, MemoryEntry(id="L-user", content="widget user rule", namespace=USER_NAMESPACE))
+    _store(fake_memory_store, MemoryEntry(id="L-proj", content="widget project rule", namespace="default"))
+
+    result = execute_recall("widget", trw_dir, get_config().model_copy(update={"project_namespace": "project:test"}))
+    served = {row["id"]: row for row in cast("list[dict[str, object]]", result["learnings"])}
+
+    assert served["L-user"].get("scope") == USER_NAMESPACE
+    assert "scope" not in served["L-proj"]
+
+
+@pytest.mark.parametrize(
+    ("namespace", "scope"),
+    [("team:core", "team:core"), ("project:test", None), ("default", None), (None, None)],
+    ids=["other", "home", "default", "missing"],
+)
+def test_scope_is_omitted_for_the_home_and_default_namespaces(namespace: str | None, scope: str | None) -> None:
+    """FR02: only a namespace other than ``default`` and the checkout's own carries signal."""
+    row: dict[str, object] = {"id": "L-1", "summary": "widget rule"}
+    if namespace is not None:
+        row["namespace"] = namespace
+    [served] = _served_stubs([row], home="project:test")
+
+    assert served.get("scope") == scope
+
+
+@pytest.mark.parametrize("namespace", ["t" * 40, "\u00e9" * 40, '"' * 40], ids=["ascii", "non-ascii", "quotes"])
+def test_scope_is_bounded_in_rendered_bytes(namespace: str) -> None:
+    """FR02 bound: an over-cap value is cut to 32 escaped bytes and marked with ``...``."""
+    import json
+
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule", "namespace": namespace}])
+    scope = str(served.get("scope", ""))
+
+    assert scope.endswith("...")
+    assert namespace.startswith(scope[:-3])
+    assert len(json.dumps(scope)) - 2 <= 32
+
+
+def test_recall_by_ids_row_carries_its_non_default_namespace(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """FR02: the full row an agent fetches next names the same scope; ``default`` stays unprinted."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._tier_routing import USER_NAMESPACE
+    from trw_mcp.tools._recall_impl import recall_by_ids
+
+    _store(fake_memory_store, MemoryEntry(id="L-user", content="widget user rule", namespace=USER_NAMESPACE))
+    _store(fake_memory_store, MemoryEntry(id="L-proj", content="widget project rule", namespace="default"))
+
+    rows = {row["id"]: row for row in recall_by_ids(trw_dir, get_config(), ["L-user", "L-proj"])["learnings"]}
+
+    assert rows["L-user"].get("namespace") == USER_NAMESPACE
+    assert "namespace" not in rows["L-proj"]
+
+
+def test_superseded_row_names_its_closer(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """FR04, end to end: under include_superseded the closed-window row names its closer."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._recall_impl import execute_recall
+
+    # Distinct wording: recall collapses exact-content duplicates before presenting.
+    closed = MemoryEntry(
+        id="L-aaaa", content="git stash old rule", valid_from=T0, invalid_from=T2, invalidated_by="L-bbbb"
+    )
+    _store(fake_memory_store, closed)
+    _store(fake_memory_store, MemoryEntry(id="L-bbbb", content="git stash new rule", valid_from=T2))
+
+    result = execute_recall("git stash", trw_dir, get_config(), include_superseded=True)
+    served = {row["id"]: row for row in cast("list[dict[str, object]]", result["learnings"])}
+
+    assert served["L-aaaa"].get("superseded_by") == "L-bbbb"
+    assert "superseded_by" not in served["L-bbbb"]
+
+
+@pytest.mark.parametrize(
+    "row_extra",
+    [{"status": "obsolete"}, {"superseded": False, "invalidated_by": "L-2"}, {"superseded": True}],
+    ids=["obsolete-open-window", "open-window", "no-closer"],
+)
+def test_open_window_row_names_no_closer(row_extra: dict[str, object]) -> None:
+    """FR04/NFR03: a retired-by-status or open-window row, or one missing its closer, gets no key."""
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule", **row_extra}])
+
+    assert "superseded_by" not in served
+
+
+def test_superseded_by_is_bounded_in_rendered_bytes() -> None:
+    """FR04 bound: a caller-supplied closer id is cut to 32 escaped bytes."""
+    import json
+
+    closer = "L-" + "\u00e9" * 40
+    [served] = _served_stubs([{"id": "L-1", "summary": "widget rule", "superseded": True, "invalidated_by": closer}])
+    shown = str(served.get("superseded_by", ""))
+
+    assert shown.endswith("...")
+    assert closer.startswith(shown[:-3])
+    assert len(json.dumps(shown)) - 2 <= 32

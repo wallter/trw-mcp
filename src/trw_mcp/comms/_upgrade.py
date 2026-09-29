@@ -1,8 +1,12 @@
-"""Explicit, orchestrator-invoked v3 -> v4 mailbox upgrade and guarded rollback (PRD-CORE-274 FR16).
+"""Explicit, orchestrator-invoked mailbox upgrade to v5 and guarded rollback.
 
-Nothing here runs implicitly: opening a v3 mailbox with a v4 build refuses
-``mailbox_upgrade_required`` in ``_store``; only these two entry points change the
-schema. Integrity rests on one connection held in SQLite ``locking_mode=EXCLUSIVE``:
+A version chain (PRD-CORE-274 FR16, PRD-CORE-322 FR05): the upgrade reads the stored
+version (v3 or v4), verifies and backs up the file AS that version, then applies every
+step from there to v5 (v3 runs the v4 row rewrite and the v5 step) in one exclusive
+hold with exactly one commit, and records ``from_version``; rollback restores that
+version's backup. Nothing here runs implicitly: opening an older mailbox with a v5
+build refuses ``mailbox_upgrade_required`` in ``_store``; only these two entry points
+change the schema. Integrity rests on one connection held in SQLite ``locking_mode=EXCLUSIVE``:
 the backup copy, the column steps, the commit and the recorded file change counter
 all happen before that lock is released, so no concurrent write can fall between
 them (lane-C R4-3/R6-1). Quiescence is an availability courtesy for old-build
@@ -31,10 +35,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from trw_mcp._pinned_read import copy_to, read_at
+from trw_mcp._checkout_access import copy_to, read_at
 from trw_mcp.comms._envelope import canonical_bytes
 from trw_mcp.comms._pins import member_pin_entry
-from trw_mcp.comms._schema import SCHEMA_VERSION, V4_STEPS, SchemaVersionError, stored_version, verify
+from trw_mcp.comms._schema import (
+    SCHEMA_VERSION,
+    UPGRADABLE_FROM,
+    V4_STEPS,
+    V5_STEPS,
+    SchemaVersionError,
+    stored_version,
+    verify,
+)
 from trw_mcp.comms._store import StoreError, StoreRefusal, database_path
 
 #: The upgrade record, beside the mailbox. Its presence is what makes a rollback possible.
@@ -127,17 +139,17 @@ def _fsync_file_and_dir(path: Path) -> None:
         os.close(directory)
 
 
-def _verified_backup(path: Path) -> Path:
-    """Copy the committed v3 file (caller holds the exclusive lock), fsync it, and verify the copy."""
+def _verified_backup(path: Path, from_version: int) -> Path:
+    """Copy the committed pre-upgrade file (caller holds the exclusive lock), fsync it, and verify the copy."""
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    backup = path.with_name(f"comms.sqlite3.v3-{stamp}-{os.getpid()}-{time.monotonic_ns()}.bak")
+    backup = path.with_name(f"comms.sqlite3.v{from_version}-{stamp}-{os.getpid()}-{time.monotonic_ns()}.bak")
     copy_to(path, backup)  # never shutil.copyfile: its close would release the held lock (C15)
     _fsync_file_and_dir(backup)
     copy = sqlite3.connect(backup.resolve().as_uri() + "?mode=ro", uri=True)
     copy.row_factory = sqlite3.Row
     try:
         copy.execute("BEGIN")
-        verify(copy, version=3)
+        verify(copy, version=from_version)
     except (ValueError, TypeError, OverflowError, sqlite3.DatabaseError) as exc:
         raise StoreError(StoreRefusal.CORRUPT, "backup copy failed verification") from exc
     finally:
@@ -174,6 +186,17 @@ def _apply_v4(conn: sqlite3.Connection, ttl_seconds: int) -> None:
                 row["message_id"],
             ),
         )
+
+
+def _apply_chain(conn: sqlite3.Connection, from_version: int, ttl_seconds: int) -> None:
+    """Every step from *from_version* to ``SCHEMA_VERSION``, uncommitted, then the version stamp.
+
+    Runtime caller: :func:`upgrade`, inside its one exclusive hold; the caller commits once.
+    """
+    if from_version < 4:
+        _apply_v4(conn, ttl_seconds)
+    for step in V5_STEPS:  # additive: no existing row changes (PRD-CORE-322 FR05)
+        conn.execute(step)
     conn.execute("UPDATE schema_meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
 
 
@@ -189,7 +212,7 @@ def _write_record(path: Path, record: dict[str, Any]) -> None:
 def upgrade(
     manifest_path: Path, *, acknowledged: Iterable[str] = (), ttl_seconds: int, busy_timeout_ms: int = 5000
 ) -> dict[str, Any]:
-    """Upgrade one formation's v3 mailbox to v4, or refuse leaving the v3 file unchanged."""
+    """Upgrade one formation's v3 or v4 mailbox to v5, or refuse leaving the file unchanged."""
     path = database_path(manifest_path)
     if not path.is_file() or path.is_symlink():
         raise StoreError(StoreRefusal.UNAVAILABLE, "no mailbox to upgrade")
@@ -200,12 +223,16 @@ def upgrade(
     backup: Path | None = None
     with _exclusive(path, busy_timeout_ms) as conn:
         try:
-            if stored_version(conn) == str(SCHEMA_VERSION):
+            stored = stored_version(conn)
+            if stored == str(SCHEMA_VERSION):
                 return {"status": "already_current", "schema_version": SCHEMA_VERSION}
-            verify(conn, version=3)
+            if stored not in UPGRADABLE_FROM:
+                raise SchemaVersionError("unsupported schema version; no implicit migration")
+            from_version = int(stored)
+            verify(conn, version=from_version)
             before = change_counter(path)
-            backup = _verified_backup(path)
-            _apply_v4(conn, ttl_seconds)
+            backup = _verified_backup(path, from_version)
+            _apply_chain(conn, from_version, ttl_seconds)
             verify(conn, version=SCHEMA_VERSION)
         except BaseException as exc:
             if backup is not None:  # nothing committed: this attempt's backup is not evidence of anything
@@ -222,6 +249,7 @@ def upgrade(
             return {
                 "status": "upgraded",
                 "schema_version": SCHEMA_VERSION,
+                "from_version": from_version,
                 "backup": backup.name,
                 "rollback": "unavailable",
             }
@@ -231,23 +259,35 @@ def upgrade(
             "change_counter": counter,
             "upgraded_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "acknowledged": sorted(acked),
+            "from_version": from_version,
         }
         _write_record(path, record)
-    return {"status": "upgraded", "schema_version": SCHEMA_VERSION, "backup": record["backup"]}
+    return {
+        "status": "upgraded",
+        "schema_version": SCHEMA_VERSION,
+        "from_version": from_version,
+        "backup": record["backup"],
+    }
 
 
 def rollback(manifest_path: Path, *, busy_timeout_ms: int = 5000) -> dict[str, Any]:
-    """Restore the verified v3 backup, only if nothing at all was written since the upgrade."""
+    """Restore the verified ``from_version`` backup, only if nothing at all was written since the upgrade."""
     path = database_path(manifest_path)
     record_path = path.with_name(RECORD_FILENAME)
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        backups = sorted(candidate.name for candidate in path.parent.glob("comms.sqlite3.v3-*.bak"))
+        if not isinstance(record, dict):
+            raise TypeError("upgrade record is not an object")
+    except (OSError, ValueError, TypeError) as exc:
+        backups = sorted(candidate.name for candidate in path.parent.glob("comms.sqlite3.v*-*.bak"))
         detail = "no upgrade record; nothing to roll back"
         if backups:
-            detail += f" (v3 backups present: {', '.join(backups)}; restoring one is a manual operator step with all members stopped)"
+            detail += f" (pre-upgrade backups present: {', '.join(backups)}; restoring one is a manual operator step with all members stopped)"
         raise StoreError(StoreRefusal.UNAVAILABLE, detail) from exc
+    # A record written before PRD-CORE-322 has no from_version: every such upgrade started at v3.
+    from_version = record.get("from_version", 3)
+    if type(from_version) is not int or str(from_version) not in UPGRADABLE_FROM:
+        raise StoreError(StoreRefusal.CORRUPT, "upgrade record names an unsupported from_version")
     backup = path.with_name(str(record["backup"]))
     wal = path.with_name(path.name + "-wal")
     if wal.exists() and wal.stat().st_size > 0:
@@ -255,11 +295,11 @@ def rollback(manifest_path: Path, *, busy_timeout_ms: int = 5000) -> dict[str, A
             StoreRefusal.ROLLBACK_WOULD_DROP_TRAFFIC, "a write-ahead log holds uncounted writes; fix forward"
         )
     with _exclusive(path, busy_timeout_ms) as conn:
-        if stored_version(conn) == "3":
+        if stored_version(conn) == str(from_version):
             # A restore that crashed before the record rename: finish the bookkeeping only.
             conn.rollback()
             os.replace(record_path, record_path.with_suffix(".rolled-back.json"))
-            return {"status": "already_rolled_back", "schema_version": 3, "backup": backup.name}
+            return {"status": "already_rolled_back", "schema_version": from_version, "backup": backup.name}
         if change_counter(path) != int(record["change_counter"]):
             raise StoreError(StoreRefusal.ROLLBACK_WOULD_DROP_TRAFFIC, "mailbox changed after upgrade; fix forward")
         if hashlib.sha256(backup.read_bytes()).hexdigest() != record["backup_sha256"]:
@@ -272,12 +312,12 @@ def rollback(manifest_path: Path, *, busy_timeout_ms: int = 5000) -> dict[str, A
             source.close()
         conn.execute("BEGIN")
         try:
-            verify(conn, version=3)
+            verify(conn, version=from_version)
         except (ValueError, TypeError, OverflowError) as exc:
-            raise StoreError(StoreRefusal.CORRUPT, "restored mailbox failed v3 verification") from exc
+            raise StoreError(StoreRefusal.CORRUPT, f"restored mailbox failed v{from_version} verification") from exc
         conn.execute("COMMIT")
     os.replace(record_path, record_path.with_suffix(".rolled-back.json"))
-    return {"status": "rolled_back", "schema_version": 3, "backup": backup.name}
+    return {"status": "rolled_back", "schema_version": from_version, "backup": backup.name}
 
 
 __all__ = ["change_counter", "process_exited", "rollback", "unexited_members", "upgrade"]

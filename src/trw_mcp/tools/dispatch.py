@@ -28,11 +28,13 @@ from fastmcp import Context, FastMCP
 
 from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
-from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
+from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request, uncommitted_work_warning
 from trw_mcp.dispatch._runner import dispatch
-from trw_mcp.dispatch._types import DispatchResult
+from trw_mcp.dispatch._targets import Target, TargetError, list_clients, parse_targets, resolve_role, variant_lanes
+from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 from trw_mcp.dispatch._usage import record_child_usage, record_dispatch_policy
 from trw_mcp.models.config import get_config
+from trw_mcp.tools._dispatch_fanout import launch_fanout, status_many
 from trw_mcp.tools.agent_work_evidence import export_evidence, validate_evidence
 
 logger = structlog.get_logger(__name__)
@@ -82,10 +84,23 @@ def _result_payload_capped(
     Fail-open: if the success-path omission somehow raises, fall back to the full
     capped shape so a result is never lost.
     """
-    # No fallback chain ran: its two fields carry nothing a caller acts on.
-    payload = result.model_dump(mode="json", exclude=None if result.attempts else {"attempts", "fallback_note"})
+    # No fallback chain ran: its two fields carry nothing a caller acts on. Same
+    # for FR08's pair when nothing was measured (e.g. read_only=False, or a
+    # client/isolate row the FR08 probe table doesn't cover) — an empty tuple
+    # and an empty note are the "nothing to report" case, not signal.
+    exclude: set[str] = set()
+    if not result.attempts:
+        exclude |= {"attempts", "fallback_note"}
+    if not result.enforcement_layers and not result.mcp_role_note:
+        exclude |= {"enforcement_layers", "mcp_role_note"}
+    if not result.posture_note:  # only a posture the client could not carry is signal
+        exclude.add("posture_note")
+    payload = result.model_dump(mode="json", exclude=exclude or None)
     try:
         if result.ok and not verbose:
+            # ``structured`` is the client's raw JSON envelope (usage, ids,
+            # thinking); ``text`` already carries the answer.
+            payload.pop("structured", None)
             payload.pop("raw_stdout", None)
             payload.pop("raw_stderr", None)
             payload["raw_streams_omitted"] = True
@@ -99,11 +114,19 @@ def _result_payload_capped(
     return payload
 
 
-_ACTIONS = ("launch", "status", "evidence", "validate_evidence")
+_ACTIONS = ("launch", "status", "clients", "evidence", "validate_evidence")
 
 
 def _refuse(message: str) -> dict[str, object]:
     return {"error": message, "exit_code": 2}
+
+
+def _credential_status() -> dict[str, object]:
+    """``action="status"`` with no job id: each OAuth client's login and credential lock (PRD-CORE-304-FR04)."""
+    from trw_mcp.dispatch._credentials import credential_report
+
+    status, message, rows = credential_report()
+    return {"status": status.lower(), "credentials": rows, "summary": message}
 
 
 def _status(job_id: str, verbose: bool) -> dict[str, object]:
@@ -165,11 +188,10 @@ def register_dispatch_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @_with_client_list
     def trw_dispatch(
-        prompt: str = "",
+        prompt: str | list[str] = "",
         action: str = "launch",
         client: str | None = None,
         role: str | None = None,
-        model: str | None = None,
         effort: str = "",
         timeout_s: int | None = None,
         read_only: bool | None = None,
@@ -183,28 +205,31 @@ def register_dispatch_tools(server: FastMCP) -> None:
         target: str = "",
         ctx: Context | None = None,
     ) -> dict[str, object]:
-        """Delegate a prompt to a sub-agent CLI in {clients}, or read a job or evidence.
-        Use when you need an independent agent's review. Async by default
-        (job_id; poll with action="status"), or wait=True (<=120s) inline.
-        Read-only unless allow_writes=True.
+        """Run a prompt on other agent CLIs ({clients}), one or many at once.
+        Use when you want codex/agy/grok/claude to review, critique, plan or implement.
+        client: "codex", "grok:grok-4.7" (client:model), or a comma list to fan out;
+        action="clients" lists names. prompt: as-is; a list runs each variant (x clients).
+        role: optional preamble preset (implement writes). wait=True answers inline
+        (<=120s); else poll action="status" with the job id(s).
 
-        Output: job_id+status to poll, or an inline result if wait=True; error+exit_code if rejected.
+        Output: fan-out {results:[{target, ok, text}]}; single {status, result}; job_id(s); or error.
 
         Args:
-            action: "launch" (default); "status" polls the job id in target
-                (terminal says when to stop); "evidence" exports the
-                AgentWorkEvidence v1 record for the run path in target (the
-                active run if empty; verbose adds events and the schema);
-                "validate_evidence" checks the JSON document in target.
-            prompt: instruction for the child (launch); never echoed back.
-            posture: "reviewer" limits the child to a small read-only TRW
-                tool set; excludes allow_writes.
-            with_trw: gives the child a TRW session on this project (claude,
-                codex only); excludes posture="reviewer".
+            action: launch | status | clients | evidence | validate_evidence
+                (target: job id(s), run path or JSON; bare status = OAuth logins).
+            posture: "reviewer" asks for the read-only TRW surface, best effort
+                (see posture_note); "reviewer!" refuses if it cannot hold.
+            with_trw: give the child a TRW session (claude, codex).
             verbose: raw streams on success; for evidence, events + schema.
         """
+        # A bare status reports each OAuth client's credential state (PRD-CORE-304-FR04).
         if action == "status":
-            return _status(target, verbose) if target else _refuse("action='status' needs the job id in target")
+            if not target:
+                return _credential_status()
+            ids = [t.strip() for t in target.split(",") if t.strip()]
+            return _status(ids[0], verbose) if len(ids) == 1 else status_many(ids)
+        if action == "clients":
+            return list_clients(dict(get_config().dispatch.dispatch_default_models or {}))
         if action == "evidence":
             return export_evidence(ctx, target or None, include_events=verbose, include_schema=verbose)
         if action == "validate_evidence":
@@ -213,7 +238,8 @@ def register_dispatch_tools(server: FastMCP) -> None:
             )
         if action != "launch":
             return _refuse(f"unknown action {action!r}; valid actions: {', '.join(_ACTIONS)}")
-        if not prompt:
+        prompts = [p for p in ([prompt] if isinstance(prompt, str) else prompt) if p]
+        if not prompts:
             return _refuse("action='launch' needs prompt")
         # The modes above launch nothing, so they run anywhere; everything below launches.
         # Nested-launch guard (PRD-CORE-281): FIRST, ahead of config, so a server
@@ -228,6 +254,20 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 ),
                 "exit_code": 2,
             }
+
+        try:
+            targets = parse_targets(client, None)  # a model rides in the client: "grok:grok-4.7"
+            role, role_writes = resolve_role(role)
+        except TargetError as err:
+            return _refuse(str(err))
+        if role_writes is False and read_only is None and not allow_writes:
+            read_only = True  # a preset's default only: a role never refuses the caller's own choice
+        if role_writes and read_only:  # never let a preset silently widen an explicit read_only=True
+            return _refuse("role='implement' needs writes but read_only=True was passed; drop one of them")
+        if role_writes:
+            allow_writes = True
+        if wait and timeout_s is None:
+            timeout_s = _MAX_WAIT_TIMEOUT_S  # an inline wait defaults to the cap instead of refusing
 
         dispatch_cfg = get_config().dispatch
 
@@ -298,22 +338,38 @@ def register_dispatch_tools(server: FastMCP) -> None:
                     "exit_code": 2,
                 }
 
-        try:
-            req = resolve_dispatch_request(
-                client=client,
-                prompt=prompt,
+        def _resolve(t: Target | None) -> DispatchRequest:
+            return resolve_dispatch_request(
+                client=(t.client or None) if t else None,
+                prompt=prompts[max(t.variant, 1) - 1] if t else prompts[0],
                 role=role,
-                model=model,
+                model=t.model if t else None,
                 effort=effort or None,  # "" = not requested; the smallest schema under the signature budget
                 cwd=resolved_cwd,
                 timeout_s=timeout_s,
                 read_only=resolved_read_only,
                 isolate=isolate,
                 use_pty=False,  # MCP launches no PTY; the CLI keeps --pty (PRD-CORE-290-FR03 budget)
-                posture=posture,
+                posture=posture.rstrip("!"),
+                require_posture=posture.endswith("!"),  # "reviewer!" = required; one parameter, not two
                 with_trw=with_trw,
                 dispatch_cfg=dispatch_cfg,
             )
+
+        # DISPATCH-DELTA-LOW: a writable child in a tree with uncommitted work is warned about, not refused.
+        default_ro = bool(getattr(dispatch_cfg, "dispatch_default_read_only", True))
+        writes = not (default_ro if resolved_read_only is None else resolved_read_only)
+        warning = uncommitted_work_warning(resolved_cwd, writes=writes)
+
+        def _warned(out: dict[str, object]) -> dict[str, object]:
+            return {**out, "warning": warning} if warning else out
+
+        lanes = variant_lanes(targets, None, len(prompts))
+        if len(lanes) > 1:
+            return _warned(launch_fanout(lanes, _resolve, wait=wait))
+
+        try:
+            req = _resolve(targets[0] if targets else None)
         except DispatchResolutionError as err:
             logger.info("dispatch_tool_resolution_error", error=str(err), exit_code=err.exit_code)
             return {"error": str(err), "exit_code": err.exit_code}
@@ -333,18 +389,22 @@ def register_dispatch_tools(server: FastMCP) -> None:
             policy = record_dispatch_policy(req, child_id)  # PRD-CORE-290-FR03
             result = dispatch(req)
             record_child_usage(result, child_id=child_id)  # PRD-CORE-290-FR01
-            return {
-                "job_id": None,
-                "status": "succeeded" if result.ok else "failed",
-                "policy": policy,
-                "result": _result_payload_capped(result, verbose=verbose),
-            }
+            return _warned(
+                {
+                    "job_id": None,
+                    "status": "succeeded" if result.ok else "failed",
+                    "policy": policy,
+                    "result": _result_payload_capped(result, verbose=verbose),
+                }
+            )
 
         job = start_background(req)
-        return {
-            "job_id": job.job_id,
-            "status": job.status,
-            "client": job.client,
-            "argv_redacted": job.argv_redacted,
-            "policy": record_dispatch_policy(req, job.job_id),
-        }
+        return _warned(
+            {
+                "job_id": job.job_id,
+                "status": job.status,
+                "client": job.client,
+                "argv_redacted": job.argv_redacted,
+                "policy": record_dispatch_policy(req, job.job_id),
+            }
+        )

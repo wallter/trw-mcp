@@ -27,7 +27,6 @@ from trw_mcp.channels._manifest_models import (
 log = structlog.get_logger(__name__)
 
 __all__ = [
-    "CorrelationEvent",
     "CorrelationResult",
     "adjusted_rate",
     "correlate",
@@ -52,18 +51,6 @@ OUTCOME_EVENT_TYPES: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
-
-
-class CorrelationEvent(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-
-    schema_version: str
-    channel_id: str
-    client: str
-    ts: str
-    event_type: str
-    session_id: str | None = None
-    file_path: str | None = None
 
 
 class CorrelationResult(BaseModel):

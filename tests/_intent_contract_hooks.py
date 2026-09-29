@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import subprocess_pythonpath
 from trw_mcp.models.config._sub_models import IntentContractConfig
 from trw_mcp.security.intent_contract import _hook_common
 from trw_mcp.security.intent_contract.enrollment import write_enrollment
@@ -29,6 +30,11 @@ MARKER_REL = ".trw/contracts/enrollment.yaml"
 EVIDENCE_REL = ".trw/intent-enrollment-evidence.yaml"
 
 pytest_skip_no_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh is not installed")
+
+
+#: Back-compat alias -- see ``tests._layout.subprocess_pythonpath`` for the
+#: rationale (sibling-package PYTHONPATH for a spawned interpreter).
+hook_pythonpath = subprocess_pythonpath
 
 
 def contract_yaml(
@@ -149,7 +155,7 @@ def run_hook(
     ``test_intent_contract_inert_under_broken_git``.
     """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = hook_pythonpath()
     env.setdefault("TRW_PYTHON", sys.executable)
     env.pop("CLAUDE_PROJECT_DIR", None)
     env.pop("HOOKS_ENABLED", None)
@@ -182,14 +188,17 @@ def poison_lib(project: Path, body: str) -> None:
 
 
 def write_hook_env(project: Path, body: str) -> None:
-    """Write `.trw/runtime/hook-env.sh` — the file lib-trw.sh sources.
+    """Write `.trw/runtime/hook-env.d/claude.sh` — the file lib-trw.sh sources
+    for a hook physically installed at `.claude/hooks/` (every fixture here
+    installs the REAL bundled hooks there via `hook_project`, so `"claude"` is
+    the key those hooks will actually derive from their own `$_hook_dir`).
 
     `.trw/.gitignore` ignores the whole `runtime/` directory, so this file is
     attacker-writable AND invisible to `git status`.
     """
-    runtime = project / ".trw" / "runtime"
+    runtime = project / ".trw" / "runtime" / "hook-env.d"
     runtime.mkdir(parents=True, exist_ok=True)
-    (runtime / "hook-env.sh").write_text(body, encoding="utf-8")
+    (runtime / "claude.sh").write_text(body, encoding="utf-8")
 
 
 @pytest.fixture

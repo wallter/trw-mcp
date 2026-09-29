@@ -9,7 +9,9 @@ import pytest
 # Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
 # scripts/ + docs/ layout) absent from the standalone trw-mcp PyPI/GitHub
 # mirror. Skip cleanly there; the monorepo CI still enforces it.
-if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
+from tests._layout import MONOREPO_ROOT
+
+if MONOREPO_ROOT is None:
     pytest.skip(
         "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
         allow_module_level=True,
@@ -321,7 +323,7 @@ def test_codex_profile_capability_change_alters_write_target_behavior(
 ) -> None:
     """Changing a Codex profile capability changes the consumed write-target behavior."""
     from trw_mcp.models.config._profiles import _PROFILES
-    from trw_mcp.state.claude_md._agents_md import _determine_write_targets
+    from trw_mcp.state.claude_md._agents_md import _determine_write_target_decision
 
     codex_profile = resolve_client_profile("codex")
     overridden_profile = codex_profile.model_copy(
@@ -334,16 +336,10 @@ def test_codex_profile_capability_change_alters_write_target_behavior(
     )
     monkeypatch.setitem(_PROFILES, "codex", overridden_profile)
 
-    write_claude, write_agents, instruction_path = _determine_write_targets(
-        "codex",
-        TRWConfig(),
-        tmp_path,
-        "root",
-    )
+    decision = _determine_write_target_decision("codex", TRWConfig(), tmp_path, "root")
 
-    assert write_claude is False
-    assert write_agents is False
-    assert instruction_path == ".codex/ALT-INSTRUCTIONS.md"
+    assert decision.write_agents is False
+    assert decision.instruction_targets[0].instruction_path == ".codex/ALT-INSTRUCTIONS.md"
 
 
 # ── PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04) ───────────────────────
@@ -359,6 +355,13 @@ def test_codex_profile_capability_change_alters_write_target_behavior(
 _DELEGATION_HEADING = "## TRW Delegation & Orchestration (Auto-Generated)"
 
 
+def _carries_delegation(rendered: str) -> bool:
+    """The full guide (behavioral protocol, antigravity) or, since PRD-CORE-301-FR13, the shared block's pointer to it."""
+    from trw_mcp.state.claude_md.sections._delegation import DELEGATION_GUIDE_POINTER
+
+    return _DELEGATION_HEADING in rendered or DELEGATION_GUIDE_POINTER in rendered
+
+
 def _rendered_surface_for(client_id: str) -> str:
     """Render the actual instruction-file body TRW writes for ``client_id``."""
     profile = resolve_client_profile(client_id)
@@ -370,7 +373,7 @@ def _rendered_surface_for(client_id: str) -> str:
     if client_id == "opencode":
         from trw_mcp.state.claude_md._static_sections import render_opencode_instructions
 
-        return render_opencode_instructions("generic")
+        return render_opencode_instructions()
     if client_id == "cursor-cli":
         from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
 
@@ -405,11 +408,11 @@ def test_delegation_block_present_iff_profile_flag_true(client_id: str) -> None:
     rendered = _rendered_surface_for(client_id)
 
     if profile.include_delegation:
-        assert _DELEGATION_HEADING in rendered, (
+        assert _carries_delegation(rendered), (
             f"{client_id}: include_delegation=True but the rendered surface has no delegation block"
         )
     else:
-        assert _DELEGATION_HEADING not in rendered, (
+        assert not _carries_delegation(rendered), (
             f"{client_id}: include_delegation=False but the rendered surface carries a delegation block"
         )
 
@@ -427,9 +430,9 @@ def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: 
     row = rows[client_id]
     rendered = _rendered_surface_for(client_id)
 
-    assert row.delegation_enabled == (_DELEGATION_HEADING in rendered), (
+    assert row.delegation_enabled == _carries_delegation(rendered), (
         f"{client_id}: delegation_enabled={row.delegation_enabled} but rendered "
-        f"presence={_DELEGATION_HEADING in rendered}"
+        f"presence={_carries_delegation(rendered)}"
     )
 
 
@@ -437,7 +440,7 @@ def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: 
 # on main before ``catalog.py`` was changed to read ``WriteTargets``'
 # declared precedence instead of its own hand-written if/elif chain.
 _FR05_WRITE_TARGET_LABEL_GOLDEN: dict[str, str] = {
-    "claude-code": "CLAUDE.md",
+    "claude-code": "AGENTS.md",
     "opencode": "AGENTS.md",
     "cursor-ide": ".cursor/rules/",
     "cursor-cli": "AGENTS.md",

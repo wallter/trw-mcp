@@ -141,11 +141,6 @@ def get_message(
     return raw
 
 
-def render_message(key: str, profile: ClientProfile | None, **kwargs: object) -> str:
-    """Explicit profile-aware renderer (PRD-FIX-078 convenience wrapper)."""
-    return get_message(key, profile=profile, **kwargs)
-
-
 def get_message_or_default(key: str, default: str, **kwargs: object) -> str:
     """Get a message with fallback default — for backward compatibility.
 
@@ -163,22 +158,3 @@ def get_message_or_default(key: str, default: str, **kwargs: object) -> str:
         if kwargs:
             return default.format(**{k: str(v) for k, v in kwargs.items()})
         return default
-
-
-def get_message_lines(key: str) -> list[str]:
-    """Get a list-type message (e.g., protocol_fallback_lines).
-
-    Args:
-        key: Message key that maps to a YAML list.
-
-    Returns:
-        List of message strings.
-
-    Raises:
-        KeyError: If message key not found.
-    """
-    messages = _load_messages()
-    val = messages[key]
-    if isinstance(val, list):
-        return [str(item) for item in val]
-    return [str(val)]

@@ -12,7 +12,6 @@ from tests._tools_orchestration_support import (
     FRAMEWORK_VERSION,
     _make_orch_tools,
 )
-from trw_mcp.exceptions import ValidationError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 
@@ -181,47 +180,3 @@ class TestTrwAutoDetect:
 
         status = orch_tools["trw_status"].fn()
         assert status["task"] == "auto-task"
-
-
-class TestTrwInitWaveManifest:
-    """Tests for trw_init with wave_manifest parameter."""
-
-    def test_init_with_wave_manifest_creates_validated_plan(self, orch_tools: dict[str, Any]) -> None:
-        result = orch_tools["trw_init"].fn(
-            task_name="wave-init-task",
-            advanced={
-                "wave_manifest": [
-                    {"wave": 1, "shards": [{"id": "S1", "title": "Research", "goals": ["research"]}]},
-                    {
-                        "wave": 2,
-                        "shards": [{"id": "S2", "title": "Implement", "goals": ["implement"]}],
-                        "depends_on": [1],
-                    },
-                ]
-            },
-        )
-
-        assert result["wave_plan_status"] == "wave_plan_created"
-        assert result["wave_count"] == "2"
-        assert result["shard_count"] == "2"
-        run_path = Path(result["run_path"])
-        assert (run_path / "shards" / "wave_manifest.yaml").exists()
-        assert (run_path / "shards" / "manifest.yaml").exists()
-
-    def test_init_rejects_invalid_wave_manifest(self, orch_tools: dict[str, Any]) -> None:
-        with pytest.raises(ValidationError, match="depends_on references non-existent wave"):
-            orch_tools["trw_init"].fn(
-                task_name="invalid-wave-task",
-                advanced={"wave_manifest": [{"wave": 1, "shards": [], "depends_on": [99]}]},
-            )
-
-    def test_init_without_wave_manifest_no_wave_keys(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """Without wave_manifest, result has no wave fields."""
-        result = orch_tools["trw_init"].fn(task_name="no-wave-task")
-
-        assert result["status"] == "initialized"
-        assert "wave_plan_status" not in result
-        assert "wave_count" not in result

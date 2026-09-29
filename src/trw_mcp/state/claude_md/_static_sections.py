@@ -10,15 +10,13 @@ from __future__ import annotations
 
 # PRD-CORE-149-FR01: the facade re-exports every symbol legacy tests patch
 # (``get_config``, ``resolve_project_root``, ``FileStateReader``,
-# ``MemoryConfig``, ``time``) so ``monkeypatch.setattr(_static_sections,
+# ``time``) so ``monkeypatch.setattr(_static_sections,
 # "get_config", ...)`` continues to work. Section modules look these
 # symbols up on the facade at call time (see ``sections._lookups``).
 import time as time
 from pathlib import Path as Path
 
 import yaml as yaml
-from trw_memory.graph import list_org_shared_entries as list_org_shared_entries
-from trw_memory.models.config import MemoryConfig as MemoryConfig
 
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state._paths import resolve_project_root as resolve_project_root
@@ -57,9 +55,6 @@ from trw_mcp.state.claude_md.sections import (
     render_codex_instructions as render_codex_instructions,
 )
 from trw_mcp.state.claude_md.sections import (
-    render_codex_trw_section as render_codex_trw_section,
-)
-from trw_mcp.state.claude_md.sections import (
     render_delegation_protocol as render_delegation_protocol,
 )
 from trw_mcp.state.claude_md.sections import (
@@ -80,12 +75,6 @@ from trw_mcp.state.claude_md.sections import (
 from trw_mcp.state.claude_md.sections import (
     render_phase_descriptions as render_phase_descriptions,
 )
-from trw_mcp.state.claude_md.sections import (
-    render_rationalization_watchlist as render_rationalization_watchlist,
-)
-from trw_mcp.state.claude_md.sections import (
-    render_shared_learnings as render_shared_learnings,
-)
 from trw_mcp.state.persistence import FileStateReader as FileStateReader
 
 __all__ = [
@@ -101,7 +90,6 @@ __all__ = [
     "render_ceremony_table",
     "render_closing_reminder",
     "render_codex_instructions",
-    "render_codex_trw_section",
     "render_delegation_protocol",
     "render_framework_reference",
     "render_imperative_opener",
@@ -109,6 +97,4 @@ __all__ = [
     "render_minimal_protocol",
     "render_opencode_instructions",
     "render_phase_descriptions",
-    "render_rationalization_watchlist",
-    "render_shared_learnings",
 ]

@@ -35,6 +35,7 @@ def _seed(
     evidence: list[str] | None = None,
     anchors: list[dict[str, object]] | None = None,
     confidence: str | None = None,
+    evidence_level: str | None = None,
     namespace: str | None = None,
 ) -> None:
     learning: dict[str, object] = {}
@@ -42,6 +43,8 @@ def _seed(
         learning["anchors"] = anchors
     if confidence is not None:
         learning["confidence"] = confidence
+    if evidence_level is not None:
+        learning["evidence_level"] = evidence_level
 
     async def _do() -> None:
         await daemon_checkout.client.store(
@@ -89,6 +92,7 @@ def _update(daemon_checkout: DaemonCheckout, learning_id: str, **kwargs: object)
         tags=kwargs.pop("tags", None),  # type: ignore[arg-type]
         type=kwargs.pop("type", None),  # type: ignore[arg-type]
         confidence=kwargs.pop("confidence", None),  # type: ignore[arg-type]
+        evidence_level=kwargs.pop("evidence_level", None),  # type: ignore[arg-type]
         upd=upd,
     )
 
@@ -98,7 +102,7 @@ class TestConfidencePromotionNeedsABasis:
         """The bypass. Fails against the pre-fix tree, where status was 'updated'."""
         _seed(daemon_checkout, "L-bare")
 
-        result = _update(daemon_checkout, "L-bare", confidence="verified")
+        result = _update(daemon_checkout, "L-bare", confidence="verified", evidence_level="verified")
 
         assert result["status"] == "invalid"
         assert result["reason"] == "unsubstantiated_verified"
@@ -108,7 +112,7 @@ class TestConfidencePromotionNeedsABasis:
     def test_promotion_with_existing_evidence_proceeds(self, daemon_checkout: DaemonCheckout) -> None:
         _seed(daemon_checkout, "L-cited", evidence=["measured against memory.db on 2026-09-03"])
 
-        result = _update(daemon_checkout, "L-cited", confidence="verified")
+        result = _update(daemon_checkout, "L-cited", confidence="verified", evidence_level="verified")
 
         assert result["status"] == "updated"
         stored = _get(daemon_checkout, "L-cited")
@@ -121,7 +125,10 @@ class TestConfidencePromotionNeedsABasis:
             anchors=[{"symbol_name": "update_learning", "file": "state/_memory_update.py"}],
         )
 
-        assert _update(daemon_checkout, "L-anchored", confidence="verified")["status"] == "updated"
+        assert (
+            _update(daemon_checkout, "L-anchored", confidence="verified", evidence_level="verified")["status"]
+            == "updated"
+        )
 
     def test_assertions_supplied_by_the_SAME_call_substantiate_it(self, daemon_checkout: DaemonCheckout) -> None:
         """The gate reads the POST-update entry, not the pre-update one.
@@ -136,6 +143,7 @@ class TestConfidencePromotionNeedsABasis:
             daemon_checkout,
             "L-together",
             confidence="verified",
+            evidence_level="verified",
             metadata={
                 "assertions": [{"type": "glob_exists", "target": "pyproject.toml"}],
             },
@@ -155,7 +163,7 @@ class TestConfidencePromotionNeedsABasis:
 
     def test_a_verified_entry_can_still_be_demoted(self, daemon_checkout: DaemonCheckout) -> None:
         """Removing a claim never needs substantiation."""
-        _seed(daemon_checkout, "L-demote", confidence="verified", evidence=["a citation"])
+        _seed(daemon_checkout, "L-demote", confidence="verified", evidence_level="verified", evidence=["a citation"])
 
         assert _update(daemon_checkout, "L-demote", confidence="unverified")["status"] == "updated"
         stored = _get(daemon_checkout, "L-demote")
@@ -165,7 +173,13 @@ class TestConfidencePromotionNeedsABasis:
         """The whole update is refused, so a rejected promotion cannot half-land."""
         _seed(daemon_checkout, "L-partial")
 
-        result = _update(daemon_checkout, "L-partial", confidence="verified", metadata={"task_type": "coding"})
+        result = _update(
+            daemon_checkout,
+            "L-partial",
+            confidence="verified",
+            evidence_level="verified",
+            metadata={"task_type": "coding"},
+        )
 
         assert result["status"] == "invalid"
         stored = _get(daemon_checkout, "L-partial")
@@ -186,7 +200,10 @@ class TestOtherConfidenceSurfacesReachTheGate:
 
         async def _do() -> dict[str, object]:
             return await daemon_checkout.client.store(
-                "claim", daemon_checkout.namespace, entry_id="L-store", learning={"confidence": "verified"}
+                "claim",
+                daemon_checkout.namespace,
+                entry_id="L-store",
+                learning={"confidence": "verified", "evidence_level": "verified"},
             )
 
         result = asyncio.run(_do())
@@ -231,6 +248,7 @@ class TestOtherConfidenceSurfacesReachTheGate:
             "This claims verified confidence with no substantiation at all.",
             trw_dir=daemon_checkout.trw_dir,
             confidence="verified",
+            evidence_level="verified",
         )
 
         assert (result["status"], result["reason"]) == ("rejected", "invalid")
@@ -277,6 +295,7 @@ def test_rejected_combined_update_preserves_both_records_project_prior(daemon_ch
         summary="must not land",
         detail="must not land either",
         confidence="verified",
+        evidence_level="verified",
         metadata={"supersedes": "L-prior"},
     )
 
@@ -304,6 +323,7 @@ def test_rejected_combined_update_preserves_both_records_user_prior(daemon_check
         summary="must not land",
         detail="must not land either",
         confidence="verified",
+        evidence_level="verified",
         metadata={"supersedes": "L-prior"},
     )
 
@@ -324,6 +344,7 @@ def test_substantiated_combined_update_preserves_supersession(daemon_checkout: D
         "L-target",
         summary="corrected knowledge",
         confidence="verified",
+        evidence_level="verified",
         metadata={"supersedes": "L-prior", "assertions": [assertion]},
     )
 

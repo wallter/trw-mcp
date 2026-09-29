@@ -129,6 +129,21 @@ def register_config_resources(server: FastMCP) -> None:
             payload["raw_version_yaml"] = {"note": "No frameworks deployed yet; run trw_init to deploy."}
         return _dump_yaml(payload)
 
+    @server.resource("trw://framework/memory-routing")
+    def get_memory_routing() -> str:
+        """The full memory-routing policy: native memory, project vs user tier, feedback semantics.
+
+        PRD-CORE-301-FR13: the instruction block keeps the per-turn memory rules
+        and points here for the rest. The body is the owner's render
+        (``render_memory_harmonization`` over bundled ``memory-routing.md``), so
+        this resource and every other carrier state the policy in one wording.
+        Runtime caller: an MCP client's ``resources/read``; registered at server
+        start by ``server/_tools.py`` through ``register_config_resources``.
+        """
+        from trw_mcp.state.claude_md.sections._memory_routing import render_memory_harmonization
+
+        return render_memory_harmonization()
+
     @server.resource("trw://learnings/summary")
     def get_learnings_summary() -> str:
         """High-impact learnings summary from .trw/ — top insights for current session.

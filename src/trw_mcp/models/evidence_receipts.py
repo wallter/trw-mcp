@@ -36,18 +36,12 @@ from trw_mcp.models._evidence_core import (
 from trw_mcp.models._evidence_plans import (
     BuildCommandResult,
     CommandClass,
-    ExecutionProvenance,
     RequiredReviewPlan,
     RequiredValidationPlan,
     ReviewVerdict,
     VerificationOutcome,
 )
-from trw_mcp.models._evidence_records import (
-    BuildReceipt,
-    ReceiptTombstone,
-    ReviewReceipt,
-    VerificationReceipt,
-)
+from trw_mcp.models._evidence_records import BuildReceipt, ReviewReceipt, VerificationReceipt
 
 __all__ = [
     "CANONICAL_ALGORITHM",
@@ -60,9 +54,7 @@ __all__ = [
     "EntryState",
     "EvidenceLimits",
     "EvidenceMode",
-    "ExecutionProvenance",
     "ReceiptState",
-    "ReceiptTombstone",
     "ReceiptValidationResult",
     "RequiredReviewPlan",
     "RequiredValidationPlan",

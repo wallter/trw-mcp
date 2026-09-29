@@ -9,13 +9,14 @@ report two different verdicts for the same store.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from trw_mcp.models.config import TRWConfig
 
 __all__ = ["pipeline_health_row"]
 
 
-def pipeline_health_row(_target: Path, _config: TRWConfig) -> tuple[str, str]:
+def pipeline_health_row(_target: Path, _config: TRWConfig) -> tuple[Literal["PASS", "WARN"], str]:
     """``(status, message)``: WARN when degraded, PASS otherwise.
 
     The doctor's own per-check ``try/except`` in ``_doctor_core`` already

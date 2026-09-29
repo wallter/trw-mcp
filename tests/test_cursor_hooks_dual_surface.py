@@ -27,7 +27,7 @@ from pathlib import Path
 def _merge(path: Path, entries: dict[str, object]) -> None:
     from trw_mcp.bootstrap._cursor_hooks_io import smart_merge_cursor_json
 
-    smart_merge_cursor_json(path, entries, identity_prefix=".cursor/hooks/trw-")
+    smart_merge_cursor_json(path, entries, identity_prefix=".cursor/hooks/trw-", root=path.parent)
 
 
 def _ide_entries() -> dict[str, object]:

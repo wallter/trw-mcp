@@ -2,85 +2,11 @@
 
 from __future__ import annotations
 
-from trw_mcp.state.ceremony_nudge import CeremonyState, NudgeContext, _next_two_steps, _reversion_prompt, compute_nudge
+from trw_mcp.state.ceremony_nudge import CeremonyState, NudgeContext, _reversion_prompt
 
 
 class TestFR04NextTwoSteps:
     """FR04: Next-two-steps projection."""
-
-    def test_fr04_early_phase_steps(self) -> None:
-        """Early phase: session_start and checkpoint are applicable."""
-        state = CeremonyState(
-            session_started=False,
-            checkpoint_count=0,
-            phase="early",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "session_start"
-        assert then == "checkpoint"
-
-    def test_fr04_implement_phase_after_start(self) -> None:
-        """Implement phase with session started: checkpoint is next."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=0,
-            phase="implement",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "checkpoint"
-        assert then is None
-
-    def test_fr04_validate_phase_all_applicable(self) -> None:
-        """Validate phase: session_start, checkpoint, build_check applicable."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result=None,
-            phase="validate",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "build_check"
-        assert then is None
-
-    def test_fr04_review_phase_shows_review(self) -> None:
-        """Review phase with build passed: review is next."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=False,
-            phase="review",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "review"
-
-    def test_fr04_deliver_phase_all_steps(self) -> None:
-        """Deliver phase: all 5 steps applicable."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=True,
-            deliver_called=False,
-            phase="deliver",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "deliver"
-        assert then is None
-
-    def test_fr04_all_complete_returns_none_none(self) -> None:
-        """All steps complete: returns (None, None)."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=True,
-            deliver_called=True,
-            phase="done",
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt is None
-        assert then is None
 
     def test_fr04_step_rationale_defined(self) -> None:
         """All steps have rationale strings."""
@@ -89,32 +15,6 @@ class TestFR04NextTwoSteps:
         for step in ("session_start", "checkpoint", "build_check", "review", "deliver"):
             assert step in _STEP_RATIONALE
             assert len(_STEP_RATIONALE[step]) > 0
-
-    def test_fr04_fallback_uses_next_two_when_no_context(self) -> None:
-        """compute_nudge without context returns non-empty content."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            build_check_result="passed",
-            review_called=False,
-            phase="review",
-        )
-        result = compute_nudge(state, context=None)
-        assert "TRW" in result
-        assert len(result) > 0
-
-    def test_fr04_review_complete_next_deliver(self) -> None:
-        """phase=deliver, review_called=True -> NEXT=deliver only."""
-        state = CeremonyState(
-            session_started=True,
-            checkpoint_count=1,
-            phase="deliver",
-            build_check_result="passed",
-            review_called=True,
-        )
-        nxt, then = _next_two_steps(state)
-        assert nxt == "deliver"
-        assert then is None
 
 
 class TestFR05ReversionPrompting:

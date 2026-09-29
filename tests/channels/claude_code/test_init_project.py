@@ -416,14 +416,18 @@ class TestInstallHookIsolated:
         assert len(result2["created"]) == 0
 
     def test_install_hook_updates_when_content_differs(self, tmp_path: Path) -> None:
+        import hashlib
+
         from trw_mcp.bootstrap._claude_code_distill_channels import _install_hook
 
         hook_path = tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh"
         hook_path.parent.mkdir(parents=True, exist_ok=True)
-        hook_path.write_text("#!/bin/sh\n# old content\n", encoding="utf-8")
+        old = "#!/bin/sh\n# old content\n"
+        hook_path.write_text(old, encoding="utf-8")
+        recorded = {".claude/hooks/pre-tool-distill-hint.sh": hashlib.sha256(old.encode()).hexdigest()}
 
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-        _install_hook(tmp_path, "pre-tool-distill-hint.sh", result)
+        _install_hook(tmp_path, "pre-tool-distill-hint.sh", result, recorded)
         assert ".claude/hooks/pre-tool-distill-hint.sh" in result["updated"]
 
     def test_install_hook_absent_source_skips_silently(self, tmp_path: Path) -> None:
@@ -439,7 +443,10 @@ class TestInstallHookIsolated:
         from trw_mcp.bootstrap._claude_code_distill_channels import _install_hook
 
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-        with patch("pathlib.Path.write_text", side_effect=OSError("permission denied")):
+        with patch(
+            "trw_mcp.bootstrap._claude_code_distill_channels.write_checkout_file",
+            side_effect=OSError("permission denied"),
+        ):
             _install_hook(tmp_path, "pre-tool-distill-hint.sh", result)
         assert len(result["errors"]) > 0
         assert any("pre-tool-distill-hint.sh" in e for e in result["errors"])

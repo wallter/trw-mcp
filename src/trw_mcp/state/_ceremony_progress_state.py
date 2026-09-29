@@ -206,6 +206,26 @@ def mark_build_check(trw_dir: Path, passed: bool, session_id: str | None = None)
         write_ceremony_state(trw_dir, state)
 
 
+def mark_session_build_check(trw_dir: Path, passed: bool, session_id: str | None) -> None:
+    """Record ONLY this session's own build result: the per-session maps, never the shared fields.
+
+    ``mark_build_check`` also sets the project-global ``build_check_result`` / ``last_build_check_ts``, which the
+    status line and nudges read as this project's own work. A build check for a run that is not the caller's
+    (a scratch run) is still a true statement about the CALLER: "this session ran a build check with this
+    outcome", which the caller's own unpinned deliver gate reads (``session_build_results[<pin key>]``). An
+    existing state file is updated; a missing one is not created, since without it the unpinned gate has no
+    started session to read anyway.
+    """
+    if not session_id or not _state_path(trw_dir).is_file():
+        return
+    with _state_rmw(trw_dir):
+        state = read_ceremony_state(trw_dir)
+        result = "passed" if passed else "failed"
+        _touch_session_build_result(state, session_id, result)
+        state.session_build_results_at[session_id] = datetime.now(timezone.utc).isoformat()
+        write_ceremony_state(trw_dir, state)
+
+
 def mark_deliver(trw_dir: Path) -> None:
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
@@ -239,13 +259,6 @@ def set_ceremony_phase(trw_dir: Path, new_phase: str) -> None:
             state.previous_phase = state.phase
             state.phase = new_phase
             write_ceremony_state(trw_dir, state)
-
-
-def increment_files_modified(trw_dir: Path, count: int = 1) -> None:
-    with _state_rmw(trw_dir):
-        state = read_ceremony_state(trw_dir)
-        state.files_modified_since_checkpoint += count
-        write_ceremony_state(trw_dir, state)
 
 
 def increment_learnings(trw_dir: Path) -> None:

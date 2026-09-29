@@ -27,7 +27,6 @@ class _Cfg:
         self.dispatch_default_models: dict[str, str] = {}
         self.dispatch_default_timeout_s: int = 600
         self.dispatch_default_read_only: bool = True
-        self.dispatch_role_client: dict[str, str] = {}
         for key, value in overrides.items():
             setattr(self, key, value)
 
@@ -52,16 +51,16 @@ def _resolve(cfg: _Cfg, **kw: Any) -> Any:
 # --- client precedence ---
 
 
-def test_explicit_client_wins_over_role_and_default() -> None:
-    cfg = _Cfg(dispatch_default_client="claude", dispatch_role_client={"adversarial-audit": "agy"})
+def test_explicit_client_wins_over_default() -> None:
+    cfg = _Cfg(dispatch_default_client="claude")
     req = _resolve(cfg, client="codex", role="adversarial-audit")
     assert req.client == "codex"
 
 
-def test_role_client_beats_default_when_no_explicit() -> None:
-    cfg = _Cfg(dispatch_default_client="claude", dispatch_role_client={"adversarial-audit": "codex"})
-    req = _resolve(cfg, client=None, role="adversarial-audit")
-    assert req.client == "codex"
+def test_a_role_never_picks_the_client() -> None:
+    """DISPATCH-SIMPLIFY: dispatch_role_client is retired; a role is a prompt preset only."""
+    req = _resolve(_Cfg(dispatch_default_client="claude"), client=None, role="adversarial-audit")
+    assert req.client == "claude"
 
 
 def test_default_client_used_when_no_explicit_or_role() -> None:
@@ -241,19 +240,6 @@ def test_unverified_refusal_precedes_any_argv_construction(monkeypatch: Any) -> 
     with pytest.raises(DispatchResolutionError):
         _resolve(cfg, client="grok")
     assert calls == []
-
-
-def test_a_role_mapping_cannot_route_around_the_unverified_refusal(monkeypatch: Any) -> None:
-    # The refusal sits after client PRECEDENCE resolution, so an unverified
-    # client reached through a role mapping is refused identically.
-    _patch_unverified_grok(monkeypatch)
-    cfg = _Cfg(
-        dispatch_role_client={"adversarial-audit": "grok"},
-        dispatch_enabled_clients=["codex", "grok"],
-    )
-    with pytest.raises(DispatchResolutionError) as exc:
-        _resolve(cfg, role="adversarial-audit")
-    assert "UNVERIFIED" in str(exc.value)
 
 
 def test_verified_grok_resolves() -> None:

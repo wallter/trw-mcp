@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.bootstrap._update_transaction import (
-    _MANAGED_TRW_FILES,
+    _MANAGED_CANON_FILES,
+    _is_surface_path,
     _restore_transaction_snapshot,
     _snapshot_transaction_paths,
 )
 from trw_mcp.canons.registry import install_view, load_registry
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
+
+pytestmark = pytest.mark.usefixtures("no_memory_daemon")
 
 #: This test's own commits run no git hooks: init_project installs TRW's post-commit hook, whose
 #: background worker auto-starts a memory daemon after the test has returned (rc9 C2 FR07 leaks).
@@ -21,12 +24,11 @@ _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
 
 
 def test_transaction_covers_every_managed_framework_artifact() -> None:
+    """Every canon install target, root project references included (root AARE-F-FRAMEWORK.md was missed)."""
     registry = load_registry()
-    expected = {
-        str(DEPLOYMENT_RELATIVE_PATH),
-        *(dest for _, dest in install_view(registry) if dest.startswith(".trw/")),
-    }
-    assert expected <= set(_MANAGED_TRW_FILES)
+    expected = {str(DEPLOYMENT_RELATIVE_PATH), *(dest for _, dest in install_view(registry))}
+    assert expected <= set(_MANAGED_CANON_FILES)
+    assert all(_is_surface_path(dest) for dest in expected)
 
 
 def test_transaction_restore_preserves_runtime_writes_after_snapshot(tmp_path: Path) -> None:
@@ -238,3 +240,47 @@ def test_git_unavailable_warns_and_falls_back_to_the_manifest_guard(
     assert not result["errors"], result["errors"]
     assert any(w.startswith("git status unavailable") for w in result["warnings"])
     assert ".trw/frameworks/FRAMEWORK.md" in result["updated"]
+
+
+def test_rollback_restores_the_legacy_hook_env_for_a_not_yet_upgraded_lib(tmp_path: Path) -> None:
+    """PRD-FIX-118/R8 sol round 2 P2: a failed update must restore the legacy
+    hook-env.sh a not-yet-upgraded ``lib-trw.sh`` still sources directly.
+
+    ``_write_hook_env_file`` (bootstrap/_hook_env.py) keeps rewriting the
+    legacy shared file while the installed library predates the per-client
+    split. If that path is not in the transaction's own snapshot list, a
+    rollback after a verification failure restores every OTHER managed file
+    to its pre-update content but leaves hook-env.sh at whatever the update
+    wrote mid-flight -- an old lib and a wrong env file, silently mismatched.
+    """
+    from trw_mcp.bootstrap._file_ops import _write_hook_env_file
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    target = tmp_path / "project"
+    hooks_dir = target / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    # A pre-split lib-trw.sh: no "hook-env.d" marker, so _write_hook_env_file
+    # treats the legacy file as still load-bearing.
+    (hooks_dir / "lib-trw.sh").write_text(
+        '#!/bin/sh\n. "$PWD/.trw/runtime/hook-env.sh" 2>/dev/null || true\n', encoding="utf-8"
+    )
+    trw_dir = target / ".trw"
+    _write_hook_env_file(trw_dir, resolve_client_profile("claude-code"))
+    legacy = trw_dir / "runtime" / "hook-env.sh"
+    before = legacy.read_text(encoding="utf-8")
+    assert "Claude Code" in before
+
+    snapshot = _snapshot_transaction_paths(target)
+    try:
+        # Simulate the mid-update write a later phase (a different client's
+        # sync, or a flipped nudge setting) makes before verification fails.
+        _write_hook_env_file(trw_dir, resolve_client_profile("claude-code").model_copy(update={"nudge_enabled": False}))
+        after_update = legacy.read_text(encoding="utf-8")
+        assert after_update != before, "fixture must actually change the legacy file to be non-vacuous"
+
+        _restore_transaction_snapshot(target, snapshot)
+
+        assert legacy.exists(), "rollback must not leave the not-yet-upgraded lib without its env file"
+        assert legacy.read_text(encoding="utf-8") == before
+    finally:
+        shutil.rmtree(snapshot, ignore_errors=True)

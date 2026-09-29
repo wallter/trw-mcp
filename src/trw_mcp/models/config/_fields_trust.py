@@ -15,9 +15,8 @@ class _TrustFields:
 
     trust_crawl_boundary: int = 50
     trust_walk_boundary: int = 200
-    trust_walk_sample_rate: float = 0.3
-    trust_security_tags: tuple[str, ...] = ("auth", "secrets", "permissions", "encryption", "oauth", "jwt")
-    trust_locked: bool = False
+    # trust_walk_sample_rate, trust_security_tags and trust_locked were removed in trw-mcp 8.0.0 (PRD-CORE-313-FR06): no
+    # production reader. Keys are listed in trw_mcp/data/config-retired-keys.json.
 
     # -- Complexity classification (CORE-060) --
 
