@@ -217,6 +217,10 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # silently dropping the sandbox.
     "codex": ClientSpec(
         client_id="codex",
+        # Provider-specific dispatch defaults, not canonical tier mappings or
+        # native Codex defaults. Evidence: provider integration-research.md.
+        default_model="gpt-6.1-sol",
+        default_effort="low",
         fresh_mcp_server_table=True,
         binary="codex",
         base_argv=("codex", "exec"),
@@ -785,11 +789,9 @@ def _validate_registry() -> None:
     """
     literal_ids = set(get_args(DispatchClient))
     registry_ids = set(CLIENT_SPECS)
-    missing = sorted(literal_ids - registry_ids)
-    surplus = sorted(registry_ids - literal_ids)
-    if missing:
+    if missing := sorted(literal_ids - registry_ids):
         raise ValueError(f"DispatchClient members with no registry entry: {missing}")
-    if surplus:
+    if surplus := sorted(registry_ids - literal_ids):
         raise ValueError(f"registry entries absent from the DispatchClient Literal: {surplus}")
     for key, spec in CLIENT_SPECS.items():
         if spec.client_id != key:

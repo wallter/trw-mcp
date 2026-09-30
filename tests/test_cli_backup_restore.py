@@ -79,7 +79,7 @@ def test_restore_from_local_archive_offline_drill_into_fresh_client_recalls_plan
     calls = _install_mock_transport(monkeypatch, lambda req: (_ for _ in ()).throw(AssertionError("no network")))
 
     args = argparse.Namespace(
-        backup_command="restore", restore_from=str(archive.path), namespace="default", db=str(db_path)
+        backup_command="restore", yes=True, restore_from=str(archive.path), namespace="default", db=str(db_path)
     )
     _subcommands_backup.run_backup(args)
 
@@ -137,7 +137,9 @@ def test_restore_from_latest_into_fresh_client_recalls_planted_learning(
     fake_config = TRWConfig(backend_url="https://api.trwframework.com", platform_api_key="k")
     monkeypatch.setattr(_subcommands_backup, "_load_config", lambda: fake_config)
 
-    args = argparse.Namespace(backup_command="restore", restore_from="latest", namespace="default", db=str(fresh_db))
+    args = argparse.Namespace(
+        backup_command="restore", yes=True, restore_from="latest", namespace="default", db=str(fresh_db)
+    )
     _subcommands_backup.run_backup(args)
 
     out = capsys.readouterr().out
@@ -165,7 +167,7 @@ def test_restore_from_latest_no_remote_backups_exits_nonzero_with_clear_message(
     monkeypatch.setattr(_subcommands_backup, "_load_config", lambda: fake_config)
 
     args = argparse.Namespace(
-        backup_command="restore", restore_from="latest", namespace="default", db=str(tmp_path / "memory.db")
+        backup_command="restore", yes=True, restore_from="latest", namespace="default", db=str(tmp_path / "memory.db")
     )
     with pytest.raises(SystemExit) as exc_info:
         _subcommands_backup.run_backup(args)
@@ -193,7 +195,7 @@ def test_restore_from_latest_malformed_objects_field_is_typed_failure_not_no_bac
     monkeypatch.setattr(_subcommands_backup, "_load_config", lambda: fake_config)
 
     args = argparse.Namespace(
-        backup_command="restore", restore_from="latest", namespace="default", db=str(tmp_path / "memory.db")
+        backup_command="restore", yes=True, restore_from="latest", namespace="default", db=str(tmp_path / "memory.db")
     )
     with pytest.raises(SystemExit) as exc_info:
         _subcommands_backup.run_backup(args)
@@ -222,7 +224,7 @@ def test_restore_sha256_mismatch_refuses_local_leg(
     sidecar.write_text(f"{'0' * 64}  {corrupted_name}\n", encoding="utf-8")
 
     args = argparse.Namespace(
-        backup_command="restore", restore_from=str(archive.path), namespace="default", db=str(db_path)
+        backup_command="restore", yes=True, restore_from=str(archive.path), namespace="default", db=str(db_path)
     )
     with pytest.raises(SystemExit) as exc_info:
         _subcommands_backup.run_backup(args)
@@ -253,7 +255,7 @@ def test_restore_refuses_beside_running_daemon(
     monkeypatch.setattr(snapshot_mod, "store_access", _busy)
 
     args = argparse.Namespace(
-        backup_command="restore", restore_from=str(archive.path), namespace="default", db=str(db_path)
+        backup_command="restore", yes=True, restore_from=str(archive.path), namespace="default", db=str(db_path)
     )
     with pytest.raises(SystemExit) as exc_info:
         _subcommands_backup.run_backup(args)

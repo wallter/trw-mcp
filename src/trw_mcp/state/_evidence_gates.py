@@ -23,10 +23,11 @@ from trw_mcp.models._evidence_core import (
     EvidenceMode,
     ReceiptState,
     ReceiptValidationResult,
+    TreeStatus,
 )
 from trw_mcp.models._evidence_plans import RequiredReviewPlan, RequiredValidationPlan
 from trw_mcp.models._evidence_records import BuildReceipt, ReviewReceipt, VerificationReceipt
-from trw_mcp.state._evidence_binding import content_binding_is_current
+from trw_mcp.state._evidence_binding import BindingOutcome, content_binding_is_current
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +35,8 @@ logger = structlog.get_logger(__name__)
 #: Deliberately distinct from the content-binding check's ``bound_content_changed``
 #: so logs and tests can tell "the reviewed bytes moved" apart from "the verdict
 #: is simply too old" (PRD-CORE-255-FR01).
+#: Reason code for a build receipt whose only unmet required command is one the caller never reported.
+BUILD_STATIC_NOT_RECORDED = "build_static_checks_not_recorded"
 REVIEW_VERDICT_EXPIRED = "review_verdict_expired"
 
 #: Remedy surfaced with every expiry. Names BOTH recovery paths: minting a fresh
@@ -106,6 +109,7 @@ def _result(
     receipt_id: str | None = None,
     typed_present: bool = True,
     diagnostics: str = "",
+    tree_status: TreeStatus | None = None,
 ) -> ReceiptValidationResult:
     return ReceiptValidationResult(
         state=state,
@@ -113,6 +117,32 @@ def _result(
         receipt_id=receipt_id,
         typed_present=typed_present,
         diagnostics=diagnostics,
+        tree_status=tree_status,
+    )
+
+
+def _stale_result(freshness: BindingOutcome, receipt_id: str) -> ReceiptValidationResult:
+    """Non-positive freshness outcome, carrying the changed-path remedy when present."""
+    return _result(
+        freshness.state,
+        freshness.reason_code,
+        receipt_id=receipt_id,
+        diagnostics=freshness.detail,
+        tree_status=freshness.tree_status,
+    )
+
+
+def _tree_unbound_result(reason: str, freshness: BindingOutcome, receipt_id: str) -> ReceiptValidationResult:
+    """Positive-but-advisory: the whole-tree binding could not be checked (never 'current')."""
+    return _result(
+        ReceiptState.VALID,
+        reason,
+        receipt_id=receipt_id,
+        diagnostics=(
+            f"Working-tree binding is UNBOUND ({freshness.reason_code}): edits made after this evidence was "
+            "recorded outside the run's file-change journal cannot be detected."
+        ),
+        tree_status=TreeStatus.UNBOUND,
     )
 
 
@@ -140,7 +170,7 @@ def validate_review_receipt(
         return _result(ReceiptState.INVALID, "review_not_substantive", receipt_id=rid)
     freshness = content_binding_is_current(receipt.content_binding, project_root)
     if freshness.state is not ReceiptState.VALID:
-        return _result(freshness.state, freshness.reason_code, receipt_id=rid)
+        return _stale_result(freshness, rid)
     # PRD-CORE-255-FR01: the TIME axis, evaluated after (and independently of)
     # the content binding. Both must pass; neither can substitute for the other.
     if review_verdict_is_expired(receipt.completed_at):
@@ -151,7 +181,7 @@ def validate_review_receipt(
             remedy=REVIEW_VERDICT_EXPIRED_REMEDY,
         )
         return _result(ReceiptState.STALE_CONTENT, REVIEW_VERDICT_EXPIRED, receipt_id=rid)
-    return _result(ReceiptState.VALID, "review_substantive", receipt_id=rid)
+    return _result(ReceiptState.VALID, "review_substantive", receipt_id=rid, tree_status=freshness.tree_status)
 
 
 def validate_build_receipt(
@@ -171,14 +201,21 @@ def validate_build_receipt(
     if not receipt.covers_required(plan.required_command_ids):
         return _result(ReceiptState.PLAN_INCOMPLETE, "build_plan_incomplete", receipt_id=rid)
     derived = receipt.derived_outcome(plan.required_command_ids, plan.coverage_threshold)
+    if not derived:
+        # A failed required command is the cause; a legacy boolean that disagrees with the aggregate is
+        # a symptom of it, not a separate contradiction.
+        unrealized = [r for r in receipt.command_results if r.command_id in plan.required_command_ids and not r.passed]
+        if unrealized and all(r.not_run for r in unrealized):
+            return _result(ReceiptState.INVALID, BUILD_STATIC_NOT_RECORDED, receipt_id=rid)
+        return _result(ReceiptState.INVALID, "build_required_command_failed", receipt_id=rid)
     if receipt.legacy_contradicts_outcome(derived):
         return _result(ReceiptState.INVALID, "build_legacy_contradiction", receipt_id=rid)
-    if not derived:
-        return _result(ReceiptState.INVALID, "build_required_command_failed", receipt_id=rid)
     freshness = content_binding_is_current(receipt.content_binding, project_root)
     if freshness.state is not ReceiptState.VALID:
-        return _result(freshness.state, freshness.reason_code, receipt_id=rid)
-    return _result(ReceiptState.VALID, "build_pass_current", receipt_id=rid)
+        return _stale_result(freshness, rid)
+    if freshness.tree_status is TreeStatus.UNBOUND:
+        return _tree_unbound_result("build_pass_tree_unbound", freshness, rid)
+    return _result(ReceiptState.VALID, "build_pass_current", receipt_id=rid, tree_status=freshness.tree_status)
 
 
 def validate_verification_receipt(
@@ -197,7 +234,7 @@ def validate_verification_receipt(
         return _result(ReceiptState.STALE_CONTENT, "verification_mapping_changed", receipt_id=rid)
     freshness = content_binding_is_current(receipt.content_binding, project_root)
     if freshness.state is not ReceiptState.VALID:
-        return _result(freshness.state, freshness.reason_code, receipt_id=rid)
+        return _stale_result(freshness, rid)
     from trw_mcp.state._verification_artifact import verification_artifact_is_current
 
     artifact = verification_artifact_is_current(receipt, project_root)

@@ -152,6 +152,7 @@ async def test_the_same_config_file_now_bounds_the_real_middleware_without_the_e
     assert denied is not _EXECUTED
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
     tools = [_FakeTool(name=n) for n in sorted(REVIEWER_TOOLS | {"trw_deliver", "trw_build_check"})]
 
@@ -184,6 +185,7 @@ async def test_a_real_project_config_with_mode_all_still_denies_the_reviewer(
     assert denied is not _EXECUTED
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
     assert denied.structured_content["surface_role"] == "reviewer"
 
     tools = [_FakeTool(name=n) for n in sorted(REVIEWER_TOOLS | {"trw_deliver"})]
@@ -291,6 +293,7 @@ async def test_only_the_exact_reviewer_sentinel_activates_the_bound(
     assert denied is not _EXECUTED
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 # ── FR01: reviewer tools are never operator-only ────────────────────────

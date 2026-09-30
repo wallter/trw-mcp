@@ -202,8 +202,8 @@ class TestTrwLearnUpdate:
             learning_id=lid,
             status="invalid_status",
         )
-        assert update_result["status"] == "invalid"
-        assert "error" in update_result
+        assert update_result["status"] == "rejected"
+        assert "message" in update_result
 
     def test_rejects_invalid_impact(self, tmp_path: Path) -> None:
         tools = _get_tools()
@@ -218,8 +218,9 @@ class TestTrwLearnUpdate:
             learning_id=lid,
             impact=1.5,
         )
-        assert update_result["status"] == "invalid"
-        assert "error" in update_result
+        assert update_result["status"] == "rejected"  # INC-085: the create shape for the same rule
+        assert update_result["reason"] == "invalid_impact"
+        assert "between 0 and 1" in update_result["message"]
 
     def test_not_found_returns_error(self, tmp_path: Path) -> None:
         tools = _get_tools()
@@ -227,8 +228,9 @@ class TestTrwLearnUpdate:
             learning_id="L-nonexistent",
             status="resolved",
         )
-        assert update_result["status"] == "not_found"
-        assert "error" in update_result
+        assert update_result["status"] == "rejected"
+        assert update_result["reason"] == "learning_not_found"
+        assert "message" in update_result
 
     def test_no_changes_returns_no_changes(self, tmp_path: Path) -> None:
         tools = _get_tools()

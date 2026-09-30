@@ -109,6 +109,8 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
     base["nudge_line"] = entry.nudge_line
     base["expires"] = entry.expires
     base["confidence"] = entry.confidence
+    # E2E-INC-118: the one typed field the export dropped, so an import could not restore it.
+    base["evidence_level"] = str(getattr(entry.evidence_level, "value", entry.evidence_level))
     base["task_type"] = entry.task_type
     base["domain"] = list(entry.domain)
     base["phase_origin"] = entry.phase_origin

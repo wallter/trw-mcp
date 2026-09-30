@@ -15,6 +15,35 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
+
+
+def _type_text(annotation: object) -> str:
+    """A field's type as an operator reads it: short class names, no module paths or ``<class '...'>``."""
+    import re
+
+    text = annotation.__name__ if isinstance(annotation, type) else str(annotation)
+    return re.sub(r"(?:[A-Za-z_]\w*\.)+([A-Za-z_]\w*)", r"\1", text)
+
+
+def _shorten(text: str, limit: int = 40) -> str:
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _default_text(field_info: Any) -> str:
+    """The default an operator would get: the factory's value, the literal, or ``(required)``; never ``PydanticUndefined``."""
+    from pydantic_core import PydanticUndefined
+
+    if field_info.default is not PydanticUndefined:
+        return "" if field_info.default is None else str(field_info.default)
+    if field_info.default_factory is not None:
+        try:
+            return str(field_info.get_default(call_default_factory=True))
+        except (
+            Exception
+        ):  # justified: a factory that needs validated data cannot be shown; say so, don't crash the reference
+            return "(computed)"
+    return "(required)"
 
 
 def _run_config_reference(args: argparse.Namespace) -> None:
@@ -29,13 +58,10 @@ def _run_config_reference(args: argparse.Namespace) -> None:
 
     for name, field_info in _TRWConfigFields.model_fields.items():
         env_var = f"TRW_{name.upper()}"
-        annotation = field_info.annotation
-        field_type = str(annotation).replace("typing.", "").replace("<class '", "").replace("'>", "")
-        default = field_info.default if field_info.default is not None else ""
+        field_type = _type_text(field_info.annotation)
+        default = _default_text(field_info)
         # Truncate long defaults
-        default_str = str(default)
-        if len(default_str) > 40:
-            default_str = default_str[:37] + "..."
+        default_str = _shorten(str(default))
         desc = field_info.description or ""
         print(f"| `{env_var}` | {field_type} | `{default_str}` | {desc} |")
 
@@ -44,6 +70,17 @@ def _run_config_reference(args: argparse.Namespace) -> None:
     # single explicit registry for this category (W35 item 4).
     for env_only in ENV_ONLY_VARS:
         print(f"| `{env_only.name}` | str | (none — env-only) | {env_only.description} |")
+
+    # trw-memory's settings (the memory engine and daemon read these, not TRWConfig), so an operator sees every
+    # variable that changes memory behaviour in one table (E2E-INC-051 (a)).
+    from trw_memory.models.config import MemoryConfig
+
+    prefix = str(MemoryConfig.model_config.get("env_prefix", "MEMORY_")).upper()
+    for name, field_info in MemoryConfig.model_fields.items():
+        print(
+            f"| `{prefix}{name.upper()}` | {_type_text(field_info.annotation)} | `{_shorten(_default_text(field_info))}` "
+            f"| {field_info.description or ''} |"
+        )
 
 
 def _run_local(args: argparse.Namespace) -> None:
@@ -126,6 +163,8 @@ def _run_local(args: argparse.Namespace) -> None:
             sys.exit(1)
     elif local_cmd == "recall":
         # PRD-CORE-247-FR03: marshalling only. Ranking happened in execute_recall.
+        from trw_memory.daemon.client import DAEMON_START_COMMAND
+
         from trw_mcp.services.local_surface_service import format_local_recall, run_local_recall
 
         try:
@@ -141,7 +180,7 @@ def _run_local(args: argparse.Namespace) -> None:
             # remedy — never printed as if it were an empty result.
             print(
                 f"Error: cannot read the memory store ({type(exc).__name__}: {exc}). "
-                "Start the memory daemon or run `trw-mcp doctor` to diagnose.",
+                f"Start the memory daemon ({DAEMON_START_COMMAND}) or run `trw-mcp doctor` to diagnose.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -155,7 +194,7 @@ def _run_local(args: argparse.Namespace) -> None:
         if store_unavailable:
             print(
                 f"Error: memory store unavailable ({store_unavailable}). "
-                "Start the memory daemon or run `trw-mcp doctor` to diagnose.",
+                f"Start the memory daemon ({DAEMON_START_COMMAND}) or run `trw-mcp doctor` to diagnose.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -169,6 +208,7 @@ def _run_local(args: argparse.Namespace) -> None:
             subject=str(getattr(args, "subject", "")),
             message=str(getattr(args, "message", "")),
             contact_email=getattr(args, "contact_email", None),
+            force=bool(getattr(args, "force", False)),
         )
         if feedback_result.get("success"):
             print(f"Feedback submitted: {feedback_result.get('submission_id') or 'accepted'}")

@@ -186,7 +186,7 @@ def record_review_receipt(
         # or shrink the journal-derived required paths, and their mutation makes
         # the receipt stale through the same content-binding validator.
         scope = scope.model_copy(update={"proposed_paths": governing_paths})
-        binding_outcome = build_content_binding(scope, project_root)
+        binding_outcome = build_content_binding(scope, project_root, exclude_paths=(run_path,))
         if binding_outcome.binding is None:
             return ReviewReceiptWriteResult(reason_code=binding_outcome.reason_code)
 

@@ -36,6 +36,9 @@ from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._enforcement_layers import enforcement_fields
 from trw_mcp.dispatch._env import build_subprocess_env
 from trw_mcp.dispatch._error_class import run_dispatch
+from trw_mcp.dispatch._handshake import begin as begin_handshake
+from trw_mcp.dispatch._handshake import discard as discard_handshake
+from trw_mcp.dispatch._handshake import settle as settle_handshake
 from trw_mcp.dispatch._host_confinement import _confinement_for, _needs_host_confinement, _read_only_enforced
 from trw_mcp.dispatch._isolated import IsolationFailedError, run_isolated
 from trw_mcp.dispatch._normalize import classify_silence, normalize_output, turn_cap_next_read
@@ -342,6 +345,7 @@ def _run_once(
         isolate=req.isolate,
     )
 
+    handshake, run_argv = begin_handshake(req, run_argv)
     start = time.monotonic()
     timed_out = False
     exit_code: int | None
@@ -369,6 +373,7 @@ def _run_once(
         # Missing binary / not executable / permission denied: a clean failure,
         # never an exception out of dispatch.
         logger.warning("dispatch_launch_failed", client=req.client, error=str(exc))
+        discard_handshake(handshake)
         return _early_result(
             req,
             argv_redacted,
@@ -428,6 +433,18 @@ def _run_once(
 
     posture_enforced = reviewer_posture_enforced(req.client, req.posture)
     trw_enforced = trw_access_enforced(req.client, req.with_trw)
+    silence_reason, enforcement = settle_handshake(
+        handshake,
+        req,
+        silence_reason,
+        enforcement_fields(
+            req.client,
+            read_only=req.read_only,
+            isolate=req.isolate,
+            posture_enforced=posture_enforced,
+            mcp_injected=posture_enforced or trw_enforced,
+        ),
+    )
     result = DispatchResult(
         client=req.client,
         argv_redacted=argv_redacted,
@@ -436,13 +453,7 @@ def _run_once(
         posture_note=req.posture_note,
         posture_enforced=posture_enforced,
         trw_access_enforced=trw_enforced,
-        **enforcement_fields(
-            req.client,
-            read_only=req.read_only,
-            isolate=req.isolate,
-            posture_enforced=posture_enforced,
-            mcp_injected=posture_enforced or trw_enforced,
-        ),
+        **enforcement,
         exit_code=exit_code,
         timed_out=timed_out,
         duration_s=duration_s,

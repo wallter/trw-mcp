@@ -65,7 +65,8 @@ def test_session_changelog_written_on_deliver(tmp_path: Path, monkeypatch: pytes
         "## Follow-ups",
     ):
         assert section in body
-    assert result.learnings_recorded == 1
+    assert result.learnings_recorded is None  # not passed in: never guessed from events (INC-071)
+    assert "learnings not counted" in body
     # Follow-up event surfaced from durable events.
     assert "wire CLI test" in body
 
@@ -197,3 +198,31 @@ def test_prd_local_049_fr04_cli_rejects_non_run_dir(tmp_path: Path, monkeypatch:
     with pytest.raises(SystemExit) as exc:
         _run_session_changelog(args)
     assert exc.value.code == 1
+
+
+def test_inc071_the_deliver_step_reports_the_sessions_persisted_learnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INC-071: two trw_learn calls persisted, no learn event in events.jsonl -> the report says 2, not 0."""
+    from trw_mcp.state._ceremony_progress_state import increment_learnings
+    from trw_mcp.tools import ceremony as _ceremony
+    from trw_mcp.tools._ceremony_deliver_steps import step_session_changelog
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    run_path, trw_dir = _make_run(tmp_path)
+    (run_path / "meta" / "events.jsonl").write_text(json.dumps({"event": "trw_init"}) + "\n", encoding="utf-8")
+    increment_learnings(trw_dir)
+    increment_learnings(trw_dir)
+    monkeypatch.setattr(_ceremony, "resolve_trw_dir", lambda: trw_dir)
+    results: dict[str, object] = {}
+    step_session_changelog(run_path, results)  # type: ignore[arg-type]
+    body = (run_path / "reports" / "session-changelog.md").read_text(encoding="utf-8")
+    assert "and 2 learning(s)." in body
+    assert "- 2 learning(s) persisted this session" in body
+
+
+def test_an_explicit_count_is_rendered_and_zero_stays_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    run_path, trw_dir = _make_run(tmp_path)
+    assert "and 0 learning(s)." in build_session_changelog(run_path, trw_dir, learnings_recorded=0).markdown
+    assert build_session_changelog(run_path, trw_dir, learnings_recorded=3).learnings_recorded == 3

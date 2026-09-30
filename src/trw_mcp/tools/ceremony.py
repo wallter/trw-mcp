@@ -91,6 +91,7 @@ _ADVISORY_WARNING_KEYS: tuple[str, ...] = (
     "integration_review_warning",
     "checkpoint_blocker_warning",
     "untracked_warning",
+    "build_tree_binding_advisory",  # E2E-INC-018
     "complexity_drift_warning",
     "instruction_parity_warning",
     "integration_isolated_warning",  # PRD-CORE-320 FR04
@@ -320,6 +321,13 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 results["blocked_decisions_pending"] = _decision_pending_count
         errors: list[str] = []
         is_focused = query.strip() not in ("", "*")
+        try:  # EVIDENCE-DELETION-POLICY (b): this session's out-of-.trw change baseline (background, fail-open)
+            from trw_mcp.state._paths import resolve_pin_key
+            from trw_mcp.state._session_change_witness import record_snapshot
+
+            record_snapshot(resolve_pin_key(None), resolve_trw_dir().parent)
+        except Exception as exc:
+            record_into(cast("MutableMapping[str, object]", results), "change_witness", exc)
 
         # PRD-FIX-085 FR02: mark this scope as HOT_PATH so any caller that
         # accidentally invokes the legacy mtime scan during session_start

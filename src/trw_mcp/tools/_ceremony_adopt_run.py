@@ -112,7 +112,7 @@ def adopt_run(
     # adoptable without ``force`` as if it were live work.
     if is_terminal_status(target_status) and not force:
         raise StateError(
-            f"cannot adopt terminal-status run (status={target_status}); pass force=True to override",
+            f"cannot adopt terminal-status run (status={target_status}); pass --force to override",
             path=str(resolved),
             status=target_status,
         )

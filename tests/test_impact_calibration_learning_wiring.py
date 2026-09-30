@@ -83,9 +83,18 @@ def test_registered_capture_preserves_clamped_impact_and_existing_rows(
             scope="project",
             metadata={"client_profile": "", "model_id": ""},
         )
-    assert result["status"] == "recorded"
-    entry = asyncio.run(client.get(result["learning_id"], namespace))["entry"]
-    assert entry["importance"] == max(0, min(1, impact))
+    in_range = 0.0 <= impact <= 1.0
+    if not replay and not in_range:
+        # E2E-LEARN-VALIDATION (INC-007): at the USER tool boundary an out-of-range impact is refused before
+        # anything is written, the same 0-1 rule update already applied (create used to clamp silently).
+        assert result["status"] == "rejected" and result["reason"] == "invalid_impact", result
+        assert "between 0 and 1" in result["message"]
+    else:
+        # In range, or an INTERNAL producer (journal replay of an already-accepted payload): impact is clamped,
+        # never rejected -- a payload journaled before the boundary check existed must still replay.
+        assert result["status"] == "recorded"
+        entry = asyncio.run(client.get(result["learning_id"], namespace))["entry"]
+        assert entry["importance"] == max(0, min(1, impact))
     assert {key: asyncio.run(client.get(key, namespace))["entry"] for key in ids} == before
     forbidden.assert_not_called()
     assert not result.get("distribution_warning")

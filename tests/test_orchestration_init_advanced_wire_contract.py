@@ -40,8 +40,9 @@ pytestmark = pytest.mark.anyio
 
 async def _served_trw_init() -> tuple[str, dict[str, object]]:
     """Return the description and parameters schema the MCP client receives."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     for tool in await mcp._list_tools():
         if tool.name == "trw_init":
             return tool.description or "", tool.parameters

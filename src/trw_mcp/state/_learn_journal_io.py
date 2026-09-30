@@ -58,6 +58,9 @@ def write_record_atomic(target: Path, record: dict[str, object], *, preserve_mti
             this, every failed attempt would move a record to the back of
             the queue.
     """
+    from trw_mcp.state._containment import assert_trw_write_contained
+
+    assert_trw_write_contained(target)  # INC-034: .trw/learnings/pending can be a shipped symlink
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         stamp: tuple[float, float] | None = None

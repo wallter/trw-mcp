@@ -296,7 +296,7 @@ def _dispatch_nudge_content(
         return response
 
     # 2. Dispatch to pool-specific content generators
-    nudge_content = resolve_pool_content(pool, state, cfg, context, effective_dir)
+    nudge_content = resolve_pool_content(pool, state, cfg, context, effective_dir, response)
 
     # 3. Apply nudge content and update state
     if nudge_content:

@@ -52,8 +52,9 @@ def _drift(declared: set[str], live: set[str]) -> str:
 
 def _live_tools() -> dict[str, Any]:
     """The tools the production server registers, by name."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     return {tool.name: tool for tool in asyncio.run(mcp._list_tools())}
 
 

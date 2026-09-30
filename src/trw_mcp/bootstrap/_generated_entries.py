@@ -97,12 +97,25 @@ def _grouped(hooks_by_event: dict[str, list[dict[str, object]]]) -> GroupedHooks
     return hooks, shells
 
 
-def grouped_hook_entries(shape: str) -> GroupedHooks:
-    """TRW's hook dicts and group fields, per event, for a grouped hooks file of *shape*."""
+def grouped_hook_entries(shape: str, root: Path | None = None) -> GroupedHooks:
+    """TRW's hook dicts and group fields, per event, for a grouped hooks file of *shape* (in project *root*)."""
     if shape == "codex-hook-group-list":
+        from ._codex_distill_channels import _pre_edit_hint_group, distill_hook_group, legacy_distill_hook_group
         from ._codex_hooks import _codex_hooks_payload
 
-        return _grouped(_codex_hooks_payload()["hooks"])  # type: ignore[arg-type]
+        codex: dict[str, list[dict[str, object]]] = dict(_codex_hooks_payload()["hooks"])  # type: ignore[arg-type]
+        # The CC-03 pre-edit hint group set_pre_edit_hint_registration adds; uninstall deletes its script, so it
+        # must withdraw this group too or codex fails every apply_patch (INC-012 follow-up).
+        codex["PreToolUse"] = [*codex.get("PreToolUse", []), _pre_edit_hint_group()]
+        if root is not None:
+            # E2E-UNINSTALL-CODEX: the distill telemetry group names the project's absolute script path, so it
+            # is only TRW's for this root; without it uninstall deleted the script and kept the hook calling it.
+            codex["PostToolUse"] = [
+                *codex.get("PostToolUse", []),
+                distill_hook_group(root),
+                legacy_distill_hook_group(root),  # an install never updated since the portable command
+            ]
+        return _grouped(codex)
     if shape == "copilot-hook-group-list":
         from ._copilot import _copilot_hooks_payload
 

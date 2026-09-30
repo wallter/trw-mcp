@@ -16,7 +16,6 @@ Guarantees:
 - **Idempotent**: repeating an ID with byte-identical canonical payload is a
   no-op success; a different payload for the same ID fails ``receipt_id_collision``.
 - **Bounded**: a canonical payload over 1 MiB fails before positive persistence.
-- **Non-reusable**: a tombstoned ID is never re-minted or re-accepted.
 """
 
 from __future__ import annotations
@@ -34,7 +33,6 @@ from pydantic import BaseModel
 from trw_mcp.models._evidence_core import EvidenceLimits, canonical_json
 
 logger = structlog.get_logger(__name__)
-_TOMBSTONE_FILE = "_tombstones.jsonl"
 # 128 bits of collision resistance per FR09 (16 bytes -> 32 hex chars).
 _ID_ENTROPY_BYTES = 16
 
@@ -47,6 +45,8 @@ class WriteOutcome:
     receipt_id: str
     reason_code: str
     idempotent: bool = False
+    # E2E-INC-018 (build receipts): "bound", or the tree_unbound_* reason code.
+    tree_binding: str = ""
 
 
 def canonical_receipt_bytes(model: BaseModel) -> bytes:
@@ -65,35 +65,6 @@ def _receipts_root(run_path: Path) -> Path:
 
 def _receipt_path(run_path: Path, receipt_type: str, receipt_id: str) -> Path:
     return _receipts_root(run_path) / receipt_type / f"{receipt_id}.json"
-
-
-def _tombstone_path(run_path: Path) -> Path:
-    return _receipts_root(run_path) / _TOMBSTONE_FILE
-
-
-def _is_tombstoned(run_path: Path, receipt_id: str) -> bool:
-    path = _tombstone_path(run_path)
-    if not path.exists():
-        return False
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            if _safe_json_loads(line).get("receipt_id") == receipt_id:
-                return True
-    except OSError:
-        return False
-    return False
-
-
-def _safe_json_loads(line: str) -> dict[str, object]:
-    import json
-
-    try:
-        obj = json.loads(line)
-    except json.JSONDecodeError:
-        return {}
-    return obj if isinstance(obj, dict) else {}
 
 
 def _atomic_write_bytes(target: Path, payload: bytes) -> None:
@@ -134,8 +105,6 @@ def write_receipt(
     payload = canonical_receipt_bytes(model)
     if len(payload) > EvidenceLimits.MAX_CANONICAL_RECEIPT_BYTES:
         return WriteOutcome(False, receipt_id, "receipt_too_large")
-    if _is_tombstoned(run_path, receipt_id):
-        return WriteOutcome(False, receipt_id, "receipt_id_tombstoned")
 
     target = _receipt_path(run_path, receipt_type, receipt_id)
     existing = _read_bytes_or_none(target)
@@ -150,6 +119,11 @@ def write_receipt(
     except OSError:
         logger.warning("receipt_write_failed", receipt_type=receipt_type, exc_info=True)
         return WriteOutcome(False, receipt_id, "write_failed")
+    # PRD-CORE-345 FR02: a verify span points at the receipt just written; it never raises, and
+    # neither an idempotent rewrite nor a refusal projects one.
+    from trw_mcp.telemetry.otel_verify import project_receipt
+
+    project_receipt(receipt_type, model, run_path)
     return WriteOutcome(True, receipt_id, "written")
 
 

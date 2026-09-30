@@ -59,7 +59,7 @@ import structlog
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.exceptions import StateError
 from trw_mcp.state._pin_ttl import pin_entry_is_expired, resolve_pin_ttl_hours
-from trw_mcp.state._process_identity import process_start_time
+from trw_mcp.state._process_identity import pid_is_alive, process_start_time, read_process_start_time
 
 logger = structlog.get_logger(__name__)
 
@@ -460,6 +460,21 @@ def _load_pin_store_strict_locked() -> dict[str, dict[str, Any]]:
     return store
 
 
+def _owner_process_alive(entry: dict[str, Any]) -> bool:
+    """Whether the process that wrote *entry* still exists; a fresh heartbeat alone outlives a killed owner.
+
+    The launching client is the owner (``client_pid`` plus its birth time, so a recycled pid never matches);
+    a pin without that lineage falls back to its server ``pid``, and one with neither is kept live.
+    """
+    client = entry.get("client_pid")
+    start = entry.get("client_start")
+    if isinstance(client, int) and isinstance(start, str):
+        born = read_process_start_time(client)
+        return pid_is_alive(client) if born is None else born == start
+    pid = entry.get("pid")
+    return pid_is_alive(pid) if isinstance(pid, int) else True
+
+
 def transfer_pin_entry(
     caller_pin_key: str,
     run_path: Path,
@@ -498,10 +513,10 @@ def transfer_pin_entry(
                     pin_key=previous_pin_key,
                 ) from exc
             heartbeat_age_hours = (now_dt - parsed.astimezone(timezone.utc)).total_seconds() / 3600.0
-            owner_was_live = heartbeat_age_hours < pin_ttl_hours
+            owner_was_live = heartbeat_age_hours < pin_ttl_hours and _owner_process_alive(previous_entry)
         if owner_was_live and previous_pin_key != caller_pin_key and not force:
             raise StateError(
-                "run is actively held by a live pin; pass force=True to override",
+                "run is actively held by a live pin; pass --force to override",
                 path=target,
                 pin_key=previous_pin_key,
             )

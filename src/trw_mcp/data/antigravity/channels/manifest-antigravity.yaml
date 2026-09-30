@@ -33,7 +33,7 @@ channels:
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
   description: AG-02 trw-distill-explorer.md subagent — T1 default. Read-only exploration with distill intelligence.
-  regenerate_cmd: trw-mcp init-project --client antigravity-cli
+  regenerate_cmd: trw-mcp init-project --ide antigravity-cli
   mdc_description:
   mdc_globs:
   mdc_always_apply: false
@@ -68,7 +68,7 @@ channels:
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
   description: 'AG-03 Before-edit hook injection. ASPIRATIONAL — installer correctly writes and registers the PreToolUse entry in .antigravitycli/hooks.json (schema confirmed via agy binary analysis), but the hook does NOT fire. agy v1.0.2-1.0.3 routes file edits through an internal Step_CodeAction / tool_confirmation_manager path that bypasses the jsonhook PreToolUse system; verified by a live agy turn 2026-05-29 (file written, hook never invoked). No TRW-side fix possible — re-evaluate when agy routes edits through PreToolUse. Script at .antigravitycli/hooks/trw_before_edit_telemetry.py.'
-  regenerate_cmd: trw-mcp init-project --client antigravity-cli
+  regenerate_cmd: trw-mcp init-project --ide antigravity-cli
   mdc_description:
   mdc_globs:
   mdc_always_apply: false

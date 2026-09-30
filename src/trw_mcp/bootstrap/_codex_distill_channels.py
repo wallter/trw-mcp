@@ -48,6 +48,38 @@ _DISTILL_HOOK_SENTINEL = "trw_post_edit_telemetry"
 _CODEX_HOOKS_JSON = ".codex/hooks.json"
 
 
+_TELEMETRY_GROUP_DESCRIPTION = "TRW managed: trw-distill PostToolUse telemetry"
+_TELEMETRY_STATUS = "Recording TRW distill telemetry"
+
+
+def _telemetry_group(command: str) -> dict[str, Any]:
+    return {
+        "description": _TELEMETRY_GROUP_DESCRIPTION,
+        "hooks": [{"type": "command", "command": command, "statusMessage": _TELEMETRY_STATUS}],
+    }
+
+
+def distill_hook_group(target_dir: Path) -> dict[str, Any]:
+    """The PostToolUse group :func:`merge_distill_hook_into_hooks_json` writes; uninstall withdraws exactly this.
+
+    ``.codex/hooks.json`` is committed, so the command names no machine path (E2E-CODEX-INIT-ARTIFACTS).
+    Codex runs hook commands through a shell -- E2E-INC-032 observed the ``$(...)`` expansion -- so this is
+    the root expression the PreToolUse hooks use (``_codex_hooks._trw_hook_group``).
+    """
+    git_root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    return _telemetry_group(f'python3 "{git_root}/.codex/hooks/trw_post_edit_telemetry.py"')
+
+
+def legacy_distill_hook_group(target_dir: Path) -> dict[str, Any]:
+    """The absolute-path group every install before E2E-CODEX-INIT-ARTIFACTS wrote.
+
+    ``update-project`` replaces it with :func:`distill_hook_group`; uninstall withdraws it from an install
+    that was never updated.
+    """
+    script = target_dir.resolve() / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
+    return _telemetry_group(f'python3 "{script}"')
+
+
 def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
     """Merge the TRW distill PostToolUse hook group into .codex/hooks.json.
 
@@ -68,27 +100,7 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
     """
     hooks_json_path = target_dir / _CODEX_HOOKS_JSON
 
-    # Use the absolute path to the hook script (computed at install time).
-    # The hooks.json command string is NOT run through a shell by Codex, so
-    # $(git rev-parse --show-toplevel) shell expansion is NOT available here.
-    # We use the absolute path so the script resolves correctly when Codex
-    # spawns the hook process.
-    hook_script_abs = target_dir.resolve() / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
-
-    # Build the distill PostToolUse group in the hooks.json format:
-    # hooks.PostToolUse is an array of groups; each group has description + hooks array.
-    hook_command = f'python3 "{hook_script_abs}"'
-
-    distill_group: dict[str, Any] = {
-        "description": "TRW managed: trw-distill PostToolUse telemetry",
-        "hooks": [
-            {
-                "type": "command",
-                "command": hook_command,
-                "statusMessage": "Recording TRW distill telemetry",
-            }
-        ],
-    }
+    distill_group = distill_hook_group(target_dir)
 
     # Load existing hooks.json if present, through the shared structural-safe
     # seam. read_json_object returns None for an unreadable / non-UTF-8 /
@@ -110,12 +122,19 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
         if isinstance(raw_groups, list):
             post_tool_groups = list(raw_groups)
 
-    already_registered = any(
-        _DISTILL_HOOK_SENTINEL in str(cmd.get("command", ""))
-        for group in post_tool_groups
-        if isinstance(group, dict)
-        for cmd in (group.get("hooks") or [])
-        if isinstance(cmd, dict)
+    # Current form present: nothing to do. TRW's old absolute-path group: replace it (migration). Any other
+    # group naming the script is one the user edited, and stays as it is.
+    legacy_group = legacy_distill_hook_group(target_dir)
+    migrated = [group for group in post_tool_groups if group != legacy_group]
+    already_registered = distill_group in migrated or (
+        len(migrated) == len(post_tool_groups)
+        and any(
+            _DISTILL_HOOK_SENTINEL in str(cmd.get("command", ""))
+            for group in post_tool_groups
+            if isinstance(group, dict)
+            for cmd in (group.get("hooks") or [])
+            if isinstance(cmd, dict)
+        )
     )
 
     if already_registered:
@@ -129,9 +148,7 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
     # Append the distill group
     if not isinstance(hooks_section, dict):
         hooks_section = {}
-    if "PostToolUse" not in hooks_section or not isinstance(hooks_section["PostToolUse"], list):
-        hooks_section["PostToolUse"] = []
-    hooks_section["PostToolUse"].append(distill_group)
+    hooks_section["PostToolUse"] = [*migrated, distill_group]
     existing["hooks"] = hooks_section
 
     try:
@@ -148,7 +165,7 @@ def merge_distill_hook_into_hooks_json(target_dir: Path) -> dict[str, Any]:
     log.debug(
         "codex_distill_hook_registered",
         path=str(hooks_json_path),
-        command=hook_command,
+        command=distill_group["hooks"][0]["command"],
         outcome="written",
     )
     return {"written": True, "path": str(hooks_json_path), "skipped": False, "error": None}
@@ -388,7 +405,7 @@ def install_codex_distill_channels(
         result["errors"].append(f"gitignore update failed: {exc}")
 
     # FR19: Emit hooks approval notice so the operator knows to run /hooks in Codex.
-    result["warnings"].append(codex_hooks_review_warning())
+    result["warnings"].append(codex_hooks_review_warning(target_dir))
 
     log.debug(
         "codex_distill_channels_installed",

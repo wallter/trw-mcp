@@ -194,6 +194,7 @@ async def test_review_call_not_denied_with_no_config_overrides(tmp_path: Path, m
     assert denied is not _EXECUTED
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
     _reset_config()
 

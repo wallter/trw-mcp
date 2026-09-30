@@ -88,13 +88,13 @@ def add_dispatch_subcommand(
     dispatch_parser.add_argument(
         "--model",
         default=None,
-        help="Optional model override for the child client.",
+        help="Optional model override; otherwise operator config, then the Codex client default or role policy.",
     )
     dispatch_parser.add_argument(
         "--effort",
         choices=EFFORT_LEVELS,
         default=None,
-        help="Reasoning effort for the child; default: dispatch_default_effort, else the role's task-class row.",
+        help="Reasoning effort; default: dispatch_default_effort, then the Codex client default or role policy.",
     )
     dispatch_parser.add_argument(
         "--cwd",

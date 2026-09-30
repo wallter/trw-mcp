@@ -397,6 +397,7 @@ def generate_agents_md(
     try:
         agents_md_path = target_dir / "AGENTS.md"
 
+        from trw_mcp.state.claude_md._exact_text import append_block, read_exact
         from trw_mcp.state.claude_md._instructions_link import agents_link_section, write_instructions_file
 
         instructions = write_instructions_file(target_dir)
@@ -415,7 +416,7 @@ def generate_agents_md(
         if agents_md_path.exists() and pointer_skip_guard(agents_md_path, dry_run=True) is not None:
             result["preserved"].append("AGENTS.md")
         elif agents_md_path.exists() and not force:
-            content = agents_md_path.read_text(encoding="utf-8")
+            content = read_exact(agents_md_path)
             # Shared line-anchored replacer — never a raw substring scan.
             markers = ((_TRW_START_MARKER, "start"), (_TRW_END_MARKER, "end"))
             updated = replace_marker_region(
@@ -426,9 +427,9 @@ def generate_agents_md(
                 _guarded_agents_write(agents_md_path, updated, target_dir, result)
             elif not has_marker(content, *markers):  # no section at all -> append
                 # No TRW section yet — append it
-                if not content.endswith("\n"):
-                    content += "\n"
-                content += "\n" + new_block
+                # The same join ``render_merged_content`` uses for its append branch (one shared function): the
+                # user's bytes stay exactly as written, a separator is added only where the junction lacks one.
+                content = append_block(content, new_block)
                 _guarded_agents_write(agents_md_path, content, target_dir, result)
             else:
                 result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")

@@ -56,6 +56,7 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     nudge_line: str
     expires: str
     confidence: str
+    evidence_level: str
     task_type: str
     domain: list[str]
     phase_origin: str

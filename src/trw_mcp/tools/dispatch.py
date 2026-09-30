@@ -27,6 +27,7 @@ import structlog
 from fastmcp import Context, FastMCP
 
 from trw_mcp.dispatch._child_marker import dispatched_child_active
+from trw_mcp.dispatch._codex_observed import with_observed
 from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request, uncommitted_work_warning
 from trw_mcp.dispatch._runner import dispatch
@@ -220,6 +221,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
             posture: "reviewer" asks for the read-only TRW surface, best effort
                 (see posture_note); "reviewer!" refuses if it cannot hold.
             with_trw: give the child a TRW session (claude, codex).
+            model/effort: request overrides config; Codex otherwise uses its client defaults.
             verbose: raw streams on success; for evidence, events + schema.
         """
         # A bare status reports each OAuth client's credential state (PRD-CORE-304-FR04).
@@ -389,6 +391,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
             policy = record_dispatch_policy(req, child_id)  # PRD-CORE-290-FR03
             result = dispatch(req)
             record_child_usage(result, child_id=child_id)  # PRD-CORE-290-FR01
+            policy = with_observed(policy, req.client, result.raw_stdout)  # CODEX-P0-A S2
             return _warned(
                 {
                     "job_id": None,

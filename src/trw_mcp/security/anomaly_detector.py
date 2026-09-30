@@ -97,6 +97,9 @@ class AnomalyDetectorConfig(BaseModel):
     window_seconds: int = Field(default=DEFAULT_WINDOW_SECONDS, gt=0)
     shadow_clock_path: Path
     baseline_store_path: Path | None = None
+    #: False for a stateless reviewer session (CODEX-P0-B-REVIEWER-WRITES): the shadow clock and the
+    #: argument-hash baseline are then never created or appended in the repository under review.
+    persist_state: bool = True
     max_arg_hashes_per_pair: int = Field(default=DEFAULT_MAX_ARG_HASHES_PER_PAIR, gt=0)
     max_baseline_store_lines: int = Field(default=DEFAULT_MAX_BASELINE_STORE_LINES, gt=0)
     max_novel_arg_shapes_per_pair: int = Field(default=DEFAULT_MAX_NOVEL_ARG_SHAPES_PER_PAIR, gt=0)
@@ -175,11 +178,10 @@ class AnomalyDetector:
         self._baseline_arg_hashes: dict[tuple[str, str], OrderedDict[str, None]] = defaultdict(OrderedDict)
         # PRD-INFRA-SEC-001 FR-3 NFR: the shadow clock is written on the FIRST
         # OBSERVATION (see ``observe``), not on construction. The detector is
-        # built as part of ``create_app()``, which runs at MODULE IMPORT time
-        # (``server/__init__.py`` -> ``_app.py``'s module-level ``mcp =
-        # create_app()``) — writing here made merely importing ``trw_mcp.server``
-        # create ``.trw/security/mcp_shadow_start.yaml`` in the caller's cwd with
-        # no tool ever having been called.
+        # built as part of ``create_app()`` (which used to run at import time, so
+        # writing here made merely importing ``trw_mcp.server`` create
+        # ``.trw/security/mcp_shadow_start.yaml`` in the caller's cwd); building
+        # an app is still not a tool call.
         self._shadow_clock_ensured = False
         self._load_arg_hash_baseline()
 
@@ -227,7 +229,7 @@ class AnomalyDetector:
 
     def _persist_arg_hash_baseline(self, obs: AnomalyObservation) -> None:
         path = self._config.baseline_store_path
-        if path is None or not obs.args_hash:
+        if path is None or not obs.args_hash or not self._config.persist_state:
             return
         payload = {
             "type": "arg_baseline",
@@ -363,7 +365,7 @@ class AnomalyDetector:
 
     def observe(self, obs: AnomalyObservation) -> list[str]:
         """Process a single observation; return list of anomaly types emitted."""
-        if not self._shadow_clock_ensured:
+        if not self._shadow_clock_ensured and self._config.persist_state:
             try:
                 _ensure_shadow_clock(self._config.shadow_clock_path, now=self._now_fn())
                 self._shadow_clock_ensured = True

@@ -151,8 +151,9 @@ class TestSurfaceRegisteredEmission:
 
 def _get_production_tool_fn(tool_name: str) -> Any:
     import trw_mcp.server._tools  # noqa: F401
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     components = getattr(getattr(mcp, "_local_provider"), "_components", {})
     for key, component in components.items():
         if key.startswith(f"tool:{tool_name}@"):

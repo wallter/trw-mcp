@@ -128,7 +128,22 @@ def explain_surface(
         task_name=task_name,
         trw_dir=trw_dir,
     )
+    from trw_mcp.profile._client_provenance import client_profile_provenance
+    from trw_mcp.profile.session_resolve import ceremony_tier_for_mode
+
     payload = build_explanation(resolved, run_dir=run_dir)
+    client = client_profile_provenance(config)
+    payload["client_profile"] = client
+    # INC-078: a light client's tier is projected into the defaults layer (so an org/domain profile can still
+    # override it); say which client profile it came from rather than leave it looking like a bare default.
+    mode = str(client["ceremony_mode"])
+    for record in payload["fields"]:  # type: ignore[attr-defined]
+        if (
+            record["field"] == "ceremony_tier"
+            and record["origin_layer"] == "defaults"
+            and record["value"] == ceremony_tier_for_mode(mode)
+        ):
+            record["derived_from"] = f"client_profile:{client['id']} (ceremony_mode={mode})"
     payload["tool_surface"] = tool_surface_summary(config)
     return payload
 

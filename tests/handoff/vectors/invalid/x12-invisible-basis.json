@@ -1,0 +1,164 @@
+{
+  "ahr": "1.0-rc.1",
+  "type": "handoff",
+  "handoff_id": "01J9ZK5W1STD000000000001",
+  "subject": "swap-dirty-worktree",
+  "tier": "standard",
+  "tier_reason": "Agent-to-agent; uncommitted lane edits in a shared worktree",
+  "from": {
+    "id": "worker-w1",
+    "kind": "agent",
+    "capability_tier": "balanced",
+    "session": "s-7f3a"
+  },
+  "to": {
+    "id": "integrator",
+    "kind": "agent"
+  },
+  "created_at": "2026-09-28T21:10:00Z",
+  "expires_at": "2026-09-29T21:10:00Z",
+  "as_of": {
+    "at": "2026-09-28T21:09:30Z",
+    "run_ref": "run:hotreload-w1",
+    "base_ref": {
+      "commit": "47c004499",
+      "tree_state": "dirty",
+      "changed_paths": {
+        "uri": "file:changed-paths.txt"
+      }
+    }
+  },
+  "supersedes": [],
+  "objective": {
+    "goal": "Make the hot-reload swap refuse when the target worktree has uncommitted changes.",
+    "intent": "No operator work may be lost; a refused swap is acceptable, a silent overwrite is not. Message wording may change without asking.",
+    "done_when": [
+      "A dirty target produces a refusal and git status is unchanged",
+      "The full package suite is recorded as passing"
+    ]
+  },
+  "constraints": [
+    "Do not touch the launcher config.",
+    "Edit only the three files owned by lane W1."
+  ],
+  "claims": [
+    {
+      "id": "c1",
+      "text": "Refusal path for a dirty worktree is implemented in swap.py",
+      "label": "observed",
+      "basis": "­⠀"
+    },
+    {
+      "id": "c2",
+      "text": "Unit tests for the refusal path pass",
+      "label": "verified",
+      "evidence": [
+        {
+          "procedure": "pytest tests/test_swap.py -q",
+          "scope": "one test file, not the package suite",
+          "result": "supports",
+          "at": "2026-09-28T21:08:00Z",
+          "producer": "worker-w1",
+          "raw": {
+            "uri": "file:pytest-w1.txt"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c3",
+      "text": "Behaviour with a locked index file is unchanged",
+      "label": "inferred",
+      "basis": "The code path was not touched and was not exercised."
+    },
+    {
+      "id": "c4",
+      "text": "Windows path handling after a refusal",
+      "label": "unknown"
+    }
+  ],
+  "not_done": [
+    "Full package suite has not been run",
+    "No live swap rehearsal"
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Refusal may be raised after the source is partly staged",
+      "severity": "high",
+      "mitigation": "Check ordering in swap.py lines 120-160 first."
+    },
+    {
+      "id": "r2",
+      "text": "Refusal message may confuse operators",
+      "severity": "low"
+    }
+  ],
+  "unknowns": [
+    "Whether the MCP proxy caches the old module path after a refused swap"
+  ],
+  "contingencies": [
+    {
+      "if": "The rehearsal shows a partial stage",
+      "then": "Revert only lane-owned staged paths and message the lead; never reset the worktree."
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Refuse rather than stash",
+      "rationale": "Stash is forbidden in the shared tree and can discard operator edits.",
+      "rejected": [
+        "auto-stash",
+        "force flag"
+      ]
+    }
+  ],
+  "next_actions": [
+    {
+      "id": "a1",
+      "action": "Run the full package suite on the branch and record the result",
+      "owner": "integrator",
+      "done_when": "Recorded pass with non-zero test count and scope 'full'",
+      "depends_on": [
+        "c1"
+      ]
+    },
+    {
+      "id": "a2",
+      "action": "Rehearse a swap against a scratch worktree with one dirty file",
+      "owner": "integrator",
+      "done_when": "Refusal observed and git status unchanged",
+      "depends_on": [
+        "c2"
+      ]
+    }
+  ],
+  "next_read": [
+    {
+      "uri": "file:W1-hotreload.md",
+      "why": "Lane brief and ownership",
+      "kind": "file"
+    },
+    {
+      "uri": "file:swap.py",
+      "why": "Ordering risk r1 at lines 120-160",
+      "kind": "file",
+      "digest": "sha256:9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f"
+    }
+  ],
+  "readback": {
+    "required": true,
+    "reverify": [
+      "c2"
+    ]
+  },
+  "extensions": {
+    "https://example.org/ahr-ext/lane/1": {
+      "lane": "W1"
+    }
+  },
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "digest": "sha256:24111e3a9bb3f94f9686ac703fef1d6f03586d0ee8eea0ee4720da19e7f192a1"
+  }
+}

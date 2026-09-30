@@ -43,6 +43,16 @@ from trw_mcp.tools._delivery_event_checks import (
     unpinned_session_changed_files,
 )
 
+
+@pytest.fixture(autouse=True)
+def _client_with_a_change_evidence_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests read hook-written change records, which only a client with a registered writer produces.
+
+    Set explicitly: the ambient environment must not decide it (E2E-INC-115 b).
+    """
+    monkeypatch.setenv("TRW_CLIENT_PROFILE", "claude-code")
+
+
 _REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _BUNDLED_HOOK = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "pre-tool-deliver-gate.sh"
 _PROJECTED_HOOK = _REPO_ROOT / ".claude" / "hooks" / "pre-tool-deliver-gate.sh"
@@ -346,9 +356,13 @@ class TestUnpinnedStartedSessionIsGated:
         init_source = (PACKAGE_ROOT / "src" / "trw_mcp" / "__init__.py").read_text(encoding="utf-8")
         assert "PROCESS_STARTED_AT = _datetime.now(_timezone.utc)" in init_source
 
-    def test_a_non_claude_code_client_is_blocked_end_to_end(self, tmp_path: Path) -> None:
+    def test_a_non_claude_code_client_is_blocked_end_to_end(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The hook keyed its record on the host session id; the server's key is its
         process UUID. The gate must still see the edit (P1-2)."""
+        monkeypatch.setenv("TRW_CLIENT_PROFILE", "opencode")
+        monkeypatch.setattr("trw_mcp.client_profiles.change_evidence.CHANGE_EVIDENCE_WRITERS", frozenset({"opencode"}))
         from datetime import datetime, timezone
 
         from trw_mcp.state._paths import get_session_id

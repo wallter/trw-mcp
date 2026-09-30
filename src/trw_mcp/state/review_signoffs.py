@@ -221,9 +221,15 @@ def append_review_signoff(
         raise ValueError("--review-ref must be a non-empty review_id or scope_digest")
     if not name:
         raise ValueError("--approver must be a non-empty operator identity")
-    hours = configured_ttl_hours() if ttl_hours is None else int(ttl_hours)
+    cap = configured_ttl_hours()  # the SAME cap resolve_review_signoff enforces (E2E-INC-124)
+    hours = cap if ttl_hours is None else int(ttl_hours)
     if hours < 1:
         raise ValueError("ttl_hours must be at least 1")
+    if hours > cap:
+        raise ValueError(
+            f"ttl_hours {hours} exceeds review_signoff_ttl_hours ({cap}); the review gate would refuse this "
+            "approval as operator_approval_ttl_exceeded -- mint at most the configured window"
+        )
     issued = now or datetime.now(tz=timezone.utc)
     approved_at = issued.isoformat()
     expires_at = (issued + timedelta(hours=hours)).isoformat()
@@ -389,14 +395,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     from trw_mcp.state._paths import resolve_trw_dir
 
     parser = argparse.ArgumentParser(
-        prog="trw-review-approve",
+        prog="python -m trw_mcp.state.review_signoffs",  # the installed entry point (E2E-INC-124)
         description="Append one signed, scope-bound operator review sign-off (PRD-CORE-255-FR04).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     approve = sub.add_parser("approve", help="append one signed operator review sign-off")
     approve.add_argument("--review-ref", required=True, help="the review_id or scope_digest this approval binds to")
     approve.add_argument("--approver", required=True, help="the operator granting the sign-off")
-    approve.add_argument("--ttl-hours", type=int, default=None, help="defaults to review_signoff_ttl_hours")
+    approve.add_argument(
+        "--ttl-hours", type=int, default=None, help="defaults to, and may not exceed, review_signoff_ttl_hours"
+    )
     approve.add_argument("--trw-dir", type=Path, default=None, help="project .trw directory")
     args = parser.parse_args(argv)
 

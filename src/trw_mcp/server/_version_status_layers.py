@@ -47,6 +47,21 @@ def _expected_generation() -> tuple[str | None, dict[str, str] | None]:
         return None, None
 
 
+def realize_process_surface() -> None:
+    """Build this process's served app once, so its live fingerprint is frozen before it is read.
+
+    A served process freezes the fingerprint when its transport builds the app. A CLI process used to do the
+    same as a side effect of importing ``trw_mcp.server``; that import no longer builds anything
+    (SERVER-LAZY-APP-IMPORT), so the version checks that read this process's own surface (``version-status``,
+    doctor, ``build-release``, the publish gate) build it here instead, and only they pay for it. A fingerprint
+    that cannot be constructed stays unset, and the layer below still reports ``unknown``.
+    """
+    if get_frozen_fingerprint() is None:
+        from trw_mcp.server._app import build_served_app
+
+        build_served_app()
+
+
 def live_process_layer() -> dict[str, object]:
     """Currentness + frozen fingerprint of the connected process (FR09).
 

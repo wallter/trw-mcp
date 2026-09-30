@@ -10,6 +10,7 @@ removes, creates or follows anything. Bounded: it stops counting after
 from __future__ import annotations
 
 import os
+import shlex
 from pathlib import Path
 from typing import Literal
 
@@ -65,6 +66,11 @@ def trash_row(target: Path, _config: object) -> tuple[Literal["PASS", "WARN"], s
     bound = "≥" if truncated else ""
     size = f"{bound}{_human(total)}"
     count = f"{bound}{folders}"
+    # E2E-INC-062: name the exact command at ANY size -- TRW never deletes these backups itself.
+    remove = f"remove with: rm -rf {shlex.quote(str(trash))}"
     if total > WARN_BYTES:
-        return "WARN", f"`.trw/trash` holds {size} in {count} backups; delete it when you no longer need them"
-    return "PASS", f"{trash} holds {size} in {count} backup(s)"
+        return (
+            "WARN",
+            f"`.trw/trash` holds {size} in {count} backups; delete it when you no longer need them ({remove})",
+        )
+    return "PASS", f"{trash} holds {size} in {count} backup(s); {remove} once you no longer need them"

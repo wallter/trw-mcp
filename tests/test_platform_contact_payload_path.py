@@ -178,7 +178,8 @@ def test_a_queue_outside_any_trw_is_never_sent(
     assert result["skipped_reason"] == "no_source_project"
 
 
-# --- r3 P0 #2: MEMORY_STORAGE_PATH relocates the store to B; the archived db's .trw governs it ----
+# --- r3 P0 #2: the store is in B (--db names it; MEMORY_STORAGE_PATH no longer relocates it, see
+# E2E-BACKUP-DAEMON-STORE-ONE-RESOLVER); the archived db's .trw governs it ----
 
 
 def _store_in(project: Path) -> Path:
@@ -204,7 +205,7 @@ def test_backup_create_of_a_relocated_store_is_governed_by_the_stores_project(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The r3 repro: from A, ``MEMORY_STORAGE_PATH`` names B's store. Both A (the invoking project) and B
+    """The r3 repro: from A, ``--db`` names B's store. Both A (the invoking project) and B
     (the store's owner) must allow it: a relocation can only restrict, never substitute (classfix r1)."""
     from trw_memory.daemon import DiscoveryAbsent
 
@@ -212,15 +213,14 @@ def test_backup_create_of_a_relocated_store_is_governed_by_the_stores_project(
 
     a = _project(two_projects / "a", a_contact)
     b = _project(two_projects / "b", b_contact)
-    _store_in(b)
-    monkeypatch.setenv("MEMORY_STORAGE_PATH", str(b / ".memory"))
+    store = _store_in(b)
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(b))
     monkeypatch.setattr("trw_memory.cli_client.read_live_discovery", lambda _p: DiscoveryAbsent(reason="no record"))
     config = TRWConfig(backend_url=BACKEND_URL, platform_api_key="k", backup_remote_enabled=True)
     monkeypatch.setattr(_subcommands_backup, "_load_config", lambda: config)
     _run_from(a, monkeypatch)
 
-    _subcommands_backup.run_backup(argparse.Namespace(backup_command="create", namespace="default", db=None))
+    _subcommands_backup.run_backup(argparse.Namespace(backup_command="create", namespace="default", db=str(store)))
 
     assert len(requests_sent) == posts, capsys.readouterr()
 
@@ -400,8 +400,9 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("server/_subcommands_sync.py", "run_sync"): (
         "sync pull --full: the same rows-selected-by-trw_dir payload as the sync loop (inbound replay)"
     ),
-    ("tools/submit_feedback.py", "_submit_feedback_impl"): (
-        "feedback: the payload is agent-typed text, not a file; the caller's project is resolved once"
+    ("tools/submit_feedback.py", "_send_recorded"): (
+        "feedback: the payload is agent-typed text (a fresh submit, or its own project's outbox record on "
+        "flush), not a file; the caller's project is resolved once"
     ),
     ("tools/_recall_impl.py", "_augment_with_remote"): (
         "remote recall: the payload is the agent's query text, not a file; the caller's project is "

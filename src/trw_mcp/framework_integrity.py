@@ -84,11 +84,12 @@ class NewerGeneration:
     running: str
     deployed: str
     source: str
+    kind: str = "the project's framework"
 
     @property
     def nudge(self) -> str:
         return (
-            f"this trw-mcp ({self.running}) is older than the project's framework ({self.deployed}, "
+            f"this trw-mcp ({self.running}) is older than {self.kind} ({self.deployed}, "
             f"from {self.source}); upgrade trw-mcp, or set {FORCE_DEPLOY_ENV}=1 if that value is wrong"
         )
 
@@ -98,6 +99,7 @@ def newer_deployed_generation(
     *,
     framework_source: str,
     aaref_source: str,
+    package_version: str | None = None,
 ) -> NewerGeneration | None:
     """The newer deployed generation when this bundle is older, else None.
 
@@ -106,7 +108,9 @@ def newer_deployed_generation(
     the version the bundled bodies declare; the deployed generation is the
     highest of the ``VERSION.yaml`` stamp, the deployed body and the config pin,
     per document. Unparseable versions never report newer (caller keeps its
-    normal behaviour). ``TRW_FRAMEWORK_FORCE_DEPLOY=1`` disables the guard.
+    normal behaviour). With *package_version* the receipt's recorded package version is compared too (PEP 440),
+    which catches an older package writing over a newer one under an EQUAL framework version string.
+    ``TRW_FRAMEWORK_FORCE_DEPLOY=1`` disables the guard.
     """
     if os.environ.get("TRW_FRAMEWORK_FORCE_DEPLOY") == "1":
         return None
@@ -131,6 +135,36 @@ def newer_deployed_generation(
             key = _version_key(candidate)
             if candidate is not None and key is not None and key > running_key:
                 return NewerGeneration(running, candidate, source)
+    return _newer_package(target, package_version) if package_version else None
+
+
+def _newer_package(target: Path, package_version: str) -> NewerGeneration | None:
+    """The receipt's package version when it is newer than *package_version* (PEP 440: ``8.1.0.dev26`` < ``8.1.0``)."""
+    try:
+        receipt = json.loads(_read_or_log(target / DEPLOYMENT_RELATIVE_PATH) or "null")
+    except (
+        json.JSONDecodeError
+    ):  # trw-fail-silent-allow: an unreadable receipt claims no package version; the guard does not fire
+        return None
+    deployed = receipt.get("package_version") if isinstance(receipt, dict) else None
+    if not isinstance(deployed, str) or not deployed:
+        return None
+    try:
+        from packaging.version import InvalidVersion, Version
+
+        deployed_v, running_v = Version(deployed), Version(package_version)
+    except (
+        ImportError,
+        InvalidVersion,
+    ):  # trw-fail-silent-allow: an unparseable version cannot be ordered, so it never blocks
+        return None
+    if deployed_v > running_v:
+        return NewerGeneration(
+            package_version,
+            deployed,
+            "DEPLOYMENT.json package_version",
+            kind="the trw-mcp that last deployed this project's framework",
+        )
     return None
 
 
@@ -150,7 +184,7 @@ def _read(path: Path, errors: list[str], label: str) -> str | None:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
         errors.append(f"{label} missing: {path}")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         errors.append(f"{label} unreadable: {path}: {exc}")
     return None
 
@@ -300,6 +334,7 @@ def repair_framework_runtime(
     aaref_version: str,
     registry_digest: str | None = None,
     failure_after_promotions: int | None = None,
+    package_version: str | None = None,
 ) -> FrameworkIntegrityReport:
     """Explicitly regenerate managed bodies/stamp and update existing pins.
 
@@ -369,6 +404,7 @@ def repair_framework_runtime(
         aaref_version=aaref_version,
         failure_after_promotions=failure_after_promotions,
         mutable_artifacts=mutable_artifacts,
+        package_version=package_version,
     )
 
     return inspect_framework_runtime(

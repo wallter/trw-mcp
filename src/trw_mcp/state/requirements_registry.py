@@ -39,6 +39,7 @@ from trw_mcp.models.requirements import (
     RequirementRegistryEntry,
     SchedulingAction,
 )
+from trw_mcp.state._prd_status import prd_status
 from trw_mcp.state._registry_activation import ActivationDecision, ActivationRefusedError, evaluate_activation
 from trw_mcp.state._scheduling_ledger import (
     ANCHOR_FILENAME,
@@ -87,7 +88,7 @@ REGISTRY_FILENAME = "requirements-registry.json"
 
 # Lifecycle statuses with no executable work remaining. Everything else is an
 # executable-registry member (includes non-canonical open aliases).
-_TERMINAL_STATUSES = frozenset({"done", "implemented", "merged", "deprecated", "delivered", "complete"})
+_TERMINAL_STATUSES = frozenset({"done", "implemented", "merged", "deprecated", "superseded", "delivered", "complete"})
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
@@ -268,10 +269,11 @@ def _scan_executable_entries(prds_dir: Path) -> list[RequirementRegistryEntry]:
             raw = prd_file.read_bytes()
         except OSError:
             continue
-        fm = parse_frontmatter(raw.decode("utf-8", errors="replace"))
+        text = raw.decode("utf-8", errors="replace")
+        fm = parse_frontmatter(text)
         if not fm:
             continue
-        status = str(fm.get("status", "draft")).strip().lower()
+        status = prd_status(fm, text)
         if status in _TERMINAL_STATUSES:
             continue
         dates = fm.get("dates")

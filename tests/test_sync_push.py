@@ -485,7 +485,8 @@ async def test_pushed_payload_masks_pii_in_tags_and_metadata_values() -> None:
     assert "sk_abcdefghijklmnopqrstuvwxyz1234" not in wire
     assert published["tags"] == ["incident", "<email>"]
     assert published["metadata"]["owner"] == "<email>"
-    assert published["metadata"]["nested"]["token"] == "<api_key>"
+    # One credential detector (E2E-SECRET-DETECTOR): an API-key shape carries the unified telemetry token.
+    assert published["metadata"]["nested"]["token"] == "<REDACTED:api_key>"
     assert published["metadata"]["notes"] == ["ping <email>"]
     # Structural keys and non-string values survive untouched, and the
     # installation id is still hashed from its RAW value.

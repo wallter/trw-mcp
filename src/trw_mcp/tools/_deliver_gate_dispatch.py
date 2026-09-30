@@ -93,6 +93,7 @@ from trw_mcp.tools._deliver_gate_selfcomputed import (
 from trw_mcp.tools._deliver_gate_selfcomputed import (
     log_unused_override_intent as _log_unused_override_intent,
 )
+from trw_mcp.tools._deliver_outcome import exit_at, note_blocked, note_overridden, outcome_scope, record_outcome
 from trw_mcp.tools._deliver_requirement_drift import (
     apply_requirement_drift_gate,
     compute_requirement_drift,
@@ -258,7 +259,31 @@ def evaluate_delivery_gates(
     peer naming its ``run_path`` explicitly. Every other gate below is
     unaffected; omitting it keeps the formation gate's own conservative
     (fail-closed) default.
+
+    PRD-CORE-345 FR01: every completed evaluation also writes one durable outcome record (pass or
+    block). The record is audit only and is written AFTER the decision, which it never changes; a
+    raise out of the cascade writes none.
     """
+    with outcome_scope() as accumulator:
+        blocked = _run_cascade(
+            gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, call_ctx=call_ctx
+        )
+        record_outcome(accumulator, blocked, resolved_run, trw_dir)
+    return blocked
+
+
+def _run_cascade(
+    gate_result: Mapping[str, object],
+    results: DeliverResultDict,
+    errors: list[str],
+    resolved_run: Path | None,
+    trw_dir: Path,
+    allow_unverified: bool,
+    unverified_reason: str,
+    *,
+    call_ctx: TRWCallContext | None,
+) -> bool:
+    """The gate cascade itself; each ``return`` names its closed-table exit site (PRD-CORE-345)."""
     # CORE-205 FR07/FR08: typed decisions are now the authoritative dispatch
     # input.  The projector preserves the stable public keys while eliminating
     # parallel handwritten interpretations of gate policy.
@@ -286,46 +311,46 @@ def evaluate_delivery_gates(
         results["requirement_drift_warning"] = drift_text
 
     if _evaluate_no_escape(typed_gate_result, results, errors):
-        return True
+        return exit_at("no_escape", True)
     if _evaluate_structured(
         typed_gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
-        return True
+        return exit_at("structured", True)
     # PRD-FIX-140-FR04/FR05: the two build-evidence rules that used to live ONLY
     # in the bundled PreToolUse hook. They run here, immediately after the
     # STRUCTURED phase, so the server decides them before any softer gate and
     # under the same acceptable-failure contract.
     if _evaluate_build_authority(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
-        return True
+        return exit_at("build_authority", True)
     # PRD-CORE-213-FR04/FR05: acceptance-integrity transition gate. Runs after the
     # existing STRUCTURED gates and shares their PRD-CORE-191 override contract. It
     # self-computes (path-limited PRD diff + coherence) rather than reading a
     # gate_result key, so it is NOT a _GATE_TABLE descriptor. Fail-open: any
     # resolution error degrades to no-block (NFR02).
     if _evaluate_acceptance_integrity(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
-        return True
+        return exit_at("acceptance_integrity", True)
     # PRD-CORE-249-FR04: plan-acceptance gate. Same seam and same PRD-CORE-191
     # override contract as the CORE-213 gate above; it reads the governing plan
     # and the run's declaration rather than any gate_result key, so it is NOT a
     # _GATE_TABLE descriptor either. Deleting this call is the FR04 rollback
     # lever and turns the FR06 end-to-end test red.
     if _evaluate_plan_acceptance(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
-        return True
+        return exit_at("plan_acceptance", True)
     # PRD-CORE-265-FR11: the orchestrator's formation gate — same seam, same
     # PRD-CORE-191 override contract, and self-computing like the two above.
     # Deleting this call is the FR11 rollback lever and turns its gate test red.
     if _evaluate_formation(
         results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, call_ctx=call_ctx
     ):
-        return True
+        return exit_at("formation", True)
     # PRD-CORE-321-FR05: the drift gate reuses the report above (no recompute), under
     # the same PRD-CORE-191 override contract. Deleting this call returns to warn-only.
     if apply_requirement_drift_gate(
         drift, drift_blocks, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
-        return True
+        return exit_at("requirement_drift", True)
     _log_unused_override_intent(allow_unverified, unverified_reason, resolved_run)
-    return _evaluate_advisory(typed_gate_result, resolved_run)
+    return exit_at("advisory", _evaluate_advisory(typed_gate_result, resolved_run))
 
 
 def _build_decision_set(gate_result: Mapping[str, object]) -> DeliveryDecisionSet:
@@ -359,8 +384,13 @@ def _persist_decision_set(resolved_run: Path | None, decision_set: DeliveryDecis
     """Persist every evaluated decision as immutable audit evidence."""
     if resolved_run is None:
         return
+    from trw_mcp.state._containment import trw_write_contained
     from trw_mcp.state.persistence import FileStateWriter
 
+    # HB-1: a planted symlink must never crash or change the deliver decision. The refusal is logged at WARNING
+    # (trw_state_write_refused) and only this audit copy is skipped.
+    if not trw_write_contained(resolved_run / "meta" / "decisions"):
+        return
     writer = FileStateWriter()
     for decision in decision_set.decisions:
         path = resolved_run / "meta" / "decisions" / f"{decision.decision_id}.json"
@@ -405,6 +435,7 @@ def _evaluate_no_escape(
         message = gate_result.get(key)
         if message:
             errors.append(str(message))
+            note_blocked(key)
     results["errors"] = errors
     results["success"] = False
     return True
@@ -477,6 +508,7 @@ def _hard_block_override(
             results, errors, result_block_key=result_block_key, block_value=block_reason, error_message=block_reason
         )
         logger.warning("deliver_hard_block", gate_type=gate_type, run=str(resolved_run))
+        note_blocked(gate_type)
         return True
 
     # PRD-FIX-127 FR03: census effect S06 (the acceptable-failure override ledger)
@@ -506,6 +538,7 @@ def _hard_block_override(
         _emit_block(
             results, errors, result_block_key=result_block_key, block_value=block_reason, error_message=str(error)
         )
+        note_blocked(gate_type, refused=True)
         return True
     # PRD-SEC-013-FR07: an accepted override of the intent-violation gate MUST be
     # ledgered (success criterion 3) and clears the open-violation marker — the seam
@@ -523,12 +556,14 @@ def _hard_block_override(
                 block_value=block_reason,
                 error_message="intent-violation override refused: the FR03 ledger record could not be written",
             )
+            note_blocked(gate_type, refused=True)
             return True
     # S07 needs its OWN boundary: it runs after the S06 boundary has closed. It is
     # the audit of an ACCEPTED override, so it is re-evaluated with S06 rather than
     # skipped — a resumed accept that wrote no audit event would be unaudited.
     with journal_step("S07"):
         _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
+    note_overridden(gate_type, results.get("acceptable_failure_record"))
     return False
 
 

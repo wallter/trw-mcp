@@ -559,3 +559,16 @@ def test_canary_tamper_through_real_recall_dependency_degrades_the_payload(
     assert "recall_degraded" not in result
     # DR-001: the mandated first call still returns a payload.
     assert "framework_reminder" in result
+
+
+def test_finalize_exposes_the_sessions_own_id_and_omits_it_when_unknown() -> None:
+    """INC-006: the id `trw-mcp run adopt --session` needs is in the session_start payload."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.tools._ceremony_session_start_steps import finalize_session_start
+
+    named: dict[str, object] = {}
+    finalize_session_start(named, get_config(), {}, [], session_id="sess-own")  # type: ignore[arg-type]
+    assert named["session_id"] == "sess-own"
+    unnamed: dict[str, object] = {}
+    finalize_session_start(unnamed, get_config(), {}, [], session_id=None)  # type: ignore[arg-type]
+    assert "session_id" not in unnamed

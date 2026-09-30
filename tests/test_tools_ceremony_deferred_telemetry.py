@@ -203,7 +203,7 @@ class TestDeliverTelemetryIntegration:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools.ceremony._do_reflect",
-                return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0},
+                return_value={"status": "success", "events_analyzed": 0, "mechanical_learnings_extracted": 0},
             ),
             patch(
                 "trw_mcp.tools.ceremony._do_instruction_sync",

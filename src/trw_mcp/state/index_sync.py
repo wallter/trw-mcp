@@ -39,6 +39,7 @@ from trw_mcp.state._index_sync_catalogue import (
     _stats_parts,
 )
 from trw_mcp.state.persistence import FileStateWriter
+from trw_mcp.state._prd_status import prd_status
 from trw_mcp.state.prd_utils import parse_frontmatter
 
 logger = structlog.get_logger(__name__)
@@ -57,6 +58,7 @@ _STATUS_ORDER: dict[str, int] = {
     "review": 3,
     "draft": 4,
     "deprecated": 5,
+    "superseded": 6,
 }
 _DONE_STATUSES = frozenset({"done", "implemented"})
 
@@ -129,7 +131,7 @@ def _scan_prd_dir(directory: Path) -> list[PRDEntry]:
             prd_id = str(fm.get("id", prd_file.stem))
             title = str(fm.get("title", ""))
             priority = str(fm.get("priority", "P1")).upper()
-            status = str(fm.get("status", "draft")).lower()
+            status = prd_status(fm, content)
             category = str(fm.get("category", "")).upper()
 
             entries.append(
@@ -195,6 +197,8 @@ def render_index_catalogue(entries: list[PRDEntry], registry: RegistryBuildResul
         summary_parts.append(f"{counts['merged']} merged")
     if counts["deprecated"]:
         summary_parts.append(f"{counts['deprecated']} deprecated")
+    if counts["superseded"]:
+        summary_parts.append(f"{counts['superseded']} superseded")
     if counts["review"]:
         summary_parts.append(f"{counts['review']} review/groomed")
     summary_parts.append(f"{counts['draft']} draft")
@@ -211,6 +215,7 @@ def render_index_catalogue(entries: list[PRDEntry], registry: RegistryBuildResul
     lines.extend(_render_4col_table(f"### Merged ({counts['merged']})", groups["merged"]))
     lines.extend(_render_5col_table(f"### Review / Groomed ({counts['review']})", groups["review"]))
     lines.extend(_render_4col_table(f"### Deprecated ({counts['deprecated']})", groups["deprecated"]))
+    lines.extend(_render_4col_table(f"### Superseded ({counts['superseded']})", groups["superseded"]))
     lines.extend(_render_4col_table(f"### Draft ({counts['draft']})", groups["draft"]))
 
     lines.append(INDEX_CATALOGUE_END)

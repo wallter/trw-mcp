@@ -49,6 +49,7 @@ SYNCHRONOUS_DISPATCH_EFFECTS: frozenset[str] = frozenset(
         "S19",  # _write_nudge_analysis_artifact (nudge-analysis JSON write)
         "S20",  # _log_deliver_event (delivery-complete event append)
         "S23",  # _persist_decision_set (gate decision-set receipt writes)
+        "S23b",  # record_outcome (deliver outcome record write, PRD-CORE-345)
         "S22",  # step_project_handoff (project handoff + remaining-work section)
     }
 )

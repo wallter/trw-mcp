@@ -63,6 +63,61 @@ def print_symlink_guidance(refused: list[Path], target: Path) -> None:
     )
 
 
+def print_done(target: Path, removed: int, remove_ide: str | None, delete_memory: bool) -> None:
+    """The uninstall summary; on a full uninstall, first prune the scaffold directories left empty (INC-080)."""
+    from trw_mcp.bootstrap._uninstall_skill_dir import prune_scaffold_dirs
+    from trw_mcp.server import _uninstall_memory
+
+    if not remove_ide:
+        prune_scaffold_dirs(target)
+    print(f"\n  Done. Removed {removed} item(s).")
+    if remove_ide:
+        print(f"  {remove_ide} surfaces removed. Other clients and framework-core files are untouched.")
+    else:
+        store = _uninstall_memory.shared_store()
+        if not delete_memory and store.exists():
+            print(f"  Note: the shared memory store {store} is kept, with this checkout's rows in it.")
+            print("  Re-run with --delete-memory to delete this checkout's namespace from it.")
+        print("  To uninstall the package itself: pip uninstall trw-mcp trw-memory")
+
+
+def report_custom_format_kept(path: Path, target: Path) -> int:
+    """Name a merged config left untouched with its TRW entries; return the error count (1 when named).
+
+    E2E-UNINSTALL-CUSTOM-JSON: TRW never rewrites a file the user formatted, so its entries stay; that is a
+    partial uninstall, reported here and in the exit status, never a silent success. A file not recorded as
+    custom-formatted (nothing of TRW's was in it) prints nothing and counts 0.
+    """
+    from trw_mcp.server._uninstall_hook_strips import CUSTOM_FORMAT
+
+    if path not in CUSTOM_FORMAT:
+        return 0
+    print(
+        f"  Kept: {display(path, target)} (custom-formatted, so left untouched with its TRW entries;"
+        " remove the `trw` server and TRW hook entries by hand)"
+    )
+    return 1
+
+
+def report_stripped(path: Path, target: Path) -> int:
+    """The line for a config uninstall rewrote; return the error count (1 when edited TRW hooks remain).
+
+    INC-012 follow-up: "removed TRW entries" was printed even when TRW hooks were left behind. A TRW hook the
+    user edited is kept by design, but it runs a script uninstall deleted, so the run says so and fails.
+    """
+    from trw_mcp.server._uninstall_hook_strips import KEPT_EDITED
+
+    left = KEPT_EDITED.get(path)
+    if not left:
+        print(f"  Cleaned: {display(path, target)} (removed TRW entries)")
+        return 0
+    print(
+        f"  Kept: {display(path, target)} (removed TRW entries, but kept {len(left)} TRW hook(s) you edited, "
+        f"which run scripts uninstall removed; remove them by hand: {'; '.join(left)[:300]})"
+    )
+    return 1
+
+
 def report_kept_trw(plain_paths: list[Path], refused: list[Path], trw_left: list[str], target: Path) -> int:
     """Print why ``.trw`` (the manifest) stays; return the extra error count (1 when a TRW file was kept).
 

@@ -119,3 +119,16 @@ def test_search_mode_vocabulary_no_longer_admits_semantic() -> None:
 
     assert get_args(SearchMode) == ("lexical",)
     assert "dependency_missing" not in get_args(ErrorCode)
+
+
+def test_a_failed_search_repeats_neither_the_query_nor_the_repo_path(tmp_path: Path) -> None:
+    secret = "ghp_" + "a" * 36
+    missing = tmp_path / "no-such-dir-for-the-secret-path"
+
+    empty = lexical_search(tmp_path, query="   ")
+    invalid = lexical_search(missing, query=secret)
+
+    assert invalid.status == "failed" and invalid.error_code == "invalid_repo"
+    assert invalid.query == "" and secret not in invalid.model_dump_json()
+    assert "no-such-dir-for-the-secret-path" not in invalid.model_dump_json()
+    assert empty.query == ""

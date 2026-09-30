@@ -439,6 +439,7 @@ async def test_mounted_hooks_enforce_resolved_phase(tmp_path: Path, monkeypatch:
     assert await mw.on_list_tools(context, list_next) == []
     blocked = await mw.on_call_tool(context, call_next)
     assert blocked.structured_content["error"] == "mcp_security_blocked"
+    assert blocked.is_error is True  # CODEX-P0-B: a refusal is an MCP error
     call_next.assert_not_awaited()
 
     monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")

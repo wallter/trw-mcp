@@ -11,6 +11,7 @@ import pytest
 
 from trw_mcp.models._evidence_core import ReceiptState
 from trw_mcp.models._evidence_plans import ReviewVerdict
+from trw_mcp.models._evidence_records import ReviewReceipt
 from trw_mcp.tools._evidence_gates import validate_review_receipt
 from trw_mcp.tools._review_manual import handle_manual_mode
 from trw_mcp.tools._review_receipt_writer import load_latest_review_evidence
@@ -61,11 +62,46 @@ class TestCleanZeroFindingReviewReceiptIsSubstantive:
         project, binding, _ = project_with_binding(tmp_path, {"src/a.py": "code"})
         plan = review_plan(binding, governing_digest="gov-A")
         receipt = review_receipt(binding, plan)
-        # Deliver-time plan resolved DIFFERENT governing bytes -> input digest mismatch.
+        # Deliver-time plan resolved DIFFERENT governing bytes -> the plan digest (which covers them) mismatches first.
         other_plan = review_plan(binding, governing_digest="gov-B")
         result = validate_review_receipt(receipt, other_plan, project)
         assert not result.is_positive
         assert result.state is ReceiptState.INVALID
+        assert result.reason_code == "review_plan_digest_mismatch"
+
+    def test_input_digest_not_derived_from_this_plan_is_invalid(self, tmp_path: Path) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: plan digest matches, but the input digest names other content -> INVALID.
+
+        ``test_governing_byte_mismatch_is_invalid`` above stops at the plan-digest check, so this is the
+        only test that reaches the input-digest refusal.
+        """
+        project, binding, _ = project_with_binding(tmp_path, {"src/a.py": "code"})
+        plan = review_plan(binding)
+        honest = review_receipt(binding, plan)
+        forged = ReviewReceipt.model_validate_json(  # the on-disk load path
+            json.dumps(
+                {**honest.model_dump(mode="json"), "review_input_digest": honest.expected_input_digest("gov-other")}
+            )
+        )
+        assert forged.review_plan_digest == plan.plan_digest  # precondition: only the input digest differs
+
+        result = validate_review_receipt(forged, plan, project)
+        assert not result.is_positive
+        assert result.state is ReceiptState.INVALID
+        assert result.reason_code == "review_input_digest_mismatch"
+
+    @pytest.mark.parametrize("field", ["method", "reviewer_identity", "completed_at"])
+    def test_receipt_missing_a_provenance_field_is_not_substantive(self, tmp_path: Path, field: str) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: full plan coverage does not make a receipt with no method/reviewer/time count."""
+        project, binding, _ = project_with_binding(tmp_path, {"src/a.py": "code"})
+        plan = review_plan(binding)
+        honest = review_receipt(binding, plan)
+        hollow = ReviewReceipt.model_validate_json(json.dumps({**honest.model_dump(mode="json"), field: ""}))
+
+        result = validate_review_receipt(hollow, plan, project)
+        assert not result.is_positive
+        assert result.state is ReceiptState.INVALID
+        assert result.reason_code == "review_not_substantive"
 
 
 class TestReviewGateDerivesSubstanceFromCurrentReceipt:

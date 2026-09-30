@@ -142,4 +142,5 @@ def test_an_apostrophe_in_a_real_filename_does_not_break_the_hook(tmp_path: Path
     result = _run("src/don't.py", tmp_path)
 
     assert result.returncode == 0
-    assert "[TRW]" in result.stdout, "a legitimate filename with an apostrophe broke the hook"
+    record = tmp_path / ".trw" / "context" / "cc03-hints" / "toolu-injection-001.json"
+    assert record.is_file(), "a legitimate filename with an apostrophe broke the hook"

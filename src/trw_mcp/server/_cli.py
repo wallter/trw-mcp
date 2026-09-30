@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import os
 import threading
 from pathlib import Path
 
@@ -165,6 +166,10 @@ def _register_thread_dump_signal(dump_dir: Path | None = None) -> bool:
     return True
 
 
+#: Subcommands whose handlers report every failure on stdout/stderr as plain text, so plain output shows no logs.
+_SELF_REPORTING_COMMANDS = frozenset({"local", "doctor", "init-project", "update-project", "instructions"})
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -208,7 +213,9 @@ def main() -> None:
     plain_subcommand_output = is_subcommand and not (debug or verbosity > 0 or getattr(args, "log_json", False))
     effective_log_level = getattr(args, "log_level", None)
     if plain_subcommand_output and effective_log_level is None:
-        effective_log_level = "WARNING"
+        # These commands print every failure themselves as plain text (the remedy included), so a library log line
+        # is the same failure again as JSON noise (E2E-INC-009/014/017). -v / --debug / --log-json still show logs.
+        effective_log_level = "CRITICAL" if cmd in _SELF_REPORTING_COMMANDS else "WARNING"
 
     subcommand_log_dir: Path | None = None
     if debug or verbosity >= 2:
@@ -237,7 +244,12 @@ def main() -> None:
     # Dispatch subcommands (cmd/handler already resolved above, ahead of the
     # bounded-lane guard and before logging touched disk).
     if handler is not None:
-        handler(args)
+        # PRD-CORE-342 FR02/FR08: opt-in tracing; a CLI verb joins its caller's TRACEPARENT.
+        from trw_mcp.telemetry.otel_propagation import cli_root_span, install_tracing
+
+        install_tracing()
+        with cli_root_span(cmd, os.environ):
+            handler(args)
         return
 
     # If unrecognized subcommand (not empty, not "serve"), suggest closest match
@@ -293,6 +305,12 @@ def _serve(args: argparse.Namespace) -> None:
         log_dir=log_dir,
         package_name="trw-mcp",
     )
+
+    # PRD-CORE-342 FR02: opt-in SDK setup (TRW_OTEL_ENABLED / otel_enabled, default off), once, before
+    # tools are served. The server never extracts TRACEPARENT: request parents come from _meta (FR08).
+    from trw_mcp.telemetry.otel_propagation import install_tracing
+
+    install_tracing(config)
 
     # PRD-CORE-248 FR02: release the buffered boot-phase events now that logging
     # has a real sink. They are buffered rather than emitted at import because

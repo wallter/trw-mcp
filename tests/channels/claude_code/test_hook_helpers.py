@@ -9,7 +9,6 @@ from pathlib import Path
 from trw_mcp.channels.claude_code._hook_helpers import (
     _CEREMONY_MODE_FIELD,
     DEFAULT_SKIP_EXTENSIONS,
-    format_t0_beacon,
     format_t1_hint,
     format_t2_hint,
     prune_hint_files,
@@ -122,10 +121,11 @@ class TestReadCc03Config:
 
 
 class TestFormatters:
-    def test_t0_beacon_short(self) -> None:
-        """FR28: T0 output ≤ 20 tokens (≤ ~100 chars)."""
-        output = format_t0_beacon()
-        assert len(output) <= 120
+    def test_no_generic_presence_beacon_remains(self) -> None:
+        """E2E-HINT-OUTPUT: a hint with nothing actionable says nothing (the T0 beacon was deleted)."""
+        from trw_mcp.channels.claude_code import _hook_helpers
+
+        assert not hasattr(_hook_helpers, "format_t0_beacon")
 
     def test_t1_hint_with_learnings(self) -> None:
         learnings = [

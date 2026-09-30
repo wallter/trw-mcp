@@ -13,7 +13,12 @@ set -euo pipefail
 PAYLOAD="$(cat)"
 
 # Best-effort structured log
-LOG_DIR="${CURSOR_PROJECT_DIR:-$(pwd)}/.trw/logs"
+# Project root: Cursor's dir, else the git top level, else pwd -- never a subdirectory the shell happens to be in
+# (HOOK-CWD-STATE-LEAK). `|| true` keeps set -e from failing the hook outside a repository.
+_trw_root="${CURSOR_PROJECT_DIR:-}"
+[ -n "$_trw_root" ] || _trw_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$_trw_root" ] || _trw_root="$(pwd)"
+LOG_DIR="$_trw_root/.trw/logs"
 # PRD-SEC/RC8: refuse to log through a symlinked .trw, .trw/logs or log file -- a
 # crafted checkout must not be able to redirect this append at an arbitrary
 # target the user can write. Logging is best-effort (never blocks this

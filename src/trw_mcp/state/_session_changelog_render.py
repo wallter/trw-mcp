@@ -52,8 +52,12 @@ def _extract_followups(events: list[dict[str, object]]) -> list[str]:
     return followups
 
 
+def _learnings_phrase(learnings_recorded: int | None) -> str:
+    return "learnings not counted" if learnings_recorded is None else f"{learnings_recorded} learning(s)"
+
+
 def _section_summary(
-    commits: list[dict[str, str]], by_package: dict[str, list[str]], learnings_recorded: int
+    commits: list[dict[str, str]], by_package: dict[str, list[str]], learnings_recorded: int | None
 ) -> list[str]:
     commit_phrase = f"{len(commits)} commit(s)" if commits else "no commits"
     file_count = sum(len(v) for v in by_package.values())
@@ -62,7 +66,7 @@ def _section_summary(
         "",
         (
             f"Session recorded {commit_phrase}, {file_count} changed file(s) across "
-            f"{len(by_package)} package root(s), and {learnings_recorded} learning(s)."
+            f"{len(by_package)} package root(s), and {_learnings_phrase(learnings_recorded)}."
         ),
         "",
     ]
@@ -146,7 +150,7 @@ def render_markdown(
     review: dict[str, object] | None,
     build: dict[str, object] | None,
     events: list[dict[str, object]],
-    learnings_recorded: int,
+    learnings_recorded: int | None,
     advisory: list[PackageChangelogCoverage],
     advisory_enabled: bool,
     warnings: list[str],
@@ -161,7 +165,11 @@ def render_markdown(
     lines += [
         "## Learnings Recorded",
         "",
-        f"- {learnings_recorded} learning event(s) found in `meta/events.jsonl`.",
+        (
+            "- Not counted: the session's learning count is taken when `trw_deliver` writes this report."
+            if learnings_recorded is None
+            else f"- {learnings_recorded} learning(s) persisted this session (`trw_learn`)."
+        ),
         "",
     ]
     if advisory_enabled:

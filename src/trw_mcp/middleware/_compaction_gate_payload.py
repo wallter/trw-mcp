@@ -89,10 +89,14 @@ def build_compaction_block(tool_name: str, blocked_count: int, max_blocks: int) 
     marker_ts, unreadable_reason = _read_marker_instant()
     marker_state = MARKER_STATE_READ if marker_ts is not None else MARKER_STATE_UNREADABLE
 
+    # E2E-INC-008: the marker is written BEFORE compaction (PreCompact hook, or a manual
+    # trw_checkpoint(pre_compact=True)), so it proves only that compaction was due -- never
+    # claim it already happened.
     when = (
-        f"Your context was compacted at {marker_ts}."
+        f"A pre-compaction checkpoint was recorded at {marker_ts}, so your context was or will be compacted."
         if marker_ts is not None
-        else "Your context was compacted (the recovery marker's timestamp could not be read)."
+        else "A pre-compaction checkpoint was recorded (its timestamp could not be read), so your context"
+        " was or will be compacted."
     )
     # The delegated-sub-agent sentence is preserved in substance: ten of eleven
     # bundled agents hold no trw_session_start, so naming only the first remedy

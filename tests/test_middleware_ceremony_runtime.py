@@ -316,26 +316,66 @@ class TestCeremonyMiddleware:
         assert heartbeat_calls == ["sess-start-hb"]
 
     @pytest.mark.asyncio
-    async def test_unsuccessful_session_start_does_not_activate_session(
+    async def test_a_degraded_session_start_activates_the_session(
         self,
         middleware: CeremonyMiddleware,
     ) -> None:
-        """A failed session_start payload leaves the session inactive."""
+        """E2E-INC-005: session_start that ran but reported errors (daemon down) WAS called. It activates the
+        session so no later response claims "has not been called"; its own payload carries the errors."""
 
         async def call_next(_ctx: Any) -> Any:
             return FakeToolResult(
-                content=[TextContent(type="text", text='{"success": false}')],
+                content=[TextContent(type="text", text='{"success": false, "errors": ["memory daemon unreachable"]}')],
             )
 
-        req_ctx = FakeRequestContext(session_id="sess-failed-start")
+        req_ctx = FakeRequestContext(session_id="sess-degraded-start")
         ctx = FakeMiddlewareContext(
             message=FakeMessage(name="trw_session_start"),
             fastmcp_context=FakeContext(request_context=req_ctx),
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
-        assert not is_session_active("sess-failed-start")
-        assert out.content[0].text == '{"success": false}'
+        assert is_session_active("sess-degraded-start")
+        assert "memory daemon unreachable" in out.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_an_unparseable_session_start_result_stays_inactive(
+        self,
+        middleware: CeremonyMiddleware,
+    ) -> None:
+        """Fail-closed kept: a result that is not a session_start payload at all (an exception text) activates nothing."""
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(content=[TextContent(type="text", text="Traceback: boom")])
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="sess-broken-start")),
+        )
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert not is_session_active("sess-broken-start")
+
+    @pytest.mark.asyncio
+    async def test_a_degraded_session_start_leaves_the_compaction_gate_armed(
+        self,
+        middleware: CeremonyMiddleware,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Recovery still needs a SUCCESSFUL session_start: a degraded one never clears the compaction gate."""
+        cleared: list[bool] = []
+        monkeypatch.setattr("trw_mcp.middleware.ceremony._clear_compaction_gate_safe", lambda: cleared.append(True))
+
+        async def call_next(_ctx: Any) -> Any:
+            return FakeToolResult(content=[TextContent(type="text", text='{"success": false, "errors": ["x"]}')])
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_session_start"),
+            fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="sess-degraded-gate")),
+        )
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert cleared == []
 
     @pytest.mark.asyncio
     async def test_compaction_gate_blocks_trw_tools_until_session_start(

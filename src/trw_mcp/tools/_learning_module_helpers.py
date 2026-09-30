@@ -84,6 +84,44 @@ _VALID_LEARN_TIERS: frozenset[str] = frozenset({"critical", "high", "normal", "l
 _VALID_LEARN_EVIDENCE_LEVELS: frozenset[str] = frozenset({"observed", "verified", "inferred", "unknown"})
 
 
+_VALID_RECALL_STATUSES: tuple[str, ...] = ("active", "resolved", "obsolete")
+
+
+def _validate_recall_status(status: str | None) -> str | None:
+    """Return an error message when ``status`` is not a stored learning status, else None."""
+    if status is None or status in _VALID_RECALL_STATUSES:
+        return None
+    return f"Invalid status '{status}'. Must be one of: {list(_VALID_RECALL_STATUSES)}"
+
+
+def _validate_learn_create_inputs(
+    *, summary: str | None, detail: str | None, impact: float | None
+) -> LearnResultDict | None:
+    """Reject a create call that could never be stored, naming the field, before any state is written.
+
+    ``impact`` follows the same 0-1 rule as an update (which rejects out-of-range); create used to clamp.
+    """
+    # Both blank stays the accept gate's own ``empty_content`` rejection.
+    if (summary is None or not summary.strip()) and (detail or "").strip():
+        return {
+            "status": "rejected",
+            "reason": "missing_summary",
+            "message": "summary is required when creating a learning (with a detail); nothing was stored.",
+        }
+    return impact_rejection(impact, outcome="nothing was stored")
+
+
+def impact_rejection(impact: float | None, *, outcome: str) -> LearnResultDict | None:
+    """The one out-of-range ``impact`` answer for create AND update (INC-085): status rejected + reason + message."""
+    if impact is not None and not 0.0 <= impact <= 1.0:
+        return {
+            "status": "rejected",
+            "reason": "invalid_impact",
+            "message": f"Invalid impact {impact}: must be between 0 and 1; {outcome}.",
+        }
+    return None
+
+
 def _validate_learn_enums(
     *, type: str, confidence: str, protection_tier: str, evidence_level: str = "unknown"
 ) -> LearnResultDict | None:
@@ -98,27 +136,25 @@ def _validate_learn_enums(
         return {
             "status": "rejected",
             "reason": "invalid_type",
-            "message": f"Invalid type '{type}'. Must be one of: {sorted(_VALID_LEARN_TYPES)}",
+            "message": f"Invalid type: must be one of {sorted(_VALID_LEARN_TYPES)}",
         }
     if confidence not in _VALID_LEARN_CONFIDENCES:
         return {
             "status": "rejected",
             "reason": "invalid_confidence",
-            "message": f"Invalid confidence '{confidence}'. Must be one of: {sorted(_VALID_LEARN_CONFIDENCES)}",
+            "message": f"Invalid confidence: must be one of {sorted(_VALID_LEARN_CONFIDENCES)}",
         }
     if protection_tier not in _VALID_LEARN_TIERS:
         return {
             "status": "rejected",
             "reason": "invalid_protection_tier",
-            "message": (f"Invalid protection_tier '{protection_tier}'. Must be one of: {sorted(_VALID_LEARN_TIERS)}"),
+            "message": f"Invalid protection_tier: must be one of {sorted(_VALID_LEARN_TIERS)}",
         }
     if evidence_level not in _VALID_LEARN_EVIDENCE_LEVELS:
         return {
             "status": "rejected",
             "reason": "invalid_evidence_level",
-            "message": (
-                f"Invalid evidence_level '{evidence_level}'. Must be one of: {sorted(_VALID_LEARN_EVIDENCE_LEVELS)}"
-            ),
+            "message": (f"Invalid evidence_level: must be one of {sorted(_VALID_LEARN_EVIDENCE_LEVELS)}"),
         }
     return None
 

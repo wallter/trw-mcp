@@ -338,6 +338,18 @@ def test_every_contact_gated_module_has_a_production_entry_point_here() -> None:
     assert {m.removesuffix(".py") for m in _CONTACT_GATED} == set(_ENTRY_POINTS)
 
 
+def _backup_store_in(project: Path, module: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Place the backup store in *project*, so that project governs it (E2E-BACKUP-DAEMON-LAYOUT).
+
+    The unconfigured default is now the daemon's shared store, which belongs to no project and so never
+    uploads (lead ruling on W3's known issue 1). A backup case that must be governed by *project* says
+    where the store is, as an operator relocating it would: through the single-store path the daemon and
+    backup both honour (E2E-BACKUP-DAEMON-STORE-ONE-RESOLVER; MEMORY_STORAGE_PATH no longer relocates it).
+    """
+    if module == "sync/backup":
+        monkeypatch.setenv("MEMORY_SINGLE_STORE_PATH", str(project / ".memory" / "default" / "memory.db"))
+
+
 @pytest.mark.parametrize("module", sorted(_ENTRY_POINTS))
 @pytest.mark.parametrize("where", ["project_subdir", "no_project"])
 async def test_r1_no_payload_project_means_zero_contact(
@@ -349,6 +361,8 @@ async def test_r1_no_payload_project_means_zero_contact(
     cwd = project / "src" if where == "project_subdir" else machine / "bare"
     cwd.mkdir(exist_ok=True)
     _seed(project)
+    if where == "project_subdir":
+        _backup_store_in(project, module, monkeypatch)  # the zero then comes from the project saying no
     _run_from(cwd, monkeypatch)
 
     await _ENTRY_POINTS[module](machine, pipeline_cls, egress)
@@ -362,6 +376,7 @@ async def test_control_the_same_sender_from_a_contact_on_project_root_does_attem
 ) -> None:
     project = _project(machine / "project", "true")
     _seed(project)
+    _backup_store_in(project, module, monkeypatch)
     _run_from(project, monkeypatch)
 
     await _ENTRY_POINTS[module](machine, pipeline_cls, egress)

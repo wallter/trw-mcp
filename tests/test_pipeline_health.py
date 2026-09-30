@@ -186,6 +186,22 @@ def test_probe_graph_edges_empty_corpus_suppressed(fake_memory_store: FakeMemory
     assert result["degraded"] is False
 
 
+@pytest.mark.parametrize(("corpus", "degraded"), [(3, False), (49, False), (51, True)])
+def test_probe_graph_edges_judges_only_a_store_past_the_young_store_threshold(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, corpus: int, degraded: bool
+) -> None:
+    """E2E-INC-010: a new project's unrelated learnings are not a "dead knowledge graph" (error severity)."""
+    from trw_mcp.tools._pipeline_health import probe_graph_edges
+
+    trw_dir = _make_trw_dir(tmp_path)
+    _stock_store(fake_memory_store, corpus=corpus, edges=0)
+
+    result = probe_graph_edges(trw_dir)
+
+    assert result["degraded"] is degraded
+    assert bool(result["advisory"]) is degraded
+
+
 def test_probe_graph_edges_tag_only_corpus_is_not_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """A corpus related only by shared tags is healthy despite 0 edges (CORE-245 FR07).
 
@@ -250,6 +266,23 @@ def test_probe_embedding_coverage_degraded(fake_memory_store: FakeMemoryStore, t
     assert result["degraded"] is True
     assert result.get("coverage_ratio", 1.0) < 0.10
     assert result["advisory"] != ""
+
+
+@pytest.mark.parametrize(("corpus", "degraded"), [(3, False), (49, False), (51, True)])
+def test_probe_embedding_coverage_judges_only_a_store_past_the_young_store_threshold(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, corpus: int, degraded: bool
+) -> None:
+    """E2E-INC-010: a new project with no embedding weights yet has 0% coverage without a broken pipeline."""
+    from trw_mcp.tools._pipeline_health import probe_embedding_coverage
+
+    trw_dir = _make_trw_dir(tmp_path)
+    _stock_store(fake_memory_store, corpus=corpus, vec=0)
+
+    result = probe_embedding_coverage(trw_dir)
+
+    assert result["measured"] is True
+    assert result["degraded"] is degraded
+    assert bool(result["advisory"]) is degraded
 
 
 def test_probe_embedding_coverage_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
@@ -779,3 +812,80 @@ def test_a_probes_own_handler_reports_not_measured(
     # Neither degraded nor healthy — counted in neither, listed as unmeasured.
     assert probe_name in aggregate["unmeasured"]
     assert aggregate["degraded"] is False
+
+
+# ---------------------------------------------------------------------------
+# E2E-INC-073 — absence of a measurement is not a measurement of absence
+# ---------------------------------------------------------------------------
+
+
+def _probe_result(*, measured: bool, degraded: bool = False) -> dict[str, Any]:
+    return {"degraded": degraded, "measured": measured, "advisory": "" if measured else "x not measured: boom"}
+
+
+@pytest.mark.parametrize(
+    ("measured", "degraded", "expected_status", "expected_unmeasured"),
+    [
+        # nothing measured at all: unknown, never healthy
+        ((False, False, False, False), (False, False, False, False), "unknown", list(_ALL_PROBES)),
+        # partial: judge only what was measured, and name the rest
+        ((True, False, False, False), (False, False, False, False), "healthy", list(_ALL_PROBES[1:])),
+        ((True, False, False, False), (True, False, False, False), "degraded", list(_ALL_PROBES[1:])),
+        # an unmeasured probe's own ``degraded`` flag is never counted
+        ((False, True, True, True), (True, False, False, False), "healthy", list(_ALL_PROBES[:1])),
+        # fully measured
+        ((True, True, True, True), (False, False, False, False), "healthy", []),
+        ((True, True, True, True), (False, True, False, False), "degraded", []),
+    ],
+)
+def test_aggregate_status_never_reports_unmeasured_as_healthy(
+    tmp_path: Path,
+    measured: tuple[bool, ...],
+    degraded: tuple[bool, ...],
+    expected_status: str,
+    expected_unmeasured: list[str],
+) -> None:
+    from trw_mcp.tools import _pipeline_health as ph
+
+    patches = [
+        patch.object(ph, f"probe_{name}", return_value=_probe_result(measured=m, degraded=d))
+        for name, m, d in zip(_ALL_PROBES, measured, degraded, strict=True)
+    ]
+    for p in patches:
+        p.start()
+    try:
+        result = ph.step_pipeline_health(_make_trw_dir(tmp_path))
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert result["status"] == expected_status
+    assert result.get("unmeasured", []) == expected_unmeasured
+    if expected_status == "unknown":
+        assert result["degraded"] is False  # existing consumers of the field keep working
+        assert "unknown" in result["advisory"]
+    if expected_status == "healthy" and not expected_unmeasured:
+        assert result["advisory"] == ""
+
+
+@pytest.mark.parametrize("unreachable_store", [True, False])
+def test_probe_that_cannot_measure_logs_no_traceback(
+    tmp_path: Path, captured_structlog: list[dict[str, object]], unreachable_store: bool
+) -> None:
+    """E2E-INC-073: the failure is already in the payload; stderr never gets a traceback.
+
+    An unreachable store (the expected way to be unmeasured) adds no warning at
+    all; any other probe failure is one warning line without ``exc_info``.
+    """
+    from trw_mcp.state._store_selection import StoreUnavailableError
+    from trw_mcp.tools import _pipeline_health as ph
+
+    exc: Exception = StoreUnavailableError("daemon unreachable") if unreachable_store else RuntimeError("boom")
+    with patch.object(ph, "store_health", side_effect=exc):
+        result = ph.step_pipeline_health(_make_trw_dir(tmp_path))
+
+    assert result["graph_edges"]["measured"] is False
+    warnings = [e for e in captured_structlog if e.get("log_level") == "warning"]
+    assert not [e for e in warnings if e.get("exc_info")], "warnings must not carry a traceback"
+    probe_warnings = [e for e in warnings if e["event"] == "pipeline_probe_graph_edges_failed"]
+    assert len(probe_warnings) == (0 if unreachable_store else 1)

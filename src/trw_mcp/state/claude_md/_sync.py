@@ -62,6 +62,7 @@ from trw_mcp.state.claude_md._review_md import (
 from trw_mcp.state.claude_md._review_md import (
     _sanitize_summary as _sanitize_summary,
 )
+from trw_mcp.state.claude_md._review_md import existing_review_kept, record_review_md, user_edited_review_kept
 from trw_mcp.state.claude_md._review_md import (
     recall_learnings as recall_learnings,
 )
@@ -196,13 +197,16 @@ def _get_repo_root() -> Path | None:
 def generate_review_md(
     trw_dir: Path,
     repo_root: Path | None = None,
+    *,
+    allow_empty: bool = False,
+    force: bool = False,
 ) -> ReviewMdResultDict:
     """Generate REVIEW.md at repo root with auto-injected learning rules.
 
-    Full regeneration on every call. Atomic write via temp+rename.
-    Fail-open: never blocks CLAUDE.md sync or delivery.
+    Atomic write via temp+rename; fail-open: never blocks CLAUDE.md sync or delivery.
 
-    Returns dict with keys: path, rules_count, status.
+    An existing REVIEW.md is kept, not emptied, when there are no learnings (see ``existing_review_kept``);
+    ``allow_empty=True`` (``instructions sync --force``, a recall withdrawal) lets it shrink.
     """
     if repo_root is None:
         repo_root = _get_repo_root()
@@ -211,6 +215,8 @@ def generate_review_md(
         return _review_md_failed_result("could not determine repo root")
 
     target_path = repo_root / "REVIEW.md"
+    if not force and (kept := user_edited_review_kept(target_path, trw_dir)):  # never overwrite the user's edits
+        return kept
 
     # PRD-FIX-085 FR05: use named factory. recall_for_review_tags already
     # returns the impact-ranked, max_results-capped union across the tag set
@@ -242,6 +248,9 @@ def generate_review_md(
         logger.warning("review_md_learnings_skipped", reason=skipped_reason)
         selected = []
 
+    if kept := existing_review_kept(target_path, selected, skipped_reason, allow_empty=allow_empty):
+        return kept
+
     # Build learning entries section
     if skipped_reason is not None:
         learning_entries = f"_Learnings section skipped: store unavailable ({skipped_name})._"
@@ -268,8 +277,12 @@ def generate_review_md(
             suffix=".tmp",
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:  # disk bytes == recorded hash
                 fh.write(content)
+            # Act-time re-proof (codex r2): recall ran since the guard, so re-prove just before the rename.
+            if not force and (kept := user_edited_review_kept(target_path, trw_dir)):
+                os.unlink(tmp_path)
+                return kept
             os.rename(tmp_path, str(target_path))
         except Exception:  # justified: cleanup — remove temp file on write failure, re-raise
             with contextlib.suppress(OSError):
@@ -283,6 +296,7 @@ def generate_review_md(
             "status": "failed",
             "error": "write failed",
         }
+    record_review_md(trw_dir, content)  # uninstall and sync prove ownership by these bytes (INC-080)
 
     rules_count = len(selected)
     logger.info(

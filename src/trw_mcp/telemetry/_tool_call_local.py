@@ -105,7 +105,7 @@ def record_local(
     fallback_dir: Path | None,
     trace: dict[str, str] | None = None,
 ) -> None:
-    """Write the run-log row and emit the OTEL span; neither can fail the tool call."""
+    """Write the run-log row; it can never fail the tool call (the OTel span is FastMCP's, PRD-CORE-344)."""
     try:
         _write_tool_event(
             tool_name,
@@ -119,11 +119,3 @@ def record_local(
         )
     except Exception:  # justified: fail-open, the run-log row must never fail the tool call
         logger.debug("tool_call_row_write_failed", tool=tool_name, exc_info=True)
-    try:
-        from trw_mcp.state.otel_wrapper import emit_tool_span
-
-        emit_tool_span(
-            tool_name, duration_ms, {"agent_id": os.environ.get("TRW_AGENT_ID", "default")}, error_type=error_type
-        )
-    except Exception:  # justified: fail-open, the OTEL span must never fail the tool call
-        logger.debug("tool_call_span_failed", tool=tool_name, exc_info=True)

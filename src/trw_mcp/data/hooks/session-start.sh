@@ -26,6 +26,9 @@ if _trw_has_json_parser; then
   _payload_session_id=$(printf '%s' "$_payload" | _json_get .session_id) || true
 else
   log_hook_execution "SessionStart" "unknown" "0" "jq_unavailable=1"
+  # E2E-INC-033: the other hooks stay quiet without a parser (they log jq_unavailable=1), so say it once,
+  # here, where the session will read it. A fixed line: nothing payload-derived.
+  printf '%s\n' "TRW: hooks are running degraded: neither jq nor python3 is on PATH, so session guidance, run recovery and edit hints are off. Install jq or python3 to restore them."
 fi
 
 _project_root="$(get_repo_root)" || exit 0
@@ -321,6 +324,15 @@ case "$_source" in
       _phase=$(_json_get --file "$_state_file" .phase) || true
       _event_count=$(_json_get --file "$_state_file" --default 0 .events_logged) || true
       _last_cp=$(_json_get --file "$_state_file" .last_checkpoint) || true
+      # E2E-INC-031: with no session identity in the environment every session shares the
+      # project-wide marker, so replay it only for the session key it was written for.
+      case "$_state_file" in
+        */pre_compact_state.json)
+          _snap_key=$(_json_get --file "$_state_file" .session_key) || _snap_key=""
+          _own_key=$(trw_pin_key "$_payload_session_id" 2>/dev/null) || _own_key=""
+          [ "$_snap_key" = "$_own_key" ] || _run_path=""
+          ;;
+      esac
       # Sanitize all values read from the untrusted pre_compact_state.json before
       # echoing them into the AI context (prompt-injection / control-char defense).
       # Relativize to the project root first, matching _emit_run_state's
@@ -329,6 +341,12 @@ case "$_source" in
       # with the install path's length rather than with the run's identity.
       _run_path=$(_sanitize_context_text "${_run_path#"$_project_root"/}")
       _phase=$(_sanitize_context_text "$_phase")
+      # E2E-INC-065: the sanitizer blanks [ ] < > and cuts at 200 chars (injection defense), so a
+      # factory payload shown here is NOT a copyable shape; say so and name where the exact one is.
+      case "$_last_cp" in
+        '{"factory"'*) _cp_note=' (sanitized preview, not a payload to copy: exact JSON is in the run meta/checkpoints.jsonl)' ;;
+        *) _cp_note='' ;;
+      esac
       _last_cp=$(_sanitize_context_text "$_last_cp")
       # events_logged must be numeric; coerce to 0 if not.
       case "$_event_count" in
@@ -338,7 +356,7 @@ case "$_source" in
         # printf, not echo: an XSI echo would expand a backslash escape in these values.
         printf '%s\n' "RECOVERED: Run at $_run_path"
         [ -n "$_phase" ] && printf '%s\n' "RECOVERED: Phase: $_phase | Events: ${_event_count:-0}"
-        [ -n "$_last_cp" ] && printf '%s\n' "LAST CHECKPOINT: \"$_last_cp\""
+        [ -n "$_last_cp" ] && printf '%s\n' "LAST CHECKPOINT: \"$_last_cp\"$_cp_note"
       fi
     fi
     echo ""

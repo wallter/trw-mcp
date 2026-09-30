@@ -10,7 +10,8 @@ This is the I/O layer beneath the pure models. It performs repository-confined
 *stable reads* (detecting concurrent byte/type/symlink changes), mints the
 authoritative :class:`RunOwnedScope` from the run's durable file-change journal,
 and assembles a :class:`ContentBinding`. It uses no network, subprocess, or
-repository-wide history scan (NFR03) and confines every path beneath the
+repository-wide history scan (NFR03); the one git subprocess use, for the whole-tree
+digest, is isolated in ``state/_tree_binding.py`` (E2E-INC-018) and confines every path beneath the
 server-resolved project root (NFR02).
 """
 
@@ -32,6 +33,7 @@ from trw_mcp.models._evidence_core import (
     ReceiptState,
     RunOwnedScope,
     ScopeConfidence,
+    TreeStatus,
     compute_manifest_digest,
     compute_scope_digest,
 )
@@ -41,6 +43,13 @@ from trw_mcp.state._evidence_identity import (
     ProjectIdentityError,
     project_identity_is_current,
     resolve_project_identity,
+)
+from trw_mcp.state._tree_binding import (
+    UNBOUND_LEGACY,
+    UNBOUND_RECHECK_FAILED,
+    differing_paths,
+    relative_excludes,
+    snapshot_tree,
 )
 
 logger = structlog.get_logger(__name__)
@@ -56,6 +65,9 @@ class BindingOutcome:
     binding: ContentBinding | None
     state: ReceiptState
     reason_code: str
+    # E2E-INC-018: None = the whole-tree comparison was not reached.
+    tree_status: TreeStatus | None = None
+    detail: str = ""
 
 
 def _normalize_scope_path(project_root: Path, raw: str) -> tuple[str | None, bool]:
@@ -248,11 +260,26 @@ def _read_entries_with_budget(project_root: Path, paths: Iterable[str]) -> tuple
     return tuple(entries)
 
 
-def build_content_binding(scope: RunOwnedScope, project_root: Path) -> BindingOutcome:
+def _tree_excludes(project_root: Path, exclude_paths: Iterable[Path]) -> tuple[str, ...]:
+    """TRW's own state (configured trw_dir, plus the run dir / receipts) is never bound."""
+    from trw_mcp.models.config import get_config
+
+    return relative_excludes(project_root, [str(get_config().trw_dir), *exclude_paths])
+
+
+def build_content_binding(
+    scope: RunOwnedScope,
+    project_root: Path,
+    *,
+    exclude_paths: Iterable[Path] = (),
+) -> BindingOutcome:
     """Assemble a :class:`ContentBinding` for a scope via stable reads (FR01).
 
     A ``scope_unverifiable`` scope yields no binding. An unstable/​escaping/​
-    over-limit read yields the exact non-positive state and reason code.
+    over-limit read yields the exact non-positive state and reason code. The
+    binding also records a whole-working-tree digest (E2E-INC-018) so edits the
+    journal never saw are detected; *exclude_paths* names TRW-owned paths (the
+    run dir) that must not count as project content.
     """
     if scope.confidence is ScopeConfidence.UNVERIFIABLE:
         return BindingOutcome(None, ReceiptState.SCOPE_UNVERIFIABLE, "scope_unverifiable")
@@ -267,6 +294,8 @@ def build_content_binding(scope: RunOwnedScope, project_root: Path) -> BindingOu
         return BindingOutcome(None, state, exc.reason_code)
     if project_identity_is_current(scope.project_identity, root)[0] is not ReceiptState.VALID:
         return BindingOutcome(None, ReceiptState.UNSTABLE_READ, "project_identity_changed")
+    excludes = _tree_excludes(root, exclude_paths)
+    tree = snapshot_tree(root, excludes)
     try:
         binding = ContentBinding(
             scope_id=scope.scope_id,
@@ -274,10 +303,14 @@ def build_content_binding(scope: RunOwnedScope, project_root: Path) -> BindingOu
             project_identity=scope.project_identity,
             entries=entry_tuple,
             manifest_digest=compute_manifest_digest(entry_tuple),
+            tree_digest=tree.tree_sha,
+            tree_excludes=excludes,
+            tree_unbound_reason=tree.unbound_reason,
         )
     except ValueError as exc:
         return BindingOutcome(None, ReceiptState.INVALID, str(exc))
-    return BindingOutcome(binding, ReceiptState.VALID, "ok")
+    status = TreeStatus.BOUND if tree.tree_sha else TreeStatus.UNBOUND
+    return BindingOutcome(binding, ReceiptState.VALID, "ok" if tree.tree_sha else tree.unbound_reason, status)
 
 
 def content_binding_is_current(binding: ContentBinding, project_root: Path) -> BindingOutcome:
@@ -285,7 +318,11 @@ def content_binding_is_current(binding: ContentBinding, project_root: Path) -> B
 
     Returns ``VALID`` when current bytes match, ``STALE_CONTENT`` when a bound
     entry changed, and the exact non-positive state for an unstable/​unsafe read.
-    Unrelated out-of-scope changes are never read, so they cannot invalidate.
+    A binding that carries a whole-tree digest is also compared against the
+    current working tree (E2E-INC-018): any change to the covered tree, made by
+    any actor or tool, is ``STALE_CONTENT`` (``bound_tree_changed``). When no
+    comparison is possible the outcome stays ``VALID`` (advisory) but reports
+    ``tree_status=UNBOUND`` with a ``tree_unbound_*`` reason - never "current".
     """
     root = project_root
     identity_state, identity_reason = project_identity_is_current(binding.project_identity, root)
@@ -301,4 +338,30 @@ def content_binding_is_current(binding: ContentBinding, project_root: Path) -> B
     current_digest = compute_manifest_digest(current_entries)
     if current_digest != binding.manifest_digest:
         return BindingOutcome(None, ReceiptState.STALE_CONTENT, "bound_content_changed")
-    return BindingOutcome(binding, ReceiptState.VALID, "ok")
+    return _tree_outcome(binding, root)
+
+
+def _tree_outcome(binding: ContentBinding, root: Path) -> BindingOutcome:
+    """Compare the recorded whole-tree digest with the tree as it is now."""
+    if binding.tree_digest is None:
+        reason = binding.tree_unbound_reason or UNBOUND_LEGACY
+        return BindingOutcome(binding, ReceiptState.VALID, reason, TreeStatus.UNBOUND)
+    current = snapshot_tree(root, binding.tree_excludes)
+    if current.tree_sha is None:
+        reason = f"{UNBOUND_RECHECK_FAILED}:{current.unbound_reason}"
+        return BindingOutcome(binding, ReceiptState.VALID, reason, TreeStatus.UNBOUND)
+    if current.tree_sha == binding.tree_digest:
+        return BindingOutcome(binding, ReceiptState.VALID, "ok", TreeStatus.BOUND)
+    changed = differing_paths(root, binding.tree_digest, current.tree_sha, binding.tree_excludes)
+    if changed is None:
+        return BindingOutcome(
+            binding, ReceiptState.VALID, f"{UNBOUND_RECHECK_FAILED}:tree_diff_unavailable", TreeStatus.UNBOUND
+        )
+    if not changed:  # trees differ only inside the excluded TRW state
+        return BindingOutcome(binding, ReceiptState.VALID, "ok", TreeStatus.BOUND)
+    named = f" Changed: {', '.join(changed[:5])}" + (f" (+{len(changed) - 5} more)." if len(changed) > 5 else ".")
+    detail = (
+        "The working tree changed after this evidence was recorded." + named + " Any change to the covered tree "
+        "invalidates the evidence, including another agent's edit in a shared checkout: re-run validation."
+    )
+    return BindingOutcome(None, ReceiptState.STALE_CONTENT, "bound_tree_changed", TreeStatus.STALE, detail)

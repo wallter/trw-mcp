@@ -16,6 +16,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.state._entitlements import (
     DISTILL_SIDECAR_FEATURE,
     Entitlement,
@@ -68,7 +69,7 @@ def _run_tier_issue(args: argparse.Namespace) -> None:
     trw_dir = Path(args.trw_dir)
     trw_dir.mkdir(parents=True, exist_ok=True)
     out_path = trw_dir / "entitlements.yaml"
-    out_path.write_text(yaml_text, encoding="utf-8")
+    write_checkout_file(trw_dir, out_path, yaml_text)  # protects the leaf; trw_dir is the operator's --trw-dir
     print(f"tier issue: wrote {out_path}")
     print(f"  tier={args.tier}  issued_to={args.issued_to}  expires_at={expires_iso}")
 

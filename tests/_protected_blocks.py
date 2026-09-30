@@ -61,7 +61,8 @@ TRANSPORT_ANCHOR = "## MCP transport-loss retry protocol"
 GATE_SECTION_HEADING = "## Deliver Gate (v26.2)"
 
 #: sha256 of the ``## Deliver Gate`` section of the bundled tool-lifecycle.md.
-GATE_SECTION_SHA256 = "4dab2f1910ba229daf06db7552ee83224359041e5c9185d5b0613b9208feed51"
+#: Re-pinned for E2E-INC-001: gate (a) dropped "(or omitted)", which canon 1.a never had.
+GATE_SECTION_SHA256 = "fe7b91a87f7b8eac83c3b57cbfed5120d6e9fd022f11c4e5112e0ce00fcf2f02"
 #: sha256 of ``render_transport_loss_guidance()``.
 TRANSPORT_SHA256 = "1dc9aebcb8b11d175112d0b82973b7c2f07b93a50fb75f2ae01841f6ea901809"
 

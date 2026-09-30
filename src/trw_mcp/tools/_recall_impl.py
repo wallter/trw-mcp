@@ -196,10 +196,13 @@ def execute_recall(
     # BEFORE the cap, so N near-identical copies of one finding can't crowd out
     # distinct findings in the top-K.
     ranked_learnings, duplicates_collapsed = _dedup_ranked_learnings(trw_dir, ranked_learnings)
+    # The count BEFORE the cap: a capped call used to report the capped size, so ``max_results=1``
+    # said one match however many there were (E2E-INC-010). Bounded by the prefetch, not the corpus.
+    total_matches = len(ranked_learnings)
     if max_results > 0:
         ranked_learnings = ranked_learnings[:max_results]
 
-    recall_result: RecallResultDict = {"query": query, "total_matches": len(ranked_learnings)}
+    recall_result: RecallResultDict = {"query": query, "total_matches": total_matches}
     # Advisories ride only when they carry signal, and are attached BEFORE the
     # presenter so the byte budget covers them.
     if topic_filter_warning:

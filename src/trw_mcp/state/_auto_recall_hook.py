@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 START_NS = time.monotonic_ns()
 #: FR08: the scan's budget, from the moment the store's rows are in hand.
@@ -159,7 +160,7 @@ def score(
     """Rank *rows* against *keywords*; a passed deadline scores what it already scanned (FR08)."""
     candidates: list[tuple[str, str, str, frozenset[str]]] = []
     doc_freq = dict.fromkeys(keywords, 0)
-    doc_count = scanned = 0
+    doc_count = scanned = deduped = 0
     deadline_hit = False
     for row in rows:
         if time.monotonic_ns() >= deadline_ns:
@@ -167,7 +168,11 @@ def score(
             break
         scanned += 1
         # FR12: the stored status is the candidate gate.
-        if row.status.lower() != "active" or row.entry_id in injected_ids or not row.summary:
+        if row.status.lower() != "active" or not row.summary:
+            continue
+        if row.entry_id in injected_ids:
+            # Already shown this session: not a candidate, but a match on it is why nothing new fires.
+            deduped += any(keyword in _tokenize(row.summary + " " + " ".join(row.tags)) for keyword in keywords)
             continue
         doc_count += 1
         tokens = _tokenize(row.summary + " " + " ".join(row.tags))
@@ -211,7 +216,7 @@ def score(
     elif lines:
         outcome.decision = "fired"
     elif outcome.top_score <= 0.0:
-        outcome.decision = "no_match"
+        outcome.decision = "dedup" if deduped else "no_match"
     else:
         outcome.decision = "below_threshold"
     return outcome
@@ -228,9 +233,15 @@ def _diagnostic(outcome: Outcome, keywords: int, min_score: float) -> None:
     )
 
 
-def main(argv: Sequence[str], *, read_rows: ReadRows = store_rows) -> int:
-    """``<project_root> <prompt> <injected_file> <max_results> <max_tokens> <min_score> <scan_cap>``."""
+def main(argv: Sequence[str], *, read_rows: ReadRows = store_rows, stdin: TextIO | None = None) -> int:
+    """``<project_root> <prompt> <injected_file> <max_results> <max_tokens> <min_score> <scan_cap>``.
+
+    A prompt of ``-`` is read from stdin: a shell hands a long prompt over argv only up to ARG_MAX
+    (128 KB per argument on Linux), past which the exec fails and recall silently never runs.
+    """
     project_root, prompt, injected_file = Path(argv[0]), argv[1], Path(argv[2])
+    if prompt == "-":
+        prompt = (stdin or sys.stdin).read()
     max_results = _as_int(argv[3], DEFAULT_MAX_RESULTS, 0)
     max_tokens = _as_int(argv[4], DEFAULT_MAX_TOKENS, 0)
     min_score = _as_float(argv[5], DEFAULT_MIN_SCORE, 0.0, 1.0)

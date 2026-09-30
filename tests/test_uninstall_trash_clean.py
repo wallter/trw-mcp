@@ -205,8 +205,11 @@ def test_uninstall_exdev_falls_back_to_trw_trash(
     _uninstall(root)
     out = capsys.readouterr().out
     assert "to the system Trash" not in out
-    listed = [ln for ln in out.splitlines() if ln.startswith("  Moved to .trw/trash: ")]
+    # E2E-INC-062: each capture that stayed names why (the cross-device move), not only "see doctor".
+    listed = [ln for ln in out.splitlines() if ln.startswith("  Kept in .trw/trash: ")]
     assert listed and len(listed) == len(list((root / ".trw" / "trash").glob("*/data")))
+    suffix = f"(the system Trash is on another device; see doctor; remove with: rm -rf {root / '.trw' / 'trash'})"
+    assert all(ln.endswith(suffix) for ln in listed), listed[:2]
     assert _os_trash(home) == []
 
 

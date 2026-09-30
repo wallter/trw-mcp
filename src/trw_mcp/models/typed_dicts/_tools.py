@@ -73,7 +73,7 @@ class RunStatusDict(TypedDict, total=False):
     effort_adapter_status: str
     owner_session_id: str | None
     wave_status: dict[str, object] | None
-    # PRD-CORE-165 FR-01: caller-supplied recovery context surfaced from the
+    # PRD-CORE-342 FR-01: caller-supplied recovery context surfaced from the
     # pre-compact state so the post-compaction session resumes exactly.
     directive: str
     context_anchor: str
@@ -85,6 +85,8 @@ class SessionStartResultDict(TypedDict, total=False):
     """Return shape of ``trw_session_start`` MCP tool."""
 
     timestamp: str
+    # INC-006: this session's own pin key, the value ``trw-mcp run adopt --session`` expects.
+    session_id: str
     # PRD-CORE-329-FR03: positioned ahead of ``learnings`` by insertion order
     # (set before ``run_steps`` runs). Omitted when nothing is pending (NFR01).
     blocked_decision: dict[str, object]
@@ -427,6 +429,7 @@ class DeliverResultDict(TypedDict, total=False):
     requirement_drift_block: str
     untracked_warning: str
     build_gate_warning: str
+    build_tree_binding_advisory: str
     build_gate_block: str
     build_gate_override: str
     truthfulness_gate_bypassed: str
@@ -561,7 +564,7 @@ class PreCompactResultDict(TypedDict, total=False):
     failing_tests: list[str]
     reason: str
     error: str
-    # PRD-CORE-165 FR-01: caller-supplied directive + context-anchor persisted
+    # PRD-CORE-342 FR-01: caller-supplied directive + context-anchor persisted
     # into the pre-compact state (echoed back on the success path when set).
     directive: str
     context_anchor: str

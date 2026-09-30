@@ -10,6 +10,7 @@ from __future__ import annotations
 import atexit
 import collections
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -588,15 +589,15 @@ class TelemetryPipeline:
         (same pattern as _deferred_delivery.py).
         """
         try:
-            if not path.exists():
-                return
-            with path.open("r+", encoding="utf-8") as fh:
-                _lock_ex(fh.fileno())
-                try:
-                    fh.truncate(0)
-                    fh.seek(0)
-                finally:
-                    _lock_un(fh.fileno())
+            # O_NOFOLLOW: a planted symlink at the log path is refused (ELOOP), never truncated; a missing
+            # file is FileNotFoundError. Both are OSError, fail-open below.
+            fd = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                _lock_ex(fd)
+                os.ftruncate(fd, 0)
+                _lock_un(fd)
+            finally:
+                os.close(fd)  # also releases the lock if ftruncate raised
         except OSError:
             # Fail-open: if truncation fails, events remain for next cycle
             logger.debug("pipeline_truncate_error", exc_info=True)

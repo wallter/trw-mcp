@@ -21,6 +21,7 @@ import structlog
 from pydantic import Field, model_validator
 
 from trw_mcp.models.config._client_profile import ClientProfile, NudgePoolWeights
+from trw_mcp.models.config._field_descriptions import apply_descriptions
 from trw_mcp.models.config._local_only_guard import reject_local_only_mapping
 from trw_mcp.models.config._main_fields import _TRWConfigFields
 from trw_mcp.models.config._profiles import resolve_client_profile
@@ -413,3 +414,8 @@ class TRWConfig(_TRWConfigFields):
                 seen.add(normalized)
                 result.append(normalized)
         return result
+
+
+# Pydantic re-collects fields from the mixins' annotations when it builds this subclass, so the descriptions set on
+# ``_TRWConfigFields`` do not carry over: apply them to the class the rest of the code actually uses.
+apply_descriptions(TRWConfig)

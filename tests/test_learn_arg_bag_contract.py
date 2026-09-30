@@ -58,8 +58,9 @@ async def _served_text(tool_name: str) -> str:
     them is what makes these assertions placement-agnostic; normalizing
     whitespace makes them survive the re-wrapping griffe applies.
     """
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     for tool in await mcp._list_tools():
         dumped = tool.model_dump(exclude_none=True)
         if dumped.get("name") != tool_name:
@@ -137,18 +138,19 @@ def test_unknown_metadata_key_is_rejected_and_the_error_names_the_accepted_set()
     assert values == LearnMetadata()
 
 
-def test_unknown_update_field_is_rejected_with_the_update_error_shape() -> None:
-    """``trw_learn``'s update mode rejects in its own documented shape, not create mode's.
+def test_unknown_update_field_is_rejected_in_the_create_shape() -> None:
+    """E2E-INC-085 sweep: update mode rejects in create mode's shape (status rejected + reason + message).
 
-    The two modes have different published output contracts; unifying them here
-    would silently break every caller that branches on the result.
+    No hook, skill, agent or trw-mcp caller branched on update's old ``{error, status: invalid}``; the internal
+    callers that check ``invalid``/``not_found`` read the store's result, which is unchanged.
     """
     values, rejection = parse_learn_update_fields({"protection_teir": "high"})
     assert rejection is not None
-    assert set(rejection) == {"error", "status"}
-    assert rejection["status"] == "invalid"
+    assert set(rejection) == {"status", "reason", "message"}
+    assert rejection["status"] == "rejected"
+    assert rejection["reason"] == "invalid_metadata"
     for accepted in LearnUpdateFields.model_fields:
-        assert accepted in rejection["error"]
+        assert accepted in rejection["message"]
     assert values == LearnUpdateFields()
 
 

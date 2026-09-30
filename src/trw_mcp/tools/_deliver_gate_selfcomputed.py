@@ -14,12 +14,19 @@ kinds in one file is what pushed the dispatcher past the module-size gate.
 
 ``_hard_block_override`` is imported lazily inside each function: the dispatcher
 imports this module, so a module-level import back into it would be a cycle.
+
+A FAULT IS NEVER A PASS (E2E-DELIVER-GATE-DISPATCH-FAIL-CLOSED; CONSTITUTION §1.a
+outranks the old "degrade to no-block" NFR02 clauses). An unexpected exception
+while a gate computes its condition goes to :func:`_fault_verdict`: it BLOCKS
+(structured, so an acceptable-failure record still releases it) unless that
+gate's own mode is warn/advisory, where it is a NAMED warning -- never a new hard
+block there, never silent. The verdict is set before any logging.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -63,9 +70,13 @@ def evaluate_acceptance_integrity(
         from trw_mcp.tools._prd_transition_gate import evaluate_transition_gate
 
         outcome = evaluate_transition_gate(resolved_run)
-    except Exception as exc:  # gate resolution failure degrades to no-block (NFR02)
-        logger.warning("acceptance_integrity_dispatch_degraded", run=str(resolved_run), reason=str(exc), exc_info=True)
-        return False
+    except Exception as exc:  # justified: a fault is never a pass -- blocks unless warn/advisory (CORE-213-NFR02)
+        return _fault_verdict(
+            results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, exc,
+            gate="PRD-CORE-213 transition", gate_type="acceptance_integrity",
+            result_block_key="acceptance_integrity_block", warning_key="acceptance_integrity_warning",
+            enforced=_transition_gate_enforced(),
+        )  # fmt: skip
     # Surface a non-blocking advisory so the delivering agent SEES it (mirrors the
     # build_gate_warning idiom; no dormant warn path). Present whenever the gate
     # found non-certifying items that did not hard-block.
@@ -118,16 +129,24 @@ def evaluate_plan_acceptance(
     """
     if resolved_run is None:
         return False
+    task_type = "unknown"
+    stage = "reading meta/run.yaml"
     try:
-        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.state._evidence_bound_read import read_evidence_mapping
         from trw_mcp.tools._plan_acceptance_gate import evaluate_plan_acceptance
 
-        run_yaml = resolved_run / "meta" / "run.yaml"
-        run_data = FileStateReader().read_yaml(run_yaml) if run_yaml.is_file() else {}
+        # Evidence-bound: absent is {} (as before); invalid, null or symlinked is a fault, never a skipped gate.
+        run_data = read_evidence_mapping(resolved_run, "meta/run.yaml") or {}
+        task_type = str(run_data.get("task_type") or "unknown")
+        stage = "evaluating"
         outcome = evaluate_plan_acceptance(resolved_run, run_data)
-    except Exception as exc:  # run-state resolution failure degrades to no-block (NFR02)
-        logger.warning("plan_acceptance_dispatch_degraded", run=str(resolved_run), reason=str(exc), exc_info=True)
-        return False
+    except Exception as exc:  # justified: a fault is never a pass -- blocks unless advisory (CORE-249-NFR02)
+        return _fault_verdict(
+            results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, exc,
+            gate=f"PRD-CORE-249 plan-acceptance ({stage})", gate_type="plan_acceptance",
+            result_block_key="plan_acceptance_block", warning_key="plan_acceptance_warning",
+            enforced=_deliver_mode_enforced(task_type),
+        )  # fmt: skip
     if outcome.unresolved_scope_entries:
         results["unresolved_scope_entries"] = list(outcome.unresolved_scope_entries)
     if outcome.warning:
@@ -245,8 +264,9 @@ def evaluate_build_authority(
 
     Both are STRUCTURED blocks: a PRD-CORE-191 acceptable-failure record still
     releases them, so the gate can force evidence or a record but never wedge a
-    session. Both fail CLOSED on uncomputable evidence. Any unexpected fault
-    degrades to no-block (NFR02), matching the other self-computing gates.
+    session. Both fail CLOSED on uncomputable evidence, and so does an unexpected
+    fault (PRD-FIX-140-FR10): a pinned run blocks whatever the mode, as
+    FR05 does; an unpinned one blocks unless its mode is advisory.
     """
     try:
         if resolved_run is None:
@@ -294,7 +314,7 @@ def evaluate_build_authority(
             elif recorded_failure is None:
                 cause = "this session's ceremony state could not be read, so its build result is unknown"
             elif files_changed is None:
-                cause = "this session's change evidence could not be read, so it cannot be shown to be code-free"
+                cause = _uncomputable_cause(session_id, trw_dir)
             elif key_is_unshared:
                 cause = (
                     f"{files_changed} file(s) were modified by unpinned sessions in this checkout since this "
@@ -325,15 +345,16 @@ def evaluate_build_authority(
                 "trw_build_check(), or override with allow_unverified=true + an unexpired "
                 "acceptable-failure record."
             )
-    # trw-fail-silent-allow: matches the fail-OPEN contract every self-computing gate
-    # in this module already carries (NFR02) — a fault in gate dispatch must never
-    # wedge delivery. The fail-CLOSED decisions live INSIDE the predicates this calls
-    # (an unreadable event log and an unreadable ceremony state both return the
-    # blocking value), so this handler covers unexpected faults only, and logs them.
-    except Exception:  # justified: fail-open, a fault in this dispatch must not wedge delivery
-        logger.warning("deliver_build_authority_degraded", run=str(resolved_run), exc_info=True)
-        # trw-fail-silent-allow: NFR02 fail-OPEN dispatch contract; the fail-CLOSED decisions live in the predicates
-        return False
+    except Exception as exc:  # justified: a fault is never a pass (PRD-FIX-140-FR10)
+        blocked = _fault_verdict(
+            results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, exc,
+            gate="PRD-FIX-140 build-authority", gate_type="delivery_blocked",
+            result_block_key="delivery_blocked", warning_key="build_authority_warning",
+            enforced=resolved_run is not None or _deliver_mode_enforced("unknown"),
+        )  # fmt: skip
+        if blocked:
+            results["missing_gate"] = "build_check"
+        return blocked
     from trw_mcp.tools._deliver_gate_dispatch import _hard_block_override
 
     blocked_delivery = _hard_block_override(
@@ -350,3 +371,88 @@ def evaluate_build_authority(
     if blocked_delivery:
         results["missing_gate"] = "build_check"
     return blocked_delivery
+
+
+def _transition_gate_enforced() -> bool:
+    """Whether the CORE-213 gate enforces: ``prd_transition_gate`` is ``block`` and the deliver mode is not advisory."""
+    try:
+        from trw_mcp.models.config import get_config
+
+        transition = str(get_config().prd_transition_gate)
+    except Exception:  # justified: unreadable config -> the field's declared default ("block"), as WD-05
+        transition = "block"
+    return transition == "block" and _deliver_mode_enforced("unknown")
+
+
+def _deliver_mode_enforced(task_type: str) -> bool:
+    try:
+        from trw_mcp.tools._deliver_gate_mode import resolve_gate_mode
+
+        return resolve_gate_mode(task_type) != "advisory"
+    except Exception:  # justified: an unresolvable mode is not permission to pass -- enforced
+        return True
+
+
+def _fault_verdict(
+    results: DeliverResultDict,
+    errors: list[str],
+    resolved_run: Path | None,
+    trw_dir: Path,
+    allow_unverified: bool,
+    unverified_reason: str,
+    exc: Exception,
+    *,
+    gate: str,
+    gate_type: str,
+    result_block_key: str,
+    warning_key: str,
+    enforced: bool,
+) -> bool:
+    """A gate that could not compute its condition: block when *enforced*, else a named warning."""
+    # The type name only: str(exc) runs arbitrary __str__ code and must not stand before the verdict.
+    fault = f"the {gate} gate could not be evaluated ({type(exc).__name__})"
+    if enforced:
+        reason = (
+            f"Delivery blocked: {fault}, so it cannot be shown to pass (deliver gates fail closed, "
+            "CONSTITUTION §1.a). Fix the fault and re-run trw_deliver, or override with allow_unverified=true "
+            "+ an unexpired acceptable-failure record."
+        )
+        # _hard_block_override writes the block (or, for an accepted acceptable-failure record, lets delivery
+        # proceed); if it raises, the block is written below -- a failing override path is never a pass.
+        try:
+            from trw_mcp.tools._deliver_gate_dispatch import _hard_block_override
+
+            blocked = _hard_block_override(
+                results=results, errors=errors, resolved_run=resolved_run, trw_dir=trw_dir,
+                allow_unverified=allow_unverified, unverified_reason=unverified_reason, block_reason=reason,
+                gate_type=gate_type, result_block_key=result_block_key,
+            )  # fmt: skip
+        except Exception:  # justified: the override path failed -- block, never a pass
+            results[result_block_key] = reason  # type: ignore[literal-required]
+            results["success"] = False
+            if reason not in errors:
+                errors.append(reason)
+            results["errors"] = errors
+            blocked = True
+    else:
+        cast("dict[str, object]", results)[warning_key] = f"{fault}; not enforced under the current gate mode"
+        blocked = False
+    try:
+        logger.warning("deliver_gate_fault", gate=gate_type, blocked=blocked, run=str(resolved_run), exc_info=exc)
+    except Exception:  # trw-fail-silent-allow: diagnostics after the verdict; a broken logger cannot change it
+        pass
+    return blocked
+
+
+def _uncomputable_cause(session_id: str, trw_dir: Path) -> str:
+    """Why this session's change count is unknown, naming what would resolve it."""
+    from trw_mcp.client_profiles.change_evidence import active_client_writes_change_evidence, change_evidence_gap_reason
+    from trw_mcp.state._session_change_witness import changed_since_snapshot
+
+    witness = changed_since_snapshot(session_id, trw_dir.parent)
+    if witness.status == "no_snapshot":  # a restart: never "re-run trw_session_start" (it would hide the edits)
+        return witness.reason
+    if not active_client_writes_change_evidence():
+        return change_evidence_gap_reason()
+    detail = "" if witness.status == "counted" else f" ({witness.reason})"
+    return f"this session's change evidence could not be read, so it cannot be shown to be code-free{detail}"

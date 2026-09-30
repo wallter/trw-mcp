@@ -160,10 +160,20 @@ def test_docs_run_with_no_build_reports_ready_advisory(tmp_path: Path, monkeypat
     _use_config(monkeypatch, deliver_gate_mode="block_coding")
     run_dir = _seed_run(tmp_path, "docs")
 
-    gate = gate_scan.compute_deliver_gate_status([_failing_build_event()], tmp_path / ".trw", run_dir)
+    gate = gate_scan.compute_deliver_gate_status([{"event": "run_init"}], tmp_path / ".trw", run_dir)
 
     assert gate["build_gate_ready"] is False, "readiness still reports the missing evidence"
     assert gate["deliver_gate_summary"].startswith("READY")
+
+
+def test_docs_run_whose_latest_build_failed_reports_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E S3-F2: deliver blocks a recorded build failure in any gate mode, so the preview must too."""
+    _use_config(monkeypatch, deliver_gate_mode="block_coding")
+    run_dir = _seed_run(tmp_path, "docs")
+
+    gate = gate_scan.compute_deliver_gate_status([_failing_build_event()], tmp_path / ".trw", run_dir)
+
+    assert gate["deliver_gate_summary"].startswith("BLOCKED")
 
 
 def test_coding_run_with_no_build_still_reports_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

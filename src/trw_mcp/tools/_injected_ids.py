@@ -19,6 +19,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.tools._ceremony_degradations import record_into
 
 logger = structlog.get_logger(__name__)
@@ -71,11 +72,9 @@ def _write_session_start_ids(
                 seen.add(lid)
                 deduped_reversed.append(lid)
         capped = list(reversed(deduped_reversed[:_MAX_INJECTED_IDS]))
-        # Atomic rewrite so a crash mid-write can't corrupt the bounded file.
-        tmp = state_file.with_suffix(state_file.suffix + ".tmp")
-        tmp.write_text("".join(lid + "\n" for lid in capped), encoding="utf-8")
-        tmp.replace(state_file)
-    except OSError as exc:
+        # Atomic (temp + replace) and symlink-refusing, so a crash or a planted link cannot corrupt it.
+        write_checkout_file(trw_dir, state_file, "".join(lid + "\n" for lid in capped))
+    except (OSError, UnsafeWriteError) as exc:
         # Narrow by design: only filesystem failures are expected here, and a
         # broader catch would hide a bug in the merge/cap logic above.
         if results is not None:

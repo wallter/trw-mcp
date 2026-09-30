@@ -298,39 +298,34 @@ def render_merged_content(
     # exact defect that corrupted AGENTS.md, whose section (unlike the CLAUDE.md
     # renderer's) does not start with a newline (PRD-QUAL-112).
     if target.exists():
-        existing = _migrate_legacy_marker_block(target.read_text(encoding="utf-8"))
+        from trw_mcp.state.claude_md._exact_text import append_block, block_text, file_eol, read_exact
+
+        existing = _migrate_legacy_marker_block(read_exact(target))
         # Line-anchored whole-line marker matching. The previous substring form
         # (``existing.index(TRW_MARKER_START)``) resolved to the FIRST occurrence
-        # anywhere in the file — including a marker mentioned inside prose or
-        # backticks — and then deleted everything from there to the real end
+        # anywhere in the file -- including a marker mentioned inside prose or
+        # backticks -- and then deleted everything from there to the real end
         # marker. That is the 705-line ROADMAP corruption shape, and it was live
         # on the delivery path: merge_trw_section is what instructions sync
         # and trw_deliver call for CLAUDE.md and AGENTS.md. The bootstrap sibling
         # (_template_claude_md.py) had already been hardened with
         # find_marker_line_span; this copy never was.
         existing_lines = existing.splitlines()
+        kept_lines = existing.splitlines(keepends=True)
         marker_start, marker_end = markers
         start_idx = _marker_line_index(existing_lines, marker_start)
         end_idx = _marker_line_index(existing_lines, marker_end, after=start_idx) if start_idx is not None else None
         if start_idx is not None and end_idx is not None:
             cut = _block_cut_index(existing_lines, start_idx)
-            before = "\n".join(existing_lines[:cut]).rstrip()
-            after = "\n".join(existing_lines[end_idx + 1 :]).lstrip("\n")
-            separator = "\n\n" if before else ""
-            trailing = "\n" if after else ""
-            new_content = before + separator + trw_section.lstrip("\n") + trailing + after
+            # Both sides of the block are the user's and are kept BYTE-FOR-BYTE: line endings, blank lines and
+            # the terminal newline included -- the same boundary contract as the bootstrap ``replace_marker_region``.
+            # Re-deciding either (one blank line, LF) made the two AGENTS.md writers take turns rewriting, and
+            # backing up, the same file on every sync (E2E-INC-015), and converted a CRLF file to LF.
+            before = "".join(kept_lines[:cut])
+            after = "".join(kept_lines[end_idx + 1 :])
+            new_content = before + block_text(trw_section, file_eol(existing)) + after
         else:
-            before = existing.rstrip()
-            separator = "\n\n" if before else ""
-            # ``.strip("\n")`` (not ``.lstrip``): every real caller's
-            # trw_section already ends with its own trailing newline (it is
-            # built as ``...{TRW_MARKER_END}\n``), so appending a bare "\n"
-            # unconditionally left an extra blank line at EOF on the write
-            # that first created this branch's shape, self-correcting only on
-            # the NEXT merge (idempotent from run 2 onward, not run 1) —
-            # surfaced by PRD-CORE-243's cursor-cli legacy-block migration,
-            # which lands a file in exactly this markerless-but-existing state.
-            new_content = before + separator + trw_section.strip("\n") + "\n"
+            new_content = append_block(existing, trw_section)
     else:
         new_content = trw_section.lstrip().rstrip("\n") + "\n"
     return new_content

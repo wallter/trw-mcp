@@ -175,11 +175,11 @@ def test_a_bare_prompt_passes_no_effort() -> None:
 
 
 def test_a_role_on_codex_now_reaches_it_as_a_config_override() -> None:
-    """codex takes effort as ``-c model_reasoning_effort="..."``; the role's medium is applied."""
+    """Codex's client default takes effort as a quoted TOML config override."""
     req = _resolved("adversarial-audit", client="codex")
-    assert req.effort == "medium"
+    assert req.effort == "low"
     assert "--effort" not in build_command(req)
-    assert _effort_tokens("codex", build_command(req)) == ["medium"]
+    assert _effort_tokens("codex", build_command(req)) == ["low"]
 
 
 def test_codex_effort_is_a_quoted_toml_override_pair() -> None:

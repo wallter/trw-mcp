@@ -102,7 +102,7 @@ class TestBuildCheckReporterAPI:
             "trw_mcp.tools.build._registration.find_active_run",
             return_value=run_dir,
         ):
-            build_check_invoke(tests_passed=True, test_count=10, coverage_pct=85.0)
+            build_check_invoke(tests_passed=True, test_count=10, coverage_pct=85.0, static_checks_clean=True)
 
         assert events_file.exists(), "events.jsonl should be created"
         events = [json.loads(line) for line in events_file.read_text().splitlines() if line.strip()]

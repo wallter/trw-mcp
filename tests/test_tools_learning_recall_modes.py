@@ -117,7 +117,9 @@ class TestRecallCap:
 
         result = tools["trw_recall"].fn(query="cap test entry", max_results=5)
         assert len(result["learnings"]) == 5
-        assert result["total_matches"] == 5
+        # E2E-INC-010 (5): total_matches is the match count BEFORE the max_results cap, so a caller can tell
+        # "5 of 10" from "all 5" (it used to report the capped size).
+        assert result["total_matches"] == 10
 
     def test_recall_max_results_zero_unlimited(self, tmp_path: Path) -> None:
         """max_results=0 returns all matches (subject to the byte budget)."""

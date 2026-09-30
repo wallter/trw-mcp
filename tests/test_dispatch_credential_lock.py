@@ -219,3 +219,16 @@ def test_the_lock_reads_the_login_the_child_uses_not_the_parents_codex_home(
     monkeypatch.setenv("CODEX_HOME", str(elsewhere / ".codex"))
 
     assert credential_state("codex", Path.home()).could_expire_within(600)
+
+
+def test_an_expired_login_says_expired_not_a_negative_number_of_minutes() -> None:
+    """E2E-INC-051: an expired token read 'expires in -300 min'."""
+    from trw_mcp.dispatch._credentials import credential_report
+
+    _codex_login(Path.home(), datetime.now(timezone.utc) - timedelta(minutes=300))
+    status, message, rows = credential_report()
+
+    assert status == "WARN"  # already past expiry: still a warning
+    assert "codex: logged in, expired 300 min ago" in message or "codex: logged in, expired 299 min ago" in message
+    assert "-" not in message.split("codex:", 1)[1].split(";", 1)[0]  # no negative number anywhere in the codex row
+    assert next(row for row in rows if row["client"] == "codex")["expires_in_min"] < 0  # the data field stays numeric

@@ -520,14 +520,22 @@ def _run_init_phases(
     from ._namespace_pin import pin_empty_checkout, store_holds_data, written_pin
 
     rewrite_config, kept_pin = force and not store_holds_data(target_dir), written_pin(target_dir)
+    config_existed = (target_dir / ".trw" / "config.yaml").is_file()
+    recordable = _recordable_targets(target_dir, ide_targets, explicit=ide_explicit)
     _write_initial_config(
         target_dir,
         rewrite_config,
         result,
         runs_root=runs_root,
-        target_platforms=_recordable_targets(target_dir, ide_targets, explicit=ide_explicit),
+        target_platforms=recordable,
         on_progress=on_progress,
     )
+    if config_existed and not rewrite_config and recordable:
+        # A second `init --ide X` on an initialized project records X too, append-only, as update-project
+        # does; the kept config otherwise never learned the new client (E2E-CODEX-INIT-ARTIFACTS).
+        from ._ide_targets_finalize import _update_config_target_platforms
+
+        _update_config_target_platforms(target_dir, recordable, result)
     if rewrite_config and kept_pin:
         _set_pin(target_dir / ".trw", kept_pin)
     # 3a. A new checkout has nothing to move: pin project_namespace and mint its grant (PRD-CORE-280 FR06)

@@ -46,6 +46,10 @@ def add_shared_subcommands(subparsers: Any) -> None:
     create = env_sub.add_parser("create", help="create an env's memory dir (grants copied, store empty)")
     create.add_argument("name")
     create.add_argument("--seed-from", default=None, help="snapshot-copy this env's store (the source is only read)")
+    gc = env_sub.add_parser("gc", help="remove version venvs no env uses (dry run unless --apply)")
+    gc.add_argument("--env", default=None, help=_ENV_HELP)
+    gc.add_argument("--keep", type=int, default=2, help="newest version venvs always kept (default 2, minimum 1)")
+    gc.add_argument("--apply", action="store_true", help="remove them; without it, only print what would go")
 
 
 def _env(args: argparse.Namespace) -> str:
@@ -54,13 +58,40 @@ def _env(args: argparse.Namespace) -> str:
     return validate_env(getattr(args, "env", None) or os.environ.get("TRW_MCP_ENV") or STABLE)
 
 
-def _paths() -> tuple[Any, Any]:
-    from trw_mcp.models.config import get_config
-    from trw_mcp.shared_server._records import SharedPaths
-    from trw_mcp.state._paths import resolve_trw_dir
+def shared_project_root() -> Path:
+    """The TRW project the shared-server verbs act on (SWAP-PROJECT-ROOT), or a named refusal.
 
-    config = get_config()
-    return SharedPaths.resolve(resolve_trw_dir(), config.shared_mcp), config
+    ``_project_root.trw_project_root`` is the one resolver, shared with the proxy (PROXY-PROJECT-ROOT). A verb
+    outside a TRW project refuses: no record root is ever created there silently.
+    """
+    from trw_mcp.shared_server._project_root import trw_project_root
+    from trw_mcp.shared_server._records import SharedServerError
+    from trw_mcp.state._paths import resolve_project_root
+
+    root = trw_project_root()
+    if root is None:
+        raise SharedServerError(
+            f"not a TRW project: {resolve_project_root()} (no .trw/config.yaml at it or its git toplevel); "
+            "run from inside a TRW project or set TRW_PROJECT_ROOT to one"
+        )
+    return root
+
+
+def _paths() -> tuple[Any, Any, Path]:
+    """(paths, config, project root) for a shared-server verb; refuses (exit 1) outside a TRW project."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.shared_server._records import SharedPaths, SharedServerError
+
+    try:
+        root = shared_project_root()
+    except SharedServerError as exc:
+        print(f"trw-mcp: {exc}", file=sys.stderr)
+        sys.exit(1)
+    from trw_mcp.state._project_root_binding import project_bound
+
+    with project_bound(root):  # the root's own .trw/config.yaml, whatever subdirectory resolved to it
+        config = get_config()
+    return SharedPaths.resolve(root / str(config.trw_dir), config.shared_mcp), config, root
 
 
 def _refusing(action: Any) -> None:
@@ -73,6 +104,15 @@ def _refusing(action: Any) -> None:
         sys.exit(1)
 
 
+def _enabled_at(root: Path) -> bool:
+    """``shared_mcp.enabled`` from the project root's own config (not a subdirectory's)."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._project_root_binding import project_bound
+
+    with project_bound(root):
+        return bool(get_config().shared_mcp.enabled)
+
+
 def main_proxy() -> None:
     """``trw-mcp-proxy [--env X]``: the stdio entry a client launches (its own lean console script).
 
@@ -82,17 +122,22 @@ def main_proxy() -> None:
     own environment, which a shared server does not have.
     """
     from trw_mcp.dispatch._child_marker import dispatched_child_active
-    from trw_mcp.models.config import get_config
     from trw_mcp.state._surface_role import reviewer_role_active
 
     parser = argparse.ArgumentParser(prog="trw-mcp-proxy", description="stdio shim to the shared trw-mcp")
     parser.add_argument("--env", default=None, help=_ENV_HELP)
     args = parser.parse_args()
+    from trw_mcp.shared_server._project_root import trw_project_root
+
+    root = None if reviewer_role_active() or dispatched_child_active() else trw_project_root()
     stdio_reason = (
         "bounded lane (reviewer role or dispatched child)"
         if reviewer_role_active() or dispatched_child_active()
+        # PROXY-PROJECT-ROOT: outside a TRW project there is no shared record to use, and none is ever made.
+        else f"not inside a TRW project ({Path.cwd()})"
+        if root is None
         else None
-        if get_config().shared_mcp.enabled
+        if _enabled_at(root)
         else "shared_mcp.enabled is false"
     )
     if stdio_reason is not None:
@@ -116,15 +161,13 @@ def run_swap(args: argparse.Namespace) -> None:
         worktree_pythonpath,
     )
     from trw_mcp.shared_server._records import SharedServerError
-    from trw_mcp.state._paths import resolve_project_root
 
-    paths, config = _paths()
+    paths, config, project_root = _paths()
 
     def act() -> None:
         env = _env(args)
         if args.with_distill is not None and args.swap_version is None:
             raise SharedServerError("--with only applies to --version (it picks what the new venv installs)")
-        project_root = resolve_project_root()
         pythonpath = None
         no_source = args.python is None and getattr(args, "src", None) is None and args.swap_version is None
         if no_source and not args.daemon:
@@ -147,6 +190,7 @@ def run_swap(args: argparse.Namespace) -> None:
             )
         expect = args.expect_version or args.swap_version
         print(swap(paths, env, python, project_root=project_root, expect=expect, pythonpath=pythonpath))
+        print(f"project root {project_root} · record {paths.record(env)}")  # which record the server pid lives in
         if args.daemon:
             try:
                 print(drain_env_daemon(paths, env, project_root=project_root))
@@ -159,7 +203,7 @@ def run_swap(args: argparse.Namespace) -> None:
 def run_status(args: argparse.Namespace) -> None:
     from trw_mcp.shared_server._ops import status_rows
 
-    paths, _ = _paths()
+    paths, _config, _root = _paths()
     _refusing(lambda: print(json.dumps(status_rows(paths), indent=2)))
 
 
@@ -167,7 +211,14 @@ def run_env(args: argparse.Namespace) -> None:
     from trw_mcp.shared_server._ops import ensure_env
     from trw_mcp.shared_server._records import serving_env_path
 
-    paths, _ = _paths()
+    paths, _config, _root = _paths()
+    if getattr(args, "env_command", "create") == "gc":
+        from trw_mcp.shared_server._gc import run_gc
+
+        _refusing(
+            lambda: print("\n".join(run_gc(paths, _env(args), keep=args.keep, apply=args.apply)) or "nothing to do")
+        )
+        return
 
     def act() -> None:
         created = ensure_env(paths, args.name, seed_from=args.seed_from)

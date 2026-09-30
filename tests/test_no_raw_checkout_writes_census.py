@@ -39,7 +39,20 @@ from trw_memory._write_census import CLASS_TAGS, Site, census, raw_write_sites, 
 import trw_mcp
 
 #: The trees FR05 audits, relative to the ``trw_mcp`` package directory.
-_AUDITED_TREES = ("bootstrap", "channels", "state", "models/config")
+_AUDITED_TREES = (
+    "bootstrap",
+    "channels",
+    "state",
+    "models/config",
+    # Security slice 3A (W5's symlink-writers census, 2026-09-29): these trees held 47 raw checkout writes no census
+    # saw, including the two CRITICAL ones (compact_instructions.txt, reports/final.md), now migrated.
+    "tools",
+    "sync",
+    "telemetry",
+    "meta_tune",
+    "formation",
+    "server",
+)
 
 
 #: (relative path, enclosing qualname, 1-based ordinal) -> (class tag, one-line reason). Every row is a
@@ -158,6 +171,10 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "migrates-in-FR10",
         "FileStateWriter().write_text of the migration manifest; FR10 delegation.",
     ),
+    ("state/_tree_binding.py", "_tree_sha", 1): (
+        "own-state-stays",
+        "copies the git index into a private tempfile.TemporaryDirectory (refused if TMPDIR is inside the checkout), not the checkout.",
+    ),
     ("state/_tier_sweep.py", "_sweep_cold_to_purge", 1): (
         "unscheduled-checkout-write",
         ".trw/memory/purge_audit.jsonl append via Path.open('a').",
@@ -261,6 +278,159 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("state/tiers.py", "TierManager.warm_remove", 1): (
         "unscheduled-checkout-write",
         ".trw/memory/warm.jsonl plain rewrite.",
+    ),
+    # --- security slice 3A: tools/ sync/ telemetry/ meta_tune/ formation/ server/ (reported residuals) ---
+    ("tools/_ceremony_deliver_steps.py", "step_clear_score", 1): (
+        "unscheduled-checkout-write",
+        "deliver: plain write_text of the run's clear-score file under .trw; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("tools/_ceremony_telemetry.py", "step_first_session_marker", 1): (
+        "unscheduled-checkout-write",
+        "first-session flag file under .trw written with plain write_text; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 1): (
+        "unscheduled-checkout-write",
+        "deferred-deliver lock file under .trw opened 'a+'; appends through a leaf symlink but writes no bytes (lock only).",
+    ),
+    ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 2): (
+        "unscheduled-checkout-write",
+        "second 'a+' open of the same deferred-deliver lock file; lock only, no bytes written.",
+    ),
+    ("tools/_deferred_persistence.py", "log_deferred_result", 1): (
+        "unscheduled-checkout-write",
+        "appends a deferred-deliver result line to a .trw log with open('a'); follows a leaf symlink (census MEDIUM).",
+    ),
+    ("tools/_deliver_gate_dispatch.py", "_persist_decision_set", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of the deliver decision set under the run dir (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_distill_spawn.py", "_write_stamp", 1): (
+        "unscheduled-checkout-write",
+        "os.fdopen on a mkstemp(dir=cache_dir) descriptor for the distill rebuild stamp; parent re-resolved by name.",
+    ),
+    ("tools/_evidence_writers.py", "record_build_receipt", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of the validation plan under run meta/plans (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_experiment_cli.py", "_save_state", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of experiment CLI state (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_prd_validation_cache.py", "store_pure_result", 1): (
+        "unscheduled-checkout-write",
+        "os.fdopen on a mkstemp descriptor for the PRD validation cache entry; parent re-resolved by name.",
+    ),
+    ("tools/_prd_validation_cache.py", "_bump_write_counter", 1): (
+        "unscheduled-checkout-write",
+        "PRD validation cache write counter rewritten with plain write_text; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("tools/_project_handoff.py", "_atomic_replace", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of the project handoff file (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_review_helpers.py", "_persist_review_artifact", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of the review markdown under the run dir (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_review_receipt_writer.py", "record_review_receipt", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of the review plan under run meta/plans (leaf-atomic, parent-exposed).",
+    ),
+    ("tools/_sidecar_ancestry.py", "_write_cache", 1): (
+        "unscheduled-checkout-write",
+        "os.fdopen on a mkstemp descriptor for the sidecar ancestry cache; parent re-resolved by name.",
+    ),
+    ("tools/build/_registration.py", "_record_session_observation", 1): (
+        "unscheduled-checkout-write",
+        "appends a build-check session observation with open('a'); follows a leaf symlink (census MEDIUM).",
+    ),
+    ("tools/requirements.py", "create_prd", 1): (
+        "migrates-in-FR10",
+        "FileStateWriter.write_text of a new PRD file under the configured prds dir (leaf-atomic, parent-exposed).",
+    ),
+    ("sync/_replay.py", "_receipt", 1): (
+        "unscheduled-checkout-write",
+        "appends a sync replay receipt line with open('a'); follows a leaf symlink (census LOW).",
+    ),
+    ("sync/backup.py", "BackupUploader.download", 1): (
+        "unscheduled-checkout-write",
+        "streams the backup into a fresh <dest>.tmp from os.open(O_CREAT|O_EXCL|O_NOFOLLOW) after unlinking any stale one, then os.replace; leaf-safe, parent dirs resolved by name.",
+    ),
+    ("sync/cache.py", "IntelligenceCache.update", 1): (
+        "own-state-stays",
+        "os.fdopen on a mkstemp descriptor for the intelligence cache under the user cache dir, not a checkout.",
+    ),
+    ("sync/coordinator.py", "SyncCoordinator._write_state", 1): (
+        "unscheduled-checkout-write",
+        "sync state written to '<state>.tmp' with plain write_text then replaced; the .tmp name follows a leaf symlink.",
+    ),
+    ("telemetry/publisher.py", "_save_hashes", 1): (
+        "unscheduled-checkout-write",
+        "published-hashes file rewritten with plain write_text; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("telemetry/retention.py", "rotate_and_compress", 1): (
+        "unscheduled-checkout-write",
+        "opens the active telemetry log 'r+' to truncate after rotation; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("telemetry/retention.py", "rotate_and_compress", 2): (
+        "unscheduled-checkout-write",
+        "gzip.open(tmp, 'wb') for the rotated archive; the tmp name follows a leaf symlink (census MEDIUM).",
+    ),
+    ("telemetry/retention_registry.py", "save_registry", 1): (
+        "unscheduled-checkout-write",
+        "retention registry written to a .tmp with plain write_text then replaced; the .tmp name follows a leaf symlink.",
+    ),
+    ("telemetry/retention_store.py", "store_payload", 1): (
+        "unscheduled-checkout-write",
+        "retention payload written to a .tmp with write_bytes then replaced; the .tmp name follows a leaf symlink.",
+    ),
+    ("telemetry/retention_store.py", "add_reference", 1): (
+        "unscheduled-checkout-write",
+        "retention reference file written with plain write_text; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("telemetry/surface_manifest.py", "write_manifest", 1): (
+        "own-state-stays",
+        "os.fdopen on a mkstemp descriptor for the surface manifest under a user/temp dir, not a checkout.",
+    ),
+    ("meta_tune/audit.py", "append_audit_entry", 1): (
+        "unscheduled-checkout-write",
+        "meta-tune audit lock file opened 'a' (lock only, no bytes); follows a leaf symlink.",
+    ),
+    ("meta_tune/audit.py", "append_audit_entry", 2): (
+        "unscheduled-checkout-write",
+        "appends a meta-tune audit entry with open('a'); follows a leaf symlink (census LOW).",
+    ),
+    ("meta_tune/promote_state.py", "target_write_lock", 1): (
+        "unscheduled-checkout-write",
+        "per-target meta-tune lock file opened 'a' (lock only, no bytes); follows a leaf symlink.",
+    ),
+    ("meta_tune/rollback.py", "rollback_proposal", 1): (
+        "unscheduled-checkout-write",
+        "rollback restores the promoted target with shutil.copy2 from its backup; follows a leaf symlink at the target (census MEDIUM).",
+    ),
+    ("meta_tune/rollback.py", "rollback_proposal", 2): (
+        "unscheduled-checkout-write",
+        "rollback snapshot json rewritten with plain write_text; follows a leaf symlink (census MEDIUM).",
+    ),
+    ("formation/_stall.py", "start_call", 1): (
+        "unscheduled-checkout-write",
+        "stall marker created with open('x') at a temp name: O_EXCL refuses an existing file or link, parent resolved by name.",
+    ),
+    ("formation/_store.py", "write_owner_only", 1): (
+        "unscheduled-checkout-write",
+        "os.open(O_CREAT|O_TRUNC, 0o600) then fdopen for formation manifests; follows a leaf symlink at the path.",
+    ),
+    ("formation/_store.py", "_exclusive", 1): (
+        "unscheduled-checkout-write",
+        "formation index lock file opened 'a+' (lock only, no bytes); follows a leaf symlink.",
+    ),
+    ("server/__main__.py", "_crash_log", 1): (
+        "unscheduled-checkout-write",
+        "server crash log appended with open('a'); follows a leaf symlink (census LOW).",
+    ),
+    ("server/_cli.py", "_register_thread_dump_signal._dump", 1): (
+        "unscheduled-checkout-write",
+        "SIGUSR thread dump appended with open('a'); follows a leaf symlink (census LOW).",
     ),
 }
 

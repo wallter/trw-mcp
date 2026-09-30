@@ -322,8 +322,9 @@ def _prose_and_signature_chars(tool: object) -> tuple[int, int]:
 
 async def _measure(names: frozenset[str] | None = None) -> dict[str, tuple[int, int]]:
     """Measure every registered tool, optionally restricted to ``names``."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     tools = await mcp._list_tools()
     measured: dict[str, tuple[int, int]] = {}
     for tool in tools:
@@ -392,8 +393,9 @@ async def test_core_preset_within_definition_budget() -> None:
 
 async def _measure_split() -> dict[str, tuple[int, int]]:
     """Measure ``(prose, signature)`` chars for every registered tool."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     out: dict[str, tuple[int, int]] = {}
     for tool in await mcp._list_tools():
         name = str(tool.model_dump(exclude_none=True).get("name") or "")
@@ -453,8 +455,9 @@ async def test_parameter_prose_does_not_dwarf_the_description() -> None:
     trw_dispatch purely for having many arguments.
     """
     offenders: dict[str, tuple[int, int]] = {}
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     for tool in await mcp._list_tools():
         dumped = tool.model_dump(exclude_none=True)
         name = str(dumped.get("name") or "")
@@ -483,8 +486,9 @@ async def test_definitions_omit_internal_implementation_vocabulary() -> None:
     import re
 
     measured_names: dict[str, str] = {}
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     for tool in await mcp._list_tools():
         dumped = tool.model_dump(exclude_none=True)
         # Parameter descriptions are billed to every caller exactly like the

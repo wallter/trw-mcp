@@ -13,6 +13,7 @@ import structlog.contextvars
 
 from trw_mcp.telemetry._tool_call_local import record_local
 from trw_mcp.telemetry._tool_call_measures import CallMeasures
+from trw_mcp.telemetry._tool_span_attrs import enrich_tool_span
 from trw_mcp.telemetry.event_base import ToolCallEvent
 
 logger = structlog.get_logger("trw_mcp.telemetry.tool_call_timing")
@@ -59,6 +60,8 @@ def emit_tool_call_event(ctx: ToolCallEmitContext) -> None:
     session_id = _resolve_session_id(ctx)
     resolved_run_dir = _resolve_run_dir(ctx)
     run_id = resolved_run_dir.name if resolved_run_dir is not None else None
+    if ctx.parent_event_id is None:  # PRD-CORE-344 FR02: the outermost call's ids stand
+        enrich_tool_span(run_id, _bound_tool_call_id())
     surface_snapshot_id = ctx.resolve_surface_snapshot_id(resolved_run_dir)
     try:
         event = ctx.build_tool_call_event(

@@ -11,8 +11,8 @@ from typing import NamedTuple
 
 import pytest
 
-from trw_mcp.bootstrap import _safe_remove
 from trw_mcp.bootstrap import _uninstall_skill_dir as sd  # the skill-dir walk lives here
+from trw_mcp.bootstrap._trash import Removal
 from trw_mcp.bootstrap._uninstall_manifest import KeyDisposition, apply_removal
 
 SKILL_MD = b"# demo skill\n"
@@ -28,8 +28,13 @@ class Env(NamedTuple):
 
 
 def _tree(root: Path) -> dict[str, bytes]:
+    # apply_removal leaves each proven capture in .trw/trash (uninstall moves them to the system Trash in one
+    # step, UNINSTALL-SKILL-DIR-CAPTURE), so the project tree is judged without that holding area.
+    trash = root / ".trw" / "trash"
     return {
-        str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file() and not p.is_symlink()
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and not p.is_symlink() and trash not in p.parents
     }
 
 
@@ -186,14 +191,14 @@ def test_rerun_after_a_kept_user_file_lists_it_again(env: Env) -> None:
 def test_unlink_failure_is_an_error_and_keeps_the_record(
     env: Env, monkeypatch: pytest.MonkeyPatch, victim: str
 ) -> None:
-    real = _safe_remove.safe_remove
+    real = sd.remove_if_hash
 
-    def refuse(path: Path, root: Path, *, expect: str = "any") -> str | None:
+    def refuse(path: Path, root: Path, expected: str, *, key: str | None = None) -> Removal:
         if path == env.skill / victim:
-            return "error removing: boom"
-        return real(path, root, expect=expect)  # type: ignore[arg-type]
+            return Removal(key, path, "kept", None, None, "error removing: boom")
+        return real(path, root, expected, key=key)
 
-    monkeypatch.setattr("trw_mcp.bootstrap._uninstall_skill_dir.safe_remove", refuse)
+    monkeypatch.setattr(sd, "remove_if_hash", refuse)  # the delete itself fails; nothing else changes
     removed, errors, result = _remove(env)
     assert removed == set() and errors == 1
     assert "boom" in result["errors"][0]

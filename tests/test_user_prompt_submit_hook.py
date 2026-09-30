@@ -77,10 +77,22 @@ def test_user_prompt_submit_hook_copies_stay_in_sync() -> None:
 
 
 @pytest.mark.unit
-def test_user_prompt_submit_hook_timeout_is_500ms() -> None:
+def test_user_prompt_submit_hook_timeout_is_seconds_and_the_recall_deadline_is_500ms() -> None:
+    """The hook's `timeout` is Claude Code SECONDS (E2E-HOOK-TIMEOUT-UNITS: 10, never the old millisecond-style 500,
+    and within Claude Code's own 600 s default); the in-process recall budget is the 500 ms deadline below."""
+    import json
+
     for settings_path in _SETTINGS_PATHS:
-        settings = settings_path.read_text(encoding="utf-8")
-        assert '"timeout": 500' in settings
+        groups = json.loads(settings_path.read_text(encoding="utf-8"))["hooks"]["UserPromptSubmit"]
+        timeouts = [
+            hook["timeout"]
+            for group in groups
+            for hook in group["hooks"]
+            if "user-prompt-submit.sh" in hook.get("command", "")
+        ]
+        assert timeouts, f"no user-prompt-submit.sh hook in {settings_path}"
+        assert all(t == 10 for t in timeouts), (settings_path, timeouts)
+        assert all(0 < t <= 600 for t in timeouts)
 
     from trw_mcp.state import _auto_recall_hook
 

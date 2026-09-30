@@ -571,7 +571,7 @@ class TestCrossToolIntegration:
         assert (meta / "checkpoints.jsonl").is_file()
 
         # 5. Build check — and the run's ceremony state advances to a passing build
-        r = build_fn(tests_passed=True, test_count=10, coverage_pct=90)
+        r = build_fn(tests_passed=True, test_count=10, coverage_pct=90, static_checks_clean=True)
         assert r["tests_passed"] is True, f"build_check failed: {r}"
         assert "build=passed" in r["ceremony_status"]
 

@@ -498,8 +498,9 @@ def _registered_tool_names() -> set[str]:
     tools (incl. ``trw_dispatch``), which is orthogonal to whether the tool was
     actually REGISTERED. Registration drops are exactly what this guard catches.
     """
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     tools = _run_async(mcp._list_tools())
     return {t.name for t in tools}
 
@@ -510,10 +511,9 @@ def test_full_registration_includes_dispatch_and_preserves_core() -> None:
     Guards against the historical regression where a registrar reorder silently
     dropped trw_deliver / adopt_run from the registered tool set.
     """
-    from trw_mcp.server._tools import _register_tools
+    from trw_mcp.server._app import build_served_app
 
-    _register_tools()
-    names = _registered_tool_names()
+    names = {t.name for t in _run_async(build_served_app()._list_tools())}
 
     # The Phase 3 tool is registered (its helpers are modes since PRD-CORE-300 S7).
     assert "trw_dispatch" in names

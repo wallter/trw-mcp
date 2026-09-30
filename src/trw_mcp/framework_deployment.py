@@ -168,6 +168,7 @@ def deploy_framework_generation(
     aaref_version: str,
     failure_after_promotions: int | None = None,
     mutable_artifacts: Mapping[Path, bytes] | None = None,
+    package_version: str | None = None,
 ) -> DeploymentResult:
     """Stage, verify, and promote one receipt-bound complete generation.
 
@@ -183,6 +184,10 @@ def deploy_framework_generation(
     permanent ``framework_integrity`` failure (L-QhRy). Their *meaning* —
     version pins and the registry digest they carry — is verified separately and
     field-by-field by ``inspect_framework_runtime``.
+
+    ``package_version`` is the trw-mcp version doing the deploy. It is recorded in the receipt beside, not inside,
+    the generation id so that an OLDER package can see it was not the last writer and refuse to redeploy over a
+    newer one even when the framework version strings are equal (CODEX-P0-C).
     """
     target = target.resolve()
     normalized = {Path(path): bytes(data) for path, data in artifacts.items()}
@@ -210,17 +215,18 @@ def deploy_framework_generation(
         )
     )
     deployed_at = datetime.now(timezone.utc).isoformat()
-    receipt = _canonical_json(
-        {
-            "schema_version": 1,
-            "generation_id": generation_id,
-            "registry_digest": registry_digest,
-            "framework_version": framework_version,
-            "aaref_version": aaref_version,
-            "artifact_digests": artifact_digests,
-            "deployed_at": deployed_at,
-        }
-    )
+    receipt_fields: dict[str, object] = {
+        "schema_version": 1,
+        "generation_id": generation_id,
+        "registry_digest": registry_digest,
+        "framework_version": framework_version,
+        "aaref_version": aaref_version,
+        "artifact_digests": artifact_digests,
+        "deployed_at": deployed_at,
+    }
+    if package_version:
+        receipt_fields["package_version"] = package_version
+    receipt = _canonical_json(receipt_fields)
     all_paths = (*normalized, *mutable, DEPLOYMENT_RELATIVE_PATH)
     with _deployment_lock(target):
         prior = _current_generation_id(target)

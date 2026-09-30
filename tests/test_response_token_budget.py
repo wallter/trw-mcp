@@ -420,6 +420,8 @@ def test_feedback_telemetry_adds_no_response_keys(tmp_project: Path, monkeypatch
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     server = make_test_server("learning", "code", "build")
+    # A real file: a hint for an absent path carries an extra path_status marker (E2E-INC-077).
+    (tmp_project / "app.py").write_text("x = 1\n", encoding="utf-8")
     extract_tool_fn(server, "trw_learn")(
         summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
     )

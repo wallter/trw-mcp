@@ -74,6 +74,17 @@ def test_every_entry_round_trips_through_json_unchanged(client: str) -> None:
     assert ClientSpec.model_validate_json(spec.model_dump_json()) == spec
 
 
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [({"model_flag": None}, "default_model"), ({"effort_levels": ("medium", "high")}, "default_effort")],
+)
+def test_client_defaults_require_verified_carriers(override: dict[str, object], message: str) -> None:
+    data = CLIENT_SPECS["codex"].model_dump()
+    data.update(override)
+    with pytest.raises(ValidationError, match=message):
+        ClientSpec.model_validate(data)
+
+
 def test_agent_surface_is_derived_not_restated() -> None:
     from trw_mcp.agents.agent_formats import agent_format_for
 
@@ -432,7 +443,16 @@ def test_no_client_literal_outside_the_registry_module() -> None:
     # data this FR never asked the registry to carry; the literal-per-client
     # table is the honest shape of a hand-verified probe matrix.
     # `_client_aliases.py` is registry data too: friendly names -> client ids.
-    exempt = {"_client_specs.py", "_client_aliases.py", "_run_job.py", "_enforcement_layers.py"}
+    # `_client_observation.py` is registry data as well (CODEX-P0-A S2): which client writes a record of
+    # the model/effort it ran. It is a table rather than a `ClientSpec` field only because the registry
+    # modules sit at the 350 effective-LOC gate.
+    exempt = {
+        "_client_specs.py",
+        "_client_aliases.py",
+        "_run_job.py",
+        "_enforcement_layers.py",
+        "_client_observation.py",
+    }
     ids = set(get_args(DispatchClient))
     offenders: dict[str, list[str]] = {}
     for path in sorted(_DISPATCH_PKG.glob("*.py")):

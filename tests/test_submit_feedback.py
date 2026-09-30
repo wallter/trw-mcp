@@ -530,7 +530,7 @@ def test_submit_feedback_forwards_contact_email_only_when_set() -> None:
     ):
         submit_feedback(
             category="question",
-            subject="x",
+            subject="y",  # a repeat of "x" would be refused as a duplicate
             message="valid length message body",
         )
         assert "contact_email" not in http.call_args.kwargs["payload"]
@@ -701,7 +701,7 @@ def test_submit_feedback_never_raises_on_auto_metadata_error() -> None:
 
 
 def test_submit_feedback_result_dict_shape_is_stable_on_failure() -> None:
-    """`model_dump()` (what the MCP tool wrapper returns) keeps the 5-key shape."""
+    """`model_dump()` (what the MCP tool wrapper returns) keeps a stable shape (outbox keys: FEEDBACK-LOCAL-OUTBOX)."""
     with patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("x")):
         result = submit_feedback(category="feedback", subject="s", message="valid length message").model_dump()
 
@@ -712,6 +712,8 @@ def test_submit_feedback_result_dict_shape_is_stable_on_failure() -> None:
         "error",
         "status_code",
         "metadata_attached",
+        "outbox_id",
+        "duplicate_of",
     }
     assert result["success"] is False
 

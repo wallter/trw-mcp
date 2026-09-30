@@ -187,6 +187,14 @@ def _setup_local_run(project_root: Path, _home: Path, monkeypatch: pytest.Monkey
     return [str(run_dir)]
 
 
+def _setup_ahr_record(project_root: Path, _home: Path, _monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A real, valid AHR handoff (PRD-CORE-347 vector) so validate/digest/render reach their full read path."""
+    vector = Path(__file__).parent / "handoff" / "vectors" / "valid" / "01-standard-handoff.json"
+    record = project_root / "handoff.json"
+    record.write_bytes(vector.read_bytes())
+    return [str(record)]
+
+
 def _setup_channel_manifest(project_root: Path, _home: Path, _monkeypatch: pytest.MonkeyPatch) -> list[str]:
     manifest_dir = project_root / ".trw" / "channels"
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -196,6 +204,22 @@ def _setup_channel_manifest(project_root: Path, _home: Path, _monkeypatch: pytes
     # the actual manifest-parsing code path -- the same shape of gap round-3
     # found in "local recall".
     (manifest_dir / "manifest.yaml").write_text("format_version: manifest/v1\nchannels: []\n", encoding="utf-8")
+    return []
+
+
+def _setup_feedback_outbox(project_root: Path, _home: Path, _monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """A pending and a sent record, plus an unreadable one, so ``feedback list`` reaches every read it does."""
+    import json
+
+    record = {"id": "census", "created_at": "2026-01-01T00:00:00+00:00", "attempts": 1, "last_error": "HTTP 503",
+              "payload": {"category": "bugfix", "subject": "census", "message": "census body"}}  # fmt: skip
+    for sub in ("outbox", "sent"):
+        folder = project_root / ".trw" / "feedback" / sub
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"20260101T000000000000Z-{sub}.json").write_text(json.dumps(record), encoding="utf-8")
+    (project_root / ".trw" / "feedback" / "outbox" / "20260101T000000000001Z-bad.json").write_text(
+        "{", encoding="utf-8"
+    )
     return []
 
 
@@ -224,6 +248,9 @@ CASES: list[Case] = [
     # itself starts is not the network-egress class this trap targets).
     # "repo_root" is positional on this subparser, not --repo-root.
     Case("code risk", ["code", "risk", "."]),
+    Case("handoff validate", ["handoff", "validate", "{0}"], setup=_setup_ahr_record),
+    Case("handoff digest", ["handoff", "digest", "{0}"], setup=_setup_ahr_record),
+    Case("handoff render", ["handoff", "render", "{0}"], setup=_setup_ahr_record),
     Case(
         "channel-doctor validate", ["channel-doctor", "--project-dir", ".", "validate"], setup=_setup_channel_manifest
     ),
@@ -232,10 +259,16 @@ CASES: list[Case] = [
     Case("probe budget", ["probe", "budget", "--run-id", "census-run"]),
     Case("telemetry events", ["telemetry", "events", "--session-id", "census-session"]),
     Case("telemetry classify", ["telemetry", "classify", "--path", "CLAUDE.md"]),
-    Case("telemetry surface-diff", ["telemetry", "surface-diff", "--snapshot-id-a", "a", "--snapshot-id-b", "b"]),
+    Case(  # INC-074: unknown snapshot ids are misuse -> exit 2; the read (and no write/dial) still happens
+        "telemetry surface-diff",
+        ["telemetry", "surface-diff", "--snapshot-id-a", "a", "--snapshot-id-b", "b"],
+        expected_exit=2,
+    ),
     Case("telemetry security", ["telemetry", "security"]),
     Case("telemetry channel-stats", ["telemetry", "channel-stats", "--repo-root", "."]),
-    Case("telemetry pipeline-health", ["telemetry", "pipeline-health"]),
+    # No store in the census fixture: every probe is unmeasured, so the verdict is "unknown" and the documented
+    # exit is 2 (0 healthy / 1 degraded / 2 unknown; E2E-INC-073) -- still a real, read-only run.
+    Case("telemetry pipeline-health", ["telemetry", "pipeline-health"], expected_exit=2),
     Case("prd diff", ["prd", "diff", "--before-path", _PRD_BEFORE, "--after-path", _PRD_AFTER]),
     Case("profile explain", ["profile", "explain"]),
     Case("auth status", ["auth", "status"]),
@@ -247,6 +280,7 @@ CASES: list[Case] = [
     # a bug to paper over with a real formation fixture just to force a 0.
     Case("formation status", ["formation", "status", "--run", "."], expected_exit=1),
     Case("gc", ["gc"], setup=_setup_runs_root),
+    Case("feedback list", ["feedback", "list"], setup=_setup_feedback_outbox),
     Case("session-changelog", ["session-changelog", "{0}"], setup=_setup_local_run),
     Case(
         "channel-doctor clean",
@@ -436,3 +470,4 @@ def test_hook_flags_and_doctor_and_memory_migrate_preview_are_not_in_the_census(
     assert "hook-flags" not in allowed
     assert "doctor" not in allowed
     assert "memory migrate" not in allowed
+    assert "feedback flush" not in allowed  # it resends and moves records: a write and a dial

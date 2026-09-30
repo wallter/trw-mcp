@@ -193,8 +193,9 @@ async def _served_descriptions() -> dict[str, str]:
     therefore invisible to every calling agent while remaining perfectly
     visible to an AST reader.
     """
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     served: dict[str, str] = {}
     for tool in await mcp._list_tools():
         dumped = tool.model_dump(exclude_none=True)
@@ -332,8 +333,9 @@ async def test_all_registered_tools_discoverable() -> None:
     not silently pass.
     """
     ast_tools = {name for (name, _module, _docstring) in _iter_tool_functions()}
-    from trw_mcp.server import mcp as server
+    from tests._served_app import served_app
 
+    server = served_app()
     # mcp is typed `object` in trw_mcp/server/__init__.py (lazy loader hiding
     # the optional fastmcp dependency). Cast at the call site to access the
     # FastMCP public API without forcing the import at module load.

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trw_mcp.models.config._field_descriptions import apply_descriptions
 from trw_mcp.models.config._fields_assess import _AssessFields
 from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceFields
 from trw_mcp.models.config._fields_build import _BuildFields
@@ -92,3 +93,8 @@ class _TRWConfigFields(
         case_sensitive=False,
         extra="ignore",
     )
+
+
+# Fields declared without a description get theirs from ``_field_descriptions`` (one line each); done once, here,
+# before ``TRWConfig`` subclasses this class and copies its fields.
+apply_descriptions(_TRWConfigFields)

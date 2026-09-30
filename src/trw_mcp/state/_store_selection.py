@@ -421,5 +421,8 @@ def _refuse_unpinned(trw_dir: Path, note: str = "") -> NoReturn:
             f"{trw_dir.parent} keeps its learnings in its own memory.db, which trw-mcp no longer reads{note}; "
             "run `trw-mcp memory migrate --to user` (preview first, then --apply)"
         )
-    # Nothing to move (PRD-CORE-280 FR06): update-project pins the namespace and mints the grant.
+    # Nothing to move (PRD-CORE-280 FR06): update-project pins the namespace and mints the grant -- on an
+    # initialised project. A never-initialised one has no .trw/ at all and needs init-project (E2E-INC-014).
+    if not trw_dir.is_dir():
+        raise StoreUnavailableError(f"{trw_dir.parent} is not initialised for TRW; run `trw-mcp init-project .`")
     raise StoreUnavailableError(f"{trw_dir.parent} has no project_namespace{note}; run `trw-mcp update-project`")

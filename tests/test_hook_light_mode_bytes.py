@@ -208,3 +208,28 @@ def test_post_compact_output_is_injected_or_absent(tmp_path: Path, with_marker: 
         assert 'LAST CHECKPOINT: "added retry with jitter"' in recovered
     else:
         assert "RECOVERED:" not in recovered
+
+
+def test_compact_recovery_labels_a_factory_checkpoint_as_a_sanitized_preview(tmp_path: Path) -> None:
+    """E2E-INC-065: the banner blanks brackets, so a factory READY shown there must not look copyable."""
+    context = tmp_path / ".trw" / "context"
+    context.mkdir(parents=True)
+    payload = {
+        "factory": 1,
+        "kind": "READY",
+        "attempt": "X",
+        "subject_sha": "a" * 40,
+        "receipts": {"build": ["build-1"]},
+    }
+    marker = {
+        "run_path": f"{tmp_path}/.trw/runs/x/20260926T000000Z-feedface",
+        "phase": "validate",
+        "events_logged": 1,
+        "last_checkpoint": json.dumps(payload),
+    }
+    (context / "pre_compact_state.json").write_text(json.dumps(marker), encoding="utf-8")
+
+    start = _run_compaction_hook(SESSION_HOOK, tmp_path, b'{"source":"compact"}')
+    line = next(ln for ln in start.stdout.decode(errors="replace").splitlines() if ln.startswith("LAST CHECKPOINT:"))
+    assert "[" not in line  # the sanitizer still blanks brackets (injection defense unchanged)
+    assert line.endswith("(sanitized preview, not a payload to copy: exact JSON is in the run meta/checkpoints.jsonl)")

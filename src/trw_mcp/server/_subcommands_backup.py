@@ -25,7 +25,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import sys
+import time
 from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
@@ -45,10 +47,43 @@ def _load_config() -> TRWConfig:
 
 
 def _resolve_base_and_db(args: argparse.Namespace) -> tuple[Path, Path]:
-    from trw_memory.cli_storage import resolve_base_and_db
+    """``--db``, else the store the daemon serves, through the daemon's own resolver.
+
+    E2E-BACKUP-DAEMON-STORE-ONE-RESOLVER: ``served_store_path`` is the one rule both use, so a backup
+    always archives the file the daemon serves. An explicit ``MEMORY_STORAGE_PATH`` that names another
+    store is not honoured by the daemon, so it is named in a warning rather than silently ignored.
+    """
+    if getattr(args, "db", None):
+        db_path = Path(args.db).resolve()
+        return db_path.parent, db_path
+    from trw_memory.daemon import served_store_path
+    from trw_memory.integrations._backend import resolve_backend_db_path
     from trw_memory.models.config import MemoryConfig
 
-    return resolve_base_and_db(args, config_cls=MemoryConfig)
+    db_path = served_store_path().resolve()
+    config = MemoryConfig()
+    if "storage_path" in config.model_fields_set and not config.memory_single_store_path:
+        named = resolve_backend_db_path(config, "default").resolve()
+        if named != db_path:
+            print(
+                f"warning: MEMORY_STORAGE_PATH names {named}, but the daemon serves {db_path}; "
+                "backing up the served store (pass --db to archive another file)",
+                file=sys.stderr,
+            )
+    return db_path.parent, db_path
+
+
+def _confirm_replace(db_path: Path, args: argparse.Namespace) -> None:
+    """Refuse to overwrite *db_path* unless ``--yes`` was given or an interactive user says yes (HB-2)."""
+    what = f"{db_path} (the whole store: every project's memory in it)"
+    if getattr(args, "yes", False):
+        return
+    if sys.stdin.isatty():
+        answer = input(f"backup restore will replace {what}.\nThe current store is archived first. Continue? [y/N] ")
+        if answer.strip().lower() in {"y", "yes"}:
+            return
+    print(f"backup restore: not replacing {what}; re-run with --yes to confirm", file=sys.stderr)
+    sys.exit(2)
 
 
 def _invoking_trw_dir() -> Path | None:
@@ -80,10 +115,11 @@ def _run_backup_create(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     archive = create_backup_archive(base_dir, db_path)
+    print(f"Archived store: {db_path}")
     print(f"Created backup archive: {archive.path}")
 
-    # The store FILE's own project and the invoking project must BOTH allow it: MEMORY_STORAGE_PATH or
-    # --db can place the store in another project, which may restrict the backup but never authorize it.
+    # The store FILE's own project and the invoking project must BOTH allow it: --db (or a single-store
+    # path) can place the store in another project, which may restrict the backup but never authorize it.
     owner = payload_trw_dir(db_path)
     policy = send_policy_all((_invoking_trw_dir(), owner))
     if owner is None or not (policy.contact and policy.backup_remote):
@@ -119,6 +155,74 @@ async def _fetch_latest_remote_archive(uploader: BackupUploader, staging_dir: Pa
     return download.path, newest.key
 
 
+_RAW_COPY_CHUNK = 1024 * 1024
+
+
+def _copy_streamed(source: Path, base_dir: Path, rel: Path) -> None:
+    """Copy *source* to ``base_dir/rel`` a chunk at a time, refusing a symlinked component (PRD-CORE-337).
+
+    The first ``write_beneath`` replaces the leaf (and makes an empty source an empty file); each later chunk is
+    an ``append_beneath``. Peak memory is one chunk, not the store. Not atomic: the caller discards a partial copy.
+    """
+    from trw_memory.safe_fs import append_beneath, write_beneath
+
+    with source.open("rb") as handle:
+        chunk = handle.read(_RAW_COPY_CHUNK)
+        write_beneath(base_dir, rel, chunk, mode=0o600)
+        # One chunk ahead, so the last append can be fsynced (write_beneath syncs a whole file; appends do not).
+        following = handle.read(_RAW_COPY_CHUNK)
+        while following:
+            chunk, following = following, handle.read(_RAW_COPY_CHUNK)
+            append_beneath(base_dir, rel, chunk, mode=0o600, sync=not following)
+
+
+def _keep_current_store(base_dir: Path, db_path: Path) -> None:
+    """Keep what a restore will replace: an archive, else a raw copy; exit 1 when neither can be made.
+
+    A corrupt store is restore's main use, and exactly where ``VACUUM INTO`` fails. The byte copy of the
+    store and its ``-wal``/``-shm`` is taken FIRST, before anything opens the file: opening a corrupt store
+    for the archive discards its WAL, which can hold committed rows. When the archive then succeeds the
+    raw copy is dropped. A store the daemon holds (``StoreBusyError``) is refused outright.
+    """
+    from trw_memory._tree_removal import remove_tree_beneath
+    from trw_memory.exceptions import StoreBusyError, UnsafeWriteError
+    from trw_memory.storage._backup_archive import BackupArchiveError, backups_base_dir, create_backup_archive
+
+    raw_dir = backups_base_dir(base_dir) / f"pre-restore-raw-{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
+    copy_error: Exception | None = None
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            source = db_path.with_name(db_path.name + suffix)
+            if source.exists():
+                # Anchored at the store's own directory and symlink-refusing: with --db or a relocated store
+                # that directory can be inside a checkout (PRD-CORE-337 census).
+                _copy_streamed(source, base_dir, raw_dir.relative_to(base_dir) / source.name)
+    except (OSError, UnsafeWriteError) as exc:
+        copy_error = exc
+        # A streamed copy is not atomic: drop what was written so a truncated WAL is never offered as a copy.
+        remove_tree_beneath(base_dir, raw_dir.relative_to(base_dir), purpose="partial pre-restore raw copy")
+    try:
+        saved = create_backup_archive(base_dir, db_path)
+    except StoreBusyError as exc:
+        print(f"Backup restore failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except BackupArchiveError as exc:  # trw-fail-silent-allow: falls back to the raw copy it prints
+        if copy_error is not None:
+            print(
+                f"Backup restore failed: could not archive ({exc}) or copy ({copy_error}) the current store; "
+                "nothing was replaced. Re-run with --yes --no-snapshot to replace it without a copy.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Saved a raw copy of the current store to {raw_dir} (the archive step failed: {exc})")
+        return
+    if raw_dir.exists():
+        remove_tree_beneath(
+            base_dir, raw_dir.relative_to(base_dir), purpose="pre-restore raw copy superseded by the archive"
+        )
+    print(f"Saved the current store to {saved.path} (restore it with: trw-mcp backup restore --from <that path>)")
+
+
 def _run_backup_restore(args: argparse.Namespace) -> None:
     from trw_memory.exceptions import StoreBusyError
     from trw_memory.storage._backup_archive import BackupArchiveError, restore_from_archive
@@ -151,6 +255,18 @@ def _run_backup_restore(args: argparse.Namespace) -> None:
     else:
         archive_path = Path(source).resolve()
 
+    if getattr(args, "no_snapshot", False) and not getattr(args, "yes", False):
+        print(
+            "backup restore: --no-snapshot needs --yes (it replaces the store without keeping a copy)", file=sys.stderr
+        )
+        sys.exit(2)
+    _confirm_replace(db_path, args)
+    if getattr(args, "no_snapshot", False):
+        print(
+            f"WARNING: --no-snapshot: NO copy of the current store was kept before replacing {db_path}", file=sys.stderr
+        )
+    elif db_path.exists():
+        _keep_current_store(base_dir, db_path)
     try:
         restore_from_archive(archive_path, db_path)
     except (BackupArchiveError, StoreBusyError) as exc:
@@ -175,8 +291,8 @@ def run_backup(args: argparse.Namespace) -> None:
         handlers[command](args)
         return
     print(
-        "Usage: trw-mcp backup create [--namespace NAMESPACE] [--db PATH]\n"
-        "       trw-mcp backup restore --from latest|PATH [--namespace NAMESPACE] [--db PATH]",
+        "Usage: trw-mcp backup create [--db PATH]\n"
+        "       trw-mcp backup restore --from latest|PATH [--yes [--no-snapshot]] [--db PATH]",
         file=sys.stderr,
     )
     sys.exit(2)

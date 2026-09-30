@@ -95,16 +95,15 @@ def register_build_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Use when you just ran validation and need it logged for the delivery gate.
 
-        This tool does not execute anything — run validation yourself first.
-        tests_passed is required (no default guess). scope e.g. "full"/"quick".
-        coverage_pct: 0.0-100.0, if measured. static_checks_clean: omit to
-        record CLEAN.
+        It executes nothing — run validation yourself first.
+        tests_passed is required. scope e.g. "full"/"quick".
+        coverage_pct: 0.0-100.0, if measured. static_checks_clean: omit and it is
+        recorded NOT RUN (never clean), which blocks delivery.
 
         options (unknown keys rejected): failures (list), run_path,
         min_coverage (flips tests_passed False below it), mypy_clean (legacy
-        alias of static_checks_clean), command_results (enforce mode: one per
-        required command, {command_id: "tests"|"static_checks", label,
-        command_class: "test"|"static", exit_code}).
+        alias), command_results (enforce mode: one {command_id, label,
+        command_class, exit_code} per required command).
 
         Output: tests_passed, static_checks_clean, coverage_pct,
         coverage_threshold_failed.
@@ -143,6 +142,14 @@ def register_build_tools(server: FastMCP) -> None:
                 tests_passed=tests_passed,
                 static_checks_clean=static_checks_clean,
             )
+        # An omitted static outcome is NOT RUN: never the legacy ``mypy_clean`` default (True) and never a
+        # pass, on the response, build-status.yaml, the build event, the ceremony state or the receipt. A
+        # caller that EXPLICITLY sets the legacy ``mypy_clean`` alias has reported a static outcome.
+        static_not_run = (
+            typed_command_results is None and static_checks_clean is None and "mypy_clean" not in opts.model_fields_set
+        )
+        if static_not_run:
+            effective_static_checks_clean = False
         reported_text = [scope, *(text for r in typed_command_results or () for text in (r.label, r.limitations))]
         refuse_pass_with_skip_switches(reported_tests_passed, os.environ, reported_text)
         config = get_config()
@@ -176,15 +183,20 @@ def register_build_tools(server: FastMCP) -> None:
         # that is not the caller's active (pinned) run (a verifier's or canary's scratch run) belongs to that run's
         # receipt alone. With no run named the caller is asking about its own work, as before.
         active_run = find_active_run(context=_build_call_context(ctx))
-        resolved_run: Path | None = Path(run_path).resolve() if run_path else active_run
+        from trw_mcp.state._paths import resolve_run_path
+
+        # INC-035: an explicit run_path takes the same containment rule as checkpoint/status/deliver.
+        resolved_run: Path | None = (
+            resolve_run_path(run_path, context=_build_call_context(ctx)) if run_path else active_run
+        )
         writes_project_state = not run_path or (active_run is not None and active_run.resolve() == resolved_run)
 
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
         status = BuildStatus(
             tests_passed=reported_tests_passed,
-            static_checks_clean=effective_static_checks_clean,
-            mypy_clean=mypy_clean,
+            static_checks_clean=None if static_not_run else effective_static_checks_clean,
+            mypy_clean=False if static_not_run else mypy_clean,
             timed_out=False,
             coverage_pct=coverage_pct,
             test_count=effective_test_count,
@@ -231,19 +243,17 @@ def register_build_tools(server: FastMCP) -> None:
         # concurrent session cannot overwrite this run's proof (the 88c669bf4
         # global build-status incident). Strictly fail-open — a scope/binding
         # problem skips the receipt and leaves the legacy projection intact.
-        # An omitted static outcome is "not run" on the receipt, never the tool's clean default.
-        receipt_static_clean = effective_static_checks_clean and (
-            typed_command_results is not None or static_checks_clean is not None
-        )
         receipt_write = _dual_write_build_receipt(
             resolved_run,
             status,
             scope,
-            receipt_static_clean,
+            effective_static_checks_clean,
             coverage_pct,
             typed_command_results
             or synthesize_build_command_results(
-                scope=scope, tests_passed=reported_tests_passed, static_checks_clean=static_checks_clean
+                scope=scope,
+                tests_passed=reported_tests_passed,
+                static_checks_clean=None if static_not_run else effective_static_checks_clean,
             ),
             min_coverage,
         )
@@ -268,7 +278,7 @@ def register_build_tools(server: FastMCP) -> None:
 
         result: dict[str, object] = {
             "tests_passed": status.tests_passed,
-            "static_checks_clean": effective_static_checks_clean,
+            "static_checks_clean": "not_run" if static_not_run else effective_static_checks_clean,
             "mypy_clean": status.mypy_clean,
             "timed_out": status.timed_out,
             "coverage_pct": status.coverage_pct,
@@ -280,6 +290,12 @@ def register_build_tools(server: FastMCP) -> None:
             "typed_receipt_state": "written" if receipt_write is not None and receipt_write.ok else "missing",
             "typed_receipt_reason": receipt_write.reason_code if receipt_write is not None else "receipt_not_written",
         }
+        if receipt_write is not None and receipt_write.ok and receipt_write.tree_binding:
+            # E2E-INC-018: "bound" means later edits anywhere in the working tree stale this receipt;
+            # anything else is UNBOUND (advisory) and says why.
+            result["tree_binding"] = "bound" if receipt_write.tree_binding == "bound" else "unbound"
+            if receipt_write.tree_binding != "bound":
+                result["tree_binding_reason"] = receipt_write.tree_binding
         if cache_path is not None:
             result["cache_path"] = str(cache_path)
         claims = integration_claims(typed_command_results)

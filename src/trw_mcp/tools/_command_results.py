@@ -246,6 +246,7 @@ def synthesize_build_command_results(
             label=_bounded_label(f"{scope}: static checks"),
             command_class=CommandClass.STATIC,
             exit_code=0 if static_checks_clean else 1,
+            not_run=static_checks_clean is None,
             limitations=static_note,
         ),
     )

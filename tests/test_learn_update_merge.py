@@ -88,11 +88,11 @@ def test_update_mode_takes_typed_fields_through_metadata(tmp_path: Path, monkeyp
     ("kwargs", "field"),
     [
         ({"summary": "s", "detail": "d", "status": "resolved"}, "message"),  # status without an id
-        ({"learning_id": "L-1", "evidence": ["x"]}, "error"),  # create-only argument in update mode
-        ({"learning_id": "L-1", "scope": "user"}, "error"),
-        ({"learning_id": "L-1", "metadata": {"source_identity": "x"}}, "error"),  # create-only key
+        ({"learning_id": "L-1", "evidence": ["x"]}, "message"),  # create-only argument in update mode
+        ({"learning_id": "L-1", "scope": "user"}, "message"),
+        ({"learning_id": "L-1", "metadata": {"source_identity": "x"}}, "message"),  # create-only key
         ({"summary": "s", "detail": "d", "metadata": {"supersedes": "L-0"}}, "message"),  # update-only key
-        ({"learning_id": "L-1", "metadata": {"feedback": "helpful"}}, "error"),  # PRD-CORE-293: key removed
+        ({"learning_id": "L-1", "metadata": {"feedback": "helpful"}}, "message"),  # PRD-CORE-293: key removed
     ],
 )
 def test_arguments_of_the_other_mode_are_refused(

@@ -188,7 +188,11 @@ def add_project_subcommands(
     # import-learnings
     import_parser = subparsers.add_parser(
         "import-learnings",
-        help="Import learnings from an export file",
+        help=(
+            "Import learnings from a JSON export (not CSV). Every learning gets a NEW id and source_type=agent; the "
+            "exported id and source_type are kept as imported-id:/imported-source: tags, and created/updated are "
+            "re-stamped at import time."
+        ),
     )
     import_parser.add_argument(
         "source_file",

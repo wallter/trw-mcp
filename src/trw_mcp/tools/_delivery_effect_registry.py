@@ -158,6 +158,15 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
         _PP,
         "per-decision content digest",
     ),
+    # PRD-CORE-345 FR01: one outcome record per gate evaluation, pass or block. Audit only.
+    (
+        "S23b",
+        "deliver outcome record write",
+        "record_outcome",
+        _O,
+        _PP,
+        "outcome id",
+    ),
     ("D00", "deferred lock-holder record", "_try_acquire_deferred_lock", _O, _CO, "lock/lease owner + liveness"),
     ("D01", "learning auto-prune mutations/audit", "_step_auto_prune", _O, _NR, "per-action proof"),
     ("D03", "tier sweep, impact assignment, purge", "_step_tier_sweep", _O, _NR, "stable per-transition proof"),
@@ -329,6 +338,7 @@ ALWAYS_REEVALUATE_EFFECTS: frozenset[str] = frozenset(
         "S06",  # acceptable-failure override ledger — the PRD-CORE-191 verdict
         "S07",  # override event append — the audit of that verdict
         "S23",  # gate decision-set receipts — evidence for THIS attempt's gates
+        "S23b",  # the deliver outcome record — each attempt decides afresh (PRD-CORE-345)
     }
 )
 

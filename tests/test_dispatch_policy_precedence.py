@@ -9,6 +9,7 @@ Roles are the existing dispatch roles; there is no new taxonomy.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,14 @@ from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dispatch_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real BaseSettings projections must not inherit the developer's dispatch policy."""
+    for key in tuple(os.environ):
+        if key.upper().startswith("TRW_DISPATCH_"):
+            monkeypatch.delenv(key)
 
 
 class _Cfg:
@@ -93,8 +102,8 @@ def test_an_invalid_effort_is_rejected_before_launch(where: str) -> None:
         ("claude", None, {"claude": "sonnet"}, "code-review", "sonnet", "config"),
         ("claude", None, {}, "code-review", "opus", "table"),  # review -> frontier -> opus
         ("claude", None, {}, None, None, "none"),
-        # codex has no verified tier -> model mapping: TRW passes nothing and says so
-        ("codex", None, {}, "code-review", None, "unsupported"),
+        # Codex has its own dispatch default, not a canonical capability-tier mapping.
+        ("codex", None, {}, "code-review", "gpt-6.1-sol", "default"),
         ("codex", None, {"codex": "gpt-x"}, "code-review", "gpt-x", "config"),
     ],
 )
@@ -114,10 +123,81 @@ def test_the_result_records_requested_versus_applied_effort() -> None:
     claude = _resolve(role="adversarial-audit")
     codex = _resolve(client="codex", role="adversarial-audit")
 
-    assert policy_record(claude)["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
+    assert policy_record(claude)["effort"] == {
+        "requested": None,
+        "resolved": "medium",
+        "applied": "medium",
+        "source": "table",
+    }
     # codex takes effort as a config override, so the requested level is applied
-    assert policy_record(codex)["effort"] == {"requested": "medium", "applied": "medium", "source": "table"}
-    assert policy_record(codex)["model"] == {"requested": None, "applied": None, "source": "unsupported"}
+    assert policy_record(codex)["effort"] == {
+        "requested": None,
+        "resolved": "low",
+        "applied": "low",
+        "source": "default",
+    }
+    assert policy_record(codex)["model"] == {
+        "requested": None,
+        "resolved": "gpt-6.1-sol",
+        "applied": "gpt-6.1-sol",
+        "source": "default",
+    }
+
+
+@pytest.mark.parametrize("role", [None, "code-review", "adversarial-audit", "implement"])
+def test_codex_default_reaches_argv_with_real_config_projection(role: str | None) -> None:
+    from trw_mcp.dispatch._commands import build_command
+    from trw_mcp.models.config import TRWConfig
+
+    req = _resolve(client="codex", role=role, cfg=TRWConfig(_env_file=None).dispatch)
+    argv = build_command(req)
+    assert (req.model, req.model_source) == ("gpt-6.1-sol", "default")
+    assert (req.effort, req.effort_source) == ("low", "default")
+    assert argv[argv.index("--model") + 1] == req.model
+    assert 'model_reasoning_effort="low"' in argv
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
+    assert "--ignore-user-config" in argv
+
+
+def test_codex_operator_config_and_request_override_defaults() -> None:
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = TRWConfig(
+        _env_file=None, dispatch_default_models={"codex": "gpt-6-astra"}, dispatch_default_effort="high"
+    ).dispatch
+    configured = _resolve(client="codex", role="code-review", cfg=cfg)
+    assert (configured.model, configured.model_source) == ("gpt-6-astra", "config")
+    assert (configured.effort, configured.effort_source) == ("high", "config")
+    explicit = _resolve(client="codex", cfg=cfg, model="gpt-6-luna", effort="medium")
+    assert (explicit.model, explicit.model_source) == ("gpt-6-luna", "request")
+    assert (explicit.effort, explicit.effort_source) == ("medium", "request")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "model", "effort"),
+    [({"model": "gpt-6-astra"}, "gpt-6-astra", "low"), ({"effort": "high"}, "gpt-6.1-sol", "high")],
+)
+def test_codex_model_and_effort_overrides_are_independent(overrides: dict[str, str], model: str, effort: str) -> None:
+    req = _resolve(client="codex", **overrides)
+    assert (req.model, req.effort) == (model, effort)
+
+
+@pytest.mark.parametrize("effort", ["minimal", "none"])
+def test_codex_unsupported_portable_effort_is_refused(effort: str) -> None:
+    with pytest.raises(DispatchResolutionError, match=effort):
+        _resolve(client="codex", effort=effort)
+
+
+def test_mcp_codex_omitted_model_and_effort_use_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.models.config import TRWConfig
+
+    captured: list[DispatchRequest] = []
+    monkeypatch.setattr("trw_mcp.tools.dispatch.get_config", lambda: TRWConfig(_env_file=None))
+    monkeypatch.setattr("trw_mcp.tools.dispatch.dispatch", lambda req: captured.append(req) or _fake_result())
+    out = _mcp_dispatch()(prompt="review this", client="codex", role="code-review", timeout_s=60, wait=True)
+    assert (captured[0].model, captured[0].effort) == ("gpt-6.1-sol", "low")
+    assert out["policy"]["model"]["source"] == "default"
+    assert out["policy"]["effort"]["source"] == "default"
 
 
 # ── Public entry points: CLI and MCP ──────────────────────────────────────────
@@ -152,6 +232,21 @@ def test_cli_effort_flag_reaches_the_request(monkeypatch: pytest.MonkeyPatch) ->
     assert (captured[0].effort, captured[0].effort_source) == ("low", "request")
 
 
+def test_cli_codex_defaults_reach_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.dispatch import _cli
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+
+    ns = _build_arg_parser().parse_args(["dispatch", "--prompt", "review this"])
+    captured: list[DispatchRequest] = []
+    monkeypatch.setattr(_cli, "get_config", lambda: TRWConfig(_env_file=None))
+    monkeypatch.setattr(_cli, "dispatch", lambda req: captured.append(req) or _fake_result())
+    with pytest.raises(SystemExit) as exc:
+        _cli.run_dispatch(ns)
+    assert exc.value.code == 0
+    assert (captured[0].client, captured[0].model, captured[0].effort) == ("codex", "gpt-6.1-sol", "low")
+
+
 def test_cli_rejects_an_invalid_effort() -> None:
     from trw_mcp.server._cli_argparse import _build_arg_parser
 
@@ -182,7 +277,7 @@ def test_mcp_effort_reaches_the_request_and_the_result_records_it(monkeypatch: p
     )
 
     assert (captured[0].effort, captured[0].effort_source) == ("high", "request")
-    assert out["policy"]["effort"] == {"requested": "high", "applied": "high", "source": "request"}
+    assert out["policy"]["effort"] == {"requested": "high", "resolved": "high", "applied": "high", "source": "request"}
 
 
 def test_mcp_rejects_an_invalid_effort(monkeypatch: pytest.MonkeyPatch) -> None:

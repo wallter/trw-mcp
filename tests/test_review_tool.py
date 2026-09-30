@@ -69,7 +69,7 @@ def _make_deliver_with_stubs(
     monkeypatch.setattr("trw_mcp.tools.ceremony.find_active_run", lambda **_: run_dir)
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony._do_reflect",
-        lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "learnings_produced": 0},
+        lambda *_a, **_kw: {"status": "success", "events_analyzed": 0, "mechanical_learnings_extracted": 0},
     )
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony._do_instruction_sync",

@@ -104,7 +104,7 @@ class TestConfidencePromotionNeedsABasis:
 
         result = _update(daemon_checkout, "L-bare", confidence="verified", evidence_level="verified")
 
-        assert result["status"] == "invalid"
+        assert result["status"] == "rejected"
         assert result["reason"] == "unsubstantiated_verified"
         stored = _get(daemon_checkout, "L-bare")
         assert stored["confidence"] == "unverified", "the refused promotion must not have landed"
@@ -181,7 +181,7 @@ class TestConfidencePromotionNeedsABasis:
             metadata={"task_type": "coding"},
         )
 
-        assert result["status"] == "invalid"
+        assert result["status"] == "rejected"
         stored = _get(daemon_checkout, "L-partial")
         assert stored["task_type"] == ""
 
@@ -299,7 +299,7 @@ def test_rejected_combined_update_preserves_both_records_project_prior(daemon_ch
         metadata={"supersedes": "L-prior"},
     )
 
-    assert result["status"] == "invalid"
+    assert result["status"] == "rejected"
     assert result["reason"] == "unsubstantiated_verified"
     assert _get(daemon_checkout, "L-prior") == before_prior
     assert _get(daemon_checkout, "L-target") == before_target
@@ -327,7 +327,7 @@ def test_rejected_combined_update_preserves_both_records_user_prior(daemon_check
         metadata={"supersedes": "L-prior"},
     )
 
-    assert result["status"] == "invalid"
+    assert result["status"] == "rejected"
     assert result["reason"] == "unsubstantiated_verified"
     assert _get(daemon_checkout, "L-prior", namespace=USER_NAMESPACE) == before_prior
     assert _get(daemon_checkout, "L-target") == before_target

@@ -211,7 +211,7 @@ def _update_codex_artifacts(
             result["preserved"].extend(hooks_result.get("preserved", []))
             result["errors"].extend(hooks_result.get("errors", []))
             if hooks_result.get("created") or hooks_result.get("updated"):
-                result.setdefault("warnings", []).append(codex_hooks_review_warning())
+                result.setdefault("warnings", []).append(codex_hooks_review_warning(target_dir))
         except Exception as exc:  # justified: fail-open, codex update is best-effort
             result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
 

@@ -124,6 +124,10 @@ def _append_event_best_effort(
     actively-competing ``active`` run the sweep silently gave up on.
     """
     record = {"ts": _iso_utc_now(), "event": event, "data": payload}
+    from trw_mcp.state._containment import trw_write_contained
+
+    if not trw_write_contained(events_path):  # INC-034: logged there; the sweep carries on, as on a disk error
+        return
     try:
         events_path.parent.mkdir(parents=True, exist_ok=True)
         with events_path.open("a", encoding="utf-8") as fh:

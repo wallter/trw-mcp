@@ -60,6 +60,11 @@ def _context(stdout: str) -> str:
     return str(payload["hookSpecificOutput"]["additionalContext"])
 
 
+def _hook_ran(project: Path, tool_use_id: str = "toolu-test-001") -> bool:
+    """The hook got past every gate: its CC-04 record for this tool call exists (it prints nothing to prove it)."""
+    return (project / ".trw" / "context" / "cc03-hints" / f"{tool_use_id}.json").is_file()
+
+
 def _enable_cc03(tmp_project: Path) -> None:
     """Write .trw/config.yaml enabling the CC-03 hook."""
     trw_dir = tmp_project / ".trw"
@@ -188,12 +193,12 @@ class TestOptInGate:
         assert result.stdout == ""
 
     def test_enabled_produces_output_for_py_file(self, tmp_path: Path) -> None:
-        """When enabled, a .py file produces at least the T0 beacon."""
+        """When enabled, a .py file reaches the hint program (no beacon is printed when there is nothing to say)."""
         _enable_cc03(tmp_path)
         result = _run_hook(_make_pretooluse(file_path="src/app.py"), tmp_path)
         assert result.returncode == 0
-        # Enabled + .py → T0 beacon at minimum (Python may not be importable)
-        assert len(result.stdout) > 0
+        assert _hook_ran(tmp_path)
+        assert "Distill intelligence available" not in result.stdout
 
     def test_enabled_reads_the_payload_without_jq(self, tmp_path: Path) -> None:
         """No jq: lib-trw.sh _json_get reads the payload with python3, so the hint still fires."""
@@ -216,7 +221,7 @@ class TestOptInGate:
             },
         )
         assert result.returncode == 0
-        assert len(result.stdout) > 0
+        assert _hook_ran(project)
 
     def test_enabled_invalid_yaml_config_falls_back_disabled(self, tmp_path: Path) -> None:
         """Corrupt config.yaml → shell falls back to disabled (no output)."""
@@ -242,8 +247,8 @@ class TestOptInGate:
         (trw_dir / "config.yaml").write_text("channels:\n  cc03_hook_enabled: true\n", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="main.py"), tmp_path)
         assert result.returncode == 0
-        # Nested key IS now matched by the shell — hook emits output (T0 beacon at minimum)
-        assert len(result.stdout) > 0, (
+        # Nested key IS now matched by the shell: the hook ran
+        assert _hook_ran(tmp_path), (
             "channels.cc03_hook_enabled: true should enable the hook via shell; got empty output (hook stayed disabled)"
         )
 
@@ -268,7 +273,7 @@ class TestOptInGate:
         result = _run_hook(_make_pretooluse(file_path="main.py"), tmp_path)
         assert result.returncode == 0
         # Alternative nested key IS matched by the shell
-        assert len(result.stdout) > 0, (
+        assert _hook_ran(tmp_path), (
             "channels.cc03.enabled: true should enable the hook via shell; got empty output (hook stayed disabled)"
         )
 
@@ -344,19 +349,19 @@ class TestSkipConditions:
         """.py files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/engine.py"), tmp_path)
         assert result.returncode == 0
-        assert len(result.stdout) > 0
+        assert _hook_ran(tmp_path)
 
     def test_non_skipped_ts_extension_produces_output(self, tmp_path: Path) -> None:
         """.ts files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/index.ts"), tmp_path)
         assert result.returncode == 0
-        assert len(result.stdout) > 0
+        assert _hook_ran(tmp_path)
 
     def test_non_skipped_yaml_extension_produces_output(self, tmp_path: Path) -> None:
         """.yaml files are NOT in the skip allowlist (they have blast radius)."""
         result = _run_hook(_make_pretooluse(file_path=".trw/config.yaml"), tmp_path)
         assert result.returncode == 0
-        assert len(result.stdout) > 0
+        assert _hook_ran(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -373,16 +378,14 @@ class TestT0BeaconShape:
         # .py file + enabled → T0 beacon (no sidecar)
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
-        if result.stdout:
-            assert len(_context(result.stdout)) <= 120
+        assert "Distill intelligence available" not in result.stdout
 
-    def test_t0_beacon_contains_trw_marker(self, tmp_path: Path) -> None:
-        """T0 beacon output references TRW."""
+    def test_a_hint_with_nothing_to_say_prints_nothing(self, tmp_path: Path) -> None:
+        """No presence beacon: silence is the answer when no learning or sidecar applies."""
         _enable_cc03(tmp_path)
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
-        if result.stdout:
-            assert "[TRW]" in result.stdout or "trw" in result.stdout.lower()
+        assert result.stdout == ""
 
 
 # ---------------------------------------------------------------------------
@@ -410,11 +413,10 @@ class TestOutputHardCap:
 class TestPythonFallback:
     """FR30/FR31: Python subprocess fallback on import error / timeout."""
 
-    def test_unimportable_python_still_produces_t0_beacon(self, tmp_path: Path) -> None:
-        """FR30: if Python subprocess fails/timeouts, hook emits T0 beacon (not hang/crash).
+    def test_unimportable_python_stays_silent(self, tmp_path: Path) -> None:
+        """FR30: if Python subprocess fails/timeouts, hook says nothing (not hang/crash).
 
         We simulate an import error by writing a bad Python path file.
-        The hook falls back to _format_t0_beacon in the || branch.
         """
         _enable_cc03(tmp_path)
         channels_dir = tmp_path / ".trw" / "channels"
@@ -423,19 +425,17 @@ class TestPythonFallback:
         (channels_dir / "cc03-python.txt").write_text("/nonexistent/python", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
-        # Fallback T0 beacon or empty (if library path also fails)
-        # Key invariant: no crash (rc=0)
+        assert result.stdout.strip() == ""
 
-    def test_fallback_output_within_t0_cap(self, tmp_path: Path) -> None:
-        """FR31: fallback output (T0 beacon) is ≤ 120 chars."""
+    def test_fallback_emits_no_beacon(self, tmp_path: Path) -> None:
+        """FR31: the fallback is silent; no presence beacon reaches the model."""
         _enable_cc03(tmp_path)
         channels_dir = tmp_path / ".trw" / "channels"
         channels_dir.mkdir(parents=True, exist_ok=True)
         (channels_dir / "cc03-python.txt").write_text("/nonexistent/python", encoding="utf-8")
         result = _run_hook(_make_pretooluse(file_path="src/module.py"), tmp_path)
         assert result.returncode == 0
-        if result.stdout:
-            assert len(_context(result.stdout)) <= 120
+        assert "Distill intelligence available" not in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -465,9 +465,9 @@ class TestDebounce:
         r2 = _run_hook(_make_pretooluse(file_path="src/b.py", tool_use_id="t-b"), tmp_path)
         assert r1.returncode == 0
         assert r2.returncode == 0
-        # Both non-skipped files get output (not debounced against each other)
-        assert len(r1.stdout) > 0
-        assert len(r2.stdout) > 0
+        # Both non-skipped files reach the hint program (not debounced against each other)
+        assert _hook_ran(tmp_path, "t-a")
+        assert _hook_ran(tmp_path, "t-b")
 
     def test_debounce_dir_created_on_first_call(self, tmp_path: Path) -> None:
         """Debounce directory is created at .trw/context/cc03-debounce."""

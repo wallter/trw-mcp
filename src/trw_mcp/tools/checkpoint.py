@@ -143,7 +143,7 @@ def _read_last_events(events_path: Path) -> list[str]:
 
 
 def _read_last_checkpoint_message(run_dir: Path) -> str:
-    """Last checkpoint message from checkpoints.jsonl (PRD-CORE-165 FR-02).
+    """Last checkpoint message from checkpoints.jsonl (PRD-CORE-342 FR-02).
 
     Pre-compaction recovery must surface the REAL last checkpoint message — that
     is what the next session reads to resume — not a generic hardcoded literal.
@@ -214,7 +214,7 @@ def _write_compact_state(
 ) -> None:
     """Write this session's pre-compaction marker with enhanced checkpoint metadata.
 
-    PRD-CORE-165 FR-01: ``directive`` + ``context_anchor`` are caller-supplied
+    PRD-CORE-342 FR-01: ``directive`` + ``context_anchor`` are caller-supplied
     (they live in the harness conversation, not trw state, so they cannot be
     auto-derived). They are persisted only when non-empty so the next session's
     recovery readback can surface them; the run-derived in-flight position
@@ -296,7 +296,11 @@ def _write_compact_instructions(
         ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
     )
     instructions_path = project_root / ".trw" / "context" / "compact_instructions.txt"
-    instructions_path.write_text(instructions)
+    # SYMLINK-WRITERS slice 2: the body carries run-derived text, so a planted symlink (e.g. to a shell rc
+    # file) is refused rather than followed. The caller's boundary reports the refusal as an error.
+    from trw_mcp._checkout_write import write_checkout_file
+
+    write_checkout_file(project_root, instructions_path, instructions)
     return instructions_path
 
 

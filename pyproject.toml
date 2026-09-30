@@ -2,12 +2,14 @@
 # Pinned below 1.29: hatchling 1.29+ stamps Metadata-Version 2.5, which twine 7.0 /
 # packaging 26.3 reject ("'2.5' is not a valid metadata version"). Every wheel we
 # have published carries 2.4. Re-verified 2026-09-05 in the release rehearsal.
-requires = ["hatchling>=1.27,<1.29"]
+# Exact since R9 #8: the signed tag attests the wheel's sha256, and the mirror rebuilds it; both
+# isolated builds must resolve the same backend or every publish fails closed. Bump deliberately.
+requires = ["hatchling==1.28.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "8.0.1"
+version = "8.1.1"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -34,9 +36,15 @@ dependencies = [
     # longer supported; the catch is deliberately not widened to compensate.
     "anyio>=4.11.0",
     "cryptography>=48.0.1",
-    "fastmcp>=3.2.0,<4.0.0",
+    "fastmcp>=3.4.0,<4.0.0",
     "httpx>=0.27.0",
     "mcp>=1.26.0",
+    # PRD-CORE-342 FR01: the one OTel API floor (already transitive via fastmcp-slim[client]).
+    "opentelemetry-api>=1.38,<2",
+    # PRD-CORE-347-NFR02: trw_mcp.handoff validates Agent Handoff Records against the packaged
+    # JSON Schema 2020-12. Declared, not left transitive via mcp; listed after mcp so the
+    # mcp pin line that PRD-CORE-317 cites does not move.
+    "jsonschema>=4.18.0",
     "packaging>=24.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.14.2",
@@ -75,7 +83,12 @@ dependencies = [
     # does not). Unpublished when raised: the lock follows after trw-memory ships,
     # and release_cut_prep.py re-derives the final pin. The floor's major is never
     # behind trw-memory's own version (test_mcp_version_source.py guards it).
-    "trw-memory>=5.0.0,<6.0.0",
+    # 5.1.0 also carries `trw_memory.safe_fs.write_beneath(exact_mode=)`, which _checkout_write.write_checkout_file
+    # passes UNGUARDED (SAFE-WRITE-MODE-EDGES); 5.0.x raises TypeError on it.
+    # 5.1.0 also carries `trw_memory.security.credentials` (the one credential detector,
+    # E2E-INC-036), imported UNGUARDED by telemetry/anonymizer.py; if this ships after
+    # trw-memory 5.1.0 is published, raise the floor to the release that carries it.
+    "trw-memory>=5.1.1,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -111,9 +124,10 @@ meta-tune = [
     "pyseccomp>=0.1.2; sys_platform == 'linux'",
     "psutil>=5.9.0",
 ]
+# PRD-CORE-342 FR01: the SDK and OTLP/HTTP exporter come from trw-memory[otel], whose otel_setup is
+# the one SDK-setup module. Installing the extra never enables export (TRW_OTEL_ENABLED=false).
 otel = [
-    "opentelemetry-distro>=0.48b0",
-    "opentelemetry-exporter-otlp>=1.27.0",
+    "trw-memory[otel]",
 ]
 dev = [
     "pytest>=8.0.0",
@@ -130,13 +144,14 @@ dev = [
     "vulture>=2.11",
     "deptry>=0.21.0",
     "defusedxml>=0.7.1",  # PRD-SEC-020 FR06: .github/scripts/{timing_job,verify_suite}.py parse fork-PR-triggered JUnit XML with this instead of stdlib xml.etree
+    "opentelemetry-sdk>=1.38,<2",  # PRD-CORE-342 FR09: the in-memory-exporter test fixture
     "build>=1.2.0",  # PRD skip-audit D5: lets the installer-build test fixture run `python -m build --wheel` without a repo-wide install
     # Backend for --no-isolation wheel builds under `build` above. MUST match the
     # [build-system] requires pin in trw-mcp/pyproject.toml AND trw-memory/pyproject.toml
     # exactly (hatchling 1.29+ stamps Metadata-Version 2.5, which twine/packaging reject)
     # — --no-isolation uses the venv's installed hatchling instead of an isolated one,
     # so a looser pin here silently breaks the D5 build fixture.
-    "hatchling>=1.27,<1.29",
+    "hatchling==1.28.0",
 ]
 ai = [
     "anthropic>=0.40.0",
@@ -191,14 +206,11 @@ typeCheckingMode = "standard"
 known_first_party = ["trw_mcp"]
 optional_dependencies_dev_groups = ["dev"]
 extend_exclude = ["scripts/install-trw.template.py"]
-package_module_name_map = { "opentelemetry-distro" = "opentelemetry_distro", "opentelemetry-exporter-otlp" = "opentelemetry_exporter_otlp" }
+package_module_name_map = { "opentelemetry-api" = "opentelemetry" }
 
 [tool.deptry.per_rule_ignores]
-# Optional OpenTelemetry installers are exercised through namespace imports and
-# runtime environment, not direct package-name imports. Starlette is an
-# intentional direct security-floor pin for FastMCP's transitive web surface.
-DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
-DEP003 = ["opentelemetry"]
+# Starlette is an intentional direct security-floor pin for FastMCP's transitive web surface.
+DEP002 = ["starlette"]
 
 [tool.ruff]
 # Style target, NOT the support floor (requires-python is >=3.11). Raising it to py311 makes ruff want
@@ -346,7 +358,7 @@ module = ["trw_memory", "trw_memory.*"]
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
-module = ["sqlite_vec", "sqlite_vec.*", "pysqlite3"]
+module = ["sqlite_vec", "sqlite_vec.*", "pysqlite3", "jsonschema", "jsonschema.*"]
 ignore_missing_imports = true
 no_implicit_reexport = true
 strict_equality = true

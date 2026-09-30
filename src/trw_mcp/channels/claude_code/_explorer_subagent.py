@@ -108,12 +108,14 @@ Invoke this subagent when asked for:
 This subagent cannot run these itself — name the command for the operator
 to run from a shell. All support `--json` for machine-readable output.
 
-- `trw-distill query callers|callees|uses|def|deps|importers|tests <target>`
-  — codebase relationships, e.g. `trw-distill query deps app/billing.py`.
-- `trw-distill rca trace|log|raises|history|pack <target>` — root-cause
-  helpers, e.g. `trw-distill rca trace tests/test_billing.py::test_refund`.
-- **A failing test**: suggest `trw-distill query deps <failing test>` FIRST
-  — it names what the test touches before `rca trace` explains why it broke.
+- `trw-distill query callers|uses|def <symbol>`, `trw-distill query callees <target>`,
+  `trw-distill query deps|importers|tests <path>` — codebase relationships, e.g.
+  `trw-distill query deps app/billing.py`.
+- `trw-distill rca trace <traceback-file>` (`-` reads a piped traceback),
+  `trw-distill rca raises <exception-name>`, `trw-distill rca history <path>` — root-cause
+  helpers, e.g. `trw-distill rca trace crash.txt`.
+- **A failing test**: suggest `trw-distill query deps <path>` on the test file FIRST — it names what the
+  test touches before `rca trace` ranks where a saved traceback points.
 
 ## Rules
 

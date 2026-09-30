@@ -132,7 +132,8 @@ _HINT_DUMP = {
     "lessons_status": None,
 }
 _BATCH_MISS = (
-    "Batch sidecar does not cover {target!r} (it covers the files the last commit touched) — run: "
+    "Batch sidecar does not cover {target!r} (it covers every file in the map at the commit it was"
+    " built from, so this file is new since then or outside the map) — run: "
     "cd <repo> && trw-distill self-improve before-edit --repo . --file {target} --persist-sidecar"
 )
 _RUN = "Run: cd <repo> && trw-distill self-improve before-edit --repo . --file foo.py --persist-sidecar"
@@ -234,3 +235,14 @@ def test_flag_off_hint_is_byte_identical(case: str, tmp_path: Path, flag_off: li
     assert flag_off == [{"tier": expected_tier, "distill_status": status, "file_path": target}]
     rendered = _render_like_the_hooks(result)
     assert rendered == text
+
+
+def test_batch_miss_text_matches_the_whole_map_batch_semantics() -> None:
+    """E2E-INC-056: the batch sidecar is whole-map (trw-distill compute_whole_map_batch), so the miss text must
+    not claim it covers only the files the last commit touched."""
+    from trw_mcp.tools._before_edit_hint_core import _batch_miss_action
+
+    text = _batch_miss_action("src/new_module.py")
+    assert "last commit touched" not in text
+    assert "every file in the map" in text and "new since then or outside the map" in text
+    assert "--file src/new_module.py --persist-sidecar" in text

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
@@ -157,8 +158,29 @@ class TestStepKnowledgeSyncGraphBackfillF5:
 class TestStepGraphHealthFR04:
     """End to end through the daemon: the advisory reads the store's own ``health`` block."""
 
+    def test_a_young_store_gets_no_advisory_under_the_default_threshold(self, daemon_checkout: DaemonCheckout) -> None:
+        """E2E-INC-010: 14 memories with no relation is a young store, not a dead graph (default threshold 50)."""
+        trw_dir = daemon_checkout.trw_dir
+        for i, w in enumerate(_distinct_words()):
+            store_learning(trw_dir, f"L-yg-{i}", f"{w} subject {i}", f"{w} body {i}", tags=[f"uniq{i}"])
+
+        assert step_graph_health(trw_dir) is None
+
+    @pytest.fixture
+    def graph_min_corpus_10(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+        from trw_mcp.models.config import reload_config
+
+        monkeypatch.setenv("TRW_PIPELINE_HEALTH_GATE_GRAPH_MIN_CORPUS", "10")
+        reload_config(None)
+        yield
+
+    @pytest.mark.usefixtures("graph_min_corpus_10")
     def test_empty_graph_many_memories_emits_advisory(self, daemon_checkout: DaemonCheckout) -> None:
-        """>10 memories + no relation → advisory dict returned."""
+        """More memories than the configured minimum + no relation → advisory dict returned.
+
+        The minimum is set to 10 explicitly: its default rose from 10 to 50 when a young store stopped reading as a
+        broken pipeline (E2E-NUDGE-NOISE / E2E-INC-010), and this fixture holds 14 memories.
+        """
         trw_dir = daemon_checkout.trw_dir
         for i, w in enumerate(_distinct_words()):
             # Distinct content (avoids semantic dedup) + unique tags (no derived relation).

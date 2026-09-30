@@ -30,6 +30,8 @@ calls trw-mcp's own ``recall_learnings`` only — no trw_distill import.
 from __future__ import annotations
 
 import functools
+import os
+import re
 from collections.abc import Callable, Iterator
 
 import structlog
@@ -73,6 +75,7 @@ def collect_learnings(
     top_n: int = DEFAULT_TOP_N,
     anchor_file: str | None = None,
     single_page: bool = False,
+    must_name: str | None = None,
 ) -> list[LearningSummary]:
     """Best-effort trw_recall over a list of queries.
 
@@ -89,6 +92,9 @@ def collect_learnings(
         single_page: HINT-RECALL-BUDGET. Take exactly one page per recall
             instead of growing to a deeper one; the pre-edit hint sets this
             to bound its own recall cost under a deadline.
+        must_name: E2E-HINT-RELEVANCE. A file path; when given, a row found only by a text
+            query is kept only if its text, tags or anchors name the file (its repo-relative
+            *anchor_file* or its file name). Anchored rows always pass. None keeps every text row.
 
     Returns:
         Up to ``top_n`` LearningSummary objects, deduped by id, in
@@ -113,7 +119,8 @@ def collect_learnings(
     # full anchored page ends collection before any text query, as the early return does.
     # On a hub file its rows are held back until after every text row instead.
     anchored, held = _anchored_rows(recall_learnings, anchor_file, collect_target)
-    for rows in _row_batches(recall_learnings, anchored, queries, held, collect_target):
+    mentions = tuple(dict.fromkeys(n for n in (anchor_file, os.path.basename(must_name)) if n)) if must_name else ()
+    for rows in _row_batches(recall_learnings, anchored, queries, held, collect_target, mentions):
         for r in rows:
             if not isinstance(r, dict):
                 continue
@@ -188,13 +195,28 @@ def _row_batches(
     queries: list[str],
     held: list[dict[str, object]],
     collect_target: int,
+    mentions: tuple[str, ...] = (),
 ) -> Iterator[list[dict[str, object]]]:
     """The anchored rows, each text query's rows (recalled lazily, so an early return skips the rest), then *held*."""
     yield anchored
     for q in queries[:MAX_QUERIES]:
         if isinstance(q, str) and q:
-            yield _recall_rows(recall, q, collect_target, None)
+            rows = _recall_rows(recall, q, collect_target, None)
+            yield [r for r in rows if _names_any(r, mentions)] if mentions else rows
     yield held
+
+
+def _names_any(row: dict[str, object], needles: tuple[str, ...]) -> bool:
+    """Whether the row's text, tags or anchors contain one of *needles* as a whole path or file-name token."""
+    parts: list[str] = [str(row.get(k) or "") for k in ("summary", "detail")]
+    tags = row.get("tags")
+    if isinstance(tags, list):
+        parts.extend(str(t) for t in tags)
+    anchors = row.get("anchors")
+    if isinstance(anchors, list):
+        parts.extend(str(a.get("file", "")) if isinstance(a, dict) else str(a) for a in anchors)
+    text = "\n".join(parts)
+    return any(re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w-])", text) for n in needles if n)
 
 
 def _attributable_first(

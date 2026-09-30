@@ -73,9 +73,12 @@ def resolve_unified_events_path(
         # intended destination, so ensure it exists.
         meta = run_dir / "meta"
         try:
-            meta.mkdir(parents=True, exist_ok=True)
-            return meta / fname
-        except OSError:  # justified: fail-open, fall back to fallback_dir if mkdir fails
+            from trw_mcp.state._containment import trw_write_contained
+
+            if trw_write_contained(meta):  # INC-034: warns once and falls back, never mkdirs through a planted link
+                meta.mkdir(parents=True, exist_ok=True)
+                return meta / fname
+        except (OSError, StateError):  # justified: fail-open, a failed or refused (INC-034) mkdir falls back
             logger.warning(
                 "unified_event_meta_mkdir_failed",
                 run_dir=str(run_dir),

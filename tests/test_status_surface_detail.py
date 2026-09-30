@@ -84,7 +84,8 @@ def test_reviewer_role_reports_the_reviewer_bound(project: Path, monkeypatch: py
 def test_trw_status_advertises_the_detail_parameter() -> None:
     import asyncio
 
-    from trw_mcp.server import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     tools = {tool.name: tool for tool in asyncio.run(mcp._list_tools())}
     assert "detail" in tools["trw_status"].parameters["properties"]

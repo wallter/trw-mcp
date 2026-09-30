@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -184,7 +185,7 @@ def record_build_receipt(
             return None
         governing_ids, governing_paths = _governing_prd_paths(run_path, project_root)
         scope = scope.model_copy(update={"proposed_paths": governing_paths})
-        binding = build_content_binding(scope, project_root)
+        binding = build_content_binding(scope, project_root, exclude_paths=(run_path,))
         if binding.binding is None:
             return None
         governing_digest = _governing_digest(project_root, governing_paths)
@@ -216,7 +217,8 @@ def record_build_receipt(
             legacy_tests_passed=tests_passed,
             legacy_static_checks_clean=static_checks_clean,
         )
-        return write_receipt(run_path, "build", receipt_id, receipt)
+        written = write_receipt(run_path, "build", receipt_id, receipt)
+        return replace(written, tree_binding="bound" if binding.binding.tree_digest else binding.reason_code)
     except (
         Exception
     ):  # trw-fail-silent-allow: writer failure is missing evidence, never a legacy positive in enforce mode

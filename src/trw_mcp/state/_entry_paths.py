@@ -106,8 +106,10 @@ def resolve_entry_file(
 def _candidate_dates(created: str) -> list[str]:
     """The dates a sidecar for a row created on *created* can be named after.
 
-    The two halves of the dual write do NOT agree on a date. The sidecar's
-    ``created`` is ``datetime.date.today()`` — the LOCAL date — while the backend
+    The two halves of the dual write did NOT agree on a date (sidecars written before
+    E2E-INC-010 stamped the LOCAL ``date.today()``; the model now defaults to UTC, so the
+    neighbouring-day probe stays for those older files). The sidecar's
+    ``created`` was ``datetime.date.today()`` — the LOCAL date — while the backend
     row's is ``created_at.date()``, which is UTC. Measured 2026-09-04 at 17:00
     local: the row said ``2026-09-05`` and the file said ``2026-09-04``. A
     single-date lookup would therefore miss for a whole timezone offset's worth

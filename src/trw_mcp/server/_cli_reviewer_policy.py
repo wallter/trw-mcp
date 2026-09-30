@@ -81,6 +81,11 @@ _ALWAYS_SAFE_PATHS: frozenset[str] = frozenset(
         # write branch in either function, and --repo-root skips the git
         # subprocess entirely (resolve_repo_root returns the arg verbatim).
         "code risk",
+        # server/_subcommands_handoff.py: validate/digest/render read the named
+        # file(s) and print; only `handoff seal` writes, so it stays unlisted.
+        "handoff validate",
+        "handoff digest",
+        "handoff render",
         # _run_validate (cli/channel_doctor.py): reads manifest.yaml via
         # channels._manifest_loader.load if present, else prints an error;
         # no write call in the function.
@@ -128,6 +133,9 @@ _ALWAYS_SAFE_PATHS: frozenset[str] = frozenset(
         # roll-up" (also relied on by trw_status's "STRICTLY READ-ONLY"
         # formation block).
         "formation status",
+        # list_outbox (tools/_feedback_cli.py): globs and reads .trw/feedback/{outbox,sent}; no write,
+        # no socket. flush is the write + network path and stays denied.
+        "feedback list",
     }
 )
 

@@ -375,3 +375,140 @@ def test_hard_build_block_accepts_and_ledgers_structured_override(
     ledger = list((tmp_project / ".trw" / "overrides").glob("*.yaml"))
     assert len(ledger) == 1
     assert "gate_type: delivery_blocked" in ledger[0].read_text(encoding="utf-8")
+
+
+# ── INC-072: the block headline names the real reason ───────────────────────
+
+
+def test_inc072_a_stale_passing_build_is_named_stale_not_missing(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A passing trw_build_check whose bound tree changed after it: the block says content-stale, not 'no passing'."""
+    run_dir = _make_run(tmp_project, "coding", build_passed=True, file_modified_count=0)
+    cfg = get_config()
+    object.__setattr__(cfg, "deliver_gate_mode", "block_coding")
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
+    stale = (
+        "Content-stale build evidence (reason: bound_tree_changed). Changed: out.jsonl Record typed command_results."
+    )
+    monkeypatch.setattr("trw_mcp.tools._delivery_build_gates.build_receipt_gate_findings", lambda _run: (stale, None))
+    result = check_delivery_gates(run_dir, FileStateReader(), tmp_project / ".trw")
+    blocked = str(result.get("delivery_blocked"))
+    assert "bound_tree_changed" in blocked
+    assert "no passing trw_build_check" not in blocked
+    assert "allow_unverified=true" in blocked  # the override remedy is still named
+    assert result.get("missing_gate") == "build_check"
+
+
+def test_inc072_without_a_reason_the_headline_is_unchanged() -> None:
+    from trw_mcp.tools._deliver_gate_mode import apply_deliver_gate_mode
+
+    result: dict[str, object] = {}
+    apply_deliver_gate_mode(result, {"task_type": "coding"}, 0)  # type: ignore[arg-type]
+    assert str(result["delivery_blocked"]).startswith(
+        "Delivery blocked: no passing trw_build_check for task_type=coding"
+    )
+
+
+# ── E2E-GATE-MODE-FAIL-CLOSED: a fault in the dispatch never turns into a pass ─
+
+_FAULT_PAYLOAD = "secret-token-in-the-exception-message"
+
+
+def _inject_dispatch_fault(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(**_kwargs: object) -> bool:
+        raise RuntimeError(_FAULT_PAYLOAD)
+
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.resolve_deliver_gate_decision", _boom)
+
+
+def test_a_fault_in_the_gate_mode_dispatch_blocks_with_a_named_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard tier (CONSTITUTION §1.a): an unexpected exception blocks; it names the type and site, never the message."""
+    from trw_mcp.tools._deliver_gate_mode import apply_deliver_gate_mode
+
+    _inject_dispatch_fault(monkeypatch)
+    result: dict[str, object] = {}
+    apply_deliver_gate_mode(result, {"task_type": "coding"}, 3, reason="no passing build check.")  # type: ignore[arg-type]
+
+    blocked = str(result.get("delivery_blocked", ""))
+    assert "RuntimeError" in blocked
+    assert "test_deliver_gate_mode.py:" in blocked and " in _boom)" in blocked  # the innermost raising frame
+    assert _FAULT_PAYLOAD not in blocked  # a message payload never reaches the caller
+    assert "allow_unverified=true" in blocked and "acceptable-failure record" in blocked
+    assert "(failed_command, residual_risk, owner, expiry_iso)" in blocked  # the record's required fields
+    assert result.get("missing_gate") == "build_check"
+
+
+def test_trw_deliver_with_a_faulting_dispatch_is_blocked_not_delivered(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _inject_dispatch_fault(monkeypatch)
+
+    result = _call_deliver(tmp_project, monkeypatch, task_type="coding", mode="block_coding")
+
+    assert result["success"] is False
+    assert "RuntimeError" in str(result.get("delivery_blocked", ""))
+
+
+def test_a_faulting_dispatch_block_is_still_escapable_by_a_structured_record(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """'Must not wedge delivery' is the documented escape, not a silent pass."""
+    _inject_dispatch_fault(monkeypatch)
+    reason = json.dumps(
+        {
+            "failed_command": "pytest tests -q",
+            "residual_risk": "gate-mode dispatch fault under investigation",
+            "owner": "operator-example",
+            "expiry_iso": (datetime.now(timezone.utc).date() + timedelta(days=7)).isoformat(),
+        }
+    )
+
+    result = _call_deliver(
+        tmp_project,
+        monkeypatch,
+        task_type="coding",
+        mode="block_coding",
+        allow_unverified=True,
+        unverified_reason=reason,
+    )
+
+    assert result["success"] is True
+    ledger = list((tmp_project / ".trw" / "overrides").glob("*.yaml"))
+    assert len(ledger) == 1 and "gate_type: delivery_blocked" in ledger[0].read_text(encoding="utf-8")
+
+
+class _RaisingLogger:
+    def warning(self, *_a: object, **_k: object) -> None:
+        raise OSError("log sink unavailable")
+
+    def info(self, *_a: object, **_k: object) -> None:
+        raise OSError("log sink unavailable")
+
+
+@pytest.mark.parametrize("broken", ["fault-site", "logger"])
+def test_a_failing_diagnostic_never_leaves_a_faulting_dispatch_unblocked(
+    monkeypatch: pytest.MonkeyPatch, broken: str
+) -> None:
+    """Codex r1 KI: the block is set from constants FIRST; site enrichment and logging are best-effort."""
+    from trw_mcp.tools import _deliver_gate_mode as gate
+
+    _inject_dispatch_fault(monkeypatch)
+    if broken == "fault-site":
+
+        def _no_traceback(_tb: object) -> list[object]:
+            raise OSError("traceback unavailable")
+
+        monkeypatch.setattr(gate.traceback, "extract_tb", _no_traceback)
+    else:
+        monkeypatch.setattr(gate, "logger", _RaisingLogger())
+    result: dict[str, object] = {}
+
+    gate.apply_deliver_gate_mode(result, {"task_type": "coding"}, 3, reason="no passing build check.")  # type: ignore[arg-type]
+
+    blocked = str(result.get("delivery_blocked", ""))
+    assert "RuntimeError" in blocked and _FAULT_PAYLOAD not in blocked
+    assert "(failed_command, residual_risk, owner, expiry_iso)" in blocked
+    assert result.get("missing_gate") == "build_check"
+    if broken == "logger":
+        assert " in _boom)" in blocked  # the site still enriches when only logging failed

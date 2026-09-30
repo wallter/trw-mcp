@@ -453,8 +453,9 @@ class TestCodexEnabledToolsCompleteness:
         async def _masked_list_tools() -> list[_FakeTool]:
             return [_FakeTool("trw_session_start"), _FakeTool("trw_learn")]
 
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         monkeypatch.setattr(mcp, "list_tools", _masked_list_tools)  # type: ignore[attr-defined]
 
         names = codex._registered_trw_tool_names()

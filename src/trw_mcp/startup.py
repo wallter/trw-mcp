@@ -18,6 +18,7 @@ from trw_mcp.security.mcp_registry import (
     bundled_public_key_path,
 )
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+from trw_mcp.state._surface_role import reviewer_role_active
 
 logger = structlog.get_logger(__name__)
 
@@ -106,6 +107,8 @@ def init_security(config: MCPSecurityConfig | None = None) -> MCPSecurityMiddlew
                 window_seconds=resolved.anomaly.window_seconds,
                 shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
                 baseline_store_path=trw_dir / "security" / "mcp_arg_baseline.jsonl",
+                # A reviewer is stateless: it must not seed the reviewed repo's security baselines.
+                persist_state=not reviewer_role_active(),
                 max_arg_hashes_per_pair=resolved.anomaly.max_arg_hashes_per_pair,
                 max_baseline_store_lines=resolved.anomaly.max_baseline_store_lines,
             ),

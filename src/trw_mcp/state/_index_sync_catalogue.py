@@ -31,6 +31,7 @@ def _group_by_status(
         "review": [],
         "draft": [],
         "deprecated": [],
+        "superseded": [],
     }
     for entry in entries:
         if entry.status in _DONE_STATUSES:
@@ -39,6 +40,8 @@ def _group_by_status(
             groups["merged"].append(entry)
         elif entry.status == "deprecated":
             groups["deprecated"].append(entry)
+        elif entry.status == "superseded":  # PRD-SUPERSEDED-BUCKET: historical, never Draft
+            groups["superseded"].append(entry)
         elif entry.status in _REVIEW_STATUSES:
             groups["review"].append(entry)
         else:
@@ -89,6 +92,8 @@ def _stats_parts(groups: dict[str, list[PRDEntry]]) -> list[str]:
         parts.append(f"{len(groups['merged'])} merged")
     if groups["deprecated"]:
         parts.append(f"{len(groups['deprecated'])} deprecated")
+    if groups["superseded"]:
+        parts.append(f"{len(groups['superseded'])} superseded")
     if groups["review"]:
         parts.append(f"{len(groups['review'])} review")
     parts.append(f"{len(groups['draft'])} draft")

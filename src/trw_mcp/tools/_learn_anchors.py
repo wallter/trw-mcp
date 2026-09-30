@@ -44,6 +44,25 @@ def _absolute(project_root: Path, recorded: str) -> str:
     return str(project_root / recorded)
 
 
+def repo_relative(project_root: Path, recorded: str) -> str | None:
+    """POSIX path of *recorded* under *project_root*, or ``None`` when it is not inside it.
+
+    Both sides are resolved (the file through its parent, so a symlinked file
+    is not followed out of the tree), which makes ``/tmp/x`` and
+    ``/private/tmp/x`` the same root. A path outside the root yields ``None``:
+    an anchor is repo-relative or it is not stored, never an absolute
+    machine path (E2E-INC-025).
+    """
+    try:
+        path = Path(_absolute(project_root, recorded))
+        return (path.parent.resolve() / path.name).relative_to(project_root.resolve()).as_posix()
+    except (
+        ValueError,
+        OSError,
+    ):  # trw-fail-silent-allow: outside the root (or unresolvable) means "no anchor", by design; never a machine path
+        return None
+
+
 def resolve_learn_anchors(
     project_root: Path,
     learning_id: str,
@@ -101,8 +120,11 @@ def resolve_learn_anchors(
             mentioned_names=mentions.names,
             mentioned_files=mentioned_files,
         )
-        if raw_anchors:
-            anchors = [dict(a) for a in raw_anchors]
+        # Generation reads files by absolute path; what is persisted is repo-relative.
+        for raw in raw_anchors:
+            relative = repo_relative(project_root, str(raw["file"]))
+            if relative is not None:
+                anchors.append({**raw, "file": relative})
     except Exception:  # justified: fail-open, anchor generation is best-effort
         logger.debug("anchor_generation_skipped", exc_info=True)
         # trw-fail-silent-allow: anchor-generation failure already logged above.
@@ -159,4 +181,4 @@ def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) 
         return None
 
 
-__all__ = ["resolve_learn_anchors", "reverify_entry_anchors"]
+__all__ = ["repo_relative", "resolve_learn_anchors", "reverify_entry_anchors"]

@@ -8,14 +8,18 @@ their patch.
 PARTIAL-UPDATE SENTINEL: every field defaults to ``None`` and the adapter reads
 ``None`` as "the caller did not ask me to touch this". Do not "helpfully"
 default a missing key to an empty value; that would silently clear data the
-caller never mentioned. Clearing stays explicit: ``""`` or ``[]``.
+caller never mentioned. A blank string (``""`` or whitespace) for ANY text field
+(``detail`` and every string in ``metadata``) means unset, i.e. no change: some MCP
+clients send ``""`` for unset optionals, so clear-by-``""`` wiped data. Clearing is
+explicit only for list fields, via ``[]`` (``tags`` also accepts ``""``). A blank
+``summary`` is rejected, never stored.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -56,8 +60,25 @@ def execute_learn_update(
     """Apply one partial update; return ``{status, learning_id, changes}`` or ``{error, status}``."""
     # Only the string shape is coerced: an update REPLACES the tag set, so a list
     # with a stray non-string element must still fail validation loudly.
+    # A blank string clears (the tool doc: `tags replace; "" or [] clears`), exactly like [].
     if isinstance(tags, str):
-        tags = _coerce_tags(tags)
+        tags = _coerce_tags(tags) or []
+    # An empty summary is never a valid stored value (create rejects it too); some MCP
+    # clients send "" for an unset optional string, so reject rather than blank the entry.
+    if summary is not None and not summary.strip():
+        return {
+            "status": "rejected",
+            "reason": "missing_summary",
+            "message": "summary must not be empty; omit it to leave the summary unchanged. Nothing was changed.",
+        }
+    # INC-085: the same rule as create, in the same shape (status rejected + reason + message), before trw-memory's
+    # patch parser would answer it as {"error", "status": "invalid"}.
+    from trw_mcp.tools._learning_module_helpers import impact_rejection
+
+    if (rejected := impact_rejection(impact, outcome="nothing was changed")) is not None:
+        return cast("dict[str, str]", rejected)
+    if detail is not None and not detail.strip():
+        detail = None  # blank means unset (see the module docstring), never a clear
     if type is not None:
         type = _coerce_learn_type(type)
     fields: dict[str, object] = {
@@ -77,7 +98,7 @@ def execute_learn_update(
 
     patch = parse_patch(fields)
     if isinstance(patch, dict):
-        return patch
+        return _patch_rejection(fields)
 
     # Refresh anchor validity against the current tree BEFORE any other field update.
     if upd.reverify_anchors:
@@ -102,4 +123,50 @@ def execute_learn_update(
                 # The store update already succeeded; only the rollback copy's tags go stale.
                 logger.warning("learn_update_backup_tags_unavailable", id=learning_id, exc_info=True)
         _sync_learning_yaml_backup(trw_dir, config, writer, learning_id, backup)
-    return result
+    return _as_rejection(result)
+
+
+#: Store refusals that are a caller-visible "no" rather than a success; reported in create's rejection shape.
+_REFUSED_STATUSES = frozenset({"invalid", "not_found", "conflict"})
+
+
+def _as_rejection(result: dict[str, str]) -> dict[str, str]:
+    """A store refusal (``{status: invalid|not_found|conflict, error}``) in create's shape; anything else as is."""
+    status = str(result.get("status", ""))
+    if status not in _REFUSED_STATUSES:
+        return result
+    # The store's text can quote a submitted value; it goes through the one secret/PII detector before the client
+    # sees it (codex r1 KI: only the parse_patch path was rebuilt value-free).
+    from trw_mcp.telemetry.anonymizer import redact_secrets
+
+    rejected = {
+        "status": "rejected",
+        "reason": str(result.get("reason") or result.get("error_type") or status),
+        "message": redact_secrets(str(result.get("error") or status)),
+    }
+    if result.get("learning_id"):
+        rejected["learning_id"] = str(result["learning_id"])
+    return rejected
+
+
+def _patch_rejection(fields: dict[str, object]) -> dict[str, str]:
+    """The first invalid patch field as ``{status rejected, reason invalid_<field>, message}`` -- never its value.
+
+    trw-memory's ``parse_patch`` names the refused field WITH its raw input (``Invalid type 'x': ...``); a value the
+    caller put in the wrong field must not come back in the transcript (the VALIDATION-ERROR-ECHO class), so the
+    message is rebuilt from pydantic's errors without the input.
+    """
+    from pydantic import ValidationError
+    from trw_memory.lifecycle.correction import LearningPatch
+
+    try:
+        LearningPatch.model_validate({k: v for k, v in fields.items() if v is not None})
+    except ValidationError as exc:
+        first = exc.errors(include_input=False, include_url=False, include_context=False)[0]
+        field = ".".join(str(part) for part in first["loc"]) or "patch"
+        return {
+            "status": "rejected",
+            "reason": f"invalid_{field.split('.')[0]}",
+            "message": f"Invalid {field}: {first['msg']}. Nothing was changed.",
+        }
+    return {"status": "rejected", "reason": "invalid_update", "message": "The update was refused; nothing was changed."}

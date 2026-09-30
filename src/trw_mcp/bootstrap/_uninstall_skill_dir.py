@@ -10,9 +10,9 @@ import errno
 import hashlib
 import os
 import stat
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from ._safe_remove import path_refusal, safe_remove
+from ._safe_remove import path_refusal, remove_if_hash
 
 
 def _lexists_strict(path: Path) -> bool:
@@ -94,13 +94,43 @@ def _not_owned_reason(path: Path, rel: Path, bundled_root: Path, recorded_hash: 
     return None if digest == shipped_digest else "edited (hash differs)"
 
 
-def _identity(path: Path) -> tuple[int, int, int] | None:
-    """``(dev, inode, size)`` of a regular file (symlinks not followed), else None; narrows the hash-to-delete gap."""
-    try:
-        info = os.lstat(path)
-    except OSError:  # trw-fail-silent-allow: unstat-able means the identity cannot be proven, so the caller keeps it
-        return None
-    return (info.st_dev, info.st_ino, info.st_size) if stat.S_ISREG(info.st_mode) else None
+def _remove_proven(
+    path: Path,
+    rel: Path,
+    target: Path,
+    expected: str | None,
+    captures: dict[str, list[str]],
+    kept: list[tuple[Path, str]],
+    failures: list[tuple[Path, str]],
+) -> None:
+    """Delete a file just proven TRW's, re-proving the bytes as they are captured (UNINSTALL-SKILL-DIR-CAPTURE).
+
+    ``remove_if_hash`` renames the file into ``.trw/trash``, re-hashes THOSE bytes against *expected* and links
+    them back on a mismatch, so an edit saved after the proof survives; nothing is unlinked. A capture joins
+    *captures* for uninstall's one move to the system Trash.
+    """
+    if expected is None:
+        kept.append((path, "unreadable"))
+        return
+    outcome = remove_if_hash(path, target, expected, key=rel.as_posix())
+    if outcome.status == "removed":
+        captures.setdefault("trashed", []).append(str(path))
+        captures.setdefault("trashed_at", []).append(str(outcome.retained_at or ""))
+    elif outcome.status == "kept" and outcome.published is None and outcome.retained_at is not None:
+        # The folder moved mid-removal (codex KI): the bytes are not at *path*, so say where the copy is.
+        failures.append((path, f"kept ({outcome.reason}); a copy is in {outcome.retained_at}"))
+    elif outcome.status == "kept" and outcome.reason.startswith("bytes differ"):
+        kept.append((path, "changed during uninstall"))
+    elif outcome.status != "absent":
+        where = f"; a copy is in {outcome.retained_at}" if outcome.retained_at is not None else ""
+        failures.append((path, f"kept ({outcome.reason}){where}"))
+
+
+def _expected_digest(rel: Path, bundled_root: Path, recorded_hash: str) -> str | None:
+    """The digest a proven file must still have when captured: the recorded one for SKILL.md, else the shipped."""
+    if recorded_hash and rel == Path("SKILL.md"):
+        return recorded_hash
+    return _hash_regular_file(bundled_root / rel)[0]
 
 
 #: Kept-file reasons a re-run could resolve once the user fixes the cause (a symlink, an unreadable or
@@ -110,7 +140,11 @@ _RERUN_CAN_CHANGE = frozenset({"symlink", "unreadable", "not a regular file", "c
 
 
 def _remove_skill_dir(
-    skill_dir: Path, target: Path, recorded_hash: str = "", own_keys: dict[Path, str] | None = None
+    skill_dir: Path,
+    target: Path,
+    recorded_hash: str = "",
+    own_keys: dict[Path, str] | None = None,
+    captures: dict[str, list[str]] | None = None,
 ) -> tuple[list[tuple[Path, str]], list[tuple[Path, str]], bool]:
     """Delete only the files of a TRW skill that are provably TRW's; return ``(kept, failures, trw_left)``.
 
@@ -128,6 +162,7 @@ def _remove_skill_dir(
     from ._utils import _DATA_DIR
 
     bundled_root = _DATA_DIR / "skills" / skill_dir.name
+    captures = {} if captures is None else captures
     kept: list[tuple[Path, str]] = []
     failures: list[tuple[Path, str]] = []
     dirs: list[Path] = []
@@ -166,8 +201,10 @@ def _remove_skill_dir(
                 kept.append((child, f"recorded file, disposition {own_keys[child]}"))  # type: ignore[index]
             elif (why := _not_owned_reason(child, rel, bundled_root, recorded_hash)) is not None:
                 kept.append((child, why))
-            elif (failure := safe_remove(child, target, expect="file")) is not None:
-                failures.append((child, failure))
+            else:
+                _remove_proven(
+                    child, rel, target, _expected_digest(rel, bundled_root, recorded_hash), captures, kept, failures
+                )
     for directory in reversed(dirs):  # reverse pre-order: children before parents
         if not (bundled_root / directory.relative_to(skill_dir)).is_dir():
             kept.append((directory, "not in the bundled skill"))
@@ -175,15 +212,12 @@ def _remove_skill_dir(
             _rmdir_if_empty(directory, target, failures)
     manifest_file = skill_dir / "SKILL.md"
     if _lexists_strict(manifest_file):  # re-hashed here, at the act; deleted even when user files remain
-        before = _identity(manifest_file)
-        why = _not_owned_reason(manifest_file, Path("SKILL.md"), bundled_root, recorded_hash)
-        if why is None and (before is None or _identity(manifest_file) != before):
-            why = "changed during uninstall"
-        # TODO(HOOK-WITHDRAW): replace the identity re-check with remove_if_hash once it lands on trunk.
-        if why is not None:
+        rel = Path("SKILL.md")
+        if (why := _not_owned_reason(manifest_file, rel, bundled_root, recorded_hash)) is not None:
             kept.append((manifest_file, why))
-        elif (failure := safe_remove(manifest_file, target, expect="file")) is not None:
-            failures.append((manifest_file, failure))
+        else:
+            expected = _expected_digest(rel, bundled_root, recorded_hash)
+            _remove_proven(manifest_file, rel, target, expected, captures, kept, failures)
     if not (kept or failures):
         _rmdir_if_empty(skill_dir, target, failures)
     bundled = bundled_root.is_dir()
@@ -207,8 +241,13 @@ def _rmdir_if_empty(directory: Path, target: Path, failures: list[tuple[Path, st
             failures.append((directory, f"error removing {directory}: {exc}"))
 
 
-def prune_empty_dirs(surface_root: Path) -> None:
-    """Remove now-empty directories under *surface_root*, then the dir itself if empty."""
+def prune_empty_dirs(surface_root: Path, up_to: Path | None = None) -> None:
+    """Remove now-empty directories under *surface_root*, then the dir itself if empty.
+
+    With *up_to* (the project root), also each ancestor that is left empty, stopping below *up_to*:
+    ``.agents/skills`` emptied by uninstall otherwise left an empty ``.agents/`` (E2E-UNINSTALL-EMPTY-DIRS).
+    Only ``rmdir`` is used, so a directory with anything in it stays.
+    """
     if not surface_root.is_dir() or surface_root.is_symlink():
         return
     subdirs = sorted(
@@ -222,8 +261,40 @@ def prune_empty_dirs(surface_root: Path) -> None:
                 d.rmdir()
         except OSError:  # trw-fail-silent-allow: a dir that won't empty-check cleanly is left as-is
             continue
-    try:
-        if not any(surface_root.iterdir()):
-            surface_root.rmdir()
-    except OSError:  # trw-fail-silent-allow: leaves the (non-empty or permission-denied) dir in place
-        pass
+    current = surface_root
+    while True:
+        try:
+            if any(current.iterdir()):
+                return
+            current.rmdir()
+        except OSError:  # trw-fail-silent-allow: leaves the (non-empty or permission-denied) dir in place
+            return
+        parent = current.parent
+        if up_to is None or parent == up_to or not parent.is_relative_to(up_to) or parent.is_symlink():
+            return
+        current = parent
+
+
+def prune_scaffold_dirs(target: Path) -> None:
+    """After a full uninstall, remove the directories TRW's scaffold or client surfaces made, if now empty.
+
+    INC-080: ``docs/`` (init's ``_TRW_DIRS``) and ``.codex/`` (a client surface root) outlived a full uninstall
+    as empty directories. The candidates come from init's own scaffold list and the uninstall surface catalog --
+    each surface's parent directories -- never a hand-typed list. Deepest first, ``rmdir`` only and never a
+    symlink, so a directory holding anything at all stays. ``.trw`` is left to its own removal step.
+    """
+    from trw_mcp.bootstrap import _CLAUDE_SCAFFOLD_DIRS, _TRW_DIRS
+    from trw_mcp.client_profiles.catalog import uninstall_surfaces
+
+    candidates: set[PurePosixPath] = set()
+    for rel in (*_TRW_DIRS, *_CLAUDE_SCAFFOLD_DIRS, *(surface.relpath for surface in uninstall_surfaces())):
+        rel_path = PurePosixPath(rel)
+        if rel_path.parts and rel_path.parts[0] != ".trw":
+            candidates.update(p for p in (rel_path, *rel_path.parents) if p.parts)
+    for candidate in sorted(candidates, key=lambda p: len(p.parts), reverse=True):
+        directory = target.joinpath(*candidate.parts)
+        try:
+            if directory.is_dir() and not directory.is_symlink() and not any(directory.iterdir()):
+                directory.rmdir()
+        except OSError:  # trw-fail-silent-allow: a directory that will not empty-check or rmdir cleanly stays
+            continue

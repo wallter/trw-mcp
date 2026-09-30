@@ -79,13 +79,13 @@ def test_classify_reports_the_same_shape_as_the_former_tool(
     assert isinstance(payload["rationale"], str)
 
 
-def test_surface_diff_reports_not_found_without_failing(
+def test_surface_diff_on_a_missing_snapshot_reports_it_and_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A missing snapshot is a reported result, not an execution failure."""
+    """INC-074: a snapshot id that does not exist is misuse (exit 2); the document still says which side was missing."""
     code = _cli(["surface-diff", "--snapshot-id-a", "a", "--snapshot-id-b", "b"], tmp_path, monkeypatch)
     payload = json.loads(capsys.readouterr().out)
-    assert code == 0
+    assert code == 2
     assert payload["error"] == "snapshot_not_found"
     assert payload["a_found"] is False
     assert payload["b_found"] is False
@@ -142,39 +142,33 @@ def test_run_telemetry_rejects_an_unknown_verb(capsys: pytest.CaptureFixture[str
     assert "pipeline-health" in capsys.readouterr().err
 
 
-def test_run_telemetry_pipeline_health_prints_json_and_exits_zero_when_measured(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize("as_json", [True, False], ids=["json", "text"])
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"degraded": False, "status": "healthy", "advisory": ""}, 0),
+        ({"degraded": True, "status": "degraded", "advisory": "pipeline degraded: sync_push"}, 1),
+        ({"degraded": False, "status": "unknown", "advisory": "pipeline health unknown"}, 2),
+        # the crash document safe_pipeline_health returns: unmeasured, never healthy
+        ({"degraded": False, "status": "unknown", "measured": False, "advisory": "health_probe_failed"}, 2),
+        # no status at all is not evidence of health either
+        ({"degraded": False, "advisory": ""}, 2),
+    ],
+    ids=["healthy", "degraded", "unknown", "crashed", "no-status"],
+)
+def test_run_telemetry_pipeline_health_exit_code_is_the_verdict(
+    document: dict[str, object], expected: int, as_json: bool, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """E2E-INC-073 lead ruling: 0 healthy, 1 degraded, 2 unknown -- same with ``--json``; a script must never
+    read an unmeasured pipeline as healthy."""
     from trw_mcp.tools._telemetry_cli import run_telemetry
 
-    healthy = {"degraded": False, "advisory": "", "sync_push": {}, "graph_edges": {}}
-    with patch("trw_mcp.tools._telemetry_cli.safe_pipeline_health", return_value=healthy):
+    with patch("trw_mcp.tools._telemetry_cli.safe_pipeline_health", return_value=document):
         with pytest.raises(SystemExit) as exc:
-            run_telemetry(_health_args(as_json=True))
-
-    assert exc.value.code == 0
-    out = capsys.readouterr().out
-    assert '"degraded": false' in out
-
-
-def test_run_telemetry_pipeline_health_exits_one_only_when_unmeasured(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A *degraded* result is a reported outcome (exit 0); a probe that could
-    not run at all (``measured: False`` at the top level) is the CLI error."""
-    from trw_mcp.tools._telemetry_cli import run_telemetry
-
-    degraded_but_measured = {"degraded": True, "advisory": "pipeline degraded: sync_push"}
-    with patch("trw_mcp.tools._telemetry_cli.safe_pipeline_health", return_value=degraded_but_measured):
-        with pytest.raises(SystemExit) as exc:
-            run_telemetry(_health_args(as_json=False))
-    assert exc.value.code == 0
-
-    crashed = {"degraded": False, "measured": False, "advisory": "health_probe_failed"}
-    with patch("trw_mcp.tools._telemetry_cli.safe_pipeline_health", return_value=crashed):
-        with pytest.raises(SystemExit) as exc:
-            run_telemetry(_health_args(as_json=False))
-    assert exc.value.code == 1
+            run_telemetry(_health_args(as_json=as_json))
+    assert exc.value.code == expected
+    if as_json:
+        assert json.loads(capsys.readouterr().out)["advisory"] == document["advisory"]
 
 
 def test_safe_pipeline_health_reports_measured_false_on_crash() -> None:
@@ -221,3 +215,42 @@ def test_doctor_subcommand_includes_the_pipeline_health_row() -> None:
     from trw_mcp.server import _subcommands_doctor as doctor
 
     assert any(fn_name == "_check_pipeline_health" for _, fn_name in doctor._CHECKS)
+
+
+@pytest.mark.parametrize(
+    ("argv", "fragment"),
+    [
+        (["channel-stats", "--window-hours", "-5"], "positive number of hours"),
+        (["channel-stats", "--window-hours", "0"], "positive number of hours"),
+        (["channel-stats", "--repo-root", "/nonexistent-trw-inc074"], "is not a directory"),
+    ],
+)
+def test_channel_stats_misuse_exits_2_with_the_reason(
+    argv: list[str], fragment: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """INC-074: -5 hours used to become a silent 3600 s window and a bad root 'no_activity', both exit 0."""
+    code = _cli(argv, tmp_path, monkeypatch)
+    captured = capsys.readouterr()
+    assert code == 2
+    assert fragment in captured.err
+    assert captured.out == ""
+
+
+def test_doctor_pipeline_health_row_warns_when_status_is_unknown(tmp_path: Path) -> None:
+    """E2E-INC-073: nothing measured must not render as PASS."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server._doctor_pipeline_health import pipeline_health_row
+
+    unknown = {"degraded": False, "status": "unknown", "advisory": "pipeline health unknown: x", "unmeasured": ["a"]}
+    with patch("trw_mcp.tools._telemetry_cli.safe_pipeline_health", return_value=unknown):
+        status, message = pipeline_health_row(tmp_path, TRWConfig())
+
+    assert status == "WARN"
+    assert "unknown" in message
+
+
+def test_safe_pipeline_health_crash_reports_status_unknown() -> None:
+    from trw_mcp.tools._telemetry_cli import safe_pipeline_health
+
+    with patch("trw_mcp.state._paths.resolve_trw_dir", side_effect=RuntimeError("boom")):
+        assert safe_pipeline_health()["status"] == "unknown"

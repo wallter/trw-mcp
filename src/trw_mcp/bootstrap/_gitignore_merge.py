@@ -38,6 +38,9 @@ logger = structlog.get_logger(__name__)
 #    init-project and update-project (PRD-CORE-280 FR06).
 #  - ``channels/cc03-python.txt`` — the interpreter the hooks start, written by
 #    init-project and update-project (PRD-FIX-155).
+#  - ``learnings/pending/`` and ``learnings/dead_letter/`` — the learn journal's
+#    write-ahead and refused-record directories. They hold caller text and sit
+#    beside the tracked ``learnings/entries/``, so ``git add -A`` would take them.
 #
 #: A new entry here must ALSO be added to the bundled ``data/gitignore.txt``
 #: (fresh installs deploy that file; this list is the brownfield half).
@@ -60,6 +63,16 @@ _REQUIRED_RULES: tuple[tuple[str, str], ...] = (
         "channels/cc03-python.txt",
         "# The interpreter this machine's hooks start — a local install fact, never track it (PRD-FIX-155).",
     ),
+    (
+        "learnings/pending/",
+        "# Write-ahead journal of learnings in flight (raw caller text) — never track it.",
+    ),
+    (
+        "learnings/dead_letter/",
+        "# Learnings the store refused, kept aside for the operator — never track them.",
+    ),
+    ("feedback/outbox/", "# Feedback waiting to be sent (submission bodies) — never track it."),
+    ("feedback/sent/", "# Feedback already sent (submission bodies) — never track it."),
 )
 
 

@@ -217,17 +217,30 @@ def compute_requirement_drift(resolved_run: Path | None) -> RequirementDriftRepo
 
     A scope entry that names no PRD id (a path or glob) is keyed by the entry
     itself and reported ``prd_not_found``. No run, or an empty union, gives
-    ``{"scope": "not_declared", "prds": {}}``.
+    ``{"scope": "not_declared", "prds": {}}``. An unreadable review receipt is
+    reported as its own ``receipt:<stem>`` entry (``not_evaluated``,
+    ``receipt_unreadable``, always ``warn``): reported, never dropped, never a block.
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.state.prd_utils import extract_prd_identifier
-    from trw_mcp.tools._delivery_safety_critical_gate import declared_scope_union
+    from trw_mcp.tools._delivery_safety_critical_gate import _RUN_YAML_LABEL as RUN_YAML_LABEL
+    from trw_mcp.tools._delivery_safety_critical_gate import DeclaredScope, declared_scope
 
-    union = declared_scope_union(resolved_run) if resolved_run is not None else []
-    if resolved_run is None or not union:
+    declared = declared_scope(resolved_run) if resolved_run is not None else DeclaredScope([])
+    union = declared.union
+    if resolved_run is None or not (union or declared.unreadable_receipts):
         return {"scope": "not_declared", "prds": {}}
     configured = get_config().requirement_drift_gate
     prds: dict[str, RequirementDriftEntry] = {}
+    for stem in declared.unreadable_receipts:
+        # DECISION (E2E-INC-106): an unreadable receipt is REPORTED here, never dropped and never
+        # blocking. Its PRD ids are unknowable, so it cannot be attributed to a PRD's drift; the
+        # safety-critical gate is the blocking authority for it (UNKNOWN_SCOPE). Mode is pinned to
+        # "warn" regardless of requirement_drift_gate, so one corrupt file cannot mint a drift block.
+        if stem == RUN_YAML_LABEL:  # E2E-INC-124: run metadata, not a receipt
+            prds[f"run_metadata:{stem}"] = _entry("not_evaluated", "run_yaml_unreadable", "warn")
+        else:
+            prds[f"receipt:{stem}"] = _entry("not_evaluated", "receipt_unreadable", "warn")
     for scope_entry in union:
         prd_id = extract_prd_identifier(scope_entry) or scope_entry
         if prd_id not in prds:

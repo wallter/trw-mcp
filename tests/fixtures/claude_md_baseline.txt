@@ -72,7 +72,7 @@ Task arrives → Assess scope and harness
 Delegation is optional. The invariant is focused context, explicit file ownership, persisted findings, and final integration by the orchestrator. If the client has no safe delegation surface, execute the same shards sequentially in the current session.
 
 
-<!-- trw:lifecycle-sync:sha256-dde1f975c069 -->
+<!-- trw:lifecycle-sync:sha256-ddf74144e806 -->
 
 ## TRW Governance (non-negotiable)
 
@@ -83,7 +83,7 @@ Hard limits: `.trw/frameworks/FRAMEWORK.md` → EXECUTION MODEL SUMMARY → **Va
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true` (or omitted), a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
+- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true`, a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**
@@ -189,7 +189,7 @@ Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates,
 
 
 === closing_reminder ===
-<!-- trw:lifecycle-sync:sha256-dde1f975c069 -->
+<!-- trw:lifecycle-sync:sha256-ddf74144e806 -->
 
 ## TRW Governance (non-negotiable)
 
@@ -200,7 +200,7 @@ Hard limits: `.trw/frameworks/FRAMEWORK.md` → EXECUTION MODEL SUMMARY → **Va
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true` (or omitted), a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
+- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true`, a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**

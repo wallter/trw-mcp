@@ -103,7 +103,9 @@ class ValidateResultDict(TypedDict, total=False):
     # ``quality_tier``/``grade`` sits beside it.
     verdict: str
     verdict_note: str
-    valid: bool
+    # INC-097: ``None`` (null) when ``validation_partial`` is True -- a run that
+    # skipped checks cannot certify validity; ``verdict`` is NEEDS_WORK then.
+    valid: bool | None
     completeness_score: float
     traceability_coverage: float
     measured_traceability_coverage: float

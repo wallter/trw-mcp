@@ -764,3 +764,14 @@ def test_the_sidecar_written_last_is_the_latest_row(tmp_path: Path) -> None:
     sidecar = FileStateReader().read_yaml(entries_dir / "existing.yaml")
     assert (sidecar["recurrence"], sorted(sidecar["merged_from"])) == (row.recurrence, ["L-a", "L-b"])
     assert sorted(sidecar["evidence"]) == ["e-a", "e-b"]
+
+
+def test_a_merge_leaves_no_lock_file_in_the_entries_directory(tmp_path: Path) -> None:
+    """E2E-INC-010: the merge's sidecar lock is anchored outside ``entries/``, so no ``*.yaml.lock`` is left there."""
+    store = FakeMemoryStore()
+    entries_dir = _merge_setup(tmp_path, store)
+
+    assert _learn_duplicate(tmp_path, entries_dir, store, "L-a", evidence=["e-a"])["status"] == "merged"
+
+    assert sorted(p.name for p in entries_dir.iterdir() if p.name.endswith(".lock")) == []
+    assert (entries_dir / "existing.yaml").is_file()

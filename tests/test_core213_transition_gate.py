@@ -561,7 +561,8 @@ def test_real_deliver_override_proceeds(tmp_path: Path) -> None:
     assert result.get("truthfulness_gate_bypassed")
 
 
-def test_dispatch_gate_degraded_never_blocks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_dispatch_gate_fault_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """NFR02 (amended): a gate-resolution fault is never a pass -- it blocks under the default block mode."""
     from trw_mcp.tools import _deliver_gate_dispatch as gd
 
     def _boom(_run: object) -> object:
@@ -570,10 +571,12 @@ def test_dispatch_gate_degraded_never_blocks(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr("trw_mcp.tools._prd_transition_gate.evaluate_transition_gate", _boom)
     results: dict[str, Any] = {}
     errors: list[str] = []
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.resolve_gate_mode", lambda _t: "block_coding")
     assert (
         gd._evaluate_acceptance_integrity(cast("Any", results), errors, tmp_path, cast("Any", "/tmp/x"), False, "")
-        is False
+        is True
     )
+    assert "could not be evaluated" in results["acceptance_integrity_block"]
 
 
 # ---------------------------------------------------------------------------

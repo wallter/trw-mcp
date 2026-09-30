@@ -84,17 +84,19 @@ _BASELINE_BLOCK_CHARS = {
 # hookless client otherwise never reached HB-2 (0 of 8 gate carriers named it). The DoD-5 round-2 trace ran
 # this exact text on 4 clients (all quoted FRAMEWORK on the non-ceiling scenarios), so it is recorded as
 # measured rather than trimmed after the fact.
+# -13 each (E2E-INC-001): Deliver Gate (a) no longer says "(or omitted)". Canon 1.a Path 1
+# has no such clause and an omitted static_checks_clean is now recorded NOT RUN, which blocks.
 _MEASURED_BLOCK_CHARS = {
-    "claude-code": 7187,
-    "cursor-ide": 7187,
-    "copilot": 7187,
-    "antigravity-cli": 7187,
-    "grok": 7187,
+    "claude-code": 7174,
+    "cursor-ide": 7174,
+    "copilot": 7174,
+    "antigravity-cli": 7174,
+    "grok": 7174,
     # -12 each (2026-09-26): the ceremony table's sync row no longer names
     # "CLAUDE.md / " -- TRW 8.0 stopped writing CLAUDE.md.
-    "codex": 9332,
-    "cursor-cli": 8245,
-    "opencode": 8245,
+    "codex": 9319,
+    "cursor-cli": 8232,
+    "opencode": 8232,
 }
 #: The call the full-mode pointer names for the live surface (PRD-CORE-300 S11b).
 _SURFACE_CALL = 'trw_status(detail="surface")'

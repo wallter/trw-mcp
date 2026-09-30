@@ -29,11 +29,6 @@ is never blocked.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Coroutine
-from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar
-
 import structlog
 from fastmcp import FastMCP
 
@@ -54,23 +49,11 @@ from trw_mcp.canons.registry import (
     managed_source_digests,
     template_artifact,
 )
+from trw_mcp.server._tools import _run_async
 
 logger = structlog.get_logger(__name__)
 
 _UNKNOWN = "unknown"
-_AsyncResultT = TypeVar("_AsyncResultT")
-
-
-def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
-    """Run an async coroutine from sync startup code (mirror of _tools._run_async)."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop is not None and loop.is_running():
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    return asyncio.run(coro)
 
 
 def _package_version() -> str:
@@ -110,8 +93,8 @@ def resolve_loaded_versions() -> tuple[str, str, str, str]:
 
 def _tool_decls(server: FastMCP) -> tuple[PublicToolDecl, ...]:
     decls: list[PublicToolDecl] = []
-    # ``run_middleware=False``: this call runs once, at MODULE IMPORT time
-    # (``server/_tools.py``'s ``_register_tools()``), before any real client
+    # ``run_middleware=False``: this call runs once, while the served app is
+    # built (``_app.build_served_app`` -> ``_register_tools``), before any real client
     # has connected. FastMCP synthesizes its own ``Context`` for a
     # middleware-enabled ``list_tools()`` call whether or not a genuine
     # client is asking, so ``MCPSecurityMiddleware`` could not tell this

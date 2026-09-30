@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._served_app import served_app
 from tests._structlog_capture import captured_structlog as captured_structlog
 
 
@@ -28,7 +29,9 @@ def test_boot_registers_each_tool_exactly_once(monkeypatch: pytest.MonkeyPatch) 
     from fastmcp import FastMCP
 
     from trw_mcp.server import _tools
+    from trw_mcp.server._app import create_app
 
+    app = create_app()  # the served app itself; any FastMCP built after this point is an extra one
     real_registrars = _tools._tool_registrars()
     calls: dict[str, int] = {}
 
@@ -53,7 +56,7 @@ def test_boot_registers_each_tool_exactly_once(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(FastMCP, "__init__", _tracking_init)
 
-    _tools._register_tools()
+    _tools._register_tools(app)
 
     assert calls, "the spy list must actually have been used"
     over_registered = {name: n for name, n in calls.items() if n != 1}
@@ -69,7 +72,7 @@ def test_parity_check_reads_the_live_app_not_a_second_server(monkeypatch: pytest
         raise AssertionError("the boot parity check must not build a throwaway FastMCP")
 
     monkeypatch.setattr(_tools, "raw_registered_tool_names", _forbidden)
-    _tools._assert_manifest_parity(_tools.mcp)
+    _tools._assert_manifest_parity(served_app())
 
 
 def test_drift_still_warns_on_a_seeded_manifest_mismatch(
@@ -86,7 +89,7 @@ def test_drift_still_warns_on_a_seeded_manifest_mismatch(
     seeded["trw_ghost_tool_that_does_not_exist"] = seeded[next(iter(seeded))]
     monkeypatch.setattr(_surface_manifest_registry, "MANIFEST_BY_NAME", seeded)
 
-    _tools._assert_manifest_parity(_tools.mcp)
+    _tools._assert_manifest_parity(served_app())
 
     drift = [log for log in captured_structlog if log.get("event") == "surface_manifest_parity_drift"]
     assert drift, f"seeded drift must warn; got {captured_structlog}"
@@ -97,7 +100,7 @@ def test_clean_surface_emits_no_drift_warning(captured_structlog: list[dict[str,
     """Non-vacuity: the drift test above is not passing because it always warns."""
     from trw_mcp.server import _tools
 
-    _tools._assert_manifest_parity(_tools.mcp)
+    _tools._assert_manifest_parity(served_app())
     assert not [log for log in captured_structlog if log.get("event") == "surface_manifest_parity_drift"]
 
 
@@ -117,8 +120,11 @@ def test_live_names_are_the_raw_surface_not_the_session_mask() -> None:
     against the manifest would report drift for every tool the session cannot
     currently see.
     """
+    from tests._served_app import served_app
     from trw_mcp.server._surface_manifest_registry import MANIFEST_BY_NAME
-    from trw_mcp.server._tools import live_registered_tool_names, mcp
+    from trw_mcp.server._tools import live_registered_tool_names
+
+    mcp = served_app()
 
     assert live_registered_tool_names(mcp) == frozenset(MANIFEST_BY_NAME)
 

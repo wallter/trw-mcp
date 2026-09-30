@@ -7,6 +7,7 @@ Belongs to the ``_subcommands_lifecycle.py`` ``_run_uninstall`` facade. Split ou
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -37,10 +38,11 @@ def _move_matched_captures_to_os_trash(
         if deleted:
             print(f"  Removed {deleted} unchanged TRW file(s) (byte-identical to what TRW wrote; no system Trash here)")
     left = {str(data): why for data, why in kept}
+    remove = f"remove with: rm -rf {shlex.quote(str(trash_dir(target)))}"
     for orig, at in pairs:
-        if at and at in left and sys.platform != "darwin":
-            print(f"  Kept in .trw/trash: {display(Path(orig), target)} ({left[at]}; see doctor)")
-        elif not at or at in left:
+        if at and at in left:  # E2E-INC-062: on either platform, say why the capture stayed and how to remove it
+            print(f"  Kept in .trw/trash: {display(Path(orig), target)} ({left[at]}; see doctor; {remove})")
+        elif not at:
             print(f"  Moved to .trw/trash: {display(Path(orig), target)} (unchanged TRW file; see doctor)")
     # Every capture moved on: leave no empty .trw/trash behind, even on a refused run that keeps .trw.
     if captures and not kept:

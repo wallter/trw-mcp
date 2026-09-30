@@ -117,7 +117,10 @@ class TestCeremonyDeliverSubStepFailures:
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.tools.ceremony._do_reflect", return_value={"status": "success", "learnings_produced": 0}),
+            patch(
+                "trw_mcp.tools.ceremony._do_reflect",
+                return_value={"status": "success", "mechanical_learnings_extracted": 0},
+            ),
             patch("trw_mcp.tools.ceremony._do_instruction_sync", side_effect=RuntimeError("sync failed")),
             patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value={"status": "success"}),
             patch("trw_mcp.tools._deferred_delivery._do_auto_progress", return_value={"status": "skipped"}),

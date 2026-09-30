@@ -107,6 +107,7 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
 
     from trw_mcp.state import _checkout_servers
     from trw_mcp.state._store_migration import (
+        AlreadyMigratedError,
         MigrationRefusedError,
         MigrationRetryError,
         apply_migration,
@@ -133,6 +134,8 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
                 print(f"memory migrate: still running on the old store, reconnect: {line}")
         else:
             print(json.dumps(preview_migration(trw_dir), indent=2))
+    except AlreadyMigratedError as exc:  # a no-op is success (exit 0), so a script can run migrate idempotently
+        print(f"memory migrate: {exc}")
     except MigrationRefusedError as exc:
         # Exit 2 is "stop something, then rerun": say what still runs against this checkout.
         print(f"memory migrate: {exc}", file=sys.stderr)

@@ -39,6 +39,15 @@ from trw_mcp.state.doc_variants import VariantLocationError, variant_dir, write_
 _MAX_PROMPT_FILE_BYTES = 1_000_000
 
 
+def policy_with_observation(
+    policy: dict[str, dict[str, object]], client: str, raw_stdout: str
+) -> dict[str, dict[str, object]]:
+    """*policy* plus what the child reports it ran (CODEX-P0-A S2); unchanged for clients with no source."""
+    from trw_mcp.dispatch._codex_observed import with_observed
+
+    return with_observed(policy, client, raw_stdout)
+
+
 def _listed(value: object) -> list[str]:
     return [value] if isinstance(value, str) else [str(v) for v in (value or [])]  # type: ignore[attr-defined]
 
@@ -180,15 +189,23 @@ def run_dispatch(args: argparse.Namespace) -> None:
         )
 
     client, model = getattr(args, "client", None), getattr(args, "model", None)
-    if len(prompts) > 1 or "," in (client or ""):
-        try:
-            targets = parse_targets(client, model)
-        except TargetError as err:
-            print(str(err), file=sys.stderr)
-            sys.exit(2)
-        _fan_out(variant_lanes(targets, model, len(prompts)), prompts, build, output_file)
+    # One parse for both forms (E2E-DISPATCH-CLI-TARGETS): the single-client path used to hand the raw name
+    # to the resolver, so an alias, a model shorthand or ``client:model`` read as a "disabled" client.
     try:
-        req = build(getattr(args, "client", None), getattr(args, "model", None))
+        targets = parse_targets(client, model)
+    except TargetError as err:
+        print(str(err), file=sys.stderr)
+        sys.exit(2)
+    if client is not None and targets is None:
+        # Lead ruling: a given-but-empty --client is a scripting bug; only an omitted flag means the default.
+        print("--client given but empty; omit it to use the configured default", file=sys.stderr)
+        sys.exit(2)
+    if len(prompts) > 1 or "," in (client or ""):
+        _fan_out(variant_lanes(targets, model, len(prompts)), prompts, build, output_file)
+    if targets:
+        client, model = targets[0].client, targets[0].model
+    try:
+        req = build(client, model)
     except DispatchResolutionError as err:
         print(str(err), file=sys.stderr)
         sys.exit(err.exit_code)
@@ -215,6 +232,7 @@ def run_dispatch(args: argparse.Namespace) -> None:
         print(f"dispatch fallback: {result.fallback_note}", file=sys.stderr)
     if result.posture_note:  # never hide a downgrade behind a plain-text answer
         print(f"dispatch posture: {result.posture_note}", file=sys.stderr)
+    policy = policy_with_observation(policy, last_req.client, result.raw_stdout)
     payload = json.dumps({**result.model_dump(mode="json"), "policy": policy}, indent=2)
 
     if output_file:

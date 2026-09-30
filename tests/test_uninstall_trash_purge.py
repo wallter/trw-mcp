@@ -125,5 +125,29 @@ def test_uninstall_off_macos_deletes_proven_captures_and_says_so(
     report._move_matched_captures_to_os_trash(result, root, lambda p, r: str(p.relative_to(r)))
     out = capsys.readouterr().out
     assert "  Removed 1 unchanged TRW file(s)" in out
-    assert "Kept in .trw/trash: .claude/edited.md (changed since TRW wrote it; see doctor)" in out
+    remove = f"remove with: rm -rf {root / '.trw' / 'trash'}"
+    assert f"Kept in .trw/trash: .claude/edited.md (changed since TRW wrote it; see doctor; {remove})" in out
     assert not data.parent.exists() and edited.read_bytes() == b"user edit\n"
+
+
+def test_uninstall_on_macos_names_why_a_capture_stayed_in_trw_trash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """E2E-INC-062: with no usable ~/.Trash the captures stay, and each line says why (not only 'see doctor')."""
+    from trw_mcp.server import _uninstall_trash_report as report
+
+    root, data = _capture(tmp_path)
+    monkeypatch.setattr(report.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        report,
+        "move_captures_to_os_trash",
+        lambda _root, paths: (None, [(p, "no usable system Trash (FileNotFoundError): ~/.Trash") for p in paths]),
+    )
+    result = {"trashed": [str(root / ".claude" / "thing.md")], "trashed_at": [str(data)]}
+    report._move_matched_captures_to_os_trash(result, root, lambda p, r: str(p.relative_to(r)))
+    out = capsys.readouterr().out
+    assert (
+        "Kept in .trw/trash: .claude/thing.md (no usable system Trash (FileNotFoundError): ~/.Trash; see doctor; "
+        f"remove with: rm -rf {root / '.trw' / 'trash'})" in out
+    )
+    assert data.read_bytes() == _TRW

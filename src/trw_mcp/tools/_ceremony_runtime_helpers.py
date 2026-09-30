@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 def _read_pre_compact_recovery() -> tuple[str, str]:
     """Read caller-supplied directive + context-anchor from pre-compact state.
 
-    PRD-CORE-165 FR-01 recovery readback. Cheap and GUARDED for the session_start
+    PRD-CORE-342 FR-01 recovery readback. Cheap and GUARDED for the session_start
     hot path: one small typed read, performed only when an active run already
     exists (the caller gates this). Never scans run dirs. Returns ``("", "")``
     when the marker is absent or unreadable.
@@ -105,7 +105,7 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
                 result["wave_status"] = wave_status
     except (StateError, OSError, ValueError):
         result["status"] = "error_reading"
-    # PRD-CORE-165 FR-01: surface persisted directive + context-anchor so the
+    # PRD-CORE-342 FR-01: surface persisted directive + context-anchor so the
     # post-compaction session resumes exactly. Only runs because an active run
     # exists here, and only emits keys when the state actually carries them.
     directive, context_anchor = _read_pre_compact_recovery()
@@ -243,7 +243,7 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
             {
                 "reflection_id": "delivery",
                 "scope": "delivery",
-                "learnings_produced": len(new_learnings),
+                "mechanical_learnings_extracted": len(new_learnings),
             },
         )
 
@@ -251,7 +251,7 @@ def _do_reflect(trw_dir: Path, run_dir: Path | None) -> ReflectResultDict:
     return {
         "status": "success",
         "events_analyzed": len(events),
-        "learnings_produced": len(new_learnings),
+        "mechanical_learnings_extracted": len(new_learnings),
         "success_patterns": len(success_patterns),
     }
 

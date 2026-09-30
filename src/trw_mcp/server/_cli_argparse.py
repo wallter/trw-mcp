@@ -15,6 +15,7 @@ from trw_mcp import __version__
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
 from trw_mcp.server._cli_argparse_code import add_code_subcommands
 from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
+from trw_mcp.server._cli_argparse_handoff import add_handoff_subcommands
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import _ide_choice, add_project_subcommands
 from trw_mcp.server._cli_factory import add_factory_subcommands
@@ -22,6 +23,7 @@ from trw_mcp.shared_server._cli import add_shared_subcommands
 from trw_mcp.tools._decision_cli import add_decision_subcommands
 from trw_mcp.tools._delivery_cli import add_delivery_subcommands
 from trw_mcp.tools._experiment_cli import add_experiment_subcommands
+from trw_mcp.tools._feedback_cli import add_feedback_subcommands
 from trw_mcp.tools._instructions_cli import add_instructions_subcommands
 from trw_mcp.tools._prd_cli import add_prd_create_diff_subcommands
 from trw_mcp.tools._profile_cli import add_profile_subcommands
@@ -42,6 +44,17 @@ _REMOVE_IDE_CHOICES = sorted(SUPPORTED_IDES)
 #: surface must not depend on the factory), so ``scripts/_cli_subcommands_inventory.py``
 #: skips these. Drop a name here when its command graduates to stable.
 EXPERIMENTAL_COMMANDS: frozenset[str] = frozenset({"factory", "receipt"})
+
+
+def _non_negative_int(text: str) -> int:
+    """An hours flag: a whole number of hours, never negative (a negative window silently marked every run stale)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number of hours") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"{value} is negative; hours must be 0 or more")
+    return value
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -280,7 +293,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     local_learn.add_argument(
         "--type",
         default="pattern",
-        help="Learning type: incident | pattern | convention | hypothesis | workaround (default: pattern)",
+        help="Learning type: incident | pattern | convention | hypothesis | workaround | decision (default: pattern)",
     )
     local_learn.add_argument(
         "--confidence",
@@ -324,6 +337,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     local_feedback.add_argument("--subject", required=True, help="One-line subject")
     local_feedback.add_argument("--message", "-m", required=True, help="Feedback body (redacted before validation)")
     local_feedback.add_argument("--contact-email", default=None, help="Optional reply address")
+    local_feedback.add_argument("--force", action="store_true", help="Send even if the same report went out this week")
     local_deliver = local_sub.add_parser("deliver", help="Mark the active local run delivered")
     local_deliver.add_argument("--message", "-m", default="local delivery", help="Delivery checkpoint message")
     local_deliver.add_argument(
@@ -344,6 +358,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # the CLI replacements for two former code-navigation MCP tools (see
     # server/_cli_replacements.py::CLI_REPLACEMENTS for the exact names).
     add_code_subcommands(subparsers)
+    # handoff (PRD-CORE-347-FR05): Agent Handoff Record validate/digest/seal/render.
+    add_handoff_subcommands(subparsers)
 
     # gc (PRD-CORE-141 FR11) — stale-run sweep CLI
     gc_parser = subparsers.add_parser(
@@ -367,13 +383,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     gc_parser.add_argument(
         "--staleness-hours",
-        type=int,
+        type=_non_negative_int,
         default=None,
         help="Override config.run_staleness_hours for this invocation.",
     )
     gc_parser.add_argument(
         "--grace-hours",
-        type=int,
+        type=_non_negative_int,
         default=None,
         help="Override config.run_staleness_grace_hours for this invocation.",
     )
@@ -404,6 +420,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # telemetry: read-only query/security/classify/channel-stats tools (PRD-CORE-300-FR04
     # slice S3a) and pipeline-health (FR05 slice S3b), moved to the CLI.
     add_telemetry_subcommands(subparsers)
+    # feedback: the local feedback outbox -- list (read-only) and flush (FEEDBACK-LOCAL-OUTBOX).
+    add_feedback_subcommands(subparsers)
 
     # prd create / diff: moved to the CLI (PRD-CORE-300-FR07); registered next
     # to prd-state / prd-epoch (add_operational_subcommands above).

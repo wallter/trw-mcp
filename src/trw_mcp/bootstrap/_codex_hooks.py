@@ -63,7 +63,10 @@ def _trw_hook_group(
     from trw_mcp.models.config._profiles import resolve_client_profile
 
     hook_client_key = _hook_env_key(resolve_client_profile("codex"))
-    git_root = "$(git rev-parse --show-toplevel)"
+    # Codex runs this through a shell in the session directory. Outside git, `git rev-parse` fails and the bare
+    # expansion left `/bin/sh "/.claude/hooks/..."`: exit 127 on every hooked call (E2E-INC-032). Fall back to the
+    # session directory, which is the project root when there is no repository to ask.
+    git_root = "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
     command = f'TRW_HOOK_CLIENT={hook_client_key} /bin/sh "{git_root}/.claude/hooks/{script_name}"'
     hook_command: CodexHookCommand = {"type": "command", "command": command}
     if status_message is not None:
@@ -129,10 +132,28 @@ def codex_trw_hook_count(config: CodexHooksConfig | None = None) -> int:
     return hook_count
 
 
-def codex_hooks_review_warning() -> str:
-    """Return the installer warning shown after writing TRW-managed Codex hooks."""
-    hook_count = codex_trw_hook_count()
-    hook_label = "hook" if hook_count == 1 else "hooks"
+def codex_hooks_review_warning(target_dir: Path | None = None) -> str:
+    """Return the installer warning shown after writing TRW-managed Codex hooks.
+
+    With *target_dir* it describes the files actually written (E2E-CODEX-INIT-ARTIFACTS): the count is the
+    TRW hooks in that project's ``.codex/hooks.json``, and ``[features].hooks`` is named only when it is set.
+    Without it, the full ceremony payload's count, as before.
+    """
+    if target_dir is not None:
+        from trw_mcp.bootstrap._codex import codex_hooks_enabled
+
+        written = read_json_object(target_dir / ".codex" / "hooks.json", context="codex_hooks_warning")
+        hook_count = codex_trw_hook_count(cast("CodexHooksConfig", written)) if written is not None else 0
+        hook_label = "hook" if hook_count == 1 else "hooks"
+        if not codex_hooks_enabled(target_dir):
+            return (
+                f"TRW registered {hook_count} TRW-managed {hook_label} in .codex/hooks.json; current Codex builds "
+                "require manual review before project hooks run. Open /hooks in Codex to approve or disable them. "
+                "Hook trust state stays in user-controlled Codex config, not in project files."
+            )
+    else:
+        hook_count = codex_trw_hook_count()
+        hook_label = "hook" if hook_count == 1 else "hooks"
     return (
         "Codex hooks are enabled with [features].hooks; current Codex builds require "
         "manual review before project hooks run. Open /hooks in Codex to approve or "

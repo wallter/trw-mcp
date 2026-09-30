@@ -1,0 +1,1588 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trwframework.com/schemas/ahr/1/ahr.schema.json",
+  "title": "Agent Handoff Record (AHR) v1 draft",
+  "description": "AHR v1.0-rc.1. Three document kinds dispatched by `type`: sender-authored handoff, receiver-authored readback, lifecycle event. Structure is normative (SPEC R-CONV-3); cross-field rules X-0..X-21 live in SPEC section 13.",
+  "type": "object",
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "handoff",
+        "readback",
+        "event"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "handoff"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/handoff"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "readback"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/readback"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "event"
+          }
+        }
+      },
+      "then": {
+        "$ref": "#/$defs/event"
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "RFC 3339 UTC profile: years 0001-9999, no leap second (:60), at most 6 fractional digits, literal Z (R-TIME-1).",
+      "pattern": "^(000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,6})?Z$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "[^\\s\\u200b\\u200c\\u200d\\u2060\\ufeff\\u3164\\u1160\\u115f\\uffa0]"
+    },
+    "short": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 280,
+      "pattern": "[^\\s\\u200b\\u200c\\u200d\\u2060\\ufeff\\u3164\\u1160\\u115f\\uffa0]"
+    },
+    "principal": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id",
+          "description": "Stable identifier of the principal; unique within the deployment (R-ROLE-1)."
+        },
+        "kind": {
+          "enum": [
+            "agent",
+            "human",
+            "service"
+          ]
+        },
+        "model": {
+          "$ref": "#/$defs/short"
+        },
+        "capability_tier": {
+          "enum": [
+            "frontier",
+            "balanced",
+            "local-large",
+            "local-small"
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/short"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recipient": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/principal"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "scope"
+          ],
+          "properties": {
+            "kind": {
+              "const": "unaddressed"
+            },
+            "scope": {
+              "$ref": "#/$defs/short"
+            },
+            "completer": {
+              "$ref": "#/$defs/principal"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ref": {
+      "type": "object",
+      "required": [
+        "uri"
+      ],
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/uri"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "media_type": {
+          "$ref": "#/$defs/short"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "procedure",
+        "scope",
+        "result",
+        "at"
+      ],
+      "properties": {
+        "procedure": {
+          "$ref": "#/$defs/text"
+        },
+        "scope": {
+          "$ref": "#/$defs/text"
+        },
+        "result": {
+          "enum": [
+            "supports",
+            "contradicts",
+            "inconclusive"
+          ],
+          "description": "Whether the check supports the claim it is attached to."
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "producer": {
+          "$ref": "#/$defs/id"
+        },
+        "raw": {
+          "$ref": "#/$defs/ref"
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": [
+        "id",
+        "text",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "[^\\s\\u200b\\u200c\\u200d\\u2060\\ufeff\\u3164\\u1160\\u115f\\uffa0]"
+        },
+        "label": {
+          "enum": [
+            "observed",
+            "verified",
+            "inferred",
+            "unknown"
+          ]
+        },
+        "basis": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "label": {
+                "const": "verified"
+              }
+            },
+            "required": [
+              "label"
+            ]
+          },
+          "then": {
+            "required": [
+              "evidence"
+            ],
+            "properties": {
+              "evidence": {
+                "items": {
+                  "properties": {
+                    "result": {
+                      "const": "supports"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "label": {
+                "enum": [
+                  "observed",
+                  "inferred"
+                ]
+              }
+            },
+            "required": [
+              "label"
+            ]
+          },
+          "then": {
+            "required": [
+              "basis"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "none_known": {
+      "type": "object",
+      "required": [
+        "none_known",
+        "checked"
+      ],
+      "properties": {
+        "none_known": {
+          "const": true
+        },
+        "checked": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "type": "object",
+      "required": [
+        "id",
+        "text",
+        "severity"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "mitigation": {
+          "$ref": "#/$defs/text"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risks_or_none": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/risk"
+          }
+        },
+        {
+          "$ref": "#/$defs/none_known"
+        }
+      ]
+    },
+    "texts_or_none": {
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        {
+          "$ref": "#/$defs/none_known"
+        }
+      ]
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "id",
+        "action",
+        "done_when"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "action": {
+          "$ref": "#/$defs/text"
+        },
+        "owner": {
+          "$ref": "#/$defs/id"
+        },
+        "done_when": {
+          "$ref": "#/$defs/text"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "description": "Claim ids this action relies on (X-4)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "next_read": {
+      "type": "object",
+      "required": [
+        "uri",
+        "why"
+      ],
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/uri"
+        },
+        "why": {
+          "$ref": "#/$defs/short"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "section",
+            "url",
+            "record",
+            "artifact"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "canonicalization",
+        "digest"
+      ],
+      "properties": {
+        "canonicalization": {
+          "const": "RFC8785"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "signature": {
+          "$ref": "#/$defs/ref"
+        }
+      },
+      "additionalProperties": false
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^https?://([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*|\\[[0-9A-Fa-f:.]+\\])(:[0-9]{1,5})?(/[^\\s]*)?$",
+        "maxLength": 2048
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "required": [
+        "ahr",
+        "type",
+        "handoff_id",
+        "subject",
+        "tier",
+        "tier_reason",
+        "from",
+        "to",
+        "created_at",
+        "as_of",
+        "objective",
+        "claims",
+        "not_done",
+        "risks",
+        "unknowns",
+        "next_actions",
+        "next_read"
+      ],
+      "properties": {
+        "ahr": {
+          "const": "1.0-rc.1"
+        },
+        "type": {
+          "const": "handoff"
+        },
+        "handoff_id": {
+          "$ref": "#/$defs/id"
+        },
+        "subject": {
+          "$ref": "#/$defs/id"
+        },
+        "tier": {
+          "enum": [
+            "minimal",
+            "standard",
+            "critical"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/principal"
+        },
+        "to": {
+          "$ref": "#/$defs/recipient"
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "as_of": {
+          "type": "object",
+          "required": [
+            "at"
+          ],
+          "properties": {
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "base_ref": {
+              "type": "object",
+              "required": [
+                "tree_state"
+              ],
+              "properties": {
+                "commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{7,64}$"
+                },
+                "tree_state": {
+                  "enum": [
+                    "clean",
+                    "dirty",
+                    "unknown",
+                    "not_applicable"
+                  ]
+                },
+                "changed_paths": {
+                  "$ref": "#/$defs/ref"
+                }
+              },
+              "additionalProperties": false
+            },
+            "run_ref": {
+              "$ref": "#/$defs/short"
+            }
+          },
+          "additionalProperties": false
+        },
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "handoff_id",
+              "digest"
+            ],
+            "properties": {
+              "handoff_id": {
+                "$ref": "#/$defs/id"
+              },
+              "digest": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "objective": {
+          "type": "object",
+          "required": [
+            "goal",
+            "done_when"
+          ],
+          "properties": {
+            "goal": {
+              "$ref": "#/$defs/text"
+            },
+            "intent": {
+              "$ref": "#/$defs/text"
+            },
+            "done_when": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "constraints": {
+          "oneOf": [
+            {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "$ref": "#/$defs/constraint"
+              }
+            },
+            {
+              "$ref": "#/$defs/none_known"
+            }
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/claim"
+          },
+          "maxItems": 30
+        },
+        "not_done": {
+          "$ref": "#/$defs/texts_or_none"
+        },
+        "risks": {
+          "$ref": "#/$defs/risks_or_none"
+        },
+        "unknowns": {
+          "$ref": "#/$defs/texts_or_none"
+        },
+        "contingencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "if",
+              "then"
+            ],
+            "properties": {
+              "if": {
+                "$ref": "#/$defs/text"
+              },
+              "then": {
+                "$ref": "#/$defs/text"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "decision",
+              "rationale"
+            ],
+            "properties": {
+              "decision": {
+                "$ref": "#/$defs/text"
+              },
+              "rationale": {
+                "$ref": "#/$defs/text"
+              },
+              "rejected": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/text"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "next_actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/action"
+          }
+        },
+        "next_read": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/next_read"
+          }
+        },
+        "readback": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "reverify": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/id"
+              }
+            },
+            "verifier": {
+              "$ref": "#/$defs/principal"
+            }
+          },
+          "additionalProperties": false
+        },
+        "integrity": {
+          "$ref": "#/$defs/integrity"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        },
+        "tier_reason": {
+          "$ref": "#/$defs/short"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "enum": [
+                  "standard",
+                  "critical"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "readback",
+              "integrity"
+            ],
+            "properties": {
+              "objective": {
+                "required": [
+                  "intent"
+                ]
+              },
+              "as_of": {
+                "required": [
+                  "base_ref"
+                ]
+              },
+              "readback": {
+                "required": [
+                  "required"
+                ],
+                "properties": {
+                  "required": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "critical"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "contingencies",
+              "expires_at",
+              "constraints"
+            ],
+            "properties": {
+              "contingencies": {
+                "minItems": 1
+              },
+              "to": {
+                "$ref": "#/$defs/principal"
+              },
+              "readback": {
+                "required": [
+                  "reverify",
+                  "verifier"
+                ]
+              },
+              "as_of": {
+                "properties": {
+                  "base_ref": {
+                    "properties": {
+                      "tree_state": {
+                        "not": {
+                          "const": "unknown"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "next_actions": {
+                "items": {
+                  "required": [
+                    "depends_on"
+                  ]
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "constraints": {
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "constraints"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "constraints": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "to": {
+                "properties": {
+                  "kind": {
+                    "const": "unaddressed"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "expires_at"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "readback": {
+      "type": "object",
+      "required": [
+        "ahr",
+        "type",
+        "readback_id",
+        "handoff",
+        "by",
+        "at",
+        "goal_restated",
+        "first_action",
+        "top_risk",
+        "reverified",
+        "discrepancies",
+        "questions",
+        "disposition",
+        "pointer_checks"
+      ],
+      "properties": {
+        "ahr": {
+          "const": "1.0-rc.1"
+        },
+        "type": {
+          "const": "readback"
+        },
+        "readback_id": {
+          "$ref": "#/$defs/id"
+        },
+        "handoff": {
+          "type": "object",
+          "required": [
+            "handoff_id",
+            "digest"
+          ],
+          "properties": {
+            "handoff_id": {
+              "$ref": "#/$defs/id"
+            },
+            "digest": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "additionalProperties": false
+        },
+        "by": {
+          "$ref": "#/$defs/principal"
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "goal_restated": {
+          "$ref": "#/$defs/text"
+        },
+        "first_action": {
+          "type": "object",
+          "required": [
+            "action_id",
+            "restated"
+          ],
+          "properties": {
+            "action_id": {
+              "$ref": "#/$defs/id"
+            },
+            "restated": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "additionalProperties": false
+        },
+        "top_risk": {
+          "type": "object",
+          "required": [
+            "restated"
+          ],
+          "properties": {
+            "risk_id": {
+              "$ref": "#/$defs/id"
+            },
+            "restated": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "additionalProperties": false
+        },
+        "reverified": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "claim_id",
+              "result"
+            ],
+            "properties": {
+              "claim_id": {
+                "$ref": "#/$defs/id"
+              },
+              "result": {
+                "enum": [
+                  "confirmed",
+                  "contradicted",
+                  "not_checked",
+                  "not_checkable"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/$defs/evidence"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "result": {
+                      "const": "confirmed"
+                    }
+                  },
+                  "required": [
+                    "result"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "evidence"
+                  ],
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "result": {
+                          "const": "supports"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "result": {
+                      "const": "contradicted"
+                    }
+                  },
+                  "required": [
+                    "result"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "evidence"
+                  ],
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "result": {
+                          "const": "contradicts"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "result": {
+                      "const": "not_checkable"
+                    }
+                  },
+                  "required": [
+                    "result"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "evidence"
+                  ],
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "result": {
+                          "const": "inconclusive"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          }
+        },
+        "discrepancies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "claim_id": {
+                "$ref": "#/$defs/id"
+              },
+              "text": {
+                "$ref": "#/$defs/text"
+              },
+              "pointer_index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 11
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/text"
+          }
+        },
+        "disposition": {
+          "enum": [
+            "ready",
+            "questions"
+          ]
+        },
+        "integrity": {
+          "$ref": "#/$defs/integrity"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        },
+        "done_when_restated": {
+          "$ref": "#/$defs/text"
+        },
+        "pointer_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "status"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 11
+              },
+              "status": {
+                "enum": [
+                  "match",
+                  "drift",
+                  "missing",
+                  "no_digest",
+                  "not_accessed"
+                ]
+              },
+              "observed_digest": {
+                "$ref": "#/$defs/digest"
+              }
+            },
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "match",
+                        "drift"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "observed_digest"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "missing",
+                        "no_digest",
+                        "not_accessed"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "required": [
+                      "observed_digest"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "constraints_restated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "text"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 49
+              },
+              "text": {
+                "$ref": "#/$defs/text"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "disposition": {
+                "const": "questions"
+              }
+            },
+            "required": [
+              "disposition"
+            ]
+          },
+          "then": {
+            "properties": {
+              "questions": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "questions": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "ahr",
+        "type",
+        "event_id",
+        "handoff_id",
+        "record_digest",
+        "seq",
+        "event",
+        "actor",
+        "at"
+      ],
+      "properties": {
+        "ahr": {
+          "const": "1.0-rc.1"
+        },
+        "type": {
+          "const": "event"
+        },
+        "event_id": {
+          "$ref": "#/$defs/id"
+        },
+        "handoff_id": {
+          "$ref": "#/$defs/id"
+        },
+        "record_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "Digest of the handoff record this event concerns (never of the event itself)."
+        },
+        "event": {
+          "enum": [
+            "offered",
+            "read_back",
+            "answered",
+            "readback_verified",
+            "accepted",
+            "declined",
+            "reported",
+            "completed",
+            "withdrawn",
+            "superseded",
+            "expired"
+          ]
+        },
+        "actor": {
+          "$ref": "#/$defs/principal"
+        },
+        "at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "ref": {
+          "$ref": "#/$defs/ref"
+        },
+        "reason": {
+          "$ref": "#/$defs/text"
+        },
+        "effective_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "verification": {
+          "type": "object",
+          "required": [
+            "outcome",
+            "verifier",
+            "method",
+            "rationale"
+          ],
+          "properties": {
+            "outcome": {
+              "enum": [
+                "pass",
+                "pass_with_flags",
+                "fail"
+              ]
+            },
+            "verifier": {
+              "$ref": "#/$defs/principal"
+            },
+            "method": {
+              "enum": [
+                "deterministic",
+                "judge",
+                "human"
+              ]
+            },
+            "confidence": {
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            "rationale": {
+              "$ref": "#/$defs/text"
+            },
+            "readback_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "method": {
+                    "const": "judge"
+                  }
+                },
+                "required": [
+                  "method"
+                ]
+              },
+              "then": {
+                "required": [
+                  "confidence"
+                ]
+              }
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        },
+        "outcome": {
+          "enum": [
+            "met",
+            "returned",
+            "escalated"
+          ],
+          "description": "On reported: objective met, work handed back unfinished, or escalated (R-TIER-5)."
+        },
+        "prev_event_digest": {
+          "$ref": "#/$defs/digest",
+          "description": "R-INT-1 digest of the previous stored event for this handoff (R-LC-13)."
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "required": [
+              "effective_at"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "declined",
+                  "withdrawn"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "read_back",
+                  "answered",
+                  "reported",
+                  "superseded"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "required": [
+              "ref"
+            ],
+            "properties": {
+              "ref": {
+                "required": [
+                  "uri",
+                  "digest"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "readback_verified"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "required": [
+              "verification"
+            ],
+            "properties": {
+              "verification": {
+                "required": [
+                  "outcome",
+                  "verifier",
+                  "method",
+                  "rationale",
+                  "readback_digest"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "verification"
+            ],
+            "properties": {
+              "event": {
+                "not": {
+                  "const": "readback_verified"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "reported"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "required": [
+              "outcome"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "outcome"
+            ],
+            "properties": {
+              "event": {
+                "not": {
+                  "const": "reported"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "enum": [
+                  "read_back",
+                  "superseded"
+                ]
+              }
+            },
+            "required": [
+              "event"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "required": [
+                  "uri",
+                  "digest",
+                  "media_type"
+                ],
+                "properties": {
+                  "media_type": {
+                    "const": "application/vnd.ahr+json"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "effective_at"
+            ],
+            "properties": {
+              "event": {
+                "not": {
+                  "const": "accepted"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event": {
+                "const": "declined"
+              }
+            },
+            "required": [
+              "event",
+              "ref"
+            ]
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "required": [
+                  "uri",
+                  "digest"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "uri": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]+$",
+      "description": "Absolute URI with a scheme and no whitespace (R-REC-5)."
+    },
+    "constraint": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "type": "object",
+          "required": [
+            "text",
+            "source"
+          ],
+          "properties": {
+            "text": {
+              "$ref": "#/$defs/text"
+            },
+            "source": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/ref"
+                },
+                {
+                  "required": [
+                    "uri",
+                    "digest"
+                  ]
+                }
+              ]
+            },
+            "excerpt": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

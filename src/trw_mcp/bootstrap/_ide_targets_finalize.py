@@ -294,6 +294,10 @@ def _run_claude_md_sync(
                 instruction_manifest_hashes=manifest_hashes,
             )
         logger.info("claude_md_sync_completed", target_dir=str(target_dir))
+        # A REVIEW.md the sync kept (the user's edits, or an empty store: REVIEW-MD-KEEP) is named with its
+        # remedy, not left only in a log line (E2E-INC-086: the user was never told), refusals or not.
+        if kept := (sync_result.get("review_md") or {}).get("kept_existing"):
+            result.setdefault("warnings", []).append(str(kept))
         if _record_sync_refusals(sync_result, result, target_dir):
             # A refused write did not happen. Claiming "synced" on top
             # of the warning would leave the truthful line and the false one in

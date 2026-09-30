@@ -38,8 +38,9 @@ class TestToolSummaries:
 
 async def _served_descriptions() -> dict[str, str]:
     """What a client receives: every registered tool's description off the production app."""
-    from trw_mcp.server import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     served: dict[str, str] = {}
     for name in sorted(_ELIGIBLE_TOOLS):
         tool = await mcp.get_tool(name)  # type: ignore[attr-defined]
@@ -65,8 +66,9 @@ class TestOneStringPerTool:
         """The in-memory client sees the registry's description, not a rewritten one."""
         from fastmcp import Client
 
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         served = await _served_descriptions()
         async with Client(mcp) as client:  # type: ignore[arg-type]
             listed = {tool.name: tool.description for tool in await client.list_tools()}
@@ -78,7 +80,9 @@ class TestOneStringPerTool:
         assert [line.split(" — ", 1)[1] for line in lines] == list(TOOL_SUMMARIES.values())
 
     async def test_reapplying_at_boot_does_not_prefix_twice(self) -> None:
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
+
+        mcp = served_app()
         from trw_mcp.server._tool_summaries import apply_tool_summaries
 
         before = await _served_descriptions()

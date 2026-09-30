@@ -46,7 +46,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
-from fastmcp import FastMCP
 from trw_memory.testing.daemon_reaper import (
     reap_daemons_under,
     stop_spawned,
@@ -54,10 +53,12 @@ from trw_memory.testing.daemon_reaper import (
     tag_daemon_ownership,
 )
 
+from tests._otel_support import otel_spans  # noqa: F401  (PRD-CORE-342 FR09 shared fixture)
 from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
 from tests._timing import pytest_sessionfinish as _timing_sessionfinish
 
 if TYPE_CHECKING:
+    from fastmcp import FastMCP
     from trw_memory.daemon import DaemonPaths
     from trw_memory.daemon._spawn import SpawnedDaemon
 
@@ -80,6 +81,8 @@ pytest_plugins = (
     "tests._memory_fixtures",
     "tests._duration_budget",  # PRD-INFRA-197-FR05: duration_exempt marker + duration budgets
     "tests._session_tmpdir",  # PRD-QUAL-146 FR09: mkdtemp outside tmp_path lands under basetemp
+    "tests._launch_guard",  # DISPATCH-TEST-LAUNCH-GUARD: no real client launch unless @pytest.mark.live
+    "tests._arg_order",  # COMMS-CONFTEST-ORDER: explicit file args in any order keep each directory's conftest
     "pytester",  # enables the `pytester` fixture used by tests/test_duration_budget.py
 )
 
@@ -409,6 +412,9 @@ def make_test_server(*groups: str) -> FastMCP:
         deliver_fn = tools["trw_deliver"].fn
     """
     import importlib
+
+    # Lazy: fastmcp costs ~0.85 s to import, and most test files never build a server.
+    from fastmcp import FastMCP
 
     server = FastMCP("test")
     for group in groups:

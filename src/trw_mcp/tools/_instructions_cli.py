@@ -7,8 +7,12 @@ protocol-template change, IDE switch), so it is a CLI verb over the same
 directly for its own instruction-sync step (that call site is untouched by
 this cut).
 
+``trw-mcp instructions check`` (INC-079) is the read-only verb: the same render as ``sync --dry-run`` (writes
+nothing, records no sync hash), exiting 1 when a target would change or a write would be refused -- like
+``git diff --exit-code``, so a script or CI step can gate on instruction-file drift.
+
 Output is one JSON document with ``--json``, otherwise ``key: value`` lines.
-The exit status is 1 when ``status`` is ``"refused"`` and 0 otherwise; a
+``sync`` exits 1 when ``status`` is ``"refused"`` and 0 otherwise; a
 ``"dry_run"`` or ``"unchanged"`` result is a result, not a failure.
 """
 
@@ -23,29 +27,35 @@ __all__ = ["add_instructions_subcommands", "run_instructions"]
 
 
 def add_instructions_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``instructions sync``."""
+    """Register ``instructions sync`` and the read-only ``instructions check``."""
     instructions = subparsers.add_parser("instructions", help="Instruction-file maintenance verbs")
     verbs = instructions.add_subparsers(dest="instructions_command")
     sync = verbs.add_parser(
         "sync", help="Sync TRW protocol + ceremony guidance into the client's instruction file; state-changing"
     )
-    sync.add_argument("--scope", default="root", help='"root" for the project instruction file, "sub" for module-level')
-    sync.add_argument("--target-dir", default=None, help="Where to write the sub-scope file")
-    sync.add_argument(
-        "--client",
-        default="auto",
-        help='"auto" detects from IDE config dirs, a specific client name, or "all"',
+    check = verbs.add_parser(
+        "check", help="Read-only: report what sync would change; exit 1 if anything would (writes nothing)"
     )
+    for parser in (sync, check):
+        parser.add_argument(
+            "--scope", default="root", help='"root" for the project instruction file, "sub" for module-level'
+        )
+        parser.add_argument("--target-dir", default=None, help="Where the sub-scope file lives")
+        parser.add_argument(
+            "--client",
+            default="auto",
+            help='"auto" detects from IDE config dirs, a specific client name, or "all"',
+        )
+        parser.add_argument("--json", dest="as_json", action="store_true")
     sync.add_argument(
         "--dry-run",
         action="store_true",
         help="Report a unified diff for AGENTS.md; write nothing (per-client carriers and REVIEW.md are not previewed)",
     )
     sync.add_argument("--force", action="store_true", help="Write even if the guard detects content loss")
-    sync.add_argument("--json", dest="as_json", action="store_true")
 
 
-def _sync(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _render(args: argparse.Namespace, *, dry_run: bool, force: bool) -> dict[str, Any]:
     from trw_mcp.models.config import get_config
     from trw_mcp.state.claude_md import execute_claude_md_sync, instruction_write_trigger
     from trw_mcp.state.persistence import FileStateReader
@@ -63,18 +73,30 @@ def _sync(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 reader,
                 llm,
                 args.client,
-                dry_run=bool(args.dry_run),
-                force=bool(args.force),
+                dry_run=dry_run,
+                force=force,
             )
         )
+    return result
+
+
+def _sync(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+    result = _render(args, dry_run=bool(args.dry_run), force=bool(args.force))
     return result, result.get("status") == "refused"
 
 
+def _check(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+    result = _render(args, dry_run=True, force=False)
+    drift = any(entry.get("diff") for entry in result.get("diffs") or []) or bool(result.get("refusals"))
+    result["would_change"] = drift
+    return result, drift
+
+
 def run_instructions(args: argparse.Namespace) -> None:
-    """Dispatch ``instructions sync``."""
-    handler = {"sync": _sync}.get(str(args.instructions_command))
+    """Dispatch ``instructions sync|check``."""
+    handler = {"sync": _sync, "check": _check}.get(str(args.instructions_command))
     if handler is None:
-        print("usage: trw-mcp instructions {sync}", file=sys.stderr)
+        print("usage: trw-mcp instructions {sync,check}", file=sys.stderr)
         sys.exit(2)
     document, failed = handler(args)
     if args.as_json:

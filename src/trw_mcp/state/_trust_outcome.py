@@ -155,6 +155,9 @@ def _with_registry_lock(trw_dir: Path, fn: Callable[[], _T]) -> _T:
     processes — serialize through ``flock`` (NFR02).
     """
     lock_path = _trust_lock_path(trw_dir)
+    from trw_mcp.state._containment import assert_trw_write_contained
+
+    assert_trw_write_contained(lock_path)  # INC-034: .trw/context can be a shipped symlink
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     try:

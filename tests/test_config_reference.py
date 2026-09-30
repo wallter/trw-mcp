@@ -66,3 +66,17 @@ class TestConfigReference:
         # Parse the config-reference subcommand -- should not raise
         args = parser.parse_args(["config-reference"])
         assert args.command == "config-reference"
+
+
+def test_reference_rows_show_real_defaults_and_short_types(capsys: pytest.CaptureFixture[str]) -> None:
+    """E2E-INC-051 (a): no PydanticUndefined default, no module path or class repr as a type."""
+    import argparse
+
+    from trw_mcp.server._subcommands_misc import _run_config_reference
+
+    _run_config_reference(argparse.Namespace())
+    rows = [line for line in capsys.readouterr().out.splitlines() if line.startswith("| `TRW_")]
+
+    assert rows and not [r for r in rows if "PydanticUndefined" in r or "<class" in r]
+    assert not [r for r in rows if "trw_mcp." in r.split("|")[2]], "a type shows its module path"
+    assert any("| dict[str, str] |" in r and "PydanticUndefined" not in r for r in rows)

@@ -139,7 +139,7 @@ def dispatch_for_profile(
         if dry_run:
             return {"status": "skipped", "path": None, "rules_count": 0}
         try:
-            return generate_review_md(trw_dir, repo_root=project_root)
+            return generate_review_md(trw_dir, repo_root=project_root, allow_empty=force, force=force)
         except Exception:  # justified: fail-open — REVIEW.md generation must not block the sync
             logger.warning(failure_event, exc_info=True)
             return _review_md_failed_result("generation failed")

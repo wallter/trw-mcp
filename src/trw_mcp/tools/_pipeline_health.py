@@ -73,6 +73,21 @@ def _unmeasured(probe: str, reason: str, **fields: Any) -> SignalResult:
     }
 
 
+def _log_probe_failure(event: str, exc: Exception) -> None:
+    """Log a probe that could not measure, without flooding stderr (E2E-INC-073).
+
+    The failure is already REPORTED in the probe's payload (``measured: False``
+    plus the exception class in its advisory). An unreachable store is the
+    expected way to be unmeasured, so it logs at debug; anything else is a
+    warning, and even then the traceback is debug-only.
+    """
+    from trw_mcp.state._store_selection import StoreUnavailableError
+
+    level = logger.debug if isinstance(exc, StoreUnavailableError) else logger.warning
+    level(event, error=type(exc).__name__, detail=str(exc)[:200])
+    logger.debug("pipeline_probe_failure_traceback", probe_event=event, exc_info=True)
+
+
 def _resolve_config(config: Any | None) -> Any:
     """Return *config*, or the live ``TRWConfig`` when the caller passed none.
 
@@ -152,7 +167,7 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
             "advisory": advisory,
         }
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
-        logger.warning("pipeline_probe_sync_push_failed", error=type(exc).__name__, exc_info=True)
+        _log_probe_failure("pipeline_probe_sync_push_failed", exc)
         return _unmeasured("sync_push", type(exc).__name__, consecutive_failures=0, last_push_at=None)
 
 
@@ -169,11 +184,11 @@ def probe_graph_edges(trw_dir: Path, config: Any | None = None) -> SignalResult:
         ``{"degraded": bool, "measured": bool, "edge_count": int,
         "corpus_count": int, "has_relations": bool, "min_corpus": int, "advisory": str}``
     """
-    min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 10))
+    min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 50))
     try:
         health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
-        logger.warning("pipeline_probe_graph_edges_failed", error=type(exc).__name__, exc_info=True)
+        _log_probe_failure("pipeline_probe_graph_edges_failed", exc)
         return _unmeasured("graph_edges", type(exc).__name__, edge_count=0, corpus_count=0, has_relations=False)
     corpus_count = health["entries"]
     degraded = not health["has_relations"] and corpus_count > min_corpus
@@ -206,14 +221,16 @@ def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> Signal
     try:
         health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
-        logger.warning("pipeline_probe_embedding_coverage_failed", error=type(exc).__name__, exc_info=True)
+        _log_probe_failure("pipeline_probe_embedding_coverage_failed", exc)
         return _unmeasured("embedding_coverage", type(exc).__name__, **unmeasured)
     embedded, total = health["embedded"], health["entries"]
     if embedded is None:
         # A store that keeps no vectors never computed a ratio: not measured, never zero.
         return _unmeasured("embedding_coverage", "store_keeps_no_vectors", **unmeasured)
     coverage_ratio = embedded / total if total else None
-    degraded = coverage_ratio is not None and coverage_ratio < threshold
+    # A young store has had no chance to embed: weights arrive after the first entries (E2E-INC-010).
+    min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 50))
+    degraded = coverage_ratio is not None and coverage_ratio < threshold and total > min_corpus
     advisory = ""
     if degraded:
         advisory = (
@@ -240,7 +257,7 @@ def probe_recall_feedback(trw_dir: Path) -> SignalResult:
     try:
         health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
-        logger.warning("pipeline_probe_recall_feedback_failed", error=type(exc).__name__, exc_info=True)
+        _log_probe_failure("pipeline_probe_recall_feedback_failed", exc)
         return _unmeasured("recall_feedback", type(exc).__name__, max_recall_count=0, corpus_count=0)
     max_recall, corpus_count = health["max_recall_count"], health["entries"]
     degraded = max_recall == 0 and corpus_count >= _RECALL_MIN_CORPUS
@@ -263,6 +280,19 @@ def probe_recall_feedback(trw_dir: Path) -> SignalResult:
 # ---------------------------------------------------------------------------
 
 
+def pipeline_status(*, degraded_count: int, unmeasured_count: int, total: int) -> str:
+    """The ONE verdict rule: ``unknown`` | ``degraded`` | ``healthy``.
+
+    Absence of a measurement is not a measurement of absence: when no probe
+    measured anything the pipeline is ``unknown``, never ``healthy``. Otherwise
+    only the measured probes are judged (any degraded one makes it ``degraded``);
+    the unmeasured ones are named separately in the aggregate's ``unmeasured``.
+    """
+    if unmeasured_count >= total:
+        return "unknown"
+    return "degraded" if degraded_count > 0 else "healthy"
+
+
 def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHealthResult:
     """Run all four compounding-pipeline probes and aggregate the result.
 
@@ -277,7 +307,7 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
 
     Returns:
         PipelineHealthResult with keys:
-        ``{"degraded": bool, "advisory": str, "unmeasured": list[str] (omitted
+        ``{"degraded": bool, "status": "healthy"|"degraded"|"unknown", "advisory": str, "unmeasured": list[str] (omitted
            when empty), "sync_push": SignalResult, "graph_edges": SignalResult,
            "embedding_coverage": SignalResult, "recall_feedback": SignalResult}``
     """
@@ -321,7 +351,14 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
     ]
 
     degraded = len(degraded_signals) > 0
+    status = pipeline_status(
+        degraded_count=len(degraded_signals), unmeasured_count=len(unmeasured_signals), total=len(named_signals)
+    )
     advisory = ""
+    if status == "unknown":
+        advisory = (
+            "pipeline health unknown: no probe could be measured — run `trw-mcp telemetry pipeline-health` for detail"
+        )
     if degraded:
         signals_str = ", ".join(degraded_signals)
         advisory = f"pipeline degraded: {signals_str} — run `trw-mcp telemetry pipeline-health` for details"
@@ -333,6 +370,7 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
 
     result: PipelineHealthResult = {
         "degraded": degraded,
+        "status": status,
         "advisory": advisory,
         "sync_push": sync_push,
         "graph_edges": graph_edges,

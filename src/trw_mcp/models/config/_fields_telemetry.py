@@ -16,7 +16,6 @@ MEAS-001 note:
 from __future__ import annotations
 
 import os
-from typing import Literal
 
 from pydantic import Field, field_validator
 
@@ -101,17 +100,8 @@ class _TelemetryFields:
     otel_enabled: bool = False
     # otel_endpoint removed under PRD-CORE-291 (slice 2): no production
     # reader, only a test pinning the default.
-    # PRD-INFRA-145: span/attribute vocabulary. 'legacy' (default) keeps the
-    # current tool.*/trw.* shape byte-identical so existing dashboards never
-    # break; 'gen_ai' emits OpenTelemetry GenAI semantic-convention spans.
-    # Default stays 'legacy' because the GenAI conventions are still
-    # Development/Experimental upstream (forward-compat, non-breaking).
-    otel_semconv: Literal["legacy", "gen_ai"] = "legacy"
-    # PRD-INFRA-145-FR07: opt-in emission of gen_ai.input/output.messages
-    # attributes. Default OFF (privacy-forward) — PII message bodies are never
-    # attached unless an operator explicitly enables this AND otel_semconv is
-    # 'gen_ai'; when on, every value passes through telemetry/anonymizer.py.
-    otel_capture_messages: bool = False
+    # otel_semconv and otel_capture_messages removed under PRD-CORE-344: TRW no
+    # longer emits its own tool span, and spans never carry content.
 
     # -- Framework overhead --
     #

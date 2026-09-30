@@ -19,11 +19,11 @@ Two passes, both deterministic and cheap on the small post-rank candidate set:
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import structlog
+from trw_memory.retrieval.dense import cosine_similarity
 
 if TYPE_CHECKING:
     from trw_mcp.state._store_selection import VectorSet
@@ -44,15 +44,8 @@ def _content_key(entry: dict[str, object]) -> str:
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    """Cosine similarity for two equal-length vectors; 0.0 on degenerate input."""
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return dot / (norm_a * norm_b)
+    """trw-memory's cosine_similarity, with 0.0 (not an error) for empty or unequal-length vectors."""
+    return cosine_similarity(a, b) if a and b and len(a) == len(b) else 0.0
 
 
 def dedup_ranked_learnings(

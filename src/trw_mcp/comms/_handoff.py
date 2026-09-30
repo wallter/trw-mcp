@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from trw_mcp.comms._envelope import NEXT_READ_MAX_BYTES, valid_next_read
@@ -37,6 +39,35 @@ _OPEN = (
     "AND (a.admitted_at>? OR EXISTS "
     "(SELECT 1 FROM milestones m WHERE m.message_id=a.message_id AND m.fact='accepted'))"
 )
+
+
+_BRANCH_AT_SHA = re.compile(r".+@[0-9a-fA-F]{7,40}")
+
+
+def pointer_resolves(pointer: object) -> bool:
+    """False only for a path-shaped pointer that names nothing under the project root.
+
+    A branch@SHA, an id or a pointer that is not a path is not checkable here and counts as resolving. Runtime
+    callers: ``_messages.complete`` (to tell the sender) and :func:`derive_handoff` (so a completion whose pointer
+    names nothing is not read back as ``verified``).
+    """
+    text = str(pointer).strip() if pointer is not None else ""
+    # branch@SHA names a commit, not a file: the part after the last '@' is a hex abbreviation. A file name that merely
+    # contains '@' (docs/a@b.md) is still a path and is checked.
+    if not text or _BRANCH_AT_SHA.fullmatch(text) or ("/" not in text and "." not in text):
+        return True
+    from trw_mcp.state._paths import resolve_project_root
+
+    try:
+        # Existence only, no read: a pointer outside the project (a scratchpad report) is legitimate, so it is not
+        # confined; it resolves when the file is there.
+        return (resolve_project_root() / Path(text).expanduser()).exists()
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+    ):  # trw-fail-silent-allow: unresolvable (~nosuchuser raises RuntimeError) is reported, not raised
+        return False
 
 
 def display_next_read(value: object) -> tuple[str | None, bool]:
@@ -65,7 +96,7 @@ def derive_handoff(
 
     ``message``/``receipt``/``acceptance`` are the admitted, acked and accepted fact
     times (``None`` when absent); ``completion`` is ``none``, ``reported`` or
-    ``verified``. No state is inferred from another: a reported fact without a
+    ``verified`` (or ``unresolved`` when the completed handoff's path-shaped pointer names nothing). No state is inferred from another: a reported fact without a
     completed fact is ``reported``, never ``verified``. The owner is the sender
     before acceptance, the recipient after it, and ``None`` once verified (``None``,
     not the string ``none``, which is a valid member id). A non-request row has no
@@ -76,7 +107,9 @@ def derive_handoff(
         return None
     accepted, reported, completed = facts.get("accepted"), facts.get("reported"), facts.get("completed")
     if completed is not None:
-        state, owner = "verified", None
+        # ``completed`` records that the requester closed the handoff. It reads back ``verified`` only while the
+        # report's pointer still names something; a pointer that names nothing reads ``unresolved`` (E2E-INC-125 f).
+        state, owner = ("verified" if pointer_resolves(pointer) else "unresolved"), None
     else:
         state = "reported" if reported is not None else "none"
         owner = row["recipient_member_id"] if accepted is not None else row["sender_member_id"]

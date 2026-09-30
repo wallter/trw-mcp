@@ -40,6 +40,8 @@ from tests.hooks._degenerate_result_harness import (
     pytest_skip_no_sh,
 )
 
+_BASH_EMPTY = {"stdout": "", "stderr": "", "interrupted": False, "isImage": False}
+
 
 # --------------------------------------------------------------------------- #
 # FR06 — the three degenerate shapes, the two healthy ones
@@ -52,6 +54,42 @@ from tests.hooks._degenerate_result_harness import (
         ("empty-string", {"response": ""}, 1),
         ("whitespace-only", {"response": "   \n\t  "}, 1),
         ("empty-object-leaves", {"response": {"stdout": "", "stderr": "", "interrupted": False}}, 1),
+        # E2E-DEGENERATE-NUDGE-FP: a Bash call that succeeded and printed nothing looked; only a command that
+        # could have masked its failure (pipe, ||, /dev/null) or an interrupted one is "could not look".
+        ("bash-silent-success", {"response": _BASH_EMPTY, "tool": "Bash", "command": "git init -q"}, 0),
+        ("bash-output-to-a-file", {"response": _BASH_EMPTY, "tool": "Bash", "command": "echo x >> notes.md"}, 0),
+        (
+            "bash-quoted-pipe-is-not-a-pipe",
+            {"response": _BASH_EMPTY, "tool": "Bash", "command": "echo '| a | b |' >> t.md && echo \"x|y\" >> t.md"},
+            0,
+        ),
+        ("bash-empty-through-a-pipe", {"response": _BASH_EMPTY, "tool": "Bash", "command": "grep W4 log | tail -2"}, 1),
+        ("bash-empty-errors-dropped", {"response": _BASH_EMPTY, "tool": "Bash", "command": "find . 2>/dev/null"}, 1),
+        (
+            "bash-empty-interrupted",
+            {"response": {**_BASH_EMPTY, "interrupted": True}, "tool": "Bash", "command": "sleep 100"},
+            1,
+        ),
+        # E2E-INC-063: "absent vs could not look" only applies to a lookup tool.
+        (
+            "schedulewakeup-numeric-bool-ack",
+            {
+                "response": {"scheduledFor": 1790745480000, "delaySeconds": 1237, "clamped": False},
+                "tool": "ScheduleWakeup",
+            },
+            0,
+        ),
+        ("edit-empty-ack", {"response": "", "tool": "Edit"}, 0),
+        ("write-empty-object-ack", {"response": {"filePath": "", "structuredPatch": []}, "tool": "Write"}, 0),
+        ("taskstop-empty-ack", {"response": {}, "tool": "TaskStop"}, 0),
+        ("non-lookup-mcp-empty-ack", {"response": "", "tool": "mcp__trw__trw_checkpoint"}, 0),
+        ("recall-style-mcp-empty-result", {"response": "", "tool": "mcp__trw__trw_recall"}, 1),
+        ("search-style-mcp-empty-result", {"response": {"results": ""}, "tool": "mcp__x__search_docs"}, 1),
+        (
+            "non-lookup-tool-still-truncated",
+            {"response": f"data\n[42 {_MARKER}", "tool": "Edit"},
+            1,
+        ),
         ("truncated-marker", {"response": f"line one\n[171470 {_MARKER}"}, 1),
         ("truncated-in-object", {"response": {"stdout": f"data\n[42 {_MARKER}", "stderr": ""}}, 1),
         (
@@ -79,6 +117,27 @@ def test_empty_truncated_undated_and_malformed(
     result = _run(root, _payload(**payload_kwargs))  # type: ignore[arg-type]
     assert result.returncode == 0, result.stderr
     assert len(_advisories(result)) == expected, f"{label}: {result.stdout!r} {result.stderr!r}"
+
+
+_REAL = json.loads((Path(__file__).parent / "fixtures" / "real_tool_responses.json").read_text())["responses"]
+
+
+@pytest_skip_no_sh
+@pytest_skip_no_jq
+@pytest.mark.parametrize("entry", _REAL, ids=[e["name"] for e in _REAL])
+def test_real_lookup_responses_fire_only_when_empty(tmp_path: Path, entry: dict[str, object]) -> None:
+    """E2E-INC-066: captured Grep/Glob/Read responses, empty fires and non-empty (or an image Read) does not."""
+    root = _project(tmp_path, "real")
+    result = _run(root, _payload(response=entry["tool_response"], tool=str(entry["tool"])))
+    assert result.returncode == 0, result.stderr
+    assert len(_advisories(result)) == (1 if entry["empty"] else 0), f"{entry['name']}: {result.stdout!r}"
+
+
+def test_the_real_corpus_covers_every_grep_mode_empty_and_not() -> None:
+    have = {(e["tool"], e["mode"], e["empty"]) for e in _REAL}
+    for mode in ("files_with_matches", "content", "count"):
+        assert {("Grep", mode, True), ("Grep", mode, False)} <= have
+    assert {("Glob", None, True), ("Glob", None, False), ("Read", None, True), ("Read", None, False)} <= have
 
 
 @pytest_skip_no_sh

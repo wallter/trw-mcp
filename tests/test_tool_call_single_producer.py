@@ -48,8 +48,7 @@ def wrapped(
         """Use when testing. Output: the value and the bound call id."""
         return {"value": value, "tool_call_id": structlog.contextvars.get_contextvars().get("tool_call_id")}
 
-    monkeypatch.setattr(_tools, "mcp", server)
-    _tools._apply_security_consult_wrapping()
+    _tools._apply_security_consult_wrapping(server)
     yield get_tools_sync(server), rows
     reload_config(None)
 
@@ -230,22 +229,32 @@ def test_an_async_tool_is_recorded_after_it_runs(
     assert sorted(r["tool_name"] for r in rows) == ["async_boom", "async_ok"]
 
 
-# Cross-vendor FIX-150 P2: a fault in the local OTEL span step never costs the call its pipeline row.
-def test_a_span_fault_still_enqueues_the_pipeline_row(
-    wrapped: tuple[dict[str, Any], list[dict[str, object]]], monkeypatch: pytest.MonkeyPatch
+# Cross-vendor FIX-150 P2 / PRD-CORE-344 FR01: a fault in the span-enrichment step never costs the
+# call its run-log row or its pipeline row.
+def test_a_span_enrichment_fault_still_writes_both_rows(
+    wrapped: tuple[dict[str, Any], list[dict[str, object]]], monkeypatch: pytest.MonkeyPatch, tmp_project: Path
 ) -> None:
-    import trw_mcp.state.otel_wrapper as otel
+    import trw_mcp.telemetry._tool_span_attrs as attrs
     from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
     _tools, rows = wrapped
 
-    def broken_span(*_a: object, **_k: object) -> None:
-        raise OSError("span exporter down")
+    def broken_span() -> object:
+        raise OSError("span api down")
 
-    monkeypatch.setattr(otel, "emit_tool_span", broken_span)
+    monkeypatch.setattr(attrs.trace, "get_current_span", broken_span)
 
     assert wrap_tool(lambda: 1, tool_name="span_fault_tool")() == 1
     assert [r["tool_name"] for r in rows] == ["span_fault_tool"]
+    assert [r.get("tool_name") for r in _session_rows(tmp_project)] == ["span_fault_tool"]
+
+
+def test_the_post_hoc_tool_span_module_is_gone() -> None:
+    import importlib
+
+    for name in ("trw_mcp.state.otel_wrapper", "trw_mcp.state._otel_genai"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name)
 
 
 # Cross-vendor FIX-150 P2: a failed trace-id bind leaves no half-bound call id behind.

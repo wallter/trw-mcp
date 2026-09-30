@@ -356,7 +356,9 @@ def test_injected_ids_write_failure_records_a_degradation(tmp_path: Path) -> Non
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
     results: dict[str, object] = {}
-    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+    # The write goes through the symlink-refusing checkout writer (security census slice 3a), not
+    # Path.write_text, so the failure is injected where _injected_ids calls it.
+    with patch("trw_mcp.tools._injected_ids.write_checkout_file", side_effect=OSError("disk full")):
         _write_session_start_ids(trw_dir, [{"id": "L-x"}], results)
 
     degradations = results["degradations"]

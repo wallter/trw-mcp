@@ -63,10 +63,27 @@ def _open_regular(anchor: Path, relative: str) -> int:
     return fd
 
 
+def run_relative(base: Path, root: Path, run_path: str) -> str | None:
+    """*run_path* (relative to *root*) as a POSIX path relative to *base*, or ``None`` when it is not a plain
+    path strictly below *base*. Lexical only, never ``resolve()``: the read then walks it from *base* with
+    no symlink followed, so there is no resolve-then-open window for a swapped-in link (FACTORY-ANCHOR-DOTDOT).
+    """
+    pure = PurePosixPath(run_path)
+    if not run_path or pure.is_absolute() or ".." in pure.parts or "." in run_path.split("/"):
+        return None
+    target = root / pure
+    if not target.is_relative_to(base):
+        return None
+    relative = target.relative_to(base)
+    return relative.as_posix() if relative.parts else None
+
+
 def read_bounded(anchor: Path, relative: str, limit: int) -> tuple[bytes | None, str]:
     """Return ``(bytes, "ok")`` or ``(None, state)``; state is missing/path_escape/unreadable/oversize."""
     try:
         fd = _open_regular(anchor, relative)
+    except ValueError:  # a relative path that would leave the anchor (``..``, ``.``, absolute)
+        return None, "path_escape"
     except OSError as exc:
         return None, refusal_state(exc, anchor, relative)
     try:

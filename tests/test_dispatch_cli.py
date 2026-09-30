@@ -50,7 +50,9 @@ def test_unknown_client_rejected_exit_2(capsys: pytest.CaptureFixture[str]) -> N
     with pytest.raises(SystemExit) as exc:
         run_dispatch(_ns(client="not-a-real-cli"))
     assert exc.value.code == 2
-    assert "disabled" in capsys.readouterr().err
+    # An unknown name is named as unknown (it used to read as a disabled client: E2E-DISPATCH-CLI-TARGETS);
+    # a real client that is not enabled still says "disabled" (test_dispatch_cli_config.py).
+    assert "unknown dispatch target 'not-a-real-cli'" in capsys.readouterr().err
 
 
 def test_prints_text_and_exits_zero_on_ok(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

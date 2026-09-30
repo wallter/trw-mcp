@@ -26,6 +26,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from trw_mcp.tools._sidecar_pair import pair_from_two_builds, pair_stale_action
+
 if TYPE_CHECKING:
     from trw_mcp.tools._sidecar_ancestry import AncestorSidecar, GitReader
 
@@ -295,11 +297,16 @@ def load_sidecar_with_sha_check(
             sidecar_sha=expected_sha,
         )
     sidecar_sha = envelope.get("sha")
+    stale: str | None = None
     if not isinstance(sidecar_sha, str) or sidecar_sha != expected_sha:
+        stale = f"Sidecar SHA={sidecar_sha!r}; HEAD={expected_sha} — re-run with --persist-sidecar"
+    elif pair_from_two_builds(sidecar_path, envelope, load_envelope):
+        stale = pair_stale_action(expected_sha, cli_remediation, _NO_PRODUCER_ACTION)
+    if stale is not None:
         return SidecarLoadResult(
             payload=None,
             status="stale_sha",
-            action=(f"Sidecar SHA={sidecar_sha!r}; HEAD={expected_sha} — re-run with --persist-sidecar"),
+            action=stale,
             sidecar_path=sidecar_path_str,
             sidecar_sha=expected_sha,
         )

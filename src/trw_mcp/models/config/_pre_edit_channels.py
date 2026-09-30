@@ -56,8 +56,8 @@ PRE_EDIT_HINT_INSTRUCTION = (
 #: when the proprietary package is installed (never claimed otherwise).
 _DISTILL_CLI_INSTRUCTION = (
     "- **A failing test or an unfamiliar file**: if `trw-distill` is installed, "
-    "`trw-distill query deps <path>` and `trw-distill rca trace <test>` answer "
-    "'what does this touch' and 'why did this fail' from the codebase map — see "
+    "`trw-distill query deps <path>` answers 'what does this touch'; `trw-distill rca trace <traceback-file>` "
+    "(`-` reads a piped traceback) answers 'why did this fail', both from the codebase map — see "
     "`trw-distill query --help` / `trw-distill rca --help`.\n"
 )
 

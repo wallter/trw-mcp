@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import os
+import shlex
 import shutil
 import stat
 from collections.abc import Callable, Iterator
@@ -47,7 +48,10 @@ def _finish_trash(trw_dir: Path, *, remove_trw_dir: bool) -> bool:
             held = sum(1 for _ in os.scandir(trash))
         except OSError:  # trw-fail-silent-allow: unreadable trash is still kept; the count is cosmetic
             held = 0
-        print(f"  Kept .trw/trash: it holds {held} backup(s) TRW could not remove automatically (see `trw-mcp doctor`)")
+        print(
+            f"  Kept .trw/trash: it holds {held} backup(s) TRW could not remove automatically "
+            f"(see `trw-mcp doctor`; remove with: rm -rf {shlex.quote(str(trash))})"
+        )
         return False
     if not remove_trw_dir:
         return False

@@ -88,6 +88,10 @@ CONTRACT_ARGV: dict[str, tuple[str, ...]] = {
     "instructions sync": ("--dry-run",),
 }
 
+#: A command whose documented exit code in the contract fixture is not 0. ``telemetry pipeline-health`` exits
+#: 0 healthy / 1 degraded / 2 unknown; the fixture has no store, so every probe is unmeasured -> 2 (E2E-INC-073).
+CONTRACT_EXIT: dict[str, int] = {"telemetry pipeline-health": 2, "telemetry surface-diff": 2}  # surface-diff: INC-074
+
 #: Environment a command needs to reach its result path in the ``--json`` check.
 CONTRACT_ENV: dict[str, dict[str, str]] = {
     "probe run": {"TRW_PROBE_ENABLED": "1"},
@@ -177,7 +181,7 @@ def test_json_flag_prints_exactly_one_parseable_document(
     code = _run_cli(argv, tmp_path, monkeypatch)
     out = capsys.readouterr().out
 
-    assert code == 0, out
+    assert code == CONTRACT_EXIT.get(entry.command, 0), out
     payload = json.loads(out)  # raises if stdout carries more than one document / stray prose
     assert isinstance(payload, dict)
 

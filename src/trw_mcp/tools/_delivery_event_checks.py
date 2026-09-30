@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ import structlog
 
 from trw_mcp import PROCESS_STARTED_AT as _PROCESS_STARTED_AT
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._session_stream import session_stream_records
 
 logger = structlog.get_logger(__name__)
 
@@ -475,15 +477,10 @@ def _file_modified_since(
     if not events_path.exists():
         return False
     try:
-        for line in events_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except ValueError:
-                # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
-                continue
+        records = session_stream_records(events_path.read_text(encoding="utf-8"), path=str(events_path))
+        if records is None:
+            return True  # untrusted stream (malformed middle line): fail CLOSED, counts as modified
+        for record in records:
             if not isinstance(record, dict) or record.get("event") not in ("file_modified", "change_evidence_unknown"):
                 continue
             # change_evidence_unknown names no session: an edit nobody could read is anyone's (T29).
@@ -546,18 +543,33 @@ def change_evidence_unknown(repo_root: Path | None) -> bool:
     if not stream.exists():
         return False
     try:
-        lines = stream.read_text(encoding="utf-8").splitlines()
+        text = stream.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):  # justified: fail-CLOSED, an unreadable stream cannot vouch for anything
         logger.warning("change_evidence_stream_unreadable", outcome="fail_closed", path=str(stream))
         return True
-    for line in lines:
-        try:
-            if _unreadable_edit_since_start(json.loads(line)):
-                return True
-        except ValueError:
-            # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
-            continue
-    return False
+    records = session_stream_records(text, path=str(stream))  # raw text: the torn-tail rule needs the final newline
+    if records is None:
+        return True  # untrusted stream (malformed middle line): fail CLOSED, it cannot vouch for anything
+    return any(_unreadable_edit_since_start(record) for record in records)
+
+
+def _with_witness(trw_dir: Path, session_id: str, counted: int, hook_paths: set[str]) -> int | None:
+    """EVIDENCE-DELETION-POLICY (b): hook-recorded paths UNIONED with the out-of-.trw witness.
+
+    A hook sees only the edits its client routes through it (a Codex Bash edit is invisible to every hook),
+    and the stream can be deleted, so whenever this session has a snapshot the count is
+    ``|hook paths ∪ paths changed since the snapshot|``. ``no_git`` keeps the hook answer. With no snapshot
+    (a restart) or an uncomparable checkout, recorded hook paths still count; with none, it is uncomputable.
+    """
+    from trw_mcp.state._session_change_witness import changed_since_snapshot
+
+    witness = changed_since_snapshot(session_id, trw_dir.parent)
+    if witness.status == "counted":
+        return max(counted, len(hook_paths | witness.paths))
+    if witness.status == "no_git" or hook_paths:
+        return max(counted, len(hook_paths))
+    logger.warning("unpinned_session_changes_witness", outcome="fail_closed", status=witness.status)
+    return None
 
 
 def unpinned_session_changed_files(
@@ -580,7 +592,9 @@ def unpinned_session_changed_files(
 
     ``0`` is an HONEST zero: nothing was recorded, which is what a docs-only or
     research session looks like, and the caller leaves that advisory. ``None``
-    means a surface exists but could not be read, and the caller blocks.
+    means a surface exists but could not be read, OR that the active client has no
+    registered change-evidence writer (``client_profiles.change_evidence``) so an
+    empty record set proves nothing; the caller blocks.
 
     The writer is ``data/hooks/post-tool-event.sh`` (``_append_unpinned_change``),
     keyed on ``TRW_SESSION_ID`` when the client exports one and otherwise on the
@@ -593,6 +607,20 @@ def unpinned_session_changed_files(
     unpinned sessions edit the same checkout at once, which fails closed (a block
     that names the reason) rather than the silent zero a key mismatch produced.
     """
+    from trw_mcp.client_profiles.change_evidence import active_client_writes_change_evidence
+
+    if not active_client_writes_change_evidence():
+        # E2E-INC-115 (b): no hook on this client records file changes, so an empty record set proves nothing --
+        # unless this session's out-of-.trw snapshot witness can count them (EVIDENCE-DELETION-POLICY (b)).
+        if trw_dir is not None:
+            from trw_mcp.state._session_change_witness import changed_since_snapshot
+
+            witness = changed_since_snapshot(session_id, trw_dir.parent)
+            if witness.status == "counted" and witness.count is not None:
+                return witness.count
+        with suppress(Exception):  # the verdict (None: uncomputable) is fixed; a failing logger must not change it
+            logger.warning("unpinned_session_changes_no_writer", outcome="fail_closed")
+        return None
     state = _read_unpinned_ceremony_state(trw_dir)
     if state is None:
         return None
@@ -605,7 +633,7 @@ def unpinned_session_changed_files(
         return counted
     events_path = trw_dir / "context" / "session-events.jsonl"
     if not events_path.exists():
-        return counted
+        return _with_witness(trw_dir, session_id, counted, set())
     if not events_path.is_file():
         # Present but not a regular file: uncomputable, NOT an honest zero. Same
         # distinction ``_read_run_events`` draws for the pinned path (WD-03).
@@ -613,18 +641,10 @@ def unpinned_session_changed_files(
         return None
     try:
         paths: set[str] = set()
-        for line in events_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except ValueError:
-                # A damaged LINE is not an unreadable FILE: the enclosing handler still fails closed
-                # for the latter, and FileStateReader.read_jsonl skips a torn tail line the same way
-                # on the pinned path.
-                # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
-                continue
+        records = session_stream_records(events_path.read_text(encoding="utf-8"), path=str(events_path))
+        if records is None:
+            return None  # untrusted stream (malformed middle line): uncomputable, NOT a lower count
+        for record in records:
             if _unreadable_edit_since_start(record):
                 logger.warning("unpinned_session_changes_unknown", outcome="fail_closed", reason="jq_unavailable")
                 return None
@@ -640,7 +660,7 @@ def unpinned_session_changed_files(
             raw_path = str(record.get("file", ""))
             if raw_path:
                 paths.add(_normalize_event_path(raw_path, trw_dir.parent))
-        return max(counted, len(paths))
+        return _with_witness(trw_dir, session_id, counted, paths)
     except Exception:  # justified: fail-CLOSED, an unreadable session log is uncomputable, not zero
         logger.warning("unpinned_session_changes_unreadable", outcome="fail_closed", path=str(events_path))
         return None

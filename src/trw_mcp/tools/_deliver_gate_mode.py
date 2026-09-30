@@ -27,6 +27,7 @@ evidence or the record — it can never wedge a session.
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -253,6 +254,7 @@ def apply_deliver_gate_mode(
     result: DeliveryGatesDict,
     run_data: dict[str, object],
     files_changed: int | None,
+    reason: str | None = None,
 ) -> None:
     """Set ``delivery_blocked``/``missing_gate`` per ``deliver_gate_mode``.
 
@@ -261,12 +263,13 @@ def apply_deliver_gate_mode(
     from run.yaml, and asks :func:`resolve_deliver_gate_decision` with the
     session's change evidence. ``files_changed=None`` blocks (fail-closed).
 
-    The outer handler stays fail-OPEN for genuinely unexpected faults in this
-    dispatch (a raise here must not wedge delivery). The fail-CLOSED components
-    live where the gate's own evidence is decided:
-    :func:`_meets_change_threshold` (uncomputable count) and
-    :func:`resolve_gate_mode_with_source` (unreadable mode -> the declared
-    default, carried through as ``mode_from_fallback``).
+    Fail-CLOSED throughout: :func:`_meets_change_threshold` (uncomputable
+    count), :func:`resolve_gate_mode_with_source` (unreadable mode -> the
+    declared default) and, for a genuinely unexpected fault in this dispatch,
+    the outer handler, which blocks with the fault's type and site. The deliver
+    gate is hard-tier (CONSTITUTION §1.a): a code bug never turns into a pass,
+    and "must not wedge delivery" is the structured acceptable-failure override
+    the block names, not a silent skip (E2E-GATE-MODE-FAIL-CLOSED).
     """
     try:
         task_type = str(run_data.get("task_type", "unknown")) or "unknown"
@@ -278,13 +281,20 @@ def apply_deliver_gate_mode(
             files_changed=files_changed,
             mode_from_fallback=mode_from_fallback,
         ):
-            result["delivery_blocked"] = (
-                f"Delivery blocked: no passing trw_build_check for task_type={task_type} "
-                f"under deliver_gate_mode={mode} "
-                f"(files modified this session: {'uncomputable' if files_changed is None else files_changed}). "
-                "Run project-native validation and record it "
-                "with trw_build_check(), or override with allow_unverified=true + an unexpired "
+            changed = "uncomputable" if files_changed is None else files_changed
+            override = (
+                "override with allow_unverified=true + an unexpired "
                 "acceptable-failure record (failed_command, residual_risk, owner, expiry_iso)."
+            )
+            # INC-072: name WHY the build evidence does not count (content-stale, unreadable event log, none recorded)
+            # -- the build gate's own warning -- instead of always claiming no passing check exists.
+            result["delivery_blocked"] = (
+                f"Delivery blocked for task_type={task_type} under deliver_gate_mode={mode} "
+                f"(files modified this session: {changed}): {reason.rstrip()} Or {override}"
+                if reason
+                else f"Delivery blocked: no passing trw_build_check for task_type={task_type} "
+                f"under deliver_gate_mode={mode} (files modified this session: {changed}). "
+                f"Run project-native validation and record it with trw_build_check(), or {override}"
             )
             result["missing_gate"] = "build_check"
             result["blocked_task_type"] = task_type
@@ -294,8 +304,42 @@ def apply_deliver_gate_mode(
                 deliver_gate_mode=mode,
                 files_changed=files_changed,
             )
-    except Exception:  # justified: fail-open, gate-mode dispatch must not wedge delivery
-        logger.warning("deliver_gate_mode_check_failed", exc_info=True)
+    except Exception as exc:  # justified: fail-CLOSED, a fault in the dispatch blocks with a named reason
+        # Block FIRST, from constants only: the diagnostics below are best-effort and must never be able to
+        # leave the result unblocked (codex r1). The type and site only -- an exception MESSAGE can carry
+        # arbitrary payload (paths, config values).
+        fault = type(exc).__name__
+        result["delivery_blocked"] = _dispatch_fault_block(fault)
+        result["missing_gate"] = "build_check"
+        try:
+            fault = f"{fault} at {_fault_site(exc)}"
+            result["delivery_blocked"] = _dispatch_fault_block(fault)
+        except Exception:  # trw-fail-silent-allow: the type-only block set above already stands
+            pass
+        try:
+            logger.warning("deliver_gate_mode_check_failed", outcome="fail_closed", fault=fault, exc_info=True)
+        except Exception:  # trw-fail-silent-allow: logging is diagnostics; the block set above already stands
+            pass
+    # SystemExit / KeyboardInterrupt / CancelledError are deliberately not caught: they abort the whole tool
+    # call, so no delivery completes -- a cancelled call is never a pass.
+
+
+def _dispatch_fault_block(fault: str) -> str:
+    return (
+        f"Delivery blocked: the deliver gate-mode check failed unexpectedly ({fault}), so a missing "
+        "build check could not be judged acceptable. Record a passing trw_build_check(), or override "
+        "with allow_unverified=true + an unexpired acceptable-failure record "
+        "(failed_command, residual_risk, owner, expiry_iso)."
+    )
+
+
+def _fault_site(exc: BaseException) -> str:
+    """``file:line in function`` of the innermost frame that raised, or ``unknown``."""
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return "unknown"
+    innermost = frames[-1]
+    return f"{Path(innermost.filename).name}:{innermost.lineno} in {innermost.name}"
 
 
 def resolve_unpinned_gate_decision(files_changed: int | None = None) -> tuple[bool, str]:

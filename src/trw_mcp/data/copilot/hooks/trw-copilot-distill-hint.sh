@@ -162,6 +162,7 @@ _hint_text=$(
     _trw_bounded_python 2.5 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
     TRW_EMBEDDINGS_ENABLED=false \
+    TRW_PROJECT_ROOT="$_repo" \
     TRW_C5_FILE_PATH="$_file_path" \
     "$_py" -c '
 import os, sys
@@ -185,7 +186,7 @@ except Exception:
 try:
     from trw_mcp.tools._before_edit_hint_core import T2_STATUSES, compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
-        format_t0_beacon, format_t1_hint, format_t2_hint,
+        format_t1_hint, format_t2_hint,
     )
     fp = os.environ.get("TRW_C5_FILE_PATH", "")
     result = compute_before_edit_hint(file_path=fp)
@@ -206,7 +207,7 @@ try:
     elif learnings:
         text = format_t1_hint(learnings)
     else:
-        text = format_t0_beacon()
+        text = ""
     if text:
         if len(text) > 9400:
             text = text[:9400] + "\n... (truncated — run trw_code(mode=\"hint\") for full context)"

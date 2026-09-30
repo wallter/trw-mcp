@@ -414,6 +414,12 @@ def update_project(
                 ),
             )
             result["would_run"] = external
+            # The scratch copy holds only the managed surface, so create-only files outside it (the learnings
+            # index) were never seen there; the real run reports them preserved, so the preview must too.
+            for rel_path in sorted(_NEVER_OVERWRITE):
+                kept = str(target_dir / rel_path)
+                if (target_dir / rel_path).exists() and kept not in result["preserved"]:
+                    result["preserved"].append(kept)
         else:
             _apply_update(
                 target_dir,

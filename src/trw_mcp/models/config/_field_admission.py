@@ -257,9 +257,7 @@ nudge_pool_cooldown_after
 nudge_pool_cooldown_calls
 nudge_pool_cooldown_wall_clock_max_hours
 nudge_variant
-otel_capture_messages
 otel_enabled
-otel_semconv
 parallelism_max
 path_index_exclude_dirs
 path_index_max_files

@@ -150,6 +150,19 @@ def _withdraw_hook(repo_root: Path, hook_name: str, result: dict[str, list[str]]
         result.setdefault("warnings", []).append(f"{rel}: left untouched ({outcome.reason})")
 
 
+def _restore_exec_bit(dest: Path, hook_name: str, rel: str, result: dict[str, list[str]]) -> bool:
+    """Give a kept shell script back the exec bit it lost; True when it did (only the mode changes).
+
+    Doctor's ``hook_channel`` row FAILs a CC-03 script that is not executable and names ``update-project``,
+    which used to leave an identical present script untouched, so the row stayed red.
+    """
+    if not hook_name.endswith(".sh") or os.access(dest, os.X_OK):
+        return False
+    dest.chmod(dest.stat().st_mode | 0o111)
+    result["updated"].append(f"{rel} (exec bit restored)")
+    return True
+
+
 def _install_hook(
     repo_root: Path,
     hook_name: str,
@@ -181,7 +194,8 @@ def _install_hook(
                 result.setdefault("warnings", []).append(f"{rel}: left untouched ({refusal or 'not a regular file'})")
                 return
             if dest.read_text(encoding="utf-8") == content:
-                result["preserved"].append(rel)
+                if not _restore_exec_bit(dest, hook_name, rel, result):
+                    result["preserved"].append(rel)
                 return
             bundled = {hashlib.sha256(content.encode("utf-8")).hexdigest()}
             # The CC-03 pair is recorded under its repo-relative path; a bare hook name is the legacy key.
@@ -193,6 +207,10 @@ def _install_hook(
                     f"{rel}: kept because it was edited "
                     f"(for the fresh copy, delete it and run update-project --reprovision {rel})"
                 )
+                if hook_name.endswith(".sh") and not os.access(dest, os.X_OK):
+                    result.setdefault("warnings", []).append(
+                        f"{rel}: your edited copy is not executable (chmod +x {rel})"
+                    )
                 return
         write_checkout_file(repo_root, dest, content)
         # Make shell scripts executable

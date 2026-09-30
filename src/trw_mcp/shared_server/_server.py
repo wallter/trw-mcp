@@ -161,7 +161,7 @@ def serve_shared(*, env: str, successor: bool) -> None:
 
     from trw_mcp import __version__
     from trw_mcp.models.config import get_config
-    from trw_mcp.server._app import mcp
+    from trw_mcp.server._app import build_served_app
     from trw_mcp.state._paths import resolve_trw_dir
 
     config = get_config()
@@ -181,7 +181,7 @@ def serve_shared(*, env: str, successor: bool) -> None:
         sock = bind_loopback_socket(0)
         sock.listen(4096)  # the 64-entry default backlog drops connection bursts from many proxies
         host, port = sock.getsockname()[:2]
-        app = mcp.http_app(transport="streamable-http", stateless_http=True, json_response=True)
+        app = build_served_app().http_app(transport="streamable-http", stateless_http=True, json_response=True)
         door = Door(app, token=token, env=env, version=__version__, max_inflight=config.shared_mcp.max_inflight)
         asyncio.run(_run(door, sock, paths, f"http://{host}:{port}/mcp", prior, release, config.shared_mcp))
 

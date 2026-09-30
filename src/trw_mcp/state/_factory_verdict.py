@@ -20,7 +20,7 @@ from trw_mcp.models._evidence_core import EvidenceLimits, ReceiptState, domain_d
 from trw_mcp.models._evidence_plans import VerificationOutcome
 from trw_mcp.models._evidence_records import VerificationReceipt
 from trw_mcp.state._evidence_binding import content_binding_is_current
-from trw_mcp.state._factory_read import read_bounded
+from trw_mcp.state._factory_read import read_bounded, run_relative
 from trw_mcp.state._verification_artifact import verification_artifact_is_current
 
 __all__ = ["aggregate_counts", "verification_verdict"]
@@ -114,14 +114,18 @@ def verification_verdict(
     ``binding_unverifiable`` is True unless every bound file matches its git blob at ``subject_sha``.
     """
     rid = ref if isinstance(ref, str) else ref["receipt_id"]
-    owner = run if isinstance(ref, str) else (project_root or run) / ref["run_path"]
-    owner = owner.resolve()
-    # Containment precondition, re-checked here rather than trusting the caller's _resolve to have run:
-    # the owner run must lie under the project's runs dir (or be the run itself for a bare id).
-    allowed = (project_root / ".trw" / "runs" if project_root else run).resolve()
-    if not owner.is_relative_to(allowed):
-        return "unverified", {}
-    raw, _ = read_bounded(owner, f"meta/receipts/verification/{rid}.json", EvidenceLimits.MAX_CANONICAL_RECEIPT_BYTES)
+    # Containment, re-checked here rather than trusting the caller's _resolve: a cross-run owner must lie under
+    # the project's runs dir (or the run itself), and is read by a no-follow walk from there, never resolved.
+    anchor, prefix = run, ""
+    if not isinstance(ref, str):
+        base = project_root / ".trw" / "runs" if project_root else run
+        rel = run_relative(base, project_root or run, ref["run_path"])
+        if rel is None:
+            return "unverified", {}
+        anchor, prefix = base, f"{rel}/"
+    raw, _ = read_bounded(
+        anchor, f"{prefix}meta/receipts/verification/{rid}.json", EvidenceLimits.MAX_CANONICAL_RECEIPT_BYTES
+    )
     if raw is None:
         return "unverified", {}
     try:

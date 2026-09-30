@@ -1,4 +1,4 @@
-"""Coverage for ``_read_last_checkpoint_message`` (PRD-CORE-165 FR-02).
+"""Coverage for ``_read_last_checkpoint_message`` (PRD-CORE-342 FR-02).
 
 Pre-compaction recovery must surface the REAL last checkpoint message (what the
 next session reads to resume), not a hardcoded generic literal. These tests

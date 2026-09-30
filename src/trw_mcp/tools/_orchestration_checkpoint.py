@@ -12,7 +12,12 @@ from trw_mcp.models.typed_dicts import CheckpointEventDataDict, CheckpointRecord
 from trw_mcp.state._decision_queue import record_decision
 from trw_mcp.state._factory_experiment import check as check_factory_gate
 from trw_mcp.state._factory_experiment import is_factory_message
-from trw_mcp.state._factory_receipt_gate import factory_payload_refusal, unresolved_receipts
+from trw_mcp.state._factory_receipt_gate import (
+    STATUS_HINT,
+    factory_payload_refusal,
+    lifecycle_refusal,
+    unresolved_receipts,
+)
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._no_active_run import is_no_active_run, no_active_run_remedy
 from trw_mcp.state._paths import TRWCallContext, resolve_run_path, resolve_trw_dir
@@ -142,7 +147,8 @@ def execute_checkpoint(
             invalid = _not_recorded(
                 context,
                 reason="factory_payload_invalid",
-                remedy=f"Factory payload refused: {problem}. Fix the key and record it again; nothing was written.",
+                remedy=f"Factory payload refused: {problem}. Fix the key and record it again; nothing was written. "
+                + STATUS_HINT,
             )
             invalid["error_type"] = "factory_payload_invalid"
             return invalid
@@ -171,6 +177,16 @@ def execute_checkpoint(
         return _not_recorded(context, reason="no_active_run", remedy=no_active_run_remedy())
     meta_path = resolved_path / "meta"
 
+    # E2E-INC-096: a transition out of order or recorded twice is refused before the write, judged as the reader would.
+    if is_factory_message(message) and (problem := lifecycle_refusal(resolved_path, message)) is not None:
+        refused = _not_recorded(
+            context,
+            reason="factory_lifecycle_invalid",
+            remedy=f"Factory transition refused: {problem}; nothing was written. {STATUS_HINT}",
+        )
+        refused["error_type"] = "factory_lifecycle_invalid"
+        return refused
+
     # FACTORY-READY-RECEIPT-RESOLVE: a READY/USED naming a receipt that does not exist is refused
     # before the write (the journal is append-only, so a placeholder id could never be repaired).
     if is_factory_message(message) and (unresolved := unresolved_receipts(resolved_path, message)):
@@ -179,7 +195,8 @@ def execute_checkpoint(
             reason="factory_receipt_unresolved",
             remedy=(
                 f"Unresolved receipt(s): {', '.join(unresolved)}. Record the receipt first (trw_build_check returns "
-                "build_receipt_id; a verifier's receipt id comes from `receipt verify`), then checkpoint with that id."
+                "build_receipt_id; a verifier's receipt id comes from `receipt verify`), then checkpoint with that id. "
+                + STATUS_HINT
             ),
         )
         refused["error_type"] = "factory_receipt_unresolved"

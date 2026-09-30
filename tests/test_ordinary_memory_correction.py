@@ -99,5 +99,7 @@ async def test_reviewer_cannot_call_ordinary_memory_writes(tmp_project, monkeypa
             ("trw_learn", {"summary": "Unauthorized entry", "detail": "Must never be written"}),
             ("trw_learn", {"learning_id": "L-protected", "summary": "Must never replace"}),
         ]:
-            denied = await client.call_tool(name, arguments)
+            # raise_on_error=False: a denial is now an MCP error (CODEX-P0-B), which the client would raise.
+            denied = await client.call_tool(name, arguments, raise_on_error=False)
             assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+            assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error

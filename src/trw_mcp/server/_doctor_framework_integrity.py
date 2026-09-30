@@ -56,12 +56,22 @@ def check_framework_integrity(
         )
     if report.warnings:
         return "WARN", "; ".join(report.warnings)
+    from trw_mcp.bootstrap._framework_modified_guard import restore_command, saved_canon_copies
     from trw_mcp.server._version_status_layers import FRESH_CLI_ATTEST_NOTE
 
+    saved = ""
+    if kept := saved_canon_copies(target):
+        commands = "; ".join(restore_command(target, snapshot, name) for name, snapshot in kept)
+        where = ", ".join(sorted({snapshot.relative_to(target).as_posix() for _, snapshot in kept}))
+        saved = (
+            f" Note: TRW replaced an edited canon body and kept your bytes in {where} "
+            f"({', '.join(Path(name).name for name, _ in kept)}); to keep your version run: {commands} "
+            "(the next update replaces it again). Delete the .rollback directory when you no longer need it."
+        )
     return (
         "PASS",
         f"effective config, deployed bodies, and VERSION.yaml agree ({framework_version}; AARE-F {aaref_version}). "
-        f"{FRESH_CLI_ATTEST_NOTE}",
+        f"{FRESH_CLI_ATTEST_NOTE}{saved}",
     )
 
 

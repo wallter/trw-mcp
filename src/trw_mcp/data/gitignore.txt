@@ -13,6 +13,14 @@ proprietary-installed.json
 runtime/memory-token
 # The interpreter this machine's hooks start is a local install fact (PRD-FIX-155).
 channels/cc03-python.txt
+# The learn journal's write-ahead (pending/) and refused (dead_letter/) records hold
+# raw caller text; only learnings/entries/ is tracked.
+learnings/pending/
+learnings/dead_letter/
+# The feedback outbox and its sent log hold submission bodies (redacted, but
+# caller-written) — never track them (FEEDBACK-LOCAL-OUTBOX, OQ-024).
+feedback/outbox/
+feedback/sent/
 context/
 reflections/
 logs/

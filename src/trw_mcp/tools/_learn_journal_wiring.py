@@ -9,17 +9,20 @@ module is the thin adapter between them and the learn orchestrator.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from trw_memory.security.credentials import credential_spans, mask_low_confidence
 
 from trw_mcp.state import learn_journal
+from trw_mcp.state._learn_journal_disposition import dead_letter
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.typed_dicts import LearnResultDict
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +91,68 @@ def capture_journal_payload(call_locals: dict[str, object]) -> dict[str, object]
     return {k: call_locals[k] for k in JOURNAL_ARG_KEYS if k in call_locals}
 
 
+#: Payload fields whose masked value is what gets stored. Every OTHER payload field is a
+#: short metadata scalar or list, which must not contain a credential shape at all.
+_STORED_TEXT_KEYS: frozenset[str] = frozenset({"summary", "detail", "nudge_line", "tags", "evidence", "assertions"})
+
+
+def _leaves(value: object) -> Iterator[str]:
+    """Every string in *value*, recursing through dicts (keys and values), lists and tuples."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _leaves(key)
+            yield from _leaves(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _leaves(item)
+
+
+def _mask_leaves(value: object) -> Any:
+    """*value* with ``mask_low_confidence`` applied to every string leaf, dict keys included."""
+    if isinstance(value, str):
+        return mask_low_confidence(value)
+    if isinstance(value, dict):
+        masked: dict[Any, Any] = {}
+        next_n: dict[Any, int] = {}  # per-base repeat counter: linear even when many keys mask alike
+        for key, item in value.items():
+            base = new_key = _mask_leaves(key)
+            # Two keys masked to one placeholder must not silently drop a field: number the repeats.
+            while new_key in masked:
+                next_n[base] = next_n.get(base, 1) + 1
+                new_key = f"{base} #{next_n[base]}"
+            masked[new_key] = _mask_leaves(item)
+        return masked
+    if isinstance(value, (list, tuple)):
+        return [_mask_leaves(item) for item in value]
+    return value
+
+
+def store_bound_text(payload: dict[str, object]) -> LearnResultDict | None:
+    """Decide BLOCK on the ORIGINAL payload, then make it the store-bound text, ONCE.
+
+    *payload* is the whole journal snapshot (:func:`capture_journal_payload`). A high-confidence
+    credential in ANY string leaf, nested assertion fields included, refuses the learning
+    (``API_KEY=sk-ant-...`` is refused, not stored masked) and nothing of it is journaled. A
+    placeholder-prone shape (``KEY=value``, URL password, ...) in a stored text field is masked
+    in place; in any other field it also refuses, since such a field never legitimately holds
+    one. Afterwards *payload* is exactly what the store receives, so a crash-replay stores what
+    the original call would have; no field can bypass this because the walk covers all of them.
+    """
+    blocked = any(credential_spans(text) for text in _leaves(payload))
+    masked = {key: _mask_leaves(value) for key, value in payload.items()}
+    if blocked or any(masked[key] != payload[key] for key in payload if key not in _STORED_TEXT_KEYS):
+        rejection: LearnResultDict = {
+            "status": "rejected",
+            "reason": "pii_blocked",
+            "message": "memory entry blocked by PII policy: api_key",
+        }
+        return rejection
+    payload.update(masked)
+    return None
+
+
 def journal_accepted(
     trw_dir: Path,
     config: TRWConfig,
@@ -116,6 +181,26 @@ def consume_journal(trw_dir: Path, config: TRWConfig, learning_id: str) -> None:
     if not config.learn_journal_enabled:
         return
     learn_journal.consume_pending(trw_dir, learning_id, learnings_dir=config.learnings_dir)
+
+
+def dead_letter_refused(trw_dir: Path, config: TRWConfig, learning_id: str, reason: str) -> None:
+    """Move a store-refused learning's pending record to ``dead_letter/``, credentials masked.
+
+    The store refusing the content (PII policy, schema, poisoning) is deterministic, so the
+    record is never replayable; leaving the raw payload in ``pending/`` until the next drain
+    kept a refused secret on disk. No-op when journaling is disabled.
+    """
+    if not config.learn_journal_enabled:
+        return
+    path = learn_journal.pending_dir(trw_dir, config.learnings_dir) / f"{learning_id}.json"
+    dead_letter(
+        path,
+        target_dir=learn_journal.dead_letter_dir(trw_dir, config.learnings_dir),
+        reason="deterministic_rejection:store",
+        status="rejected",
+        error=reason,
+        attempt=1,
+    )
 
 
 def make_sweep_replay(trw_dir: Path, config: TRWConfig) -> SweepContext:

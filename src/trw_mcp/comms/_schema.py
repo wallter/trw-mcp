@@ -1,7 +1,7 @@
-"""Schema v5 (v3 plus fixed v4 and v5 steps) and read-only correspondence validation.
+"""Schema v6 (v3 plus fixed v4, v5 and v6 steps) and read-only correspondence validation.
 
-One DDL path: a fresh v5 mailbox is the v3 DDL followed by ``V4_STEPS`` and then
-``V5_STEPS``, which is exactly what the explicit upgrade applies from v3 or v4, so
+One DDL path: a fresh v6 mailbox is the v3 DDL followed by ``V4_STEPS``, ``V5_STEPS`` and
+``V6_STEPS``, which is exactly what the explicit upgrade applies from v3, v4 or v5, so
 migrated and fresh files carry identical ``sqlite_master`` text (PRD-CORE-274 FR16,
 PRD-CORE-322 FR05). The expected text for each version is derived by running that
 path in memory, never hand-maintained.
@@ -38,9 +38,12 @@ from trw_mcp.comms._policy import MAX_COUNTER, REFUSALS
 #: first read, the code_index pattern (commit 9cbb148a8, PRD-QUAL-147 FR10).
 VERIFY_DEADLINE_S: float = 5.0
 
-SCHEMA_VERSION = 5
+#: One-way: a mailbox created or upgraded by this build is v6 and a v5 reader refuses it
+#: (``unsupported schema version; no implicit migration``). The explicit ``rollback`` restores the
+#: pre-upgrade v5 file; nothing downgrades a v6 mailbox in place.
+SCHEMA_VERSION = 6
 #: Stored versions this build refuses ``mailbox_upgrade_required`` and upgrades from.
-UPGRADABLE_FROM = ("3", "4")
+UPGRADABLE_FROM = ("3", "4", "5")
 V3_SCHEMA = """
 CREATE TABLE schema_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE groups (
@@ -84,7 +87,10 @@ V4_STEPS: tuple[str, ...] = (
 V5_STEPS: tuple[str, ...] = (
     "CREATE TABLE handoff_reports (message_id TEXT PRIMARY KEY,next_read TEXT NOT NULL,reported_at REAL NOT NULL)",
 )
-#: The endpoint protocol a v4 or v5 build records at enroll. v5 changes no endpoint
+#: The PRD-CORE-342 FR07 step: the sender's W3C traceparent, an opaque id outside retry identity. Additive
+#: and nullable; old rows read NULL. (PRD-CORE-349's ahr_events table is a later v7, not this step.)
+V6_STEPS: tuple[str, ...] = ("ALTER TABLE admissions ADD COLUMN traceparent TEXT",)
+#: The endpoint protocol a v4, v5 or v6 build records at enroll. v5 changes no endpoint
 #: column or meaning, so the enrolment protocol stays 4 and upgraded rows stay valid.
 ENDPOINT_PROTOCOL = 4
 
@@ -96,6 +102,8 @@ def ddl_statements(version: int) -> list[str]:
         statements += V4_STEPS
     if version >= 5:
         statements += V5_STEPS
+    if version >= 6:
+        statements += V6_STEPS
     return statements
 
 
@@ -219,6 +227,8 @@ def _admissions(
     endpoints: dict[tuple[str, str], sqlite3.Row],
     version: int,
 ) -> dict[str, sqlite3.Row]:
+    from trw_mcp.telemetry.otel_propagation import valid_traceparent  # lazy: keeps comms imports light
+
     rows = {}
     counts = dict.fromkeys(groups, 0)
     outstanding: dict[tuple[str, str], int] = {}
@@ -247,6 +257,9 @@ def _admissions(
                 isinstance(row["canonical_sha256"], str) and _HEX64.fullmatch(row["canonical_sha256"]) is not None,
                 "invalid canonical digest",
             )
+        if version >= 6:
+            carrier = row["traceparent"]
+            check(carrier is None or valid_traceparent(carrier) == carrier, "invalid traceparent")
         key = (row["group_id"], row["recipient_member_id"])
         if row["state"] == MessageState.PENDING:
             if version < 4:  # v4 rows are member-addressed (FR13): no endpoint is required

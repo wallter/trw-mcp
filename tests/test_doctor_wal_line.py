@@ -436,3 +436,22 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
 # no fake-store or daemon-checkout route that can stand in for driving the
 # real WAL checkpoint mechanics of an owned in-process connection, and both
 # tests fail the e1 oracle (an in-process open of a path ending "memory.db").
+
+
+def test_an_oversized_wal_with_no_checkpoint_ever_recorded_warns(tmp_path: Path) -> None:
+    """E2E-INC-051 (d): a 38.7 MiB WAL that no checkpoint has ever touched is the problem, not an unknown.
+
+    "Never checkpointed" is only a benign unknown on a WAL that has not reached the threshold; over it, the
+    size itself is the evidence that nothing has reset the file.
+    """
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = TRWConfig()
+    target = _seed_project(tmp_path, wal_bytes=int(38.7 * 1024 * 1024))
+
+    row = _row(target)
+
+    assert row.status == "WARN"
+    assert "38.7 MiB" in row.message
+    assert "no checkpoint has ever been recorded" in row.message
+    assert cfg.wal_checkpoint_threshold_mb < 38

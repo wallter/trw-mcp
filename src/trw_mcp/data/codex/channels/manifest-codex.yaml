@@ -76,7 +76,7 @@ channels:
     correlation) but never blocks. An optional live end-to-end smoke test (requires
     OPENAI_API_KEY, Phase 3 of verify-codex-hook-input.sh) can additionally confirm
     non-null turn_id from a real Codex turn — this is a refinement, not a gate.
-  regenerate_cmd: trw-mcp init-project --client codex
+  regenerate_cmd: trw-mcp init-project --ide codex
   mdc_description:
   mdc_globs:
   mdc_always_apply: false

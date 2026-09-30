@@ -13,6 +13,7 @@ from trw_mcp.bootstrap._generated_entries import (
 )
 from trw_mcp.bootstrap._git_hooks import MARKER_END as _GIT_HOOK_MARKER_END
 from trw_mcp.bootstrap._git_hooks import MARKER_START as _GIT_HOOK_MARKER_START
+from trw_mcp.bootstrap._git_hooks import SHIM_PREAMBLE as _GIT_HOOK_SHIM_PREAMBLE
 from trw_mcp.bootstrap._opencode_instructions import (
     OPENCODE_INSTRUCTIONS_REL as _OPENCODE_INSTRUCTIONS_REL,
 )
@@ -26,15 +27,7 @@ from trw_mcp.bootstrap._user_file_edit import (
 )
 from trw_mcp.channels._manifest_models import MARKER_REGISTRY
 from trw_mcp.server._uninstall_hook_strips import (
-    QUIET as QUIET,
-)
-from trw_mcp.server._uninstall_hook_strips import (
-    _canonical_or_untouched as _canonical_or_untouched,
-)
-from trw_mcp.server._uninstall_hook_strips import (
-    _drop_template_env as _drop_template_env,
-)
-from trw_mcp.server._uninstall_hook_strips import (
+    _STRIP_PATH,
     _entry_changed,
     _strip_codex_hook_groups,
     _strip_copilot_hook_groups,
@@ -42,6 +35,17 @@ from trw_mcp.server._uninstall_hook_strips import (
     _strip_trw_antigravity_hooks,
     _strip_trw_claude_settings,
     _strip_trw_cursor_hooks,
+)
+from trw_mcp.server._uninstall_hook_strips import CUSTOM_FORMAT as CUSTOM_FORMAT
+from trw_mcp.server._uninstall_hook_strips import KEPT_EDITED as KEPT_EDITED
+from trw_mcp.server._uninstall_hook_strips import (
+    QUIET as QUIET,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _canonical_or_untouched as _canonical_or_untouched,
+)
+from trw_mcp.server._uninstall_hook_strips import (
+    _drop_template_env as _drop_template_env,
 )
 from trw_mcp.server._uninstall_hook_strips import (
     _hook_commands as _hook_commands,
@@ -145,9 +149,8 @@ _OPENCODE_INSTRUCTION_ENTRY = _OPENCODE_INSTRUCTIONS_REL.as_posix()
 # Names the file being stripped, for warnings raised inside the shape strategies (which take no path).
 _STRIP_LABEL: ContextVar[str] = ContextVar("_STRIP_LABEL", default="")
 
-# Files whose TRW entry was kept only because the file is not in TRW's own JSON formatting.
-CUSTOM_FORMAT: set[Path] = set()
-_STRIP_PATH: ContextVar[Path | None] = ContextVar("_STRIP_PATH", default=None)
+# CUSTOM_FORMAT / _STRIP_PATH live in the leaf _uninstall_hook_strips (imported below) so its hook
+# strategies can record a custom-formatted file too; they are re-exported here for existing importers.
 
 # Why each file was last refused (a symlink, or a read failure the path guard cannot see), for the report.
 REFUSAL_REASONS: dict[Path, str] = {}
@@ -183,9 +186,11 @@ def _remove_managed_block_file(path: Path, root: Path, dry_run: bool) -> str | N
         _runtime_logger().warning("uninstall_marker_orphan", path=str(path), detail=warning)
     if not changed:
         return None  # no verified TRW block present -- leave the user's file alone
+    # A post-commit hook TRW created holds only its shim header once the block goes (E2E-UNINSTALL-EMPTY-DIRS).
+    empty = not stripped.strip() or stripped.strip() == _GIT_HOOK_SHIM_PREAMBLE.strip()
     if dry_run:
-        return "removed" if not stripped.strip() else "stripped"
-    if not stripped.strip():
+        return "removed" if empty else "stripped"
+    if empty:
         path.unlink()
         return "removed"
     atomic_write_text(path, stripped)
@@ -253,6 +258,7 @@ def _strip_trw_from_merged_config(
     label_token = _STRIP_LABEL.set(rel.as_posix())
     path_token = _STRIP_PATH.set(path)
     CUSTOM_FORMAT.discard(path)
+    KEPT_EDITED.pop(path, None)
     try:
         changed, rendered, delete = strategy(raw, root)
     except (ValueError, TypeError) as exc:
@@ -400,6 +406,11 @@ def _strip_trw_toml(raw: str, root: Path) -> tuple[bool, str, bool]:
     tool approvals or a comment stays, with a warning. ``.codex/config.toml``
     and ``.grok/config.toml`` share this shape.
     """
+    from trw_mcp.server._uninstall_codex_config import strip_codex_managed
+
+    managed = strip_codex_managed(raw)  # a marker-managed .codex/config.toml: withdraw TRW's whole merge
+    if managed is not None:
+        return managed
     rendered, removed, refusal = strip_toml_table(raw, f"{_TOML_MCP_KEY}.{_TRW_SERVER_KEY}", toml_table_texts(root))
     if refusal:
         _entry_changed("config.toml", refusal)

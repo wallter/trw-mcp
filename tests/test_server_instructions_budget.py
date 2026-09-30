@@ -87,8 +87,9 @@ async def test_every_tool_named_in_the_instructions_is_registered() -> None:
     nothing back, and concludes the capability is absent — then falls back to
     something worse. Renaming or retiring a tool has to update this string.
     """
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     served = _load_bare()
     registered = {tool.name for tool in await mcp._list_tools()}
     referenced = set(re.findall(r"\btrw_[a-z0-9_]+\b", served))

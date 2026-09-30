@@ -47,6 +47,11 @@ _CEREMONY_TIER_BY_MODE: dict[str, str] = {
 }
 
 
+def ceremony_tier_for_mode(mode: str) -> str | None:
+    """The ceremony tier the defaults layer projects for a client ``ceremony_mode`` (``light`` -> ``MINIMAL``)."""
+    return _CEREMONY_TIER_BY_MODE.get(mode)
+
+
 def _defaults_layer(config: TRWConfig) -> ProfileLayer:
     """Project the global ``TRWConfig`` into the ``defaults`` layer.
 
@@ -58,7 +63,7 @@ def _defaults_layer(config: TRWConfig) -> ProfileLayer:
     overrides: dict[str, object] = {}
     try:
         mode = config.client_profile.ceremony_mode
-        tier = _CEREMONY_TIER_BY_MODE.get(mode)
+        tier = ceremony_tier_for_mode(mode)
         if tier is not None:
             overrides["ceremony_tier"] = tier
     except Exception:  # justified: fail-open, defaults projection must not crash resolve

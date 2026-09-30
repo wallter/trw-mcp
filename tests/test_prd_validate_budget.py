@@ -349,6 +349,36 @@ def test_tool_fast_true_returns_partial_shape(tmp_path: Path) -> None:
     assert any(w.startswith("validation_partial:") and "fast mode" in w for w in result["integrity_warnings"])
 
 
+def test_tool_fast_true_never_reports_valid_true(tmp_path: Path) -> None:
+    """INC-097: a partial (fast) run reports valid=None, never a pass; the full
+    run on the same file still reports a real bool."""
+    fn = _validate_tool()
+    prd = tmp_path / "PRD-TEST-777.md"
+    prd.write_text(_PRD_UNWIRED_PUBLIC, encoding="utf-8")
+
+    fast = fn(prd_path=str(prd), fast=True)
+    full = fn(prd_path=str(prd))
+
+    assert fast["valid"] is None
+    assert fast["verdict"] == "NEEDS_WORK"
+    assert "PARTIAL" in fast["verdict_note"]
+    assert full["validation_partial"] is False
+    assert isinstance(full["valid"], bool)
+
+
+def test_tool_budget_partial_never_reports_valid_true(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same rule holds for a budget-exceeded partial run."""
+    fn = _validate_tool()
+    prd = tmp_path / "PRD-TEST-777.md"
+    prd.write_text(_PRD_UNWIRED_PUBLIC, encoding="utf-8")
+    monkeypatch.setattr(get_config(), "prd_validate_budget_seconds", 1e-6)
+
+    result = fn(prd_path=str(prd))
+
+    assert result["validation_partial"] is True
+    assert result["valid"] is None
+
+
 def test_tool_default_not_partial_and_fields_present(tmp_path: Path) -> None:
     """Default call: the two new fields are present and false/empty, and the
     total_score matches a direct pre-change refresh on the same PRD (FR03)."""

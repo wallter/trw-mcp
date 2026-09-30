@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._handshake_names import REQUIRE_ENV
 from trw_mcp.dispatch._posture import reviewer_env_for
 from trw_mcp.dispatch._types import DispatchClient, DispatchPosture
 
@@ -38,7 +39,12 @@ _LOCALE_PREFIX = "LC_"
 # are forwarded ON TOP of the per-client allowlist by ``build_runner_env`` only.
 # TRW_DISPATCH_CLAUDE_SETTING_SOURCES: the background runner re-imports the claude
 # argv, so the opt-out must survive the hop or wait=False ignores it.
-_RUNNER_PASSTHROUGH: tuple[str, ...] = ("PYTHONPATH", "VIRTUAL_ENV", "TRW_DISPATCH_CLAUDE_SETTING_SOURCES")
+_RUNNER_PASSTHROUGH: tuple[str, ...] = (
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "TRW_DISPATCH_CLAUDE_SETTING_SOURCES",
+    REQUIRE_ENV,
+)
 
 # Per-client provider credentials are NOT listed here. They live on the client's
 # registry entry (``ClientSpec.credential_env``) alongside the flags and the
@@ -140,6 +146,11 @@ def build_subprocess_env(
     allowed = _allowed_names(client)
     env = {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
     env.update(_provider_synonyms(allowed, src))
+    # PRD-CORE-342 FR06: TRACEPARENT for the current span plus non-secret OTel config (never headers,
+    # keys or certificates). Tracing grants no authority, so every posture gets the same carrier.
+    from trw_mcp.telemetry.otel_propagation import child_env_carrier  # lazy: the telemetry package imports config
+
+    env.update(child_env_carrier(src))
     env.update(reviewer_env_for(client, posture))
     if read_only:
         env.update(client_spec_for(client).read_only_env)

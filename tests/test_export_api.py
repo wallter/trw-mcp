@@ -89,13 +89,13 @@ class TestExportDataScopes:
     """Edge cases for export_data with different scopes."""
 
     def test_csv_format_only_applies_to_learnings_scope(self, tmp_path: Path) -> None:
-        """CSV format is only used when scope is exactly 'learnings', not 'all'."""
+        """CSV is learnings-only. Any other scope with csv fails loudly (E2E-INC-076), instead of silently emitting JSON."""
         project = _setup_project(tmp_path)
         _store_entry(project / ".trw", summary="CSV scope test")
 
         result = export_data(project, "all", fmt="csv")
-        assert "learnings" in result
-        assert "learnings_csv" not in result
+        assert result["status"] == "failed" and "csv exports learnings only" in str(result["error"])
+        assert "learnings" not in result and "learnings_csv" not in result
 
     def test_analytics_scope(self, tmp_path: Path) -> None:
         """scope='analytics' returns analytics data."""

@@ -385,6 +385,9 @@ def test_a_fresh_init_project_doctors_with_no_fail(tmp_path: Path, monkeypatch: 
     from trw_mcp.channels.claude_code import _hook_helpers
 
     monkeypatch.setattr(_hook_helpers, "_distill_importable", lambda: False)
+    # The generic .mcp.json launches a bare `trw-mcp`; which build PATH finds on the machine running the test is not
+    # what this test measures (launcher_divergence FAILs on a stale global install, correctly).
+    monkeypatch.setenv("PATH", str(tmp_path / "no-trw-on-path"))
     (tmp_path / ".git").mkdir()
     assert not init_project(tmp_path, ide="claude-code")["errors"]
     results = _doctor_core(tmp_path, _make_config(tmp_path))
@@ -453,6 +456,7 @@ def test_memory_backend_unpinned_checkout_fails(tmp_path: Path) -> None:
     merely "empty"), so this reports FAIL, not the retired WARN. The run still
     creates no ``.trw/memory`` files.
     """
+    (tmp_path / ".trw").mkdir(exist_ok=True)  # initialised but unpinned; a checkout with no .trw is told init-project
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     mem = _status_of(results, "memory_backend")
     assert mem.status == "FAIL"

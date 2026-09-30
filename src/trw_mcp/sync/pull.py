@@ -15,6 +15,7 @@ from trw_mcp.state._platform_trust import platform_auth_headers, platform_contac
 from trw_mcp.sync._team_entry import _local_node_id, team_learning_to_entry
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.identity import resolve_sync_client_id
+from trw_mcp.sync.push import http_status_from_exception
 
 logger = structlog.get_logger(__name__)
 
@@ -35,14 +36,6 @@ def _resolve_sync_source(metadata: dict[str, str]) -> SyncSource:
     """Return the sync source tag from server metadata, defaulting to team_sync."""
     raw = metadata.get("source", "")
     return raw if raw in _KNOWN_SYNC_SOURCES else _TEAM_SYNC_SOURCE
-
-
-def _http_status_from_exception(exc: BaseException) -> int | None:
-    """Extract an HTTP status code from httpx-style exceptions when present."""
-
-    response = getattr(exc, "response", None)
-    raw_status = getattr(response, "status_code", None)
-    return int(raw_status) if isinstance(raw_status, int) else None
 
 
 class PullResult(BaseModel):
@@ -220,7 +213,7 @@ class SyncPuller:
                 timeout_seconds=self._timeout,
                 error_type=type(exc).__name__,
                 error_message=str(exc)[:200],
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
                 duration_ms=int((perf_counter() - started_at) * 1000),
                 since_seq=since_seq,
                 client_id=effective_client_id,

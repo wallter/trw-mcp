@@ -296,6 +296,8 @@ class SurfaceAuthorityMiddleware(Middleware):
                     "surface_role": _REVIEWER_MODE,
                     "allowed_tools": sorted(REVIEWER_TOOLS),
                 },
+                # A refusal is an error to the client: isError=false read as a successful call (CODEX-P0-B).
+                is_error=True,
             )
         flag = _gating_flag(tool_name)
         payload: dict[str, Any] = {"error_type": "tool_not_in_surface", "tool_name": tool_name}
@@ -317,6 +319,7 @@ class SurfaceAuthorityMiddleware(Middleware):
         return ToolResult(
             content=[TextContent(type="text", text=message)],
             structured_content=payload,
+            is_error=True,  # the tool did not run; see the reviewer denial above (CODEX-P0-B)
         )
 
 

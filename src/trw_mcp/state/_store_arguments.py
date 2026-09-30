@@ -111,12 +111,10 @@ def build_store_arguments(
     anchor_objects: list[Anchor] = []
     for anchor in anchors or []:
         try:
-            # Anchor rejects absolute paths; convert rather than drop.
-            anchor_data = dict(anchor)
-            file_val = str(anchor_data.get("file", ""))
-            if file_val.startswith("/"):
-                anchor_data["file"] = file_val.lstrip("/")
-            anchor_objects.append(Anchor.model_validate(anchor_data))
+            # An absolute path is a machine path: never persisted (E2E-INC-025). Callers
+            # relativise to the project root first (``_learn_anchors.repo_relative``);
+            # ``Anchor`` itself refuses one, so it lands in the skip below.
+            anchor_objects.append(Anchor.model_validate(dict(anchor)))
         except Exception:  # justified: fail-open, skip invalid anchors
             logger.debug("invalid_anchor_skipped", anchor=anchor, exc_info=True)
 

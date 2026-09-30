@@ -12,6 +12,18 @@ from trw_mcp.middleware import _compaction_gate_payload as payload
 
 @pytest.mark.unit
 @pytest.mark.parametrize("timestamp", ["2026-09-19T16:00:00+00:00", None])
+def test_recovery_message_never_claims_a_compaction_the_marker_cannot_prove(
+    monkeypatch: pytest.MonkeyPatch, timestamp: str | None
+) -> None:
+    """E2E-INC-008: the marker is written BEFORE compaction (hook or trw_checkpoint(pre_compact=True))."""
+    monkeypatch.setattr(payload, "_read_marker_instant", lambda: (timestamp, None if timestamp else "invalid_json"))
+    message = payload.build_compaction_block("trw_status", 1, 2).message
+    assert "Your context was compacted" not in message
+    assert "pre-compaction checkpoint was recorded" in message and "was or will be compacted" in message
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("timestamp", ["2026-09-19T16:00:00+00:00", None])
 @pytest.mark.parametrize("attempt", [1, 2, 3, 1000])
 def test_recovery_message_is_compact_and_retains_actionable_contract(
     monkeypatch: pytest.MonkeyPatch, timestamp: str | None, attempt: int

@@ -68,7 +68,6 @@
 | `dry_check.py` | — | Primary | DRY violation scanning |
 | `receipts.py` | — | Primary | Recall receipt tracking |
 | `llm_helpers.py` | — | Primary | LLM client facade |
-| `otel_wrapper.py` | — | Primary | OpenTelemetry integration |
 
 ## Dependency Direction
 

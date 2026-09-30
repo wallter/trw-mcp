@@ -69,6 +69,10 @@ class MigrationRefusedError(RuntimeError):
     """A preflight or verification refusal; nothing was cut over."""
 
 
+class AlreadyMigratedError(MigrationRefusedError):
+    """The checkout is already on the destination store: nothing to do, which is success, not a refusal."""
+
+
 class MigrationRetryError(MigrationRefusedError):
     """A refusal that a rerun clears once the store is free: nothing was cut over."""
 
@@ -155,7 +159,7 @@ def holds_rows(db: Path) -> bool:
 def _preflight(trw_dir: Path) -> str | None:
     """Refuse what --apply cannot move; returns the checkout's pin (``None`` when unpinned)."""
     if (pinned := _pin(trw_dir)) and not holds_rows(_store(trw_dir)):
-        raise MigrationRefusedError(f"{trw_dir.parent} is already migrated to {pinned}; nothing to do")
+        raise AlreadyMigratedError(f"{trw_dir.parent} is already migrated to {pinned}; nothing to do")
     state = trw_dir / "sync-state.json"
     try:
         sync = json.loads(state.read_text(encoding="utf-8")) if state.exists() else {}

@@ -618,7 +618,8 @@ def test_aggregate_open_conflicting_and_malformed_counts(
     clock(10, 0)
     _checkpoint(lead, {"factory": 1, "kind": "START", "attempt": "a1"})
     clock(10, 1)
-    _checkpoint(lead, {"factory": 1, "kind": "START", "attempt": "a1", "model_id": "other"})  # conflicts with line 1
+    # trw_checkpoint refuses a second START (E2E-INC-096); a hand-written or older journal can still hold one.
+    _journal(lead, {"factory": 1, "kind": "START", "attempt": "a1", "model_id": "other"})  # conflicts with line 1
     clock(10, 2)
     _checkpoint(lead, {"factory": 1, "kind": "START", "attempt": "a2"})  # open: never reaches READY/USED
     with (lead / "meta" / "events.jsonl").open("a", encoding="utf-8") as handle:
@@ -886,6 +887,9 @@ def test_a_receipt_id_with_no_receipt_file_is_refused_and_never_written(
 ) -> None:
     lead = _run_dir(project, "run-lead")
     clock(10, 0)
+    _journal(lead, {"factory": 1, "kind": "START", "attempt": "a1"})  # the lifecycle gate needs what precedes it
+    if kind == "USED":
+        _journal(lead, {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"build": ["build-x"]}})
     before = _events(lead)
 
     result = _refused(lead, {"factory": 1, "kind": kind, "attempt": "a1", "receipts": receipts})
@@ -912,6 +916,7 @@ def test_one_unresolved_id_among_resolved_ones_refuses_the_whole_checkpoint_nami
     lead = _run_dir(project, "run-lead")
     built = build_check_invoke(tests_passed=True, scope="feature", run_path=str(lead))
     real = built["build_receipt_id"]
+    _journal(lead, {"factory": 1, "kind": "START", "attempt": "a1"})
     before = _events(lead)
 
     result = _refused(
@@ -929,6 +934,7 @@ def test_a_present_receipt_bound_to_another_sha_is_accepted_and_left_to_the_read
     """Report-time judgments (build_sha_mismatch, binding_unverifiable) are not this gate's to make."""
     lead = _run_dir(project, "run-lead")
     real = build_check_invoke(tests_passed=True, scope="feature", run_path=str(lead))["build_receipt_id"]
+    _checkpoint(lead, {"factory": 1, "kind": "START", "attempt": "a1"})
 
     result = _refused(
         lead, {"factory": 1, "kind": "READY", "attempt": "a1", "subject_sha": "0" * 40, "receipts": {"build": [real]}}
@@ -941,10 +947,8 @@ def test_start_void_and_prose_are_recorded_and_a_schema_invalid_ready_is_refused
     project: Path, clock: Any
 ) -> None:
     lead = _run_dir(project, "run-lead")
-    for payload in (
-        {"factory": 1, "kind": "START", "attempt": "a1"},
-        {"factory": 1, "kind": "VOID", "attempt": "a1", "reason": "r"},
-    ):
-        assert _refused(lead, payload)["recorded"] is True, payload
+    assert _refused(lead, {"factory": 1, "kind": "START", "attempt": "a1"})["recorded"] is True
+    _journal(lead, {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"build": ["build-x"]}})
+    assert _refused(lead, {"factory": 1, "kind": "VOID", "attempt": "a1", "reason": "r"})["recorded"] is True
     invalid = _refused(lead, {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"verification": ["v1"]}})
     assert invalid["recorded"] is False and invalid["reason"] == "factory_payload_invalid", invalid

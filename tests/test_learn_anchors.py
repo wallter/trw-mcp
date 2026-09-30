@@ -545,3 +545,140 @@ class TestUnanchoredLearningHasNoValidity:
         assert entry is not None
         assert entry["anchors"] == []
         assert entry["anchor_validity"] is None
+
+
+_SOURCE = "def parse_config(text):\n    return text\n"
+
+
+def _resolve(
+    root: Path, monkeypatch: pytest.MonkeyPatch, recorded: list[str], *, root_arg: Path | None = None
+) -> list[Any]:
+    """The anchors ``resolve_learn_anchors`` derives for a run whose events name *recorded*."""
+    from trw_mcp.tools._learn_anchors import resolve_learn_anchors
+
+    _pin_run(root, monkeypatch, session_id="sess-rel", modified=recorded)
+    anchors, _validity = resolve_learn_anchors(
+        root_arg or root,
+        "L-rel",
+        session_id="sess-rel",
+        summary="unrelated wording",
+        detail="mentions parse_config",
+    )
+    return anchors
+
+
+class TestAnchorsAreRepoRelative:
+    """E2E-INC-025: a persisted anchor is repo-relative, never an absolute machine path."""
+
+    def test_absolute_event_path_becomes_repo_relative(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cfgparse.py").write_text(_SOURCE)
+
+        anchors = _resolve(tmp_path, monkeypatch, [str(tmp_path / "src" / "cfgparse.py")])
+
+        assert [a["file"] for a in anchors] == ["src/cfgparse.py"]
+
+    def test_relative_event_path_stays_relative(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cfgparse.py").write_text(_SOURCE)
+
+        anchors = _resolve(tmp_path, monkeypatch, ["src/cfgparse.py"])
+
+        assert [a["file"] for a in anchors] == ["src/cfgparse.py"]
+
+    def test_a_file_outside_the_root_is_dropped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        outside = tmp_path / "elsewhere.py"
+        outside.write_text(_SOURCE)
+
+        anchors = _resolve(root, monkeypatch, [str(outside), "../elsewhere.py"])
+
+        assert anchors == []
+
+    def test_a_symlinked_root_still_relativises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """macOS: ``/tmp`` is ``/private/tmp``. The event carries one spelling, the root the other."""
+        real = tmp_path / "real"
+        (real / "src").mkdir(parents=True)
+        (real / "src" / "cfgparse.py").write_text(_SOURCE)
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+
+        anchors = _resolve(real, monkeypatch, [str(real / "src" / "cfgparse.py")], root_arg=link)
+
+        assert [a["file"] for a in anchors] == ["src/cfgparse.py"]
+
+
+class TestStoredAnchorsReachTheHint:
+    """The whole path: file_modified event -> learn -> stored anchor -> anchored hint."""
+
+    @staticmethod
+    def _hint_ids(repo: Path, rel: str) -> list[str]:
+        from tests._path_isolation import set_current_root
+        from trw_mcp.models.config import reload_config
+        from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
+
+        set_current_root(repo)  # the hint's worker thread resolves the ambient root, as the edit hook's process does
+        reload_config()
+        return [i.id for i in compute_before_edit_hint(file_path=str(repo / rel), repo_root=str(repo)).learnings]
+
+    def test_anchored_learning_is_stored_relative_and_found_by_the_hint(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.tools._learn_impl import execute_learn
+
+        repo = daemon_checkout.trw_dir.parent
+        (repo / "src").mkdir(parents=True, exist_ok=True)
+        (repo / "src" / "cfgparse.py").write_text(_SOURCE)
+        _pin_run(repo, monkeypatch, session_id="sess-e2e", modified=[str(repo / "src" / "cfgparse.py")])
+
+        result = execute_learn(
+            summary="Quoted values need parse_config to strip them",
+            detail="A finding about parse_config that never names the file.",
+            trw_dir=daemon_checkout.trw_dir,
+            config=TRWConfig(trw_dir=str(daemon_checkout.trw_dir)),
+            session_id="sess-e2e",
+        )
+        learning_id = str(result["learning_id"])
+
+        row = asyncio.run(daemon_checkout.client.get(learning_id, daemon_checkout.namespace))
+        files = [a["file"] for a in row["entry"]["anchors"]]
+        assert files == ["src/cfgparse.py"]
+        assert self._hint_ids(repo, "src/cfgparse.py") == [learning_id]
+
+    def test_a_row_stored_with_the_stripped_absolute_key_is_repaired_and_matched(
+        self, daemon_checkout: DaemonCheckout
+    ) -> None:
+        """The pre-fix key was ``lstrip('/')`` of the absolute path: it never matched and it leaked the machine path."""
+        import asyncio
+
+        from trw_mcp.state._anchor_repair import repair_legacy_anchors
+        from trw_mcp.state.memory_adapter import store_learning
+
+        repo = daemon_checkout.trw_dir.parent
+        (repo / "src").mkdir(parents=True, exist_ok=True)
+        (repo / "src" / "cfgparse.py").write_text(_SOURCE)
+        broken = str(repo / "src" / "cfgparse.py").lstrip("/")
+        foreign = "Users/someone/other/lib.py"
+        store_learning(
+            daemon_checkout.trw_dir,
+            "L-broken",
+            "Old lesson",
+            "detail",
+            anchors=[
+                {"file": broken, "symbol_name": "parse_config"},
+                {"file": foreign, "symbol_name": "other"},
+            ],
+        )
+        assert self._hint_ids(repo, "src/cfgparse.py") == []
+
+        assert repair_legacy_anchors(daemon_checkout.trw_dir, repo).changed == 1
+
+        row = asyncio.run(daemon_checkout.client.get("L-broken", daemon_checkout.namespace))
+        files = sorted(a["file"] for a in row["entry"]["anchors"])
+        assert files == [foreign, "src/cfgparse.py"]  # a spelling is not provenance: the foreign-looking key is kept
+        assert self._hint_ids(repo, "src/cfgparse.py") == ["L-broken"]
+        assert repair_legacy_anchors(daemon_checkout.trw_dir, repo).changed == 0

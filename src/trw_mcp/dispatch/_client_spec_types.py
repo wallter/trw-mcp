@@ -356,13 +356,12 @@ class ClientSpec(BaseModel):
     reviewer_extra_argv: tuple[str, ...] = ()
     isolated_review: IsolatedReviewSpec | None = None
     model_flag: str | None = None
+    #: TRW dispatch fallbacks, behind explicit request and operator configuration.
+    default_model: str | None = None
+    default_effort: DispatchEffort | None = None
+    #: Uses agents/tier_resolver.py; no verified mapping means no table-derived model.
     tier_profile: str | None = Field(
-        default=None,
-        description=(
-            "Client profile whose verified tier -> model map (agents/tier_resolver.py) turns a "
-            "task-class tier into this client's --model value (PRD-CORE-290-FR03). None: no "
-            "verified map, so a table tier is never passed as a model name."
-        ),
+        default=None, description="Verified tier-mapping profile; None disables tier mapping."
     )
     max_turns_flag: str | None = Field(
         default=None,
@@ -564,9 +563,12 @@ class ClientSpec(BaseModel):
             raise ValueError(
                 f"{self.client_id!r}: one of effort_flag/effort_config_key, and effort_levels, must be set together"
             )
-        unknown = [level for level in self.effort_levels if level not in EFFORT_LEVELS]
-        if unknown:
+        if unknown := [level for level in self.effort_levels if level not in EFFORT_LEVELS]:
             raise ValueError(f"{self.client_id!r}: effort_levels {unknown} are not in {EFFORT_LEVELS}")
+        if self.default_effort is not None and self.default_effort not in self.effort_levels:
+            raise ValueError(f"{self.client_id!r}: default_effort must have a verified effort carrier and vocabulary")
+        if self.default_model is not None and not self.model_flag:
+            raise ValueError(f"{self.client_id!r}: default_model requires a model_flag")
         return self
 
     @model_validator(mode="after")

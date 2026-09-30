@@ -292,6 +292,22 @@ class TestCeremonyStateRobustness:
         assert gate["review_gate_ready"] is False
 
 
+@pytest.fixture
+def observe_receipts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These fixtures seed a bare build EVENT and no typed receipt.
+
+    The preview now validates the typed receipt through deliver's own function, and under the shipped
+    ``enforce`` mode a missing receipt is missing evidence (deliver blocks it). The event-predicate
+    scenarios below are ``observe``-mode behaviour, so they pin that mode explicitly.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools import _delivery_helpers
+
+    config = TRWConfig().model_copy(update={"evidence_receipt_mode": "observe"})
+    monkeypatch.setattr(_delivery_helpers, "get_config", lambda: config)
+
+
+@pytest.mark.usefixtures("observe_receipts")
 class TestTrwStatusGateFieldsIntegration:
     """End-to-end: gate fields appear in trw_status output (FR01-FR03)."""
 

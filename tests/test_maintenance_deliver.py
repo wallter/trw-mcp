@@ -90,7 +90,7 @@ class TestDeliverAutoPrune:
                 return_value={
                     "status": "success",
                     "events_analyzed": 0,
-                    "learnings_produced": 0,
+                    "mechanical_learnings_extracted": 0,
                     "success_patterns": 0,
                 },
             ),
@@ -181,7 +181,7 @@ class TestDeliverAutoPrune:
                 return_value={
                     "status": "success",
                     "events_analyzed": 0,
-                    "learnings_produced": 0,
+                    "mechanical_learnings_extracted": 0,
                     "success_patterns": 0,
                 },
             ),

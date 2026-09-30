@@ -18,6 +18,7 @@ import sys
 import uuid
 
 from trw_mcp.comms._envelope import AdmissionError, Envelope, MessageState, valid_next_read
+from trw_mcp.comms._handoff import pointer_resolves
 from trw_mcp.comms._identity import CallerBinding
 
 
@@ -31,6 +32,9 @@ def insert_admission(
 ) -> sqlite3.Row:
     """Admit one member-addressed row (FR13); ``recipient_incarnation`` starts as NEVER_PREPARED."""
     message_id = uuid.uuid4().hex
+    from trw_mcp.telemetry.otel_propagation import current_traceparent
+
+    traceparent = current_traceparent()  # an in-memory context read; None without a valid span
     # trw:intentional saturate, never overflow: a huge finite group clock plus the TTL
     # must stay a finite, ordered expiry rather than become inf and corrupt the row.
     expires_at = now + float(ttl_seconds)
@@ -38,8 +42,8 @@ def insert_admission(
         expires_at = sys.float_info.max
     conn.execute(
         "INSERT INTO admissions(group_id,sender_member_id,request_key,recipient_member_id,kind,delivery_class,"
-        "body,message_id,recipient_incarnation,admitted_at,state,expires_at,canonical_sha256) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "body,message_id,recipient_incarnation,admitted_at,state,expires_at,canonical_sha256,traceparent) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             binding.group_id,
             binding.member_id,
@@ -54,6 +58,7 @@ def insert_admission(
             MessageState.PENDING.value,
             expires_at,
             envelope.canonical_sha256(),
+            traceparent,  # PRD-CORE-342 FR07: outside retry identity, so an exact retry keeps the first value
         ),
     )
     conn.execute("UPDATE groups SET charge=charge+1 WHERE group_id=?", (binding.group_id,))
@@ -117,11 +122,11 @@ def validate_ack(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str
     rows: list[sqlite3.Row] = []
     for message_id in ids:
         row = conn.execute("SELECT * FROM admissions WHERE message_id=?", (message_id,)).fetchone()
-        if (
-            row is None
-            or row["group_id"] != binding.group_id
-            or row["recipient_member_id"] != binding.member_id
-            or row["state"] not in (MessageState.PENDING, MessageState.ACKED)
+        if row is None or row["group_id"] != binding.group_id:
+            raise AdmissionError("unknown_message_id")
+        if row["recipient_member_id"] != binding.member_id or row["state"] not in (
+            MessageState.PENDING,
+            MessageState.ACKED,
         ):
             raise AdmissionError("ack_not_authorized")
         rows.append(row)
@@ -154,11 +159,10 @@ def _handoff_rows(
     for message_id in ids:
         row = conn.execute("SELECT * FROM admissions WHERE message_id=?", (message_id,)).fetchone()
         member = binding.member_id
-        if (
-            row is None
-            or row["group_id"] != binding.group_id
-            or (row["sender_member_id"] if as_sender else row["recipient_member_id"]) != member
-            or (as_sender and row["recipient_member_id"] == member)
+        if row is None or row["group_id"] != binding.group_id:
+            raise AdmissionError("unknown_message_id")
+        if (row["sender_member_id"] if as_sender else row["recipient_member_id"]) != member or (
+            as_sender and row["recipient_member_id"] == member
         ):
             raise AdmissionError("handoff_not_authorized")
         if row["kind"] != "request":
@@ -208,12 +212,13 @@ def report(conn: sqlite3.Connection, binding: CallerBinding, message_id: str, ne
     )
 
 
-def complete(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], now: float) -> None:
+def complete(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], now: float) -> list[str]:
     """FR04: only the requester records ``completed``, and only after a report.
 
     Records that the requester closed the handoff, not that the work is correct. An
-    already completed row writes nothing. Runtime caller: ``_inbox_page.inbox_action``
-    for ``trw_inbox(action="complete")``.
+    already completed row writes nothing. Returns the ids whose path-shaped next_read
+    does not resolve under the project root (E2E-INC-092), for the sender to check.
+    Runtime caller: ``_inbox_page.inbox_action`` for ``trw_inbox(action="complete")``.
     """
     checked = _handoff_rows(conn, binding, ids, as_sender=True)
     if any("reported" not in facts for _row, facts in checked):
@@ -223,3 +228,10 @@ def complete(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], n
             conn.execute(
                 "INSERT INTO milestones(message_id,fact,at) VALUES (?,'completed',?)", (row["message_id"], now)
             )
+    return [row["message_id"] for row, _facts in checked if not _pointer_resolves(conn, row["message_id"])]
+
+
+def _pointer_resolves(conn: sqlite3.Connection, message_id: str) -> bool:
+    """False only for a path-shaped pointer naming nothing; a branch@SHA or an id is not a path."""
+    stored = conn.execute("SELECT next_read FROM handoff_reports WHERE message_id=?", (message_id,)).fetchone()
+    return pointer_resolves(stored[0] if stored is not None else None)

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from trw_mcp.bootstrap import _safe_remove, init_project
+from trw_mcp.bootstrap import init_project
 from trw_mcp.server._subcommands import _run_uninstall
 
 pytestmark = pytest.mark.integration
@@ -129,14 +129,17 @@ def test_failed_skill_md_unlink_is_an_error_keeps_the_record_and_exits_nonzero(
     key = "trw-audit/SKILL.md"
     (skill / "my-notes.md").write_bytes(USER)
     shipped = (skill / "SKILL.md").read_bytes()
-    real = _safe_remove.safe_remove
+    from trw_mcp.bootstrap import _uninstall_skill_dir
+    from trw_mcp.bootstrap._trash import Removal
 
-    def refuse(path: Path, root: Path, *, expect: str = "any") -> str | None:
+    real = _uninstall_skill_dir.remove_if_hash
+
+    def refuse(path: Path, root: Path, expected: str, *, key: str | None = None) -> Removal:
         if path == skill / "SKILL.md":
-            return "error removing: boom"
-        return real(path, root, expect=expect)  # type: ignore[arg-type]
+            return Removal(key, path, "kept", None, None, "error removing: boom")
+        return real(path, root, expected, key=key)
 
-    monkeypatch.setattr("trw_mcp.bootstrap._uninstall_skill_dir.safe_remove", refuse)
+    monkeypatch.setattr(_uninstall_skill_dir, "remove_if_hash", refuse)  # the delete itself fails
 
     with pytest.raises(SystemExit) as exc:
         _run_uninstall(_ns(project, ide="claude-code"))

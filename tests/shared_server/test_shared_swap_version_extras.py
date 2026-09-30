@@ -366,7 +366,9 @@ def test_cli_passes_with_option_through(paths: SharedPaths, monkeypatch: pytest.
     args = parser.parse_args(["swap", "--env", "dev", "--version", "8.0.0", "--with", "trw-distill==0.8.0"])
     assert args.with_distill == "trw-distill==0.8.0"
     seen: dict[str, object] = {}
-    monkeypatch.setattr(_cli, "_paths", lambda: (paths, type("C", (), {"shared_mcp": SharedMcpConfig()})()))
+    monkeypatch.setattr(
+        _cli, "_paths", lambda: (paths, type("C", (), {"shared_mcp": SharedMcpConfig()})(), paths.root.parents[2])
+    )
     monkeypatch.setattr(_ops, "build_version_venv", lambda *a, **k: seen.update(k) or Path("/py"))
     monkeypatch.setattr(_ops, "swap", lambda *a, **k: "ok")
     _cli.run_swap(args)
@@ -377,7 +379,9 @@ def test_with_needs_version(paths: SharedPaths, monkeypatch: pytest.MonkeyPatch,
     parser = argparse.ArgumentParser()
     _cli.add_shared_subcommands(parser.add_subparsers(dest="command"))
     args = parser.parse_args(["swap", "--env", "dev", "--python", str(tmp_path), "--with", "trw-distill==0.8.0"])
-    monkeypatch.setattr(_cli, "_paths", lambda: (paths, type("C", (), {"shared_mcp": SharedMcpConfig()})()))
+    monkeypatch.setattr(
+        _cli, "_paths", lambda: (paths, type("C", (), {"shared_mcp": SharedMcpConfig()})(), paths.root.parents[2])
+    )
     with pytest.raises(SystemExit):
         _cli.run_swap(args)
 
@@ -390,7 +394,7 @@ def test_env_create_clears_the_recorded_serving_env_and_swap_does_not(
     stale.write_text("{}")
     other = serving_env_path(paths, "other")
     other.write_text("{}")
-    monkeypatch.setattr(_cli, "_paths", lambda: (paths, None))
+    monkeypatch.setattr(_cli, "_paths", lambda: (paths, None, paths.root.parents[2]))
     _ops.ensure_env(paths, "dev", seed_from=None)
     assert stale.exists(), "ensure_env (also reached from swap) must not clear it"
     _cli.run_env(argparse.Namespace(name="dev", seed_from=None))

@@ -37,6 +37,14 @@ from trw_mcp.bootstrap._utils import _DATA_DIR
 QUIET: ContextVar[bool] = ContextVar("QUIET", default=False)
 
 
+# Files whose TRW entries were kept only because the file is not in TRW's own JSON formatting; the
+# uninstall report names each one (E2E-UNINSTALL-CUSTOM-JSON). _STRIP_PATH is the file being stripped.
+CUSTOM_FORMAT: set[Path] = set()
+# Files that still hold a TRW hook the user edited (so it was kept), with those commands (INC-012 follow-up).
+KEPT_EDITED: dict[Path, list[str]] = {}
+_STRIP_PATH: ContextVar[Path | None] = ContextVar("_STRIP_PATH", default=None)
+
+
 def _runtime_logger() -> Any:
     """Return a fresh logger so structlog test capture sees late-bound events."""
     return structlog.ReturnLogger() if QUIET.get() else structlog.get_logger(__name__)
@@ -60,15 +68,23 @@ def _hook_commands(node: object) -> Iterator[str]:
 
 
 def _warn_kept_trw_commands(kept: object, generated: dict[str, list[object]], file_label: str) -> None:
-    """Warn about a TRW hook command left in place because its entry was edited."""
+    """Record a TRW hook command left in place because its entry was edited; the report names it."""
     ours = set(_hook_commands(generated))
     left = sorted({command for command in _hook_commands(kept) if command in ours})
     if left:
         _entry_changed(file_label, left)
+        if (strip_path := _STRIP_PATH.get()) is not None:
+            KEPT_EDITED[strip_path] = left
 
 
 def _strip_grouped_hooks(
-    raw: str, shape: str, file_label: str, *, deletable: bool = True, strip_env: bool = False
+    raw: str,
+    shape: str,
+    file_label: str,
+    *,
+    deletable: bool = True,
+    strip_env: bool = False,
+    root: Path | None = None,
 ) -> tuple[bool, str, bool]:
     """Strip only the hook dicts TRW generates from a grouped ``{"hooks": {event: [group]}}`` file.
 
@@ -94,7 +110,7 @@ def _strip_grouped_hooks(
         if not env_changed:
             return False, raw, False
         hooks = {}
-    trw_hooks, trw_groups = grouped_hook_entries(shape)
+    trw_hooks, trw_groups = grouped_hook_entries(shape, root)
 
     def _is_trw_hook(event: str, hook: dict[str, object]) -> bool:
         return is_generated_entry(hook, trw_hooks.get(event, []))
@@ -138,8 +154,8 @@ def _drop_template_env(env: object) -> tuple[object, bool]:
     return kept, len(kept) != len(env)
 
 
-def _strip_codex_hook_groups(raw: str, _root: Path) -> tuple[bool, str, bool]:
-    return _strip_grouped_hooks(raw, "codex-hook-group-list", ".codex/hooks.json")
+def _strip_codex_hook_groups(raw: str, root: Path) -> tuple[bool, str, bool]:
+    return _strip_grouped_hooks(raw, "codex-hook-group-list", ".codex/hooks.json", root=root)
 
 
 def _strip_copilot_hook_groups(raw: str, _root: Path) -> tuple[bool, str, bool]:
@@ -173,6 +189,8 @@ def _canonical_or_untouched(
     sort_keys = matching_sort_keys(data, raw)
     if sort_keys is None:
         _runtime_logger().warning("uninstall_merged_config_custom_formatting", path=file_label, action="left_untouched")
+        if (strip_path := _STRIP_PATH.get()) is not None:
+            CUSTOM_FORMAT.add(strip_path)
         return False, raw, False
     rest = {k: v for k, v in data.items() if k != empty_key}
     if shape and not new_data.get(empty_key) and is_generated_entry(rest, [hook_file_rest(shape)]):

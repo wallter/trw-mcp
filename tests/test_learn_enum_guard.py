@@ -24,7 +24,8 @@ def test_invalid_type_returns_rejection() -> None:
     assert out is not None
     assert out["status"] == "rejected"
     assert out["reason"] == "invalid_type"
-    assert "unknown" in out["message"]
+    assert "type" in out["message"]
+    assert "unknown" not in out["message"]  # the refused value is not echoed back (VALIDATION-ERROR-ECHO class)
 
 
 def test_invalid_confidence_returns_rejection() -> None:
@@ -49,7 +50,8 @@ def test_invalid_evidence_level_returns_rejection() -> None:
     assert out is not None
     assert out["status"] == "rejected"
     assert out["reason"] == "invalid_evidence_level"
-    assert "guessed" in out["message"]
+    assert "evidence_level" in out["message"]
+    assert "guessed" not in out["message"]
 
 
 @pytest.mark.parametrize("level", ["observed", "verified", "inferred", "unknown"])

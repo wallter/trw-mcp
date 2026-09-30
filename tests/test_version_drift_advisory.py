@@ -384,7 +384,7 @@ def test_prd_core_215_fr07_transport_is_stdio_only() -> None:
     """stdio is the executable transport and server/_transport.py claims no proxy."""
     src = (PACKAGE_ROOT / "src/trw_mcp/server/_transport.py").read_text(encoding="utf-8")
     # stdio is what actually runs.
-    assert "mcp.run()" in src
+    assert "app.run()" in src  # the served app build_served_app() returns, run on stdio
     assert 'transport="stdio"' in src
     # Zero current proxy production claims (the negations are stdio affirmations).
     assert scan_text_for_proxy_claims(src) == ()

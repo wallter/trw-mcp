@@ -40,7 +40,6 @@ _READ_CALLS = frozenset({"glob", "rglob", "iterdir", "read_yaml", "read_text", "
 MAINTENANCE_READERS: dict[str, str] = {
     "trw_mcp/audit.py::_iter_entries": "audit tallies of entry counts and fields",
     "trw_mcp/bootstrap/_init_project.py::_harden_trw_permissions": "chmod walk; reads no content",
-    "trw_mcp/export.py::_load_existing_summaries": "dedup set for export; exported rows come from the store",
     "trw_mcp/scoring/_io_boundary.py::_default_lookup_entry": "outcome scoring write-back path",
     "trw_mcp/scoring/_yaml_id_index.py::_build_yaml_path_index": "id -> sidecar path index",
     "trw_mcp/state/_entry_paths.py::resolve_entry_file": "sidecar path resolution for dedup merge",

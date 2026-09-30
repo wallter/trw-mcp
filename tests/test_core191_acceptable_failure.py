@@ -489,7 +489,7 @@ def _deliver(tmp_path: Path, run_dir: Path, **kwargs: Any) -> dict[str, Any]:
         patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
         patch(
             "trw_mcp.tools.ceremony._do_reflect",
-            return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0},
+            return_value={"status": "success", "events_analyzed": 0, "mechanical_learnings_extracted": 0},
         ),
         patch(
             "trw_mcp.tools._deferred_delivery._do_index_sync",
@@ -589,3 +589,21 @@ class TestDeliverOverride:
         assert "permission denied" in error
         assert "acceptable_failure_record" not in result
         assert "truthfulness_gate_bypassed" not in result
+
+
+def test_the_schema_errors_own_example_validates_when_pasted_back() -> None:
+    """E2E-INC-120: the copy-pasteable example must be a VALID record today, not a hardcoded date that expires."""
+    import re
+
+    from trw_mcp.tools._acceptable_failure_validation import parse_acceptable_failure
+
+    record, error = parse_acceptable_failure("tests are probably fine")
+    assert record is None and error is not None
+    example = re.search(r"(\{.*\})", error)
+    assert example is not None, error
+
+    pasted, paste_error = parse_acceptable_failure(example.group(1))
+
+    assert paste_error is None, paste_error
+    assert pasted is not None
+    assert pasted.expiry_iso > datetime.now(timezone.utc).date().isoformat()

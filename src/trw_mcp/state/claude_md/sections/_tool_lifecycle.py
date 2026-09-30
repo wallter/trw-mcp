@@ -86,7 +86,7 @@ Delegate only for work that is genuinely independent and parallelizable — a wi
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true` (or omitted), a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
+- (a) `trw_build_check` recorded a passing run of the full project-native suite — the suite the project designates for release validation, not a targeted, marker-filtered or single-package run — with `tests_passed=true`, `static_checks_clean=true`, a non-zero `test_count` and a non-empty `scope`. `trw_build_check` records what you report; it does not run or verify the suite. **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**

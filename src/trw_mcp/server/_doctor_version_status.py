@@ -49,6 +49,18 @@ def version_status_row(project_root: Path) -> tuple[Literal["PASS", "WARN"], str
     from trw_mcp.server._subcommands_release import collect_version_status
 
     status = collect_version_status(project_root)
+    if status["compatible"]:
+        from trw_mcp.server._doctor_version_skew import read_daemon_skew
+
+        skew = read_daemon_skew()
+        if skew is not None:
+            usable = "" if skew.incompatible else " (same major: memory still works)"
+            return (
+                "WARN",
+                f"version-status reports compatible=true for the packages on disk, but the live memory daemon "
+                f"(pid {skew.pid}) runs trw-memory {skew.daemon} while this client is {skew.client}{usable}; see "
+                f"memory_daemon and memory_backend. Fix: {skew.remedy()}.",
+            )
     if status["compatible"] and (stale := stale_editable_metadata()):
         return (
             "WARN",

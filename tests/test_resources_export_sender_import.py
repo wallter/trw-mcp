@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 import json
 import os
 from pathlib import Path
 from unittest.mock import patch
 
 from tests._resources_export_sender_support import _setup_project, _writer
+
+
+pytestmark = pytest.mark.usefixtures("fake_memory_store")
 
 
 class TestImportSourceValidation:
@@ -154,7 +159,7 @@ class TestImportResyncEnvRestore:
         original_val = "pre_import_root"
         os.environ["TRW_PROJECT_ROOT"] = original_val
         try:
-            with patch("trw_mcp.export.resync_learning_index"):
+            with patch("trw_mcp.export_import.resync_learning_index"):
                 result = import_learnings(source_file, target)
             assert result["status"] == "ok"
             assert result["imported"] == 1

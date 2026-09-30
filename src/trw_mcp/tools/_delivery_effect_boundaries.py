@@ -87,6 +87,7 @@ EFFECT_BOUNDARIES: dict[str, EffectBoundary] = {
     "S21": _unjournaled("structured application logs are diagnostic and excluded from success proof"),
     "S22": _own("journal.step('S22') wraps step_project_handoff in run_trw_deliver"),
     "S23": _own("journal_step('S23') wraps _persist_decision_set inside the gate dispatcher"),
+    "S23b": _own("journal_step('S23b') wraps record_outcome inside the gate dispatcher"),
     "D00": _unjournaled("deferred lock record is coordination; liveness is its own proof"),
     "D01": _own("deferred chokepoint journals the auto_prune roster step"),
     "D03": _own("deferred chokepoint journals the tier_sweep roster step"),

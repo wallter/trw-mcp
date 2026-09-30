@@ -129,7 +129,7 @@ def _args(**over: Any) -> argparse.Namespace:
 
 
 def _run_cli(paths: SharedPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: argparse.Namespace) -> int:
-    monkeypatch.setattr(_cli, "_paths", lambda: (paths, SharedMcpConfig()))
+    monkeypatch.setattr(_cli, "_paths", lambda: (paths, SharedMcpConfig(), tmp_path))
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
     try:
         _cli.run_swap(args)

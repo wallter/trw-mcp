@@ -157,7 +157,7 @@ class TestDoReflect:
         # Only the two intact lines survive; the torn line is dropped, not fatal.
         assert result["events_analyzed"] == 2
         # Both surviving lines are error events → mechanical learnings extracted.
-        assert result["learnings_produced"] >= 1
+        assert result["mechanical_learnings_extracted"] >= 1
 
     def test_no_telemetry_noise_learnings_from_success_patterns(
         self,

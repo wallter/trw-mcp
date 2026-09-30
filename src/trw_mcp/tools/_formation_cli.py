@@ -109,7 +109,7 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     watch_parser.add_argument("--once", action="store_true", help="Print the current line and exit")
 
     # PRD-CORE-274 FR16: the only way a comms mailbox changes schema version.
-    upgrade_parser = verbs.add_parser("comms-upgrade", help="Upgrade this formation's v3 or v4 comms mailbox to v5")
+    upgrade_parser = verbs.add_parser("comms-upgrade", help="Upgrade this formation's v3, v4 or v5 comms mailbox to v6")
     upgrade_parser.add_argument(
         "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
     )

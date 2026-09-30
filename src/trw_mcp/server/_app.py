@@ -221,12 +221,26 @@ def _build_middleware() -> list[object]:
 
     middleware: list[object] = []
 
+    # CODEX-P0-B-ZERO-TOOL: outermost, so the receipt records what the client was actually shown. None unless dispatched.
+    from trw_mcp.middleware.handshake_receipt import maybe_handshake_middleware
+
+    if (handshake_receipt := maybe_handshake_middleware()) is not None:
+        middleware.append(handshake_receipt)
+
     # PRD-CORE-248 FR01: first in the chain — its on_initialize hook must wrap
     # the whole handshake, and its first-tool-call fallback must resolve backend
     # sync before any other middleware inspects session state.
     boot_deferral = _try_init_boot_deferral()
     if boot_deferral is not None:
         middleware.append(boot_deferral)
+
+    # E2E-VALIDATION-ERROR-ECHO: next around tool calls (boot deferral passes tool errors through untouched) and
+    # unconditional, since a security boundary is never fail-open: no argument ValidationError reaches the client
+    # or fastmcp's log with its input value.
+    from trw_mcp.middleware.validation_errors import ValidationErrorRedactionMiddleware, install_log_filter
+
+    install_log_filter()
+    middleware.append(ValidationErrorRedactionMiddleware())
 
     global _mcp_security
     _mcp_security = _try_init_mcp_security(config)
@@ -335,4 +349,20 @@ _mcp_security: object | None = None
 # trw_memory, config, middleware. 99% of the pre-`initialize` window is spent
 # here, and until now nothing said so.
 emit_boot_phase("import_complete")
-mcp = create_app()
+
+
+def build_served_app() -> FastMCP:
+    """Create the served app and register its whole tool, resource and prompt surface on it.
+
+    The one place registration happens (SERVER-LAZY-APP-IMPORT). The stdio transport calls it right before
+    ``run()``, the shared server before ``http_app()``, and scripts or tests that need the served surface call
+    it themselves. It used to run as a side effect of importing :mod:`trw_mcp.server`, so every CLI verb and
+    hook paid for fastmcp and the whole tool graph before doing anything.
+    """
+    from trw_mcp.server._tools import _register_tools
+
+    app = create_app()
+    _register_tools(app)
+    # PRD-CORE-248 FR02: the app exists and its full tool surface is registered.
+    emit_boot_phase("app_constructed")
+    return app

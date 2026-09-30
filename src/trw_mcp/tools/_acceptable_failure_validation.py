@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -42,21 +42,25 @@ logger = structlog.get_logger(__name__)
 
 _REQUIRED_FIELDS: tuple[str, ...] = ("failed_command", "residual_risk", "owner", "expiry_iso")
 
-# Copy-pasteable example surfaced in the FR05 deprecation error.
-_EXAMPLE_JSON = json.dumps(
-    {
-        "failed_command": "pytest trw-mcp/tests/ -q",
-        "residual_risk": "two flaky integration tests; core logic verified manually",
-        "owner": "agent-run-id-or-operator-name",
-        "expiry_iso": "2026-06-18",
-    }
-)
 
-_SCHEMA_REQUIRED_MSG = (
-    "acceptable-failure schema required: a plain string is no longer sufficient. "
-    f"Provide a structured record with required fields {list(_REQUIRED_FIELDS)} as JSON, e.g. "
-    f"{_EXAMPLE_JSON}"
-)
+def _schema_required_message() -> str:
+    """The FR05 schema error, with a copy-pasteable example that VALIDATES when pasted.
+
+    The example's ``expiry_iso`` is computed at call time (today + 30 days): a hardcoded date
+    silently expired and turned the error's own example into a refusal (E2E-INC-120).
+    """
+    example = json.dumps(
+        {
+            "failed_command": "pytest trw-mcp/tests/ -q",
+            "residual_risk": "two flaky integration tests; core logic verified manually",
+            "owner": "agent-run-id-or-operator-name",
+            "expiry_iso": (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat(),
+        }
+    )
+    return (
+        "acceptable-failure schema required: a plain string is no longer sufficient. "
+        f"Provide a structured record with required fields {list(_REQUIRED_FIELDS)} as JSON, e.g. {example}"
+    )
 
 
 def _try_parse_payload(reason: str) -> dict[str, object] | None:
@@ -102,14 +106,14 @@ def parse_acceptable_failure(reason: str) -> tuple[AcceptableFailureRecord | Non
     """
     payload = _try_parse_payload(reason)
     if payload is None:
-        return None, _SCHEMA_REQUIRED_MSG
+        return None, _schema_required_message()
 
     try:
         record = AcceptableFailureRecord.model_validate(payload)
     except ValidationError as exc:
         missing = sorted({str(err["loc"][0]) for err in exc.errors() if err.get("loc")})
         detail = f" Missing/invalid fields: {missing}." if missing else ""
-        return None, _SCHEMA_REQUIRED_MSG + detail
+        return None, _schema_required_message() + detail
 
     expiry_error = _expiry_error(record.expiry_iso)
     if expiry_error is not None:

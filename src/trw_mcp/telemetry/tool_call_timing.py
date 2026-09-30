@@ -196,7 +196,15 @@ def _resolve_run_dir(fn: Callable[..., object], *args: object, **kwargs: object)
         # PRD-CORE-291-FR03: trw_build_check and trw_review carry run_path in options.
         explicit_run = _options_mapping(bound_args.get("options")).get("run_path")
     if isinstance(explicit_run, str) and explicit_run.strip():
-        return Path(explicit_run).expanduser().resolve()
+        # INC-035: this runs BEFORE the tool validates run_path, so it takes the same containment rule
+        # (resolve_run_path) and never creates <outside>/meta for a path the tool would refuse.
+        from trw_mcp.exceptions import StateError
+        from trw_mcp.state._paths import resolve_run_path
+
+        try:
+            return resolve_run_path(str(Path(explicit_run).expanduser()))
+        except StateError:  # trw-fail-silent-allow: an invalid run_path is unattributed; the tool reports it itself
+            return None
 
     try:
         from trw_mcp.state._paths import TRWCallContext, find_active_run, get_pinned_run

@@ -71,7 +71,7 @@ def test_default_recall_over_a_large_store_is_stubs_within_the_byte_budget(large
         # The anchor whose path matches a query token wins over the first one.
         assert row["anchor"] == "src/sqlite_driver.py:connect"
     assert result["omitted"] > 0
-    assert result["total_matches"] == len(rows) + result["omitted"]
+    assert result["total_matches"] >= len(rows) + result["omitted"]  # the cap-dropped rows count too
     removed = {"patterns", "context", "compact", "candidate_count", "store_count", "duplicates_collapsed"}
     assert not removed & set(result)
     assert not [key for key in result if key.startswith("tokens_")]

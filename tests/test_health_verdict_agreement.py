@@ -188,8 +188,8 @@ def test_the_embedding_threshold_is_the_configured_one(fake_memory_store: FakeMe
     """
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage
 
-    trw_dir = _make_store(fake_memory_store, tmp_path, corpus=10)
-    fake_memory_store.stored_vectors.update({f"m{i}": [1.0] for i in range(3)})
+    trw_dir = _make_store(fake_memory_store, tmp_path, corpus=60)  # past the young-store threshold
+    fake_memory_store.stored_vectors.update({f"m{i}": [1.0] for i in range(18)})
 
     lenient = probe_embedding_coverage(trw_dir, TRWConfig(embeddings_coverage_warn_threshold=0.10))
     strict = probe_embedding_coverage(trw_dir, TRWConfig(embeddings_coverage_warn_threshold=0.50))

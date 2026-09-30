@@ -45,8 +45,9 @@ _ALREADY_REMOVED_TOOLS: frozenset[str] = frozenset(
 
 async def test_removed_tools_absent_from_prod_server() -> None:
     """FR01: none of the 4 removed tools are registered on the production server."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     tools = await mcp._list_tools()
     tool_names = {t.name for t in tools}
     leaked = _REMOVED_TOOLS & tool_names
@@ -55,8 +56,9 @@ async def test_removed_tools_absent_from_prod_server() -> None:
 
 async def test_six_already_removed_tools_stay_absent() -> None:
     """FR00 no-op gate: the 6 already-removed tools remain absent from the surface."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     tools = await mcp._list_tools()
     tool_names = {t.name for t in tools}
     leaked = _ALREADY_REMOVED_TOOLS & tool_names

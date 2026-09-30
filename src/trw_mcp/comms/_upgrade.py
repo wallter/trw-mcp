@@ -1,10 +1,10 @@
-"""Explicit, orchestrator-invoked mailbox upgrade to v5 and guarded rollback.
+"""Explicit, orchestrator-invoked mailbox upgrade to v6 and guarded rollback.
 
 A version chain (PRD-CORE-274 FR16, PRD-CORE-322 FR05): the upgrade reads the stored
-version (v3 or v4), verifies and backs up the file AS that version, then applies every
-step from there to v5 (v3 runs the v4 row rewrite and the v5 step) in one exclusive
+version (v3, v4 or v5), verifies and backs up the file AS that version, then applies every
+step from there to v6 (v3 runs the v4 row rewrite, then the v5 and v6 steps) in one exclusive
 hold with exactly one commit, and records ``from_version``; rollback restores that
-version's backup. Nothing here runs implicitly: opening an older mailbox with a v5
+version's backup. Nothing here runs implicitly: opening an older mailbox with a v6
 build refuses ``mailbox_upgrade_required`` in ``_store``; only these two entry points
 change the schema. Integrity rests on one connection held in SQLite ``locking_mode=EXCLUSIVE``:
 the backup copy, the column steps, the commit and the recorded file change counter
@@ -43,6 +43,7 @@ from trw_mcp.comms._schema import (
     UPGRADABLE_FROM,
     V4_STEPS,
     V5_STEPS,
+    V6_STEPS,
     SchemaVersionError,
     stored_version,
     verify,
@@ -195,8 +196,12 @@ def _apply_chain(conn: sqlite3.Connection, from_version: int, ttl_seconds: int) 
     """
     if from_version < 4:
         _apply_v4(conn, ttl_seconds)
-    for step in V5_STEPS:  # additive: no existing row changes (PRD-CORE-322 FR05)
-        conn.execute(step)
+    if from_version < 5:
+        for step in V5_STEPS:  # additive: no existing row changes (PRD-CORE-322 FR05)
+            conn.execute(step)
+    if from_version < 6:
+        for step in V6_STEPS:  # additive, nullable: old rows carry no trace context (PRD-CORE-342 FR07)
+            conn.execute(step)
     conn.execute("UPDATE schema_meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
 
 
@@ -212,7 +217,7 @@ def _write_record(path: Path, record: dict[str, Any]) -> None:
 def upgrade(
     manifest_path: Path, *, acknowledged: Iterable[str] = (), ttl_seconds: int, busy_timeout_ms: int = 5000
 ) -> dict[str, Any]:
-    """Upgrade one formation's v3 or v4 mailbox to v5, or refuse leaving the file unchanged."""
+    """Upgrade one formation's v3, v4 or v5 mailbox to v6, or refuse leaving the file unchanged."""
     path = database_path(manifest_path)
     if not path.is_file() or path.is_symlink():
         raise StoreError(StoreRefusal.UNAVAILABLE, "no mailbox to upgrade")

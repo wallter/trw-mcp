@@ -596,7 +596,8 @@ def test_an_admit_between_count_and_page_never_gives_a_negative_omitted(scene: S
     _request(scene, "first")
     copy = (
         "INSERT INTO admissions SELECT group_id,sender_member_id,'late',recipient_member_id,kind,delivery_class,"
-        "body,?,recipient_incarnation,admitted_at+1,state,expires_at,delivery_count,canonical_sha256 FROM admissions"
+        "body,?,recipient_incarnation,admitted_at+1,state,expires_at,delivery_count,canonical_sha256,traceparent "
+        "FROM admissions"
     )
     listed, omitted, blocked = _interleave(scene, "COUNT(*)", copy, ("f" * 32,))
     assert omitted >= 0 and len(listed) + omitted == 1 and blocked

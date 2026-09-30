@@ -94,3 +94,6 @@ def run_profile(args: argparse.Namespace) -> None:
         for key, value in document.items():
             rendered = json.dumps(value, default=str) if isinstance(value, (dict, list)) else value
             print(f"{key}: {rendered}")
+        client = document.get("client_profile")
+        for note in client.get("notes", []) if isinstance(client, dict) else []:
+            print(f"NOTE: {note}", file=sys.stderr)  # INC-078: said loudly, not only inside the JSON line

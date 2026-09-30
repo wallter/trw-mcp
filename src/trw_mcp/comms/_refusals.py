@@ -85,6 +85,10 @@ REFUSALS: dict[str, _R] = {
     "handoff_not_authorized": _R(
         "the recipient accepts and reports; only the original sender completes, and never its own handoff"
     ),
+    "handoff_to_self": _R(
+        "a request hands work to another member; address a peer, or checkpoint your own work",
+        persisted_as="recipient_not_eligible",
+    ),
     "handoff_not_accepted": _R("accept the request first: trw_inbox(action='accept')"),
     "handoff_not_reported": _R("wait for the owner's report: trw_inbox(action='status') shows it"),
     "handoff_already_reported": _R("the report is recorded; send a new request for rework"),
@@ -130,6 +134,23 @@ REFUSALS: dict[str, _R] = {
     ),
     "not_paused": _R("the formation is not paused; carry on"),
     "pause_id_mismatch": _R("ack the pause_id from your latest response; call trw_inbox to see it"),
+    # Precise argument refusals; each is COUNTED under the legacy bucket so the stored vocabulary is unchanged.
+    "unknown_message_id": _R(
+        "no such message: the id is not in this formation's mailbox; take ids from trw_inbox fetch or status",
+        persisted_as="invalid_inbox_arguments",
+    ),
+    "invalid_message_id": _R(
+        "message id must be 32 hex characters, as returned in a send receipt", persisted_as="invalid_inbox_arguments"
+    ),
+    "report_needs_next_read": _R(
+        "report needs next_read: where the sender should look (branch@SHA, PRD, run path or file)",
+        persisted_as="invalid_inbox_arguments",
+    ),
+    "report_takes_one_message_id": _R(
+        "report takes exactly one message id; report each handoff in its own call",
+        persisted_as="invalid_inbox_arguments",
+    ),
+    "invalid_message_body": _R("send a non-blank body", persisted_as="invalid_inbox_arguments"),
 }
 IDENTITY_REASONS = frozenset(reason for reason, spec in REFUSALS.items() if spec.identity)
 

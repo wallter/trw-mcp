@@ -23,6 +23,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DedupHandleResult
 from trw_mcp.state._helpers import truncate_nudge_line as truncate_nudge_line
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.telemetry._tool_span_attrs import set_dedup_action
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -216,6 +217,7 @@ def check_and_handle_dedup(
     # duplicate" would store a copy the daemon could not check.
     dedup_result = dedup_verdict(params.summary, params.detail, entries_dir, config=config)
     if dedup_result.action == "skip":
+        set_dedup_action("skip")  # PRD-CORE-344 FR03: in-memory span attribute, no host lock held
         logger.info(
             "learning_dedup_skipped",
             new_id=params.learning_id,
@@ -281,9 +283,12 @@ def check_and_handle_dedup(
             )
             # Two accepted merges can write their sidecars in either order; each writes the
             # row as it is NOW, under the file's lock, so the last write is the latest row.
-            with lock_for_rmw(yaml_file):
+            # The lock file sits under runtime/, not beside the sidecar: a sibling ``.lock`` was left
+            # in entries/ after every merge (E2E-INC-010).
+            with lock_for_rmw(_merge_lock_anchor(entries_dir, yaml_file)):
                 fresh = store.get(str(survivor_data.get("id", "")))
                 writer.write_yaml(yaml_file, merge_base(merged_body, fresh) if fresh is not None else merged_body)
+            set_dedup_action("merge")  # after the lock is released: no telemetry under a host lock
             logger.info(
                 "learning_dedup_merged",
                 new_id=params.learning_id,
@@ -298,7 +303,13 @@ def check_and_handle_dedup(
                 "message": f"Merged into existing entry: {dedup_result.existing_id}",
             }
 
+    set_dedup_action("store")  # a checked non-duplicate, or an unresolved survivor left unmerged
     return None
+
+
+def _merge_lock_anchor(entries_dir: Path, yaml_file: Path) -> Path:
+    """The path whose ``.lock`` sibling serialises sidecar writes for *yaml_file*, kept out of ``entries/``."""
+    return _entries_trw_dir(entries_dir) / "runtime" / "entry-locks" / yaml_file.name
 
 
 def _entries_trw_dir(entries_dir: Path) -> Path:

@@ -62,7 +62,7 @@ class SessionChangelogResult:
     has_commits: bool = False
     review_present: bool = False
     build_present: bool = False
-    learnings_recorded: int = 0
+    learnings_recorded: int | None = None  # None: not counted (only trw_deliver knows the session's count)
     package_changelog_advisory: list[PackageChangelogCoverage] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -268,6 +268,7 @@ def build_session_changelog(
     *,
     changelog_filename: str = "CHANGELOG.md",
     changelog_advisory_enabled: bool = False,
+    learnings_recorded: int | None = None,
 ) -> SessionChangelogResult:
     """Build the session changelog markdown + structured metadata (FR01/FR02).
 
@@ -283,6 +284,7 @@ def build_session_changelog(
             trw_dir,
             changelog_filename=changelog_filename,
             changelog_advisory_enabled=changelog_advisory_enabled,
+            learnings_recorded=learnings_recorded,
             warnings=warnings,
         )
     except Exception as exc:  # justified: fail-open — builder must never block deliver
@@ -298,6 +300,7 @@ def _build_session_changelog_inner(
     *,
     changelog_filename: str,
     changelog_advisory_enabled: bool,
+    learnings_recorded: int | None,
     warnings: list[str],
 ) -> SessionChangelogResult:
     meta = run_path / "meta"
@@ -312,8 +315,9 @@ def _build_session_changelog_inner(
     by_package, changed_warnings = _collect_changed_files(git_root)
     warnings.extend(changed_warnings)
 
-    learnings_recorded = sum(1 for e in events if str(e.get("event", "")) in {"trw_learn", "learning_recorded"})
-
+    # INC-071: the count comes from the caller (trw_deliver passes the ceremony state's learnings_this_session, the
+    # same number its own "N discoveries persisted" line uses). It used to count "trw_learn"/"learning_recorded"
+    # run events, which nothing writes, so a session that persisted learnings reported 0.
     advisory: list[PackageChangelogCoverage] = []
     if changelog_advisory_enabled:
         advisory = detect_package_changelog_advisory(by_package, git_root, changelog_filename=changelog_filename)
@@ -350,6 +354,7 @@ def write_session_changelog(
     *,
     changelog_filename: str = "CHANGELOG.md",
     changelog_advisory_enabled: bool = False,
+    learnings_recorded: int | None = None,
 ) -> tuple[Path, SessionChangelogResult]:
     """Build and persist the session changelog to ``reports/`` (FR01/FR04).
 
@@ -362,6 +367,7 @@ def write_session_changelog(
         trw_dir,
         changelog_filename=changelog_filename,
         changelog_advisory_enabled=changelog_advisory_enabled,
+        learnings_recorded=learnings_recorded,
     )
     reports_dir = run_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)

@@ -24,7 +24,8 @@ def test_a_removed_name_is_not_registered(name: str) -> None:
     """NFR01: no registration, alias or redirect exists for a removed name."""
     import asyncio
 
-    from trw_mcp.server import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     registered = {tool.name for tool in asyncio.run(mcp._list_tools())}
     assert name not in registered

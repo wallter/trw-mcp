@@ -220,6 +220,8 @@ tasks or reset existing statuses:
 ### Handoff
 - Last verified result and evidence path; unresolved risks and next outcome-linked task
 - Drift decision and rationale; validation/review remaining
+- Maps to an Agent Handoff Record (`trw://templates/ahr`): results -> `claims`, risks -> `risks`,
+  next task -> `next_actions[0]`, evidence paths -> `next_read`, remaining -> `not_done`
 ```
 
 Use a bounded, task-specific `trw_recall` before selecting the next work slice,

@@ -59,8 +59,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_trw_code_is_registered_and_the_four_old_tools_are_not() -> None:
-    from trw_mcp.server import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     registered = {tool.name for tool in asyncio.run(mcp._list_tools())}
     assert "trw_code" in registered
     old = {"trw_" + name for name in ("code_search", "code_symbol", "before_edit_hint", "before_edit_hint_batch")}
@@ -110,7 +111,8 @@ def test_an_unknown_mode_is_refused(project: Path) -> None:
     result = _call(mode="semantic", query="x")
 
     assert result["status"] == "failed"
-    assert "semantic" in str(result["error"])
+    assert "semantic" not in str(result["error"])  # the caller's value is never repeated (E2E-INC-125)
+    assert "symbol" in str(result["error"]) and "hint" in str(result["error"])  # the accepted modes are named
 
 
 def test_the_default_mode_is_hint(project: Path) -> None:
@@ -216,6 +218,113 @@ def test_one_failing_file_does_not_cost_the_others_their_hints(project: Path, mo
     result = _call(mode="hint", files=["bad.py", "good.py"])
 
     assert result["count"] == 2
-    assert result["hints"][0] == {"file_path": "bad.py", "status": "failed", "error": "boom"}
+    assert result["hints"][0] == {
+        "file_path": "bad.py",
+        "status": "failed",
+        "error": "the hint could not be computed (RuntimeError)",
+    }
     assert result["hints"][1]["file_path"] == "good.py"
     assert "learnings" in result["hints"][1]
+
+
+def test_a_hint_for_a_path_outside_the_project_fails_clearly(project: Path) -> None:
+    result = _call(mode="hint", files=["../../../etc/passwd", "/etc/hosts", "ok.py"])
+
+    outside, absolute, inside = result["hints"]
+    assert outside["status"] == "failed" and "outside the project root" in outside["error"]
+    assert absolute["status"] == "failed" and "outside the project root" in absolute["error"]
+    assert "status" not in inside or inside["status"] != "failed"
+    assert result["failed_count"] == 2 and result["status"] == "ok"
+
+
+def test_only_outside_paths_make_the_whole_call_fail(project: Path) -> None:
+    result = _call(mode="hint", files="../escape.py")
+
+    assert result["status"] == "failed"
+    assert result["count"] == 1 and "outside the project root" in result["hints"][0]["error"]
+
+
+def test_a_hint_for_a_missing_file_inside_the_project_is_marked_not_found(project: Path) -> None:
+    (project / "real.py").write_text("x = 1\n", encoding="utf-8")
+
+    real, typo = _call(mode="hint", files=["real.py", "raelpy.py"])["hints"]
+
+    assert "path_status" not in real
+    assert typo["path_status"] == "not_found" and "does not exist" in typo["path_note"]
+
+
+def test_a_symbol_with_no_match_says_why_and_still_has_results(project: Path) -> None:
+    (project / "pkg").mkdir()
+    (project / "pkg" / "w.py").write_text("class Widget:\n    def render(self):\n        return 1\n", encoding="utf-8")
+    update_code_index(project)
+
+    found = _call(mode="symbol", query="Widget", repo_root=str(project))
+    method = _call(mode="symbol", query="render", repo_root=str(project))
+
+    assert found["results"] and "message" not in found
+    assert method["status"] == "ok" and method["results"] == []
+    assert "a method is inside its class" in method["message"]
+
+
+def test_the_docstring_names_the_index_step_and_the_method_limit() -> None:
+    from tests._served_app import served_app
+
+    mcp = served_app()
+    tool = next(t for t in asyncio.run(mcp._list_tools()) if t.name == "trw_code")
+
+    assert "trw-mcp code index" in (tool.description or "")
+    assert "method" in (tool.description or "")
+
+
+def test_a_malformed_path_fails_its_own_hint_not_the_batch(project: Path) -> None:
+    good, bad = _call(mode="hint", files=["ok.py", "bad\x00name.py"])["hints"]
+
+    assert bad["status"] == "failed" and "not a usable path" in bad["error"]
+    assert good.get("status") != "failed"
+
+
+def test_repo_root_is_confined_to_the_project_like_files_are(project: Path) -> None:
+    for mode, extra in (("hint", {"files": ["hosts"]}), ("symbol", {"query": "x"})):
+        result = _call(mode=mode, repo_root="/etc", **extra)
+
+        assert result["status"] == "failed", f"{mode}: a repo_root outside the project was accepted"
+        assert "/etc" not in str(result["error"]), "the refusal repeated the caller's value"
+        assert "project root" in str(result["error"])
+
+
+def test_repo_root_inside_the_project_is_still_accepted(project: Path) -> None:
+    (project / "sub").mkdir()
+    (project / "sub" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    result = _call(mode="hint", files=["a.py"], repo_root=str(project / "sub"))
+
+    assert result["status"] == "ok"
+
+
+def test_a_huge_path_is_neither_echoed_in_the_reason_nor_repeated_in_full(project: Path) -> None:
+    huge = "/" + "p" * 5000
+
+    result = _call(mode="hint", files=[huge])
+
+    entry = result["hints"][0]
+    assert entry["status"] == "failed"
+    assert "p" * 300 not in str(entry["error"])
+    assert len(entry["file_path"]) <= 210
+    assert len(str(result)) < 2000, "a 5000-character path must not come back twice"
+
+
+def test_repo_root_cannot_escape_by_symlink_dotdot_or_a_nul_byte(project: Path, tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-elsewhere"  # the project IS tmp_path, so this is outside it
+    outside.mkdir()
+    (project / "link").symlink_to(outside)
+    for bad in (str(project / "link"), str(project / ".." / outside.name), "../..", "a\x00b"):
+        result = _call(mode="hint", files=["x.py"], repo_root=bad)
+
+        assert result["status"] == "failed", f"repo_root {bad!r} was accepted"
+        assert "link" not in str(result["error"]) and "elsewhere" not in str(result["error"])
+
+
+def test_a_path_label_is_at_most_200_characters_including_the_ellipsis(project: Path) -> None:
+    result = _call(mode="hint", files=["/" + "q" * 400])
+
+    assert len(result["hints"][0]["file_path"]) == 200

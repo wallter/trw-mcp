@@ -477,6 +477,70 @@ class TestBackup:
         guarded_instruction_write(target, "# original\n# added\n", markers=_MARKERS, project_root=tmp_path)
         assert len(list(backups.glob("AGENTS.md.*"))) == 1
 
+    def test_a_write_whose_pre_bytes_match_the_newest_backup_takes_no_new_copy(self, tmp_path: Path) -> None:
+        """E2E-INC-015: alternating writers must not add a copy of bytes already retained."""
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# a\n", encoding="utf-8")
+        backups = tmp_path / TRWConfig().instruction_backup_dir
+
+        guarded_instruction_write(target, "# a\n# b\n", markers=_MARKERS, project_root=tmp_path)
+        first = sorted(backups.glob("AGENTS.md.*"))
+        target.write_text("# a\n", encoding="utf-8")  # back to the bytes the newest backup holds
+        guarded_instruction_write(target, "# a\n# b\n", markers=_MARKERS, project_root=tmp_path)
+
+        assert sorted(backups.glob("AGENTS.md.*")) == first
+
+    def test_each_real_change_takes_exactly_one_backup_and_at_most_retention_stay(self, tmp_path: Path) -> None:
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# v0\n", encoding="utf-8")
+        config = TRWConfig(instruction_backup_retention=2)
+        backups = tmp_path / config.instruction_backup_dir
+        counts = []
+        for i in range(1, 5):
+            time.sleep(0.001)
+            guarded_instruction_write(target, f"# v{i}\n", markers=_MARKERS, project_root=tmp_path, config=config)
+            counts.append(len(list(backups.glob("AGENTS.md.*"))))
+        assert counts == [1, 2, 2, 2]
+        assert sorted(p.read_text(encoding="utf-8") for p in backups.glob("AGENTS.md.*")) == ["# v2\n", "# v3\n"]
+
+    def test_default_retention_is_a_small_bound(self) -> None:
+        assert TRWConfig().instruction_backup_retention == 5
+
+    def test_a_symlink_to_the_live_file_is_not_reused_as_the_newest_backup(self, tmp_path: Path) -> None:
+        """Codex KI (E2E-UPDATE-IDEMPOTENT r1): a planted ``AGENTS.md.<stamp>`` symlink to the live file reads
+        equal to it; it must not stand in for a real pre-write copy."""
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# user text\n", encoding="utf-8")
+        backups = tmp_path / TRWConfig().instruction_backup_dir
+        backups.mkdir(parents=True)
+        (backups / "AGENTS.md.99991231T000000000000Z").symlink_to(target)
+
+        verdict = guarded_instruction_write(target, "# user text\n# added\n", markers=_MARKERS, project_root=tmp_path)
+
+        assert verdict.backup_path is not None
+        copy = Path(verdict.backup_path)
+        assert not copy.is_symlink() and copy.read_text(encoding="utf-8") == "# user text\n"
+
+    def test_pruning_never_removes_a_directory_or_follows_a_symlink(self, tmp_path: Path) -> None:
+        """Codex KI (E2E-UPDATE-IDEMPOTENT r1): retention prunes regular files only, never recursively."""
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# v0\n", encoding="utf-8")
+        config = TRWConfig(instruction_backup_retention=1)
+        backups = tmp_path / config.instruction_backup_dir
+        backups.mkdir(parents=True)
+        planted_dir = backups / "AGENTS.md.00000000T000000000000Z"
+        (planted_dir / "keep").mkdir(parents=True)
+        outside = tmp_path / "outside.md"
+        outside.write_text("mine\n", encoding="utf-8")
+        (backups / "AGENTS.md.00000000T000000000001Z").symlink_to(outside)
+        for i in range(1, 4):
+            time.sleep(0.001)
+            guarded_instruction_write(target, f"# v{i}\n", markers=_MARKERS, project_root=tmp_path, config=config)
+
+        assert (planted_dir / "keep").is_dir() and outside.read_text(encoding="utf-8") == "mine\n"
+        regular = [p for p in backups.glob("AGENTS.md.*") if p.is_file() and not p.is_symlink()]
+        assert [p.read_text(encoding="utf-8") for p in regular] == ["# v2\n"]
+
     def test_a_missing_target_creates_without_a_backup(self, tmp_path: Path) -> None:
         target = tmp_path / "AGENTS.md"
 
@@ -641,6 +705,17 @@ class TestDecoratorPreservesIntrospection:
             assert "_write_guard.py" not in str(resolved)
 
 
+@pytest.fixture(scope="module")
+def real_instruction_writes() -> list[_WriteSite]:
+    """The widened scan of the REAL src tree, run once for the two totality checks that read it (they each ran it,
+    ~5 s apiece, POLICY-SUITE-SPEED). Scans of synthetic trees still call ``_scan_instruction_writes`` directly."""
+    return _scan_instruction_writes(_SRC_ROOT)
+
+
+#: Both real-tree totality checks use that one scan, so under xdist they run on one worker.
+_REAL_SCAN_GROUP = pytest.mark.xdist_group("instruction_write_guard_real_scan")
+
+
 class TestWriterTotality:
     """FR06: every instruction-file writer routes through the one guard.
 
@@ -708,16 +783,20 @@ class TestWriterTotality:
         1,
     )
 
-    def test_every_instruction_writer_routes_through_the_guard(self) -> None:
+    @_REAL_SCAN_GROUP
+    def test_every_instruction_writer_routes_through_the_guard(self, real_instruction_writes: list[_WriteSite]) -> None:
         """Set difference between "writes an instruction surface" and "calls the guard"."""
         unguarded = [
             site
-            for site in _scan_instruction_writes(_SRC_ROOT)
+            for site in real_instruction_writes
             if not (self.GUARD_SYMBOLS & _referenced_names(_SRC_ROOT / site.module))
         ]
         assert _excess(unguarded, self.ALLOWLIST) == {}
 
-    def test_no_module_writes_an_instruction_surface_outside_the_seam(self) -> None:
+    @_REAL_SCAN_GROUP
+    def test_no_module_writes_an_instruction_surface_outside_the_seam(
+        self, real_instruction_writes: list[_WriteSite]
+    ) -> None:
         """No raw write to a user instruction surface survives anywhere under src/.
 
         Stronger than the per-module check above: a module can call the guard for
@@ -725,7 +804,7 @@ class TestWriterTotality:
         inside the seam itself.
         """
         seam = {"state/claude_md/_write_guard.py", "bootstrap/_guarded_write.py"}
-        offenders = [site for site in _scan_instruction_writes(_SRC_ROOT) if site.module not in seam]
+        offenders = [site for site in real_instruction_writes if site.module not in seam]
         assert _excess(offenders, self.ALLOWLIST) == {}
 
     def test_a_new_write_in_an_allowlisted_function_still_fails(self) -> None:
@@ -928,9 +1007,14 @@ class TestWriterTotality:
         forced = init_project(tmp_path, ide="claude-code", force=True)
         assert not forced["errors"]
 
+        # The invariant is that the user's bytes survive: in the file itself (the block is replaced in place, so a
+        # note after it is untouched and nothing is rewritten that needs a copy), or, when the write does replace
+        # them, in a backup. A no-op rewrite used to leave a backup only because two writers churned the file.
         backups = list((tmp_path / TRWConfig().instruction_backup_dir).glob("AGENTS.md.*"))
-        assert len(backups) >= 1, "a forced rewrite of an existing AGENTS.md must be backed up, not clobbered"
-        assert any("My private notes" in b.read_text(encoding="utf-8") for b in backups)
+        survives = "My private notes" in agents_md.read_text(encoding="utf-8")
+        assert survives or any("My private notes" in b.read_text(encoding="utf-8") for b in backups), (
+            "a forced rewrite of an existing AGENTS.md must keep the user's notes or back them up, not clobber them"
+        )
 
     def test_no_writer_reports_success_while_losing_user_bytes(self, tmp_path: Path) -> None:
         """NFR04: success and non-generated shrink are mutually exclusive."""
@@ -1109,14 +1193,21 @@ class TestPerformance:
         target = tmp_path / "AGENTS.md"
         target.write_text("# original\n", encoding="utf-8")
         reads: list[str] = []
-        real_read = Path.read_text
+        real_text, real_bytes = Path.read_text, Path.read_bytes
 
-        def _counting(self: Path, *args: object, **kwargs: object) -> str:
+        # The guard reads the target byte-exactly (no newline translation); count either spelling of a read.
+        def _counting_text(self: Path, *args: object, **kwargs: object) -> str:
             if self == target:
                 reads.append(str(self))
-            return real_read(self, *args, **kwargs)  # type: ignore[arg-type]
+            return real_text(self, *args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(Path, "read_text", _counting)
+        def _counting_bytes(self: Path) -> bytes:
+            if self == target:
+                reads.append(str(self))
+            return real_bytes(self)
+
+        monkeypatch.setattr(Path, "read_text", _counting_text)
+        monkeypatch.setattr(Path, "read_bytes", _counting_bytes)
         guarded_instruction_write(target, "# original\n# more\n", markers=_MARKERS, project_root=tmp_path)
 
         assert len(reads) == 1

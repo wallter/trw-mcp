@@ -64,8 +64,10 @@ def test_an_unknown_key_is_refused_naming_it(run: Path) -> None:
 
 
 def test_an_unknown_kind_is_refused(run: Path) -> None:
-    _refused(run, {"kind": "STOP", "attempt": "a1", "reason": "x"}, "unknown kind", "STOP")
-    _refused(run, {"attempt": "a1"}, "unknown kind")
+    _refused(run, {"kind": "STOP", "attempt": "a1", "reason": "x"}, "unknown kind", "START")
+    # The value the caller sent is not repeated (E2E-INC-125); the accepted kinds are named instead.
+    assert "STOP" not in str(_write(run, {"kind": "STOP", "attempt": "a1", "reason": "x"})["remedy"])
+    _refused(run, {"kind": None, "attempt": "a1"}, "kind is required")
 
 
 @pytest.mark.parametrize(
@@ -92,8 +94,6 @@ def test_an_unknown_key_for_the_kind_is_refused_even_when_another_kind_allows_it
         {"kind": "START", "attempt": "a1"},
         {"kind": "START", "attempt": "a1", "subject_sha": SHA, "branch": "b", "base": "c", "note": "n"},
         {"kind": "START", "attempt": "a1", "model_id": "m", "tier": "frontier", "effort": "high", "client": "claude"},
-        {"kind": "VOID", "attempt": "a1", "reason": "verifier FAIL"},
-        {"kind": "VOID", "attempt": "a1", "reason": "verifier FAIL", "by": "swarm-verifier"},
     ],
 )
 def test_every_shape_the_workers_and_the_verifier_really_write_is_still_accepted(
@@ -104,6 +104,7 @@ def test_every_shape_the_workers_and_the_verifier_really_write_is_still_accepted
 
 def test_ready_and_used_with_real_receipts_are_still_accepted(run: Path, build_check_invoke: Any) -> None:
     built = build_check_invoke(tests_passed=True, scope="feature", run_path=str(run))
+    assert _write(run, {"kind": "START", "attempt": "a1", "subject_sha": SHA})["recorded"] is True
     ready = _write(
         run,
         {"kind": "READY", "attempt": "a1", "subject_sha": SHA, "receipts": {"build": [built["build_receipt_id"]]}},
@@ -126,3 +127,72 @@ def test_non_factory_messages_are_never_touched(run: Path) -> None:
 
     for message in ("finished the parser", '{"factory": 2, "kind": "whatever"}', '{"note": "no discriminator"}'):
         assert execute_checkpoint(str(run), message, None)["recorded"] is True  # type: ignore[index]
+
+
+# --- E2E-INC-093..096 (S12 black-box report): write-time checks the reader or admit.py made only later ----------
+
+
+@pytest.mark.parametrize("sha", ["xyz", "zz", "A" * 40, "a" * 39, "a" * 41, "g" * 40])
+@pytest.mark.parametrize("kind", ["START", "READY"])
+def test_a_subject_sha_that_is_not_40_lowercase_hex_is_refused(run: Path, kind: str, sha: str) -> None:
+    """INC-093: admit.py refuses these later, but the append-only journal would keep the bad value forever."""
+    payload: dict[str, Any] = {"kind": kind, "attempt": "a1", "subject_sha": sha}
+    if kind == "READY":
+        payload["receipts"] = {"build": ["build-x"]}
+    _refused(run, payload, "subject_sha must be 40 lowercase hex")
+
+
+def test_a_missing_kind_names_the_kinds(run: Path) -> None:
+    """INC-094: not ``unknown kind 'None'``."""
+    _refused(run, {"attempt": "a1"}, "kind is required (START|READY|USED|VOID)")
+
+
+@pytest.mark.parametrize(("kind", "family"), [("READY", "build"), ("USED", "verification")])
+def test_a_receipts_value_that_is_not_a_map_shows_the_shape(run: Path, kind: str, family: str) -> None:
+    """INC-094: INC-065 gave the list branch an example; the string and missing branches had none."""
+    _refused(run, {"kind": kind, "attempt": "a1", "receipts": "build-1"}, f'e.g. "receipts": {{"{family}": [')
+
+
+def test_a_refusal_names_the_command_that_shows_attempt_state(run: Path) -> None:
+    """INC-095: the agent cannot see its attempts from trw_status; the refusal points at the reader."""
+    _refused(run, {"kind": "START", "attempt": "has space"}, "trw-mcp factory status --run")
+
+
+def _lifecycle_refused(run: Path, payload: dict[str, Any], *fragments: str) -> None:
+    before = _journal(run)
+    result = _write(run, payload)
+    assert result["recorded"] is False, result
+    assert result["reason"] == result["error_type"] == "factory_lifecycle_invalid", result
+    for fragment in (*fragments, "trw-mcp factory status --run"):
+        assert fragment in str(result["remedy"]), (fragment, result["remedy"])
+    assert _journal(run) == before, "a refused transition must not touch the journal"
+
+
+def test_ready_without_a_start_is_refused(run: Path) -> None:
+    """INC-096: the reader would count it incomplete (or excluded, once a START lands after it)."""
+    _lifecycle_refused(
+        run, {"kind": "READY", "attempt": "a1", "subject_sha": SHA, "receipts": {"build": ["b1"]}}, "no START"
+    )
+
+
+def test_void_for_an_attempt_that_never_reached_ready_is_refused(run: Path) -> None:
+    """INC-096: the reader ignores a VOID before any READY; recording it retracts nothing."""
+    _lifecycle_refused(run, {"kind": "VOID", "attempt": "ghost", "reason": "verifier FAIL"}, "no READY")
+    assert _write(run, {"kind": "START", "attempt": "a1"})["recorded"] is True
+    _lifecycle_refused(run, {"kind": "VOID", "attempt": "a1", "reason": "verifier FAIL"}, "no READY")
+
+
+def test_a_second_start_for_the_same_attempt_is_refused(run: Path) -> None:
+    """INC-096: a differing second START makes the attempt a conflict the reader excludes."""
+    assert _write(run, {"kind": "START", "attempt": "a1", "subject_sha": SHA})["recorded"] is True
+    _lifecycle_refused(run, {"kind": "START", "attempt": "a1", "subject_sha": "b" * 40}, "already recorded")
+    _lifecycle_refused(run, {"kind": "START", "attempt": "a1", "subject_sha": SHA}, "already recorded")
+
+
+def test_the_full_lifecycle_is_still_accepted(run: Path, build_check_invoke: Any) -> None:
+    built = build_check_invoke(tests_passed=True, scope="feature", run_path=str(run))
+    assert _write(run, {"kind": "START", "attempt": "a1", "subject_sha": SHA})["recorded"] is True
+    ready = {"kind": "READY", "attempt": "a1", "subject_sha": SHA, "receipts": {"build": [built["build_receipt_id"]]}}
+    assert _write(run, ready)["recorded"] is True
+    void = {"kind": "VOID", "attempt": "a1", "reason": "verifier FAIL", "by": "swarm-verifier"}
+    assert _write(run, void)["recorded"] is True  # the VOID shapes the verifier writes, now after a READY

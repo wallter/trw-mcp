@@ -97,6 +97,11 @@ class BuildCommandResult(BaseModel):
     label: str = Field(description="Safe redacted command label — not the raw argv.")
     command_class: CommandClass
     exit_code: int
+    # True when the caller never reported this command's outcome (an omitted
+    # ``static_checks_clean``). ``exit_code`` is then a placeholder, not an observed
+    # failure: the result never reads as a pass, and the deliver refusal names the
+    # omission instead of a generic failure.
+    not_run: bool = False
     started_at: str = ""
     completed_at: str = ""
     test_count: int | None = Field(default=None, ge=0)
@@ -130,7 +135,8 @@ class BuildCommandResult(BaseModel):
 
     @property
     def passed(self) -> bool:
-        return self.exit_code == 0
+        # A result whose outcome was never reported is never a pass, whatever its placeholder exit code.
+        return self.exit_code == 0 and not self.not_run
 
     def render_integration_claim(self) -> str:
         """Human-facing integration claim text (FR03).

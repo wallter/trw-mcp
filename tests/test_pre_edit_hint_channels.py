@@ -49,7 +49,7 @@ class TestCodexRegistration:
         assert group["matcher"] == "apply_patch"
         (hook,) = group["hooks"]  # type: ignore[misc]
         assert hook["command"] == (  # type: ignore[index]
-            f'TRW_HOOK_CLIENT=codex /bin/sh "$(git rev-parse --show-toplevel)/{_HINT_SCRIPT}"'
+            f'TRW_HOOK_CLIENT=codex /bin/sh "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/{_HINT_SCRIPT}"'
         )
         assert hook["timeout"] == 3  # type: ignore[index]
         assert str(group["description"]).startswith("TRW managed:"), "uninstall strips groups by this tag"

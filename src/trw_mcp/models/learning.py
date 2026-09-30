@@ -7,11 +7,21 @@ progressively more effective in a specific repository.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _utc_today() -> date:
+    """Today's UTC date: the one calendar every learning writer stamps.
+
+    ``date.today`` is the LOCAL date, so a learning created at 19:00 MT (01:00 UTC)
+    was named for one day and, once updated, stamped with the next (E2E-INC-010).
+    """
+    return datetime.now(tz=timezone.utc).date()
+
 
 # PRD-CORE-001, PRD-CORE-004: Learning entry models with utility scoring
 
@@ -80,8 +90,8 @@ class LearningEntry(BaseModel):
     impact: float = Field(ge=0.0, le=1.0, default=0.5)
     status: LearningStatus = LearningStatus.ACTIVE
     recurrence: int = Field(ge=0, default=1)
-    created: date = Field(default_factory=date.today)
-    updated: date = Field(default_factory=date.today)
+    created: date = Field(default_factory=_utc_today)
+    updated: date = Field(default_factory=_utc_today)
     resolved_at: date | None = None
     promoted_to_claude_md: bool = False
     last_accessed_at: date | None = None
@@ -264,6 +274,6 @@ class Pattern(BaseModel):
     description: str
     confidence: float = Field(ge=0.0, le=1.0, default=0.5)
     evidence: list[str] = Field(default_factory=list)
-    first_seen: date = Field(default_factory=date.today)
-    last_seen: date = Field(default_factory=date.today)
+    first_seen: date = Field(default_factory=_utc_today)
+    last_seen: date = Field(default_factory=_utc_today)
     occurrences: int = Field(ge=1, default=1)

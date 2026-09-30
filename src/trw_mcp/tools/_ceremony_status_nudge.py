@@ -15,11 +15,14 @@ closer to the 350 effective-LOC ceiling.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 
 import structlog
 
+from trw_mcp.state._ceremony_state_model import NudgeContext
 from trw_mcp.state._origin_project import is_verified, nudge_eligible_pool
 from trw_mcp.state.ceremony_progress import CeremonyState
 from trw_mcp.tools._ceremony_status_helpers import (
@@ -30,12 +33,89 @@ from trw_mcp.tools._ceremony_status_helpers import (
 
 logger = structlog.get_logger(__name__)
 
+#: ``(needles, excluded ids)``: what the learnings pool must relate to, and what it must never surface.
+Relevance = tuple[tuple[str, ...], frozenset[str]]
 
-def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | None:
+
+def nudge_relevance(
+    trw_dir: Path,
+    context: NudgeContext | None,
+    response: Mapping[str, object] | None,
+) -> Relevance | None:
+    """What the learnings pool must relate to on a ``trw_learn`` or ``trw_status`` response (E2E-INC-010).
+
+    ``None`` leaves the pool unfiltered (every other call). Otherwise a learning is drawn only when
+    it names one of ``needles`` by W2's whole-token rule (``_learnings_collector._names_any``: its
+    text, tags or anchors), and never when its id is in ``exclude``:
+
+    - ``trw_learn``: the tags and anchored files of the entry just written; that entry is excluded.
+    - ``trw_status``: the active run's task and the files modified in the working tree.
+
+    Nothing related means the pool yields no nudge for this call; the other pools still fire.
+    """
+    from trw_mcp.state._ceremony_state_model import ToolName
+
+    tool = context.tool_name if context is not None else ""
+    body = response or {}
+    if tool == ToolName.LEARN:
+        written = str(body.get("learning_id") or "")
+        row = _written_row(trw_dir, written)
+        tags = row.get("tags") if row else None
+        anchors = row.get("anchors") if row else None
+        needles: list[str] = [str(t) for t in tags] if isinstance(tags, list) else []
+        for anchor in anchors if isinstance(anchors, list) else []:
+            file = str(anchor.get("file", "")) if isinstance(anchor, dict) else str(anchor)
+            needles.extend(n for n in (file, os.path.basename(file)) if n)
+        return _clean(needles), frozenset({written} if written else ())
+    if tool == ToolName.STATUS:
+        from trw_mcp.state.recall_context import build_recall_context
+
+        needles = []
+        task = str(body.get("task") or "")
+        if task and task != "unknown":
+            needles.append(task)
+        with suppress(Exception):  # justified: fail-open, no working-tree context means fewer needles
+            context_obj = build_recall_context(trw_dir, "*")
+            needles.extend(str(f).strip() for f in getattr(context_obj, "modified_files", []) or [])
+        return _clean(needles), frozenset()
+    return None
+
+
+def _clean(needles: list[str]) -> tuple[str, ...]:
+    """Stripped, de-duplicated, non-blank needles: a whitespace tag must not match every learning (codex r1 KI)."""
+    return tuple(dict.fromkeys(n.strip() for n in needles if n.strip()))
+
+
+def _written_row(trw_dir: Path, learning_id: str) -> dict[str, object] | None:
+    """The just-written learning's tags and anchored files, read through the store (never the YAML mirror)."""
+    if not learning_id:
+        return None
+    try:
+        from trw_mcp.state._recall_admission import fetch_admitted
+
+        rows = fetch_admitted(trw_dir, [learning_id])
+    except Exception:  # trw-fail-silent-allow: fail-open, an unreadable row means nothing is related (logged at debug)
+        logger.debug("nudge_relevance_row_failed", exc_info=True)
+        return None
+    if not rows:
+        return None
+    entry = rows[0]
+    return {"tags": list(entry.tags), "anchors": [str(getattr(a, "file", a)) for a in entry.anchors]}
+
+
+def _related(candidates: list[dict[str, object]], relevance: Relevance) -> list[dict[str, object]]:
+    from trw_mcp.tools._learnings_collector import _names_any
+
+    needles, exclude = relevance
+    return [c for c in candidates if str(c.get("id", "")) not in exclude and _names_any(c, needles)]
+
+
+def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState, relevance: Relevance | None = None) -> str | None:
     """Attempt to produce learning nudge content, in recall order.
 
     Picks the first candidate with renderable text after the phase and domain
-    contextualisation (PRD-CORE-303 FR01: no backend weight reorders it).
+    contextualisation (PRD-CORE-303 FR01: no backend weight reorders it). With a
+    *relevance* (see :func:`nudge_relevance`) only learnings related to the call are candidates.
     """
     try:
         from trw_mcp.state._ceremony_progress_state import is_nudge_eligible, record_nudge_shown
@@ -58,6 +138,8 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             logger.debug("ceremony_status_config_defaults", exc_info=True)
 
         candidates = recall_for_nudge_pool(trw_dir, query="*", min_impact=0.5, max_results=20)
+        if relevance is not None:
+            candidates = _related(candidates, relevance)
         if not candidates:
             return None
 

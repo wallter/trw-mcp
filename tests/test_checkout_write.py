@@ -143,3 +143,36 @@ def test_text_line_ends_follow_os_linesep_like_text_mode(
     end = linesep.encode("ascii")
     assert (tmp_path / "a.txt").read_bytes() == b"one" + end + b"two" + end
     assert (tmp_path / "b.jsonl").read_bytes() == b"x" + end + b"y" + end
+
+
+# --- SAFE-WRITE-MODE-EDGES (codex on security slice 3B) -----------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_a_kept_mode_is_not_narrowed_by_the_umask_a_second_time(tmp_path: Path) -> None:
+    """0o664 under umask 022 used to come back 0o644: the publish is a fresh inode, so the umask applied again."""
+    target = tmp_path / "shared.json"
+    target.write_text("old\n", encoding="utf-8")
+    target.chmod(0o664)
+    previous = os.umask(0o022)
+    try:
+        write_checkout_file(tmp_path, target, "new\n")
+    finally:
+        os.umask(previous)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o664
+
+
+def test_a_failed_mode_lookup_raises_instead_of_guessing_the_default_mode() -> None:
+    """Fail closed: only an absent leaf (or a symlinked component, which the write refuses) means "new file"."""
+    from trw_mcp._checkout_write import _regular_mode
+
+    def denied() -> os.stat_result:
+        raise PermissionError(13, "Permission denied")
+
+    def absent() -> os.stat_result:
+        raise FileNotFoundError(2, "No such file")
+
+    with pytest.raises(PermissionError):
+        _regular_mode(denied)
+    assert _regular_mode(absent) is None

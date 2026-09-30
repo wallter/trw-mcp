@@ -24,12 +24,19 @@ A payload that fails the reader's schema is left to the reader, which diagnoses 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
+from trw_mcp._refusal_echo import key_name
 from trw_mcp.bootstrap._utils import printable
-from trw_mcp.state._factory_status import _ALL_KINDS, CELL_KEYS, _resolve, _schema_error
+from trw_mcp.state._factory_status import _ALL_KINDS, CELL_KEYS, _load, _resolve, _schema_error
 
-__all__ = ["factory_payload_refusal", "unresolved_receipts"]
+__all__ = ["STATUS_HINT", "factory_payload_refusal", "lifecycle_refusal", "unresolved_receipts"]
+
+#: Every factory refusal ends with this: trw_status does not show attempts, the reader does (E2E-INC-095).
+STATUS_HINT = "This run's attempts: `trw-mcp factory status --run <run_path>`."
+#: admit.py refuses anything else later, but the journal is append-only, so the bad value would stay (E2E-INC-093).
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 #: Keys every factory payload carries; the per-kind extras are what real workers and the verifier write.
 _BASE_KEYS = frozenset({"factory", "kind", "attempt"})
@@ -42,25 +49,60 @@ _KIND_KEYS: dict[str, frozenset[str]] = {
 
 
 def _shown(text: object) -> str:
-    return printable(str(text))[:40]
+    """A caller-chosen name (an attempt id, a key) as a refusal may repeat it: identifier-shaped and clean, or withheld."""
+    return key_name(
+        printable(str(text))
+    )  # no pre-truncation: a long value whose first 40 characters look clean is still withheld
 
 
 def factory_payload_refusal(message: str) -> str | None:
     """Why a ``factory:1`` message must not be recorded, naming the key at fault; ``None`` when it may be."""
     payload = json.loads(message)
     kind = payload.get("kind")
+    if kind is None:
+        return f"kind is required ({'|'.join(_ALL_KINDS)})"
     if kind not in _ALL_KINDS:
-        return f"unknown kind {_shown(kind)!r}: use one of {', '.join(_ALL_KINDS)}"
+        return f"unknown kind: use one of {', '.join(_ALL_KINDS)}"
     if "attempt" not in payload:
         others = sorted(set(payload) - _BASE_KEYS - _KIND_KEYS[kind])
         hint = f" (found {', '.join(_shown(k) for k in others)} instead)" if others else ""
         return f"missing key: attempt{hint}; without it the {kind} never joins its attempt"
     if (problem := _schema_error(payload)) is not None:
         return problem
+    sha = payload.get("subject_sha")
+    if "subject_sha" in payload and not (isinstance(sha, str) and _SHA.fullmatch(sha)):
+        return "subject_sha must be 40 lowercase hex (the full git sha)"
     unknown = sorted(set(payload) - _BASE_KEYS - _KIND_KEYS[kind])
     if unknown:
         allowed = ", ".join(sorted(_BASE_KEYS | _KIND_KEYS[kind]))
         return f"unknown key(s) for {kind}: {', '.join(_shown(k) for k in unknown)} (allowed: {allowed})"
+    return None
+
+
+#: The kind each transition follows; the reader counts one without it incomplete, excluded or ignored (E2E-INC-096).
+_FOLLOWS = {"READY": "START", "USED": "READY", "VOID": "READY"}
+
+
+def lifecycle_refusal(run: Path, message: str) -> str | None:
+    """Why a valid factory *message* must not join the attempts already journaled under *run*; ``None`` when it may.
+
+    Each kind is recorded once per attempt (the reader keeps the first and excludes a differing second as a
+    conflict) and after the kind it follows. Judged with the reader's own :func:`_load`, so write and read agree.
+    """
+    payload = json.loads(message)
+    attempt, kind = payload["attempt"], payload["kind"]
+    try:
+        seen, _, _ = _load(run / "meta" / "events.jsonl", [], [])
+    except FileNotFoundError:  # trw-fail-silent-allow: no journal yet means no attempt yet
+        seen = {}
+    if (attempt, kind) in seen:
+        return (
+            f"{kind} already recorded for attempt {_shown(attempt)} (journal line {seen[(attempt, kind)][2]}); "
+            "the journal is append-only, so rework takes a new attempt id"
+        )
+    before = _FOLLOWS.get(kind)
+    if before and (attempt, before) not in seen:
+        return f"{kind} for attempt {_shown(attempt)} has no {before} before it; record the {before} first"
     return None
 
 
@@ -80,5 +122,7 @@ def unresolved_receipts(run: Path, message: str) -> list[str]:
         for ref in refs:
             label, state = _resolve(run, family, ref, subject)
             if state not in _PRESENT:
-                found.append(f"{label} ({state})")
+                # family:id as the caller named it, each part shown only when clean (E2E-INC-125): an id that is not
+                # identifier-shaped or trips the secret detector reads <withheld>, the receipt is still counted.
+                found.append(f"{':'.join(key_name(part) for part in str(label).split(':', 1))} ({state})")
     return found

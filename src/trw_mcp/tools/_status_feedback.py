@@ -25,6 +25,7 @@ def status_feedback(payload: dict[str, Any]) -> dict[str, Any]:
         message=str(payload.get("message", "")),
         contact_email=payload.get("contact_email"),
         metadata=payload.get("metadata"),
+        force=payload.get("force") is True,
     ).model_dump()
 
 

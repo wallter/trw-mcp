@@ -349,7 +349,10 @@ def _validate_request(
     try:
         root = _validated_repo_root(repo_root)
     except NotADirectoryError as exc:
-        return _failure(query, "invalid_repo", str(exc), "Pass an existing repository directory.")
+        del exc  # its text names the caller's path; the refusal says what is wrong without repeating it
+        return _failure(
+            query, "invalid_repo", "repo_root is not an existing directory", "Pass an existing repository directory."
+        )
     safe_path = _normalize_path_filter(path)
     if path is not None and safe_path is None:
         return _failure(query, "invalid_path", "path must be repo-relative and must not contain '..'", "")
@@ -419,10 +422,12 @@ def _refused(query: str, field: str, limit: int, size: int) -> CodeSearchRespons
 
 
 def _failure(query: str, error_code: ErrorCode, error: str, remediation: str, *, bound: str = "") -> CodeSearchResponse:
+    # A refusal never repeats what the caller sent (E2E-INC-125): the query is not echoed back, the caller has it.
+    del query
     return CodeSearchResponse(
         status="failed",
         mode="lexical",
-        query=query,
+        query="",
         results=(),
         error_code=error_code,
         error=error,

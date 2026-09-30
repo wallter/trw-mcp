@@ -38,9 +38,12 @@ from trw_mcp.server._uninstall_corpus import (
 from trw_mcp.server._uninstall_global import GlobalConfigs
 from trw_mcp.server._uninstall_report import (
     display,
+    print_done,
     print_symlink_guidance,
     refusal_text,
+    report_custom_format_kept,
     report_kept_trw,
+    report_stripped,
 )
 from trw_mcp.server._uninstall_trash_report import _move_matched_captures_to_os_trash
 
@@ -106,6 +109,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         plan_manifest_removal,
         plan_uncovered_surface,
         prune_empty_dirs,
+        remove_judged_surface,
         rewrite_manifest_after_removal,
     )
     from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE, _read_manifest, manifest_refusal
@@ -342,6 +346,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         print(f"  Deleted: {deleted} row(s) of {memory.namespace} from the shared store")
     removed_manifest_keys: set[str] = set()
     trw_left: list[str] = []
+    captures: dict[str, list[str]] = {}  # both removal paths' .trw/trash captures, moved on in ONE step
     if covered_dispositions:
         apply_result: dict[str, list[str]] = {"preserved": [], "errors": []}
         removed_manifest_keys, covered_errors = apply_removal(covered_dispositions, apply_result, target)
@@ -349,7 +354,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             print(f"  Error: {printable(message)}")
         for message in apply_result["preserved"]:
             print(f"  Preserved: {printable(message)}")
-        _move_matched_captures_to_os_trash(apply_result, target, display)
+        captures.update({k: apply_result.get(k, []) for k in ("trashed", "trashed_at")})
         for d in covered_dispositions:
             if d.action == "remove" and d.key in removed_manifest_keys:
                 removed += 1
@@ -365,7 +370,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         errors += covered_errors
         trw_left = list(apply_result.get("trw_left", []))
         for root in covered_surface_roots:
-            prune_empty_dirs(root)
+            prune_empty_dirs(root, up_to=target)
 
     for u in uncovered_dispositions:
         if u.action == "refused":
@@ -379,15 +384,18 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         # Re-check safety immediately before deleting (TOCTOU defense, same as
         # `apply_removal`) even though `plan_uncovered_surface` already refused
         # a symlinked path at plan time.
-        failure = safe_remove(u.path, target)
-        if failure:
+        judged, detail = remove_judged_surface(u, target, captures)  # re-proves the judged bytes (codex r2 P0)
+        if judged == "error":
             errors += 1
             refused.append(u.path)
-            print(f"  Error removing {display(u.path, target)}: {failure}")
+            print(f"  Error removing {display(u.path, target)}: {detail}")
+        elif judged == "kept":
+            print(f"  Kept: {display(u.path, target)} ({detail})")
         else:
             removed += 1
             print(f"  Removed: {display(u.path, target)}")
 
+    _move_matched_captures_to_os_trash(captures, target, display)
     for p in managed_paths:
         try:
             status = _remove_managed_block_file(p, target, dry_run=False)
@@ -418,11 +426,13 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             print(f"  Removed: {display(p, target)} (TRW-only file)")
         elif status == "stripped":
             removed += 1
-            print(f"  Cleaned: {display(p, target)} (removed TRW entries)")
+            errors += report_stripped(p, target)
         elif status == "skipped":
             print(f"  Preserved: {display(p, target)} (unparseable; left untouched)")
         elif status in (None, "changed") and p in global_configs.paths:
             errors += global_configs.report_kept(p, status, target)
+        elif status is None:  # a custom-formatted file is reported; any other untouched file is not
+            errors += report_custom_format_kept(p, target)
         elif status == "refused":
             errors += 1
             refused.append(p)
@@ -477,15 +487,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         if scratch.get("updated"):
             print(f"  Updated: {display(Path(scratch['updated'][0]), target)} (dropped {remove_ide!r})")
 
-    print(f"\n  Done. Removed {removed} item(s).")
-    if remove_ide:
-        print(f"  {remove_ide} surfaces removed. Other clients and framework-core files are untouched.")
-    else:
-        store = _uninstall_memory.shared_store()
-        if not delete_memory and store.exists():
-            print(f"  Note: the shared memory store {store} is kept, with this checkout's rows in it.")
-            print("  Re-run with --delete-memory to delete this checkout's namespace from it.")
-        print("  To uninstall the package itself: pip uninstall trw-mcp trw-memory")
+    print_done(target, removed, remove_ide, delete_memory)
     if errors:
         # Truthful exit status: a partial uninstall must not report success to
         # scripted callers (`trw-mcp uninstall --yes && ...`).

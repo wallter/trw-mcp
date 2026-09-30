@@ -517,6 +517,18 @@ class CeremonyMiddleware(Middleware):
                     session_id=session_id,
                     tool=tool_name,
                 )
+            elif _extract_session_start_payload(ceremony_result) is not None:
+                # E2E-INC-005: a session_start that RAN but reported errors (e.g. memory daemon down) was called,
+                # so no later response may claim "has not been called"; its own payload carries the errors. The
+                # compaction gate above still needs a successful session_start and stays armed.
+                mark_session_active(session_id)
+                logger.info(
+                    "ceremony_activated_degraded",
+                    op="ceremony",
+                    session_id=session_id,
+                    tool=tool_name,
+                    outcome="degraded_session_start",
+                )
             else:
                 logger.info(
                     "ceremony_activation_skipped",

@@ -732,3 +732,52 @@ def test_cli_adopt_refuses_when_ctx_isolation_is_off(isolated_project: Path, mon
     assert document["error"] == "adoption_refused"
     assert "ctx_isolation_enabled is false" in document["detail"]
     assert get_pin_entry("owner-A") is not None, "the refusal happens before the pin store is touched"
+
+
+def test_adopt_needs_no_force_when_the_owner_process_is_dead(isolated_project: Path) -> None:
+    """A fresh heartbeat from a killed owner is not a live owner (E2E-ADOPT-DEAD-PIN)."""
+    import subprocess
+    import sys
+
+    from trw_mcp.state._paths import TRWCallContext, pin_active_run
+    from trw_mcp.state._pin_store import pin_store_path
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    pin_active_run(
+        run, context=TRWCallContext(session_id="sess-dead", client_hint=None, explicit=False, fastmcp_session=None)
+    )
+    owner = subprocess.Popen([sys.executable, "-c", "pass"])
+    owner.wait()
+    store = json.loads(pin_store_path().read_text())
+    for entry in store.values():
+        entry["pid"] = owner.pid
+        entry["client_pid"] = owner.pid
+        entry["client_start"] = "1"
+    pin_store_path().write_text(json.dumps(store))
+
+    result = _adopt(_make_server())(ctx=SimpleNamespace(session_id="sess-heir"), run_path=str(run))
+    assert result["to_pin_key"] == "sess-heir"
+    assert result["from_owner_was_live"] is False
+
+
+def test_the_live_owner_refusal_names_the_cli_flag(isolated_project: Path) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state._paths import TRWCallContext, pin_active_run
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    pin_active_run(
+        run, context=TRWCallContext(session_id="sess-l", client_hint=None, explicit=False, fastmcp_session=None)
+    )
+    with pytest.raises(StateError) as exc:
+        _adopt(_make_server())(ctx=SimpleNamespace(session_id="sess-n"), run_path=str(run))
+    assert "--force" in str(exc.value)
+    assert "force=True" not in str(exc.value)
+
+
+def test_an_unreadable_birth_time_keeps_a_live_owner_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import _pin_store
+
+    monkeypatch.setattr(_pin_store, "read_process_start_time", lambda pid: None)
+    import os
+
+    assert _pin_store._owner_process_alive({"client_pid": os.getpid(), "client_start": "123"}) is True

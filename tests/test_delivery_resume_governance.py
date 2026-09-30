@@ -128,7 +128,7 @@ def test_decision_effects_are_never_skipped_on_resume(tmp_path: Path) -> None:
     from trw_mcp.tools._delivery_journal_wiring import DeliverJournal
     from trw_mcp.tools._delivery_models import StepRecord
 
-    assert ALWAYS_REEVALUATE_EFFECTS == {"S06", "S07", "S23"}
+    assert ALWAYS_REEVALUATE_EFFECTS == {"S06", "S07", "S23", "S23b"}  # S23b: PRD-CORE-345 outcome record
 
     coord = make_coordinator(tmp_path)
     did = make_uuid7()

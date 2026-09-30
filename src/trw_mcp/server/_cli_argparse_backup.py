@@ -23,8 +23,9 @@ def add_backup_subcommands(
     create_parser = backup_sub.add_parser(
         "create", help="Create a local gzip archive; uploads it too when backup_remote_enabled is true"
     )
-    create_parser.add_argument("--namespace", default="default", help="Namespace (default: default)")
-    create_parser.add_argument("--db", default=None, help="Optional DB path override")
+    create_parser.add_argument(
+        "--db", default=None, help="Store to archive (default: the store the memory daemon serves)"
+    )
 
     restore_parser = backup_sub.add_parser(
         "restore",
@@ -37,5 +38,15 @@ def add_backup_subcommands(
         metavar="latest|PATH",
         help="'latest' fetches the newest remote backup; any other value is a local .db.gz archive path (no network)",
     )
-    restore_parser.add_argument("--namespace", default="default", help="Namespace (default: default)")
-    restore_parser.add_argument("--db", default=None, help="Optional DB path override")
+    restore_parser.add_argument(
+        "--db", default=None, help="Store to restore into (default: the store the memory daemon serves)"
+    )
+    restore_parser.add_argument(
+        "--yes", action="store_true", help="Replace the store without asking (it is archived first either way)"
+    )
+    restore_parser.add_argument(
+        "--no-snapshot",
+        dest="no_snapshot",
+        action="store_true",
+        help="With --yes: replace the store WITHOUT keeping a copy first (e.g. the disk is full)",
+    )

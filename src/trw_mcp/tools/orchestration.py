@@ -10,6 +10,7 @@ from typing import Literal, cast
 import structlog
 from fastmcp import Context, FastMCP
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.models.run import Confidence, Phase, RunState, RunStatus
@@ -169,8 +170,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         if not reader.exists(gitignore_path):
             gitignore_content = _get_bundled_file("gitignore.txt")
             if gitignore_content:
-                gitignore_path.parent.mkdir(parents=True, exist_ok=True)
-                gitignore_path.write_text(gitignore_content, encoding="utf-8")
+                write_checkout_file(trw_dir, gitignore_path, gitignore_content)
 
         # Deploy frameworks and templates to .trw/
         deploy_result = _deploy_frameworks(trw_dir)
@@ -271,6 +271,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             rationale=detection.rationale,
             recall_policy=task_profile.recall_policy,
             target_utc=adv.target_utc,
+            prd_scope=prd_scope or [],
         )
 
         logger.info(

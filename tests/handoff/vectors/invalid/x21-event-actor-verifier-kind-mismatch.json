@@ -1,0 +1,29 @@
+{
+  "ahr": "1.0-rc.1",
+  "type": "event",
+  "event_id": "EV-0003-003",
+  "handoff_id": "01J9ZK5W1CRT000000000003",
+  "seq": 3,
+  "event": "readback_verified",
+  "actor": {
+    "id": "lead",
+    "kind": "agent",
+    "capability_tier": "frontier",
+    "model": "model-b"
+  },
+  "at": "2026-09-28T21:20:00Z",
+  "record_digest": "sha256:19648eb8caf39f3a180996d58d4eeab3d11cb3455afeeeffb9b884464f9874c5",
+  "verification": {
+    "outcome": "pass",
+    "verifier": {
+      "id": "lead",
+      "kind": "human",
+      "capability_tier": "frontier",
+      "model": "model-b"
+    },
+    "method": "judge",
+    "confidence": "medium",
+    "rationale": "Goal, first action and top risk match; constraints keep their force; both claims confirmed.",
+    "readback_digest": "sha256:3779ad2bc8d1392a802efe8896398811ce0f8c9a2e151bb8603e2da73c77f19a"
+  }
+}

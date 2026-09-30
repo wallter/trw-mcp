@@ -38,6 +38,8 @@ MARKER_START = "# >>> trw post-commit (managed by trw-mcp) >>>"
 MARKER_END = "# <<< trw post-commit (managed by trw-mcp) <<<"
 
 _SHEBANG = "#!/bin/sh"
+# What a fresh shim holds above the managed block; uninstall deletes a hook left with only this.
+SHIM_PREAMBLE = f"{_SHEBANG}\n#\n# Created by trw-mcp. Non-TRW content is preserved on update.\n"
 
 _DISPATCH_BODY = f"""{MARKER_START}
 # PRD-CORE-231: re-seed the sha-keyed T2 hint sidecar and re-verify assertion/
@@ -76,7 +78,7 @@ def render_post_commit_shim(existing: str | None) -> str:
         (chained after the user's own logic).
     """
     if existing is None or not existing.strip():
-        return f"{_SHEBANG}\n#\n# Created by trw-mcp. Non-TRW content is preserved on update.\n\n{_DISPATCH_BODY}\n"
+        return f"{SHIM_PREAMBLE}\n{_DISPATCH_BODY}\n"
 
     if MARKER_START in existing and MARKER_END in existing:
         start = existing.index(MARKER_START)
@@ -204,6 +206,7 @@ __all__ = [
     "INSTALLED_HOOK_REL",
     "MARKER_END",
     "MARKER_START",
+    "SHIM_PREAMBLE",
     "install_git_post_commit_hook",
     "render_post_commit_shim",
 ]

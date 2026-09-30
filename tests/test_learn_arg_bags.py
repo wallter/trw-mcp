@@ -199,5 +199,5 @@ def test_trw_learn_update_rejects_an_unknown_field_at_the_tool_boundary(
     update_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
     result = update_fn(learning_id="L-bag", metadata={"protection_teir": "high"})
 
-    assert result["status"] == "invalid"
+    assert result["status"] == "rejected"
     assert not calls, "the adapter must not be reached once the bag is rejected"

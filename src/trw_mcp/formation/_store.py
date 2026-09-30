@@ -39,6 +39,7 @@ from typing import Any
 import structlog
 import yaml
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp._locking import _lock_ex_nb, _lock_un
 from trw_mcp.formation._manifest import FormationError, FormationManifest
 
@@ -196,9 +197,7 @@ def register_formation(trw_dir: Path, formation_id: str, orchestrator_run_path: 
     with _exclusive(path):
         index = _read_index(trw_dir)
         index[formation_id] = str(orchestrator_run_path)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        write_checkout_file(trw_dir, path, json.dumps(index, indent=2, sort_keys=True) + "\n")
 
 
 def registered_formations(trw_dir: Path) -> dict[str, Path]:

@@ -1,0 +1,62 @@
+{
+  "ahr": "1.0-rc.1",
+  "type": "handoff",
+  "handoff_id": "01J9ZK5W1MIN000000000002",
+  "subject": "docs-typo-sweep",
+  "tier": "minimal",
+  "tier_reason": "Reversible text edits only",
+  "from": {
+    "id": "session-a",
+    "kind": "agent"
+  },
+  "to": {
+    "kind": "unaddressed",
+    "scope": "next-session",
+    "completer": {
+      "id": "operator",
+      "kind": "human"
+    }
+  },
+  "created_at": "2026-09-28T22:00:00Z",
+  "as_of": {
+    "at": "2026-09-28T22:00:00Z"
+  },
+  "objective": {
+    "goal": "Finish the README typo sweep.",
+    "done_when": [
+      "No typos flagged in README sections 3-5"
+    ]
+  },
+  "claims": [
+    {
+      "id": "c1",
+      "text": "Sections 1-2 fixed and saved",
+      "label": "observed",
+      "basis": "Edited in this session."
+    }
+  ],
+  "not_done": [
+    "Sections 3-5"
+  ],
+  "risks": {
+    "none_known": true,
+    "checked": "Diff touches README.md only; no code paths."
+  },
+  "unknowns": {
+    "none_known": true,
+    "checked": "Scope is fully listed in the README table of contents."
+  },
+  "next_actions": [
+    {
+      "id": "a1",
+      "action": "Continue at README section 3",
+      "done_when": "Sections 3-5 reviewed"
+    }
+  ],
+  "next_read": [
+    {
+      "uri": "file:README.md",
+      "why": "The file being swept"
+    }
+  ]
+}

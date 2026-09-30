@@ -125,7 +125,10 @@ def _register_review_tool(server: FastMCP) -> None:
         # Resolve run directory (PRD-CORE-141 FR03/FR05).
         resolved_run: Path | None = None
         if run_path:
-            resolved_run = Path(run_path).resolve()
+            from trw_mcp.state._paths import resolve_run_path
+
+            # INC-035: containment, same rule as checkpoint/status/deliver
+            resolved_run = resolve_run_path(run_path, context=_build_call_context(ctx))
         else:
             resolved_run = find_active_run(context=_build_call_context(ctx))
 

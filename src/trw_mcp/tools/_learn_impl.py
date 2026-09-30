@@ -24,7 +24,9 @@ from trw_mcp.tools._learn_anchors import resolve_learn_anchors
 from trw_mcp.tools._learn_journal_wiring import (
     capture_journal_payload,
     consume_journal,
+    dead_letter_refused,
     journal_accepted,
+    store_bound_text,
 )
 from trw_mcp.tools._learn_preflight import resolve_learn_deps, run_accept_gates
 from trw_mcp.tools._learn_side_effects import (
@@ -199,6 +201,15 @@ def execute_learn(
     # sweep replays the journaled record so the accepted learning is never
     # silently lost. Consumed on every terminal-handled path below (and retained
     # only on a store error, which the replay retries).
+    # BLOCK is decided on the ORIGINAL payload (every field, nested ones included); the journal then
+    # holds exactly the store-bound (masked) text. See ``store_bound_text``.
+    pii_rejection = store_bound_text(_journal_payload)
+    if pii_rejection is not None:
+        return pii_rejection
+    summary, detail = str(_journal_payload["summary"]), str(_journal_payload["detail"])
+    nudge_line = str(_journal_payload["nudge_line"])
+    tags, evidence = cast("list[str]", _journal_payload["tags"]), cast("list[str]", _journal_payload["evidence"])
+    assertions = cast("list[dict[str, str]] | None", _journal_payload["assertions"])
     advance("journal")
     learning_id = _replay_learning_id or deps.generate_id()
     journal_accepted(trw_dir, config, learning_id, _journal_payload, from_journal=_from_journal)
@@ -371,7 +382,10 @@ def execute_learn(
     # of a confirmed DB write, so YAML never survives a store the DB rejected.
     if store_result_dict.get("status") == "rejected":
         # The store refused the content itself (schema, PII, poisoning): no row, no
-        # sidecar, and the journal record stays for the drain to dead-letter.
+        # sidecar. The journal record moves to dead_letter/ now, credentials masked, so a
+        # refused secret is not left raw in pending/ until the next drain.
+        if not _from_journal:
+            dead_letter_refused(trw_dir, config, learning_id, str(store_result_dict.get("message", "")))
         return {
             "learning_id": learning_id,
             "status": "rejected",

@@ -72,12 +72,24 @@ def _pid_gone(pid: int, seconds: float) -> bool:
 def test_a_real_proxy_starts_the_server_and_survives_a_hot_swap(tmp_path: Path) -> None:
     project = tmp_path / "project"
     (project / ".trw").mkdir(parents=True)
-    (project / ".trw" / "config.yaml").write_text("shared_mcp:\n  enabled: true\n", encoding="utf-8")
-    paths = SharedPaths.resolve(project / ".trw", SharedMcpConfig(enabled=True))
+    # SHARED-LOOPBACK-HERMETIC: every shared-server location is under tmp_path, never the ambient ~/.trw (a live
+    # canary swap under ~/.trw/envs once turned this test red for two back-to-back runs).
+    envs, wheels, user = tmp_path / "envs", tmp_path / "wheelhouse", tmp_path / "trw-user"
+    (project / ".trw" / "config.yaml").write_text(
+        f"shared_mcp:\n  enabled: true\n  envs_dir: {envs}\n  wheelhouse: {wheels}\n", encoding="utf-8"
+    )
+    paths = SharedPaths.resolve(
+        project / ".trw", SharedMcpConfig(enabled=True, envs_dir=str(envs), wheelhouse=str(wheels))
+    )
+    ambient = ("TRW_MCP_ENV", "TRW_PROJECT_ROOT", "TRW_USER_DIR")
     proxy = subprocess.Popen(
         [sys.executable, "-m", "trw_mcp.shared_server"],
         cwd=project,
-        env={**os.environ, "TRW_SESSION_ID": "client-a"},
+        env={
+            **{k: v for k, v in os.environ.items() if k not in ambient},
+            "TRW_SESSION_ID": "client-a",
+            "TRW_USER_DIR": str(user),
+        },
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,

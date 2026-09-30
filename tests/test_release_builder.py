@@ -294,16 +294,44 @@ class TestUnifiedStatusTaxonomy:
         finally:
             reset_frozen_fingerprint()
 
+    def test_a_fresh_process_realizes_its_own_surface_before_reading_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """SERVER-LAZY-APP-IMPORT: importing the server no longer freezes a fingerprint, so version status builds the
+        surface itself. Without that, a healthy install (and the publish gate) reported live currentness unknown."""
+        from trw_mcp.canons.fingerprint import get_frozen_fingerprint, reset_frozen_fingerprint
+        from trw_mcp.models.config import TRWConfig
+
+        reset_frozen_fingerprint()
+        try:
+            monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+            _write_version_root(
+                tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version
+            )
+            status = collect_version_status(tmp_path)
+            assert get_frozen_fingerprint() is not None
+            assert status["live_process"]["present"] is True
+            assert "live_process_currentness_unknown" not in status["mismatches"], status["mismatches"]
+        finally:
+            reset_frozen_fingerprint()
+
     def test_missing_live_fingerprint_is_unknown_never_green(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """A fresh CLI with no frozen fingerprint reports unknown currentness — never current."""
+        """A process whose fingerprint cannot be frozen reports unknown currentness — never current.
+
+        The CLI builds its surface before reading it (realize_process_surface); a construction failure leaves the
+        fingerprint unset, which is the documented degraded path this pins.
+        """
         from trw_mcp.canons.fingerprint import reset_frozen_fingerprint
         from trw_mcp.models.config import TRWConfig
 
         reset_frozen_fingerprint()
+        monkeypatch.setattr("trw_mcp.server._live_fingerprint.freeze_live_process_fingerprint", lambda _app: None)
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
         _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         status = collect_version_status(tmp_path)
@@ -656,6 +684,7 @@ class TestBuildReleaseHandler:
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
         _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         reset_frozen_fingerprint()
+        monkeypatch.setattr("trw_mcp.server._live_fingerprint.freeze_live_process_fingerprint", lambda _app: None)
         monkeypatch.setattr(
             "trw_mcp.release_builder.build_release_bundle",
             lambda **_kwargs: pytest.fail("release artifact built before compatibility gate"),

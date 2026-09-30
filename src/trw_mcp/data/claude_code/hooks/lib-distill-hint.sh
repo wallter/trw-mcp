@@ -12,7 +12,6 @@
 #   _get_cc03_enabled()          — checks if CC-03 hook is enabled (opt-in)
 #   _is_safe_extension()         — returns 0 if extension should be skipped
 #   _write_distill_snapshot_bg() — background CC-01 snapshot write trigger
-#   _format_t0_beacon()          — outputs T0 presence beacon
 
 # ---------------------------------------------------------------------------
 # Python path resolution
@@ -273,17 +272,6 @@ _is_safe_extension() {
 }
 
 # ---------------------------------------------------------------------------
-# T0 beacon formatter
-# ---------------------------------------------------------------------------
-
-_format_t0_beacon() {
-    # The fallback when no interpreter answers in time. Emitted as the same
-    # PreToolUse JSON the hint uses: plain PreToolUse stdout never reaches
-    # Claude's context. A fixed literal, so no encoder is needed.
-    printf '%s\n' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "[TRW] Distill intelligence available — run trw_code(mode=\"hint\") for details."}}'
-}
-
-# ---------------------------------------------------------------------------
 # Session-scoped identical-hint dedup (PRD-CORE-301 cut 2)
 # ---------------------------------------------------------------------------
 #
@@ -393,7 +381,7 @@ _write_distill_snapshot_bg() {
         # them saves a ~190ms from-source recompile of the same import chain
         # (measured 2026-09-27) with no lost protection for an installed
         # interpreter.
-        TRW_CC01_REPO_ROOT="$_repo" \
+        TRW_CC01_REPO_ROOT="$_repo" TRW_PROJECT_ROOT="$_repo" TRW_REPO_ROOT="$_repo" \
         "$_py" -c '
 # Single-quoted, repo root via the environment. $_repo is not model-controlled,
 # but git_hooks/trw-post-commit.sh states the invariant for every hook in this

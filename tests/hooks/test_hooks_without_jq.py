@@ -145,3 +145,24 @@ def test_degenerate_result_read_cap_advises_with_no_parser(tmp_path: Path) -> No
 
     assert result.returncode == 0
     assert len(_advisories(result)) == 1
+
+
+@pytest.mark.parametrize("parsers", ["none", "jq-or-python3"])
+def test_session_start_says_once_when_hooks_run_without_a_parser(tmp_path: Path, parsers: str) -> None:
+    """E2E-INC-033: with neither jq nor python3 every other hook degrades silently; the session hears it once."""
+    project = tmp_path / "project"
+    (project / ".trw").mkdir(parents=True)
+    path = path_without(tmp_path, {"jq", "python3"}) if parsers == "none" else os.environ["PATH"]
+    result = subprocess.run(
+        ["sh", str(DATA / "hooks" / "session-start.sh")],
+        input=json.dumps({"source": "startup", "session_id": "s-1"}),
+        capture_output=True,
+        text=True,
+        env={"PATH": path, "CLAUDE_PROJECT_DIR": str(project), "HOME": str(tmp_path)},
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    notices = [line for line in result.stdout.splitlines() if "neither jq nor python3" in line]
+    assert len(notices) == (1 if parsers == "none" else 0), result.stdout

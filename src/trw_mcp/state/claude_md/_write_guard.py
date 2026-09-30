@@ -133,7 +133,9 @@ def _read_current(target: Path) -> str | None:
     if not target.is_file():
         return None
     try:
-        return target.read_text(encoding="utf-8")
+        from trw_mcp.state.claude_md._exact_text import read_exact
+
+        return read_exact(target)
     except (OSError, UnicodeDecodeError) as exc:
         raise BackupRefused("unreadable_target", f"could not read {target}: {exc}") from exc
 

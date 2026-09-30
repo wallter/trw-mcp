@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import os
 import re
 from collections.abc import Generator
 from datetime import date, datetime
@@ -238,7 +239,12 @@ def lock_for_rmw(path: Path) -> Generator[Path, None, None]:
     """
     lock_path = path.parent / f"{path.name}.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_fh = lock_path.open("w", encoding="utf-8")
+    # SYMLINK-WRITERS slice 2: O_NOFOLLOW refuses a planted leaf symlink (ELOOP) and there is no O_TRUNC,
+    # so the lock never truncates whatever a link names; the lock needs a descriptor, not content.
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    if not hasattr(os, "O_NOFOLLOW") and lock_path.is_symlink():  # platforms without O_NOFOLLOW
+        raise OSError(f"refusing to lock through a symlink: {lock_path}")
+    lock_fh = os.fdopen(os.open(lock_path, flags, 0o666), "w", encoding="utf-8")  # fdopen never truncates
     try:
         _lock_ex(lock_fh.fileno())
         yield path

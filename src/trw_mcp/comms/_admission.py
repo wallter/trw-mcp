@@ -50,6 +50,9 @@ def admit(
     group = conn.execute("SELECT * FROM groups WHERE group_id=?", (binding.group_id,)).fetchone()
     if group["closed"]:
         raise AdmissionError("group_closed")
+    if envelope.kind == "request" and envelope.recipient_member_id == binding.member_id:
+        # E2E-INC-091: complete never closes the owner's own handoff, so a self-request could never finish.
+        raise AdmissionError("handoff_to_self")
     recipient = next((peer for peer in snapshot.recipients if peer.member_id == envelope.recipient_member_id), None)
     if recipient is None or not recipient.eligible:
         raise AdmissionError("recipient_not_eligible")

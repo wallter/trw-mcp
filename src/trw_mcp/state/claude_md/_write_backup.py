@@ -11,6 +11,7 @@ recoverable; destroyed user content is not (PRD-FIX-123-NFR02).
 
 from __future__ import annotations
 
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,21 +57,41 @@ def resolve_backup_dir(project_root: Path, backup_dir: str) -> Path:
     return candidate
 
 
-def _prune_retention(backup_dir: Path, filename: str, retention: int) -> None:
-    """Keep at most *retention* copies of *filename*, oldest pruned first.
+def _regular_copies(backup_dir: Path, filename: str) -> list[Path]:
+    """The retained copies of *filename*, oldest first: REGULAR files only, judged by ``lstat``.
 
-    A bounded ``glob`` over one filename's siblings, never a recursive walk
-    (PRD-FIX-123-NFR01).
+    A symlink (even one to the live instruction file) or a directory is never a copy: it is neither
+    reused as the newest backup nor pruned. A bounded ``glob`` over one filename's siblings, never a
+    recursive walk (PRD-FIX-123-NFR01).
     """
-    copies = sorted(p for p in backup_dir.glob(f"{filename}.*") if p.is_file())
+    copies = []
+    for path in backup_dir.glob(f"{filename}.*"):
+        try:
+            if stat.S_ISREG(path.lstat().st_mode):
+                copies.append(path)
+        except OSError:  # trw-fail-silent-allow: a sibling that vanished mid-scan is not a copy
+            continue
+    return sorted(copies)
+
+
+def _prune_retention(backup_dir: Path, filename: str, retention: int) -> None:
+    """Keep at most *retention* copies of *filename*, oldest pruned first."""
+    copies = _regular_copies(backup_dir, filename)
     for stale in copies[: max(0, len(copies) - retention)]:
         try:
+            # ``unlink`` never recurses: an entry swapped for a directory after the scan fails here, not deleted.
             stale.unlink()
         except OSError:
             # A copy we could not prune is a disk-space concern, not a data-loss
             # one: the write it protects has not happened yet and the newest
             # copies are intact. Log rather than refuse.
             logger.warning("instruction_backup_prune_failed", path=str(stale), exc_info=True)
+
+
+def _newest_copy(backup_dir: Path, filename: str) -> Path | None:
+    """Return the newest retained regular-file copy of *filename* (stamps sort chronologically), or ``None``."""
+    copies = _regular_copies(backup_dir, filename)
+    return copies[-1] if copies else None
 
 
 def backup_instruction_file(
@@ -87,6 +108,14 @@ def backup_instruction_file(
     caller refuses the write — never proceeds unprotected.
     """
     directory = resolve_backup_dir(project_root, backup_dir)
+    newest = _newest_copy(directory, target.name)
+    if newest is not None:
+        try:
+            if newest.read_text(encoding="utf-8") == current:
+                # The newest copy already holds these exact bytes; a second one is disk churn, not protection.
+                return str(newest)
+        except (OSError, UnicodeDecodeError):  # trw-fail-silent-allow: unreadable newest copy -> take a fresh one
+            pass
     stamp = datetime.now(timezone.utc).strftime(_BACKUP_STAMP_FORMAT)
     copy_path = directory / f"{target.name}.{stamp}"
     try:

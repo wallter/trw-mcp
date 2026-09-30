@@ -26,5 +26,7 @@ def withdraw_managed_learnings(trw_dir: Path, project_root: Path, config: TRWCon
         return []
     from trw_mcp.state.claude_md._sync import generate_review_md
 
-    generate_review_md(trw_dir, repo_root=project_root)
+    generate_review_md(
+        trw_dir, repo_root=project_root, allow_empty=True
+    )  # recall is off: dropping the learnings is the point
     return [str(project_root / "REVIEW.md")]

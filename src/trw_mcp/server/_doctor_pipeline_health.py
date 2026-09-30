@@ -17,7 +17,7 @@ __all__ = ["pipeline_health_row"]
 
 
 def pipeline_health_row(_target: Path, _config: TRWConfig) -> tuple[Literal["PASS", "WARN"], str]:
-    """``(status, message)``: WARN when degraded, PASS otherwise.
+    """``(status, message)``: WARN when degraded or unknown, PASS otherwise.
 
     The doctor's own per-check ``try/except`` in ``_doctor_core`` already
     isolates a crash here into a FAIL row, so this row never needs its own
@@ -29,4 +29,6 @@ def pipeline_health_row(_target: Path, _config: TRWConfig) -> tuple[Literal["PAS
     if bool(health.get("degraded")):
         advisory = str(health.get("advisory") or "pipeline degraded")
         return "WARN", f"{advisory} (run `trw-mcp telemetry pipeline-health` for detail)"
+    if health.get("status") == "unknown":
+        return "WARN", "pipeline health unknown: no probe could be measured (run `trw-mcp telemetry pipeline-health`)"
     return "PASS", "pipeline health: no degraded signal"

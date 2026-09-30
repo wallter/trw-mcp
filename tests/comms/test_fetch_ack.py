@@ -63,7 +63,7 @@ async def test_ack_whole_batch_rejects_unknown_before_any_ack(transport_scene: S
         message_id = sent["receipt"]["message_id"]
         s.actor("impl-2")
         refused = await invoke(client, "trw_inbox", action="ack", message_ids=[message_id, "0" * 32])
-        assert refused["reason"] == "ack_not_authorized"
+        assert refused["reason"] == "unknown_message_id"
         assert s.rows("SELECT state FROM admissions") == [("pending",)]
         assert s.rows("SELECT COUNT(*) FROM milestones WHERE fact='acked'") == [(0,)]
         # ACK without any preceding fetch is deliberately allowed.

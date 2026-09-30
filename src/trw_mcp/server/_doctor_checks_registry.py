@@ -71,4 +71,5 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("shared_mcp", "_check_shared_mcp"),  # opt-in shared trw-mcp (trw_mcp.shared_server): appended last, as above
     ("distill_ingest", "_check_distill_ingest"),  # 2026-09-27 audit touchpoint #3: appended last, as above
     ("trw_trash", "_check_trw_trash"),  # SAFE-PUBLISH: appended last, as above
+    ("codex_observation", "_check_codex_observation"),  # CODEX-P0-A S3: appended last, as above
 )

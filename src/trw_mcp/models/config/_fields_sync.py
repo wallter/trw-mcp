@@ -64,7 +64,10 @@ class _SyncFields:
         description="Hours since last successful push before the FR06 gate fails closed.",
     )
     pipeline_health_gate_graph_min_corpus: int = Field(
-        default=10,
+        default=50,
         ge=1,
-        description="Minimum memories before an empty knowledge graph fails the FR06 gate.",
+        description=(
+            "Young-store threshold: an empty knowledge graph fails the FR06 gate, and low embedding coverage "
+            "degrades the pipeline, only for a store holding more memories than this."
+        ),
     )

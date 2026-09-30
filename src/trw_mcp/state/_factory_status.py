@@ -89,14 +89,15 @@ def _schema_error(p: dict[str, Any]) -> str | None:
     if p["kind"] == "START":
         return "START carries no receipts (START forbids receipts)" if receipts else None
     if not isinstance(receipts, dict) or not receipts:
-        return f"{p['kind']} requires a nonempty receipts map"
+        family = "build" if p["kind"] == "READY" else "verification"
+        return f'{p["kind"]} requires a nonempty receipts map, e.g. "receipts": {{"{family}": ["{family}-<id>"]}}'
     for family, refs in receipts.items():
         if not (isinstance(family, str) and _SAFE.fullmatch(family)):
             return _BAD_REF
         if p["kind"] == "READY" and family not in _READY_FAMILIES:
             return "READY may reference build/review receipts; verification belongs to USED"
         if not isinstance(refs, list) or not refs:
-            return "each receipts family must be a nonempty list"
+            return 'each receipts family must be a nonempty list, e.g. "receipts": {"build": ["build-<id>"]}'
         for ref in refs:
             rid = ref.get("receipt_id") if isinstance(ref, dict) else ref
             if isinstance(ref, dict) and not isinstance(ref.get("run_path"), str):
@@ -122,17 +123,18 @@ def _resolve(run: Path, family: str, ref: str | dict[str, Any], subject: object)
     runs_dir = _project_runs_dir(run)
     rid = ref if isinstance(ref, str) else ref["receipt_id"]
     label = f"{family}:{rid}"
-    owner = run
+    anchor, prefix, owner_name = run, "", run.name
     if isinstance(ref, dict):
-        root = runs_dir.parent.parent if runs_dir else None
-        owner = (root / ref["run_path"]).resolve() if root else Path("/nonexistent-escape")
-        if runs_dir is None or not owner.is_relative_to(runs_dir.resolve()):
+        # A cross-run read walks from the runs dir with no link followed (no resolve-then-open window).
+        rel = fread.run_relative(runs_dir, runs_dir.parent.parent, ref["run_path"]) if runs_dir else None
+        if runs_dir is None or rel is None:
             return label, "path_escape"
+        anchor, prefix, owner_name = runs_dir, f"{rel}/", rel.rsplit("/", 1)[-1]
     # Unreachable via report_run (the schema already rejects these); kept as defense in depth.
     if not _SAFE.fullmatch(family) or not _SAFE.fullmatch(rid):
         return label, "path_escape"
     raw, state = fread.read_bounded(
-        owner, f"meta/receipts/{family}/{rid}.json", EvidenceLimits.MAX_CANONICAL_RECEIPT_BYTES
+        anchor, f"{prefix}meta/receipts/{family}/{rid}.json", EvidenceLimits.MAX_CANONICAL_RECEIPT_BYTES
     )
     if raw is None:
         return label, state
@@ -142,7 +144,7 @@ def _resolve(run: Path, family: str, ref: str | dict[str, Any], subject: object)
         return label, "malformed"
     if not isinstance(body, dict) or body.get("receipt_id") != rid:
         return label, "malformed"
-    if body.get("run_id") != owner.name:
+    if body.get("run_id") != owner_name:
         return label, "wrong_run"
     if family == "build" and isinstance(subject, str) and subject:
         sha = body.get("git_sha")

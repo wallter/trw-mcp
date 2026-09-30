@@ -235,6 +235,9 @@ def test_retired_ides_absent_from_supported() -> None:
 
 
 def test_write_target_label_agents_md_clients_unchanged() -> None:
-    # codex/opencode/cursor-cli still surface the shared AGENTS.md surface.
-    for cid in ("codex", "opencode", "cursor-cli"):
-        assert _write_target_label(resolve_client_profile(cid)) == "AGENTS.md"
+    # cursor-cli sets agents_md, so its label is AGENTS.md. codex and opencode set no write_targets flag; their
+    # label is the instruction file TRW writes, not an AGENTS.md neither init writes (E2E-CODEX-INIT-ARTIFACTS).
+    assert _write_target_label(resolve_client_profile("cursor-cli")) == "AGENTS.md"
+    for cid in ("codex", "opencode"):
+        profile = resolve_client_profile(cid)
+        assert _write_target_label(profile) == profile.write_targets.instruction_path != "AGENTS.md"

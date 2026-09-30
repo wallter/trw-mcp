@@ -55,6 +55,9 @@ def test_declining_sign_in_leaves_a_local_install_doctor_passes(
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
     env.update(HOME=str(home), TRW_USER_DIR=str(user_dir), TRW_EMBEDDINGS_ENABLED="false")
+    # The installed .mcp.json launches a bare `trw-mcp`, which doctor's launcher_divergence resolves on PATH: pin
+    # it to this interpreter's own launcher so an operator's older global install cannot turn the row red.
+    env["PATH"] = os.pathsep.join((str(Path(sys.executable).parent), "/usr/bin", "/bin"))
     proc = subprocess.run(
         [sys.executable, "-c", _DOCTOR, str(target)],
         capture_output=True,

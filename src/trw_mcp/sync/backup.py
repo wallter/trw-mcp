@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field
 
 from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled, send_policy
 from trw_mcp.sync.identity import resolve_sync_client_id
+from trw_mcp.sync.push import http_status_from_exception
 
 logger = structlog.get_logger(__name__)
 
@@ -121,13 +122,6 @@ class BackupUploadResult(BaseModel):
     def ok(self) -> bool:
         """True only when the archive was confirmed uploaded."""
         return self.status == "ok"
-
-
-def _http_status_from_exception(exc: BaseException) -> int | None:
-    """Extract an HTTP status code from httpx-style exceptions when present."""
-    response = getattr(exc, "response", None)
-    raw_status = getattr(response, "status_code", None)
-    return int(raw_status) if isinstance(raw_status, int) else None
 
 
 _QUERY_STRING_RE = re.compile(r"\?[^\s'\"]*")
@@ -252,7 +246,7 @@ class BackupUploader:
                 client_id=self._client_id,
                 error_type=type(exc).__name__,
                 error_message=_safe_error_message(exc),
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
             )
             return BackupUploadResult(status="presign_failed", error=type(exc).__name__)
 
@@ -297,7 +291,7 @@ class BackupUploader:
                 client_id=self._client_id,
                 error_type=type(exc).__name__,
                 error_message=_safe_error_message(exc),
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
             )
             return BackupUploadResult(status="upload_failed", error=type(exc).__name__)
 
@@ -346,7 +340,7 @@ class BackupUploader:
                 client_id=self._client_id,
                 error_type=type(exc).__name__,
                 error_message=_safe_error_message(exc),
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
             )
             return BackupListResult(status="list_failed", error=type(exc).__name__)
 
@@ -402,7 +396,7 @@ class BackupUploader:
                 key=key,
                 error_type=type(exc).__name__,
                 error_message=_safe_error_message(exc),
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
             )
             return BackupDownloadResult(status="presign_failed", key=key, error=type(exc).__name__)
 
@@ -425,7 +419,12 @@ class BackupUploader:
                 client.stream("GET", get_url) as resp,
             ):
                 resp.raise_for_status()
-                with tmp_path.open("wb") as fh:
+                # A fresh temp file only: a stale one (or a planted link at the name) is unlinked, never
+                # opened, and O_EXCL|O_NOFOLLOW refuses anything that appears there before the create.
+                # os.replace then swaps a link at dest_path itself, never writing through it.
+                tmp_path.unlink(missing_ok=True)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                with os.fdopen(os.open(tmp_path, flags, 0o600), "wb") as fh:
                     async for chunk in resp.aiter_bytes(_UPLOAD_CHUNK_SIZE):
                         fh.write(chunk)
             os.replace(tmp_path, dest_path)
@@ -438,7 +437,7 @@ class BackupUploader:
                 key=key,
                 error_type=type(exc).__name__,
                 error_message=_safe_error_message(exc),
-                status_code=_http_status_from_exception(exc),
+                status_code=http_status_from_exception(exc),
             )
             return BackupDownloadResult(status="download_failed", key=key, error=type(exc).__name__)
 

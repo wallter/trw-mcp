@@ -93,8 +93,12 @@ def test_v4_mailbox_refuses_until_upgraded_to_v5(
         run_formation(_parse("comms-upgrade", "--run", str(formation_env.orchestrator_run)))
     assert done.value.code == 0
     result = json.loads(capsys.readouterr().out)
-    assert (result["status"], result["schema_version"], result["from_version"]) == ("upgraded", 5, 4)
-    assert _version(manifest) == "5"
+    assert (result["status"], result["schema_version"], result["from_version"]) == (
+        "upgraded",
+        _schema.SCHEMA_VERSION,
+        4,
+    )
+    assert _version(manifest) == str(_schema.SCHEMA_VERSION)
     assert _open_refusal(manifest) is None
 
 

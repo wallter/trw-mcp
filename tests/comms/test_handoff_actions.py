@@ -48,13 +48,20 @@ async def step(client: Client[Any], action: str, message_id: str, **args: Any) -
 
 
 async def assert_refused(
-    client: Client[Any], s: SendScene, reason: str, action: str, ids: list[str], **args: Any
+    client: Client[Any],
+    s: SendScene,
+    reason: str,
+    action: str,
+    ids: list[str],
+    *,
+    bucket: str | None = None,
+    **args: Any,
 ) -> None:
     before = ledger(s)
     refused = await invoke(client, "trw_inbox", action=action, message_ids=ids, **args)
     assert (refused["status"], refused["reason"]) == ("refused", reason)
     assert ledger(s) == before, "a refused handoff action wrote something"
-    assert s.rows("SELECT count FROM refusal_counts WHERE reason=?", (reason,)) == [(1,)]
+    assert s.rows("SELECT count FROM refusal_counts WHERE reason=?", (bucket or reason,)) == [(1,)]
 
 
 async def enrolled_as(client: Client[Any], s: SendScene, member: str) -> None:
@@ -227,7 +234,6 @@ async def test_duplicate_report_is_a_no_op_and_a_changed_pointer_is_refused(tran
 @pytest.mark.parametrize(
     ("action", "args"),
     [
-        ("report", {}),  # report needs next_read
         ("accept", {"next_read": "x"}),  # next_read is valid only with report
         ("complete", {"next_read": "x"}),
         ("ack", {"next_read": "x"}),
@@ -243,13 +249,30 @@ async def test_handoff_argument_errors_refuse_without_writes(
         await assert_refused(client, s, "invalid_inbox_arguments", action, [message_id], **args)
 
 
+async def test_report_without_next_read_names_the_missing_argument(transport_scene: SendScene) -> None:
+    s = transport_scene
+    async with Client(s.server) as client:
+        message_id = await accepted(client, s)
+        await assert_refused(
+            client, s, "report_needs_next_read", "report", [message_id], bucket="invalid_inbox_arguments"
+        )
+
+
 async def test_report_takes_exactly_one_id(transport_scene: SendScene) -> None:
     s = transport_scene
     async with Client(s.server) as client:
         first = await accepted(client, s)
         second = await request(client, s, key="h2")
         await step(client, "accept", second)
-        await assert_refused(client, s, "invalid_inbox_arguments", "report", [first, second], next_read="x")
+        await assert_refused(
+            client,
+            s,
+            "report_takes_one_message_id",
+            "report",
+            [first, second],
+            next_read="x",
+            bucket="invalid_inbox_arguments",
+        )
 
 
 # --- next_read is report-only, even for peer actions (review P2 of this PRD) -----

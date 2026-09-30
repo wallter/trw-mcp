@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #: platform-detection code path).
 _PROJECT_VENV_LAUNCHERS: tuple[str, ...] = (".venv/bin/trw-mcp", ".venv/Scripts/trw-mcp.exe")
 _WORKSPACE_PREFIX = "${workspaceFolder}/"
-_Row = tuple[Literal["PASS", "WARN"], str]
+_Row = tuple[Literal["PASS", "WARN", "FAIL"], str]
 
 
 class _Unparseable:
@@ -184,8 +184,69 @@ def _is_dev_checkout(target_dir: Path) -> bool:
     return (target_dir / "trw-mcp" / "src" / "trw_mcp").is_dir()
 
 
+def _older_launchers(target_dir: Path) -> tuple[list[str], list[str]]:
+    """``(incompatible, merely_older)`` managed configs, by the versions their launcher's venv carries.
+
+    Incompatible = a MAJOR older than this build's trw-mcp, or a trw-memory major different from the live daemon's (the
+    client's own refusal rule); merely older = a lower minor/patch. Applies to every project, not only a dev checkout: a
+    bare ``trw-mcp`` resolving to an old install is what let a 7.0.1 client downgrade a deployed canon and read no memory
+    from an 8.x daemon (CODEX-P0-C). Version-only, from dist-info; nothing is executed.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    from trw_memory.daemon._versions import majors_differ
+
+    from trw_mcp.server._doctor_version_skew import launcher_versions, read_daemon_skew, version_key
+
+    try:  # dist-info, like the launchers' own: an editable install's source version can run ahead of its metadata
+        running_mcp, running_memory = version("trw-mcp"), version("trw-memory")
+    except (
+        PackageNotFoundError
+    ):  # trw-fail-silent-allow: no metadata to compare against, so no launcher can be called older
+        return [], []
+    daemon = read_daemon_skew()
+    daemon_memory = daemon.daemon if daemon is not None else running_memory
+    extractors = dict(_MANAGED_CONFIGS)
+    incompatible: list[str] = []
+    older: list[str] = []
+    for rel in present_managed_configs(target_dir):
+        command = extractors[rel](target_dir / rel)
+        if command is None or isinstance(command, _Unparseable):
+            continue
+        versions = launcher_versions(_expand_workspace(command), target_dir)
+        if versions is None:
+            continue
+        mcp, memory = versions
+        stale_mcp = version_key(mcp) < version_key(running_mcp)
+        stale_memory = version_key(memory) < version_key(daemon_memory)
+        if not (stale_mcp or stale_memory):
+            continue
+        text = (
+            f"{rel} launches {command!r}: trw-mcp {mcp} / trw-memory {memory}, older than this build "
+            f"({running_mcp} / {running_memory}) or the live daemon ({daemon_memory})"
+        )
+        breaks = (stale_mcp and majors_differ(mcp, running_mcp)) or majors_differ(memory, daemon_memory)
+        (incompatible if breaks else older).append(text)
+    return incompatible, older
+
+
 def launcher_divergence_row(target_dir: Path) -> _Row:
-    """WARN naming any managed config whose launcher is not the project venv build; PASS otherwise."""
+    """FAIL for a launcher on an older major, WARN for an older minor/patch or one off the project venv; else PASS."""
+    incompatible, older = _older_launchers(target_dir)
+    if incompatible:
+        return (
+            "FAIL",
+            f"{len(incompatible)} managed config(s) start an OLDER trw-mcp: {'; '.join(sorted(incompatible))}. An older "
+            "client cannot use a newer memory daemon (it reads no memory) and can overwrite the deployed framework "
+            "canon. Fix: upgrade this client or point the config at the project's launcher (`trw-mcp update-project`); "
+            "do not stop the newer daemon.",
+        )
+    if older:
+        return (
+            "WARN",
+            f"{len(older)} managed config(s) start a slightly older trw-mcp (same major): {'; '.join(sorted(older))}. "
+            "Upgrade this client when convenient.",
+        )
     if not _is_dev_checkout(target_dir):
         return "PASS", "not a dev checkout; launcher-divergence check does not apply"
 

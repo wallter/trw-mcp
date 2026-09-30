@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import (
     FileEventLogger,
@@ -133,12 +134,15 @@ def _log_init_events(
     rationale: str,
     recall_policy: str,
     target_utc: str | None = None,
+    prd_scope: list[str] | None = None,
 ) -> None:
     """Log the run_init, task_type_detected, and session_start boundary events for trw_init."""
+    # EVIDENCE-DELETION-POLICY: the declared scope is also witnessed in the append-only log, so deleting
+    # meta/run.yaml cannot undeclare it (state/_evidence_witness.recorded_scope).
     _events.log_event(
         events_jsonl_path,
         "run_init",
-        {"task": task_name, "framework": framework_version},
+        {"task": task_name, "framework": framework_version, "prd_scope": list(prd_scope or [])},
     )
     if target_utc:
         # PRD-CORE-338-FR03: one time_target event, written through the same stamping writer.
@@ -210,12 +214,9 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         Dictionary with deployment status and version info.
     """
     config = get_config()
+    from trw_mcp.bootstrap._framework_modified_guard import modified_warning
     from trw_mcp.canons.registry import bundled_manifest_bytes, load_registry
-    from trw_mcp.framework_integrity import (
-        inspect_framework_runtime,
-        newer_deployed_generation,
-        repair_framework_runtime,
-    )
+    from trw_mcp.framework_integrity import repair_framework_runtime
 
     reader = FileStateReader()
     writer = FileStateWriter()
@@ -230,9 +231,22 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     aaref_source = _get_bundled_file("aaref.md") or ""
     registry = load_registry(bundled_manifest_bytes())
 
-    # An older package must never overwrite a newer deployed generation.
-    newer = newer_deployed_generation(trw_dir.parent, framework_source=framework_source, aaref_source=aaref_source)
-    if newer is not None:
+    from trw_mcp import __version__ as package_version
+    from trw_mcp.framework_decision import deploy_decision
+
+    # One rule for both deploy paths: current -> write nothing; an older package -> leave the project alone;
+    # otherwise deploy (an edited canon body is replaced, and said so, with its old bytes saved).
+    decision = deploy_decision(
+        trw_dir.parent,
+        framework_source=framework_source,
+        aaref_source=aaref_source,
+        framework_version=current_fw_version,
+        aaref_version=current_aaref_version,
+        registry_digest=registry.digest,
+        package_version=package_version,
+    )
+    if decision.stale is not None:
+        newer = decision.stale
         logger.warning("framework_deploy_skipped_stale_package", running=newer.running, deployed=newer.deployed)
         return {
             "status": "skipped_stale_package",
@@ -240,33 +254,21 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
             "deployed": newer.deployed,
             "nudge": newer.nudge,
         }
+    if decision.action == "current":
+        return {"status": "up_to_date", "framework_version": current_fw_version}
+    edited = list(decision.edited)
+    if edited:
+        logger.warning("framework_deploy_replaces_modified_bodies", bodies=edited)
 
-    # Skip only when the receipt, body bytes, and pins agree.
     if reader.exists(version_path):
         existing = reader.read_yaml(version_path)
-        existing_versions = (
-            str(existing.get("framework_version", "")),
-            str(existing.get("aaref_version", "")),
-        )
-        integrity = inspect_framework_runtime(
-            trw_dir.parent,
-            framework_source=framework_source,
-            aaref_source=aaref_source,
-            framework_version=current_fw_version,
-            aaref_version=current_aaref_version,
-            registry_digest=registry.digest,
-        )
-        if existing_versions == (current_fw_version, current_aaref_version) and integrity.ok:
-            return {"status": "up_to_date", "framework_version": current_fw_version}
-
-        # Version mismatch — log upgrade event
         _events.log_event(
             trw_dir / "upgrade_events.jsonl",
             "framework_upgrade",
             {
-                "old_framework": existing_versions[0],
+                "old_framework": str(existing.get("framework_version", "")),
                 "new_framework": current_fw_version,
-                "old_aaref": existing_versions[1],
+                "old_aaref": str(existing.get("aaref_version", "")),
                 "new_aaref": current_aaref_version,
             },
         )
@@ -278,6 +280,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         framework_version=current_fw_version,
         aaref_version=current_aaref_version,
         registry_digest=registry.digest,
+        package_version=package_version,
     )
 
     logger.info(
@@ -286,11 +289,16 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         aaref_version=current_aaref_version,
     )
 
-    return {
+    deployed = {
         "status": "deployed",
         "framework_version": current_fw_version,
         "aaref_version": current_aaref_version,
     }
+    if edited:
+        deployed.update(
+            replaced_modified=", ".join(edited), nudge=modified_warning(edited, trw_dir.parent, decision.edited_digests)
+        )
+    return deployed
 
 
 def _deploy_templates(trw_dir: Path) -> None:
@@ -312,4 +320,4 @@ def _deploy_templates(trw_dir: Path) -> None:
 
     template_data = _get_bundled_file("claude_md.md", subdir="templates")
     if template_data:
-        template_path.write_text(template_data, encoding="utf-8")
+        write_checkout_file(trw_dir, template_path, template_data)

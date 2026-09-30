@@ -15,6 +15,7 @@ close a cycle.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -51,6 +52,29 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 __all__ = ["_register_prd_validate_tool", "run_prd_validate"]
+
+
+def _read_prd_text(path: Path) -> str:
+    """The file's text, or a plain "not a PRD" refusal (E2E-INC-099) before any scoring.
+
+    An empty file, undecodable bytes, or text with neither PRD frontmatter (an ``id``) nor a single markdown heading
+    used to be scored like a weak PRD, so the caller got generic authoring advice instead of being told the file is
+    not a PRD. Any markdown with a heading is still scored: it may be a PRD draft missing its frontmatter.
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise StateError(f"not a PRD: {path} is not UTF-8 text", path=str(path)) from None
+    if not content.strip():
+        raise StateError(f"not a PRD: {path} is empty", path=str(path))
+    has_heading = any(re.match(r"#{1,6} \S", line) for line in content.splitlines())
+    if not parse_frontmatter(content).get("id") and not has_heading:
+        raise StateError(
+            f"not a PRD: {path} has no PRD frontmatter (prd.id) and no markdown headings; "
+            "create one with `trw-mcp prd create`",
+            path=str(path),
+        )
+    return content
 
 
 def run_prd_validate(
@@ -95,7 +119,7 @@ def run_prd_validate(
     if not path.exists():
         raise StateError(f"PRD file not found: {path}", path=str(path))
 
-    content = path.read_text(encoding="utf-8")
+    content = _read_prd_text(path)
 
     config = _req.get_config()
     cache_path = _prd_validation_cache_path(project_root)
@@ -203,6 +227,13 @@ def run_prd_validate(
     validate_result["validation_partial"] = bool(budget_report.get("validation_partial", False))
     _skipped = budget_report.get("checks_skipped", [])
     validate_result["checks_skipped"] = _skipped if isinstance(_skipped, list) else []
+    # INC-097 / INC-073 rule: absence of a measurement is not a pass. A partial
+    # run (fast mode, budget, failed group) never grounded the skipped checks,
+    # so "valid: true" would read as a pass it did not earn -- and could
+    # contradict the full run. Report "not determined" (null); the verdict is
+    # already NEEDS_WORK with a verdict_note naming the partial cause.
+    if validate_result["validation_partial"]:
+        validate_result["valid"] = None
 
     # Substrate-First gate (PRD-DIST-218 FR-2). Heuristic check:
     # flag PRDs that propose module-level hardcoded vocabulary
@@ -248,7 +279,7 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         traceability gates checked before coding.
 
         A time budget bounds every call; exceeding it sets validation_partial
-        (never a silent pass). quality_tier: skeleton|draft|review|approved.
+        (never a silent pass; valid is then null). quality_tier: skeleton|draft|review|approved.
 
         Output: total_score, quality_tier, grade, valid, failures, dimensions.
 

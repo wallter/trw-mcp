@@ -1,0 +1,227 @@
+{
+ "_provenance": "Real Claude Code tool results: the `toolUseResult` object of tool-result lines in session transcripts under ~/.claude/projects/**/*.jsonl, read-only, extracted 2026-09-30 by a python json.loads scan; one example per (tool, Grep mode, key set, empty/non-empty). Scrubbed: paths -> /repo/src/*.py, file text -> neutral text, filename lists cut to 2 and the image payload to 'AAAA'; key sets, value types and the count fields are as captured. CAVEAT: that toolUseResult equals the PostToolUse hook's `tool_response` is INFERRED (scripts/measure_degenerate_result_calibration.py asserts it; no hook-side capture exists to verify it). NOT CAPTURED: none of the Grep/Glob/Read combinations are missing; Read of a PDF (firstPage key set) and error-string results (`toolUseResult` is a str) are deliberately not included.",
+ "responses": [
+  {
+   "name": "read-text-nonempty",
+   "tool": "Read",
+   "mode": null,
+   "empty": false,
+   "tool_response": {
+    "type": "text",
+    "file": {
+     "filePath": "/repo/src/x.py",
+     "content": "neutral line one\nneutral line two\n",
+     "numLines": 30,
+     "startLine": 195,
+     "totalLines": 401
+    }
+   }
+  },
+  {
+   "name": "read-image",
+   "tool": "Read",
+   "mode": null,
+   "empty": null,
+   "tool_response": {
+    "type": "image",
+    "file": {
+     "base64": "AAAA",
+     "type": "image/png",
+     "originalSize": 105942,
+     "dimensions": {
+      "originalWidth": 656,
+      "originalHeight": 1270,
+      "displayWidth": 656,
+      "displayHeight": 1270
+     }
+    }
+   }
+  },
+  {
+   "name": "read-text-empty",
+   "tool": "Read",
+   "mode": null,
+   "empty": true,
+   "tool_response": {
+    "type": "text",
+    "file": {
+     "filePath": "/repo/src/x.py",
+     "content": "",
+     "numLines": 1,
+     "startLine": 1,
+     "totalLines": 1
+    }
+   }
+  },
+  {
+   "name": "grep-files_with_matches-nonempty",
+   "tool": "Grep",
+   "mode": "files_with_matches",
+   "empty": false,
+   "tool_response": {
+    "mode": "files_with_matches",
+    "filenames": [
+     "/repo/src/f0.py"
+    ],
+    "numFiles": 1,
+    "totalFiles": 1
+   }
+  },
+  {
+   "name": "grep-files_with_matches-empty",
+   "tool": "Grep",
+   "mode": "files_with_matches",
+   "empty": true,
+   "tool_response": {
+    "mode": "files_with_matches",
+    "filenames": [],
+    "numFiles": 0,
+    "totalFiles": 0
+   }
+  },
+  {
+   "name": "grep-content-nonempty",
+   "tool": "Grep",
+   "mode": "content",
+   "empty": false,
+   "tool_response": {
+    "mode": "content",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "/repo/src/x.py:3:neutral text",
+    "numLines": 1,
+    "totalLines": 1
+   }
+  },
+  {
+   "name": "grep-content-empty",
+   "tool": "Grep",
+   "mode": "content",
+   "empty": true,
+   "tool_response": {
+    "mode": "content",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "",
+    "numLines": 0,
+    "totalLines": 0
+   }
+  },
+  {
+   "name": "glob-nonempty",
+   "tool": "Glob",
+   "mode": null,
+   "empty": false,
+   "tool_response": {
+    "filenames": [
+     "/repo/src/f0.py"
+    ],
+    "durationMs": 701,
+    "numFiles": 1,
+    "truncated": false,
+    "totalMatches": 1,
+    "countIsComplete": true
+   }
+  },
+  {
+   "name": "glob-empty",
+   "tool": "Glob",
+   "mode": null,
+   "empty": true,
+   "tool_response": {
+    "filenames": [],
+    "durationMs": 176,
+    "numFiles": 0,
+    "truncated": false,
+    "totalMatches": 0,
+    "countIsComplete": true
+   }
+  },
+  {
+   "name": "grep-files_with_matches-nonempty-appliedLimit",
+   "tool": "Grep",
+   "mode": "files_with_matches",
+   "empty": false,
+   "tool_response": {
+    "mode": "files_with_matches",
+    "filenames": [
+     "/repo/src/f0.py",
+     "/repo/src/f1.py"
+    ],
+    "numFiles": 250,
+    "totalFiles": 1797,
+    "appliedLimit": 250
+   }
+  },
+  {
+   "name": "grep-content-nonempty-appliedLimit",
+   "tool": "Grep",
+   "mode": "content",
+   "empty": false,
+   "tool_response": {
+    "mode": "content",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "/repo/src/x.py:3:neutral text",
+    "numLines": 250,
+    "totalLines": 360,
+    "appliedLimit": 250
+   }
+  },
+  {
+   "name": "grep-count-nonempty",
+   "tool": "Grep",
+   "mode": "count",
+   "empty": false,
+   "tool_response": {
+    "mode": "count",
+    "numFiles": 1,
+    "filenames": [],
+    "content": "/repo/src/x.py:3",
+    "numMatches": 46
+   }
+  },
+  {
+   "name": "grep-count-empty",
+   "tool": "Grep",
+   "mode": "count",
+   "empty": true,
+   "tool_response": {
+    "mode": "count",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "",
+    "numMatches": 0
+   }
+  },
+  {
+   "name": "grep-content-nonempty-appliedOffset",
+   "tool": "Grep",
+   "mode": "content",
+   "empty": false,
+   "tool_response": {
+    "mode": "content",
+    "numFiles": 0,
+    "filenames": [],
+    "content": "/repo/src/x.py:3:neutral text",
+    "numLines": 25,
+    "totalLines": 27,
+    "appliedOffset": 2
+   }
+  },
+  {
+   "name": "grep-count-nonempty-appliedLimit",
+   "tool": "Grep",
+   "mode": "count",
+   "empty": false,
+   "tool_response": {
+    "mode": "count",
+    "numFiles": 3,
+    "filenames": [],
+    "content": "/repo/src/x.py:3",
+    "numMatches": 9,
+    "appliedLimit": 1
+   }
+  }
+ ]
+}

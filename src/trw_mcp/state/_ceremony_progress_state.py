@@ -353,6 +353,10 @@ def _emit_nudge_shown_event(
     additive observability signal for the eval pipeline.
     """
 
+    from trw_mcp.state._containment import trw_write_contained
+
+    if not trw_write_contained(trw_dir / "context" / "session-events.jsonl"):  # INC-034: never through a planted link
+        return
     try:
         events_path = trw_dir / "context" / "session-events.jsonl"
         events_path.parent.mkdir(parents=True, exist_ok=True)

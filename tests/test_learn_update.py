@@ -77,107 +77,107 @@ class TestLearnUpdateNewFields:
     def test_update_type(self, tmp_project: Path) -> None:
         """Updating type to 'incident' is accepted."""
         result = self._run_update(tmp_project, type="incident")
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_confidence(self, tmp_project: Path) -> None:
         """Updating confidence to 'verified' is accepted."""
         result = self._run_update(tmp_project, confidence="verified")
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_phase_origin(self, tmp_project: Path) -> None:
         """Updating phase_origin to 'IMPLEMENT' is accepted."""
         result = self._run_update(tmp_project, metadata={"phase_origin": "IMPLEMENT"})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_nudge_line(self, tmp_project: Path) -> None:
         """Updating nudge_line to valid short string is accepted."""
         result = self._run_update(tmp_project, metadata={"nudge_line": "Use X not Y"})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_expires(self, tmp_project: Path) -> None:
         """Updating expires to ISO date is accepted."""
         result = self._run_update(tmp_project, metadata={"expires": "2026-12-31"})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_protection_tier(self, tmp_project: Path) -> None:
         """Updating protection_tier to 'protected' is accepted."""
         result = self._run_update(tmp_project, metadata={"protection_tier": "protected"})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_domain(self, tmp_project: Path) -> None:
         """Updating domain to a list is accepted."""
         result = self._run_update(tmp_project, metadata={"domain": ["testing", "mcp"]})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_invalid_enum_rejected(self, tmp_project: Path) -> None:
         """type='bogus' is rejected with 'invalid' status."""
         result = self._run_update(tmp_project, type="bogus")
-        assert result.get("status") == "invalid"
-        assert "type" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "type" in result.get("message", "").lower()
 
     def test_update_invalid_confidence_rejected(self, tmp_project: Path) -> None:
         """confidence='excellent' is rejected with 'invalid' status."""
         result = self._run_update(tmp_project, confidence="excellent")
-        assert result.get("status") == "invalid"
-        assert "confidence" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "confidence" in result.get("message", "").lower()
 
     def test_update_invalid_protection_tier_rejected(self, tmp_project: Path) -> None:
         """protection_tier='top-secret' is rejected with 'invalid' status."""
         result = self._run_update(tmp_project, metadata={"protection_tier": "top-secret"})
-        assert result.get("status") == "invalid"
-        assert "protection_tier" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "protection_tier" in result.get("message", "").lower()
 
     def test_update_nudge_line_over_80_rejected(self, tmp_project: Path) -> None:
         """nudge_line >80 chars is rejected with 'invalid' status."""
         too_long = "x" * 81
         result = self._run_update(tmp_project, metadata={"nudge_line": too_long})
-        assert result.get("status") == "invalid"
-        assert "nudge_line" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "nudge_line" in result.get("message", "").lower()
 
     def test_update_invalid_phase_origin_rejected(self, tmp_project: Path) -> None:
         """phase_origin='INVALID' is rejected with 'invalid' status."""
         result = self._run_update(tmp_project, metadata={"phase_origin": "INVALID"})
-        assert result.get("status") == "invalid"
-        assert "phase_origin" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "phase_origin" in result.get("message", "").lower()
 
     def test_update_phase_origin_empty_allowed(self, tmp_project: Path) -> None:
-        """phase_origin='' is valid (clears the field)."""
+        """phase_origin='' is valid (blank means unset: leaves the field unchanged)."""
         result = self._run_update(tmp_project, metadata={"phase_origin": ""})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_all_valid_enum_types(self, tmp_project: Path) -> None:
         """All valid type values are accepted."""
         for t in ("incident", "pattern", "convention", "hypothesis", "workaround"):
             result = self._run_update(tmp_project, type=t)
-            assert result.get("status") != "invalid", f"type={t!r} rejected: {result}"
+            assert result.get("status") == "updated", f"type={t!r}: {result}"
 
     def test_update_all_valid_confidence_values(self, tmp_project: Path) -> None:
         """All valid confidence values are accepted."""
         for c in ("unverified", "low", "medium", "high", "verified"):
             result = self._run_update(tmp_project, confidence=c)
-            assert result.get("status") != "invalid", f"confidence={c!r} rejected: {result}"
+            assert result.get("status") == "updated", f"confidence={c!r}: {result}"
 
     def test_update_all_valid_phase_origins(self, tmp_project: Path) -> None:
         """All valid phase_origin values are accepted."""
         for p in ("RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"):
             result = self._run_update(tmp_project, metadata={"phase_origin": p})
-            assert result.get("status") != "invalid", f"phase_origin={p!r} rejected: {result}"
+            assert result.get("status") == "updated", f"phase_origin={p!r}: {result}"
 
     def test_update_nudge_line_exactly_80_chars(self, tmp_project: Path) -> None:
         """nudge_line of exactly 80 chars is accepted."""
         exactly_80 = "x" * 80
         result = self._run_update(tmp_project, metadata={"nudge_line": exactly_80})
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_tags_list_accepted(self, tmp_project: Path) -> None:
         """Updating tags to a list of strings is accepted."""
         result = self._run_update(tmp_project, tags=["alpha", "beta", "gamma"])
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_tags_empty_list_clears_tags(self, tmp_project: Path) -> None:
         """Passing tags=[] is accepted (clears all tags)."""
         result = self._run_update(tmp_project, tags=[])
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_tags_comma_string_is_coerced_not_rejected(self, tmp_project: Path) -> None:
         """A comma/space string is accepted and split, matching trw_learn.
@@ -188,13 +188,13 @@ class TestLearnUpdateNewFields:
         be rejected passing the identical value to the update path.
         """
         result = self._run_update(tmp_project, tags="alpha, beta gamma")
-        assert result.get("status") != "invalid", f"Got error: {result}"
+        assert result.get("status") == "updated", f"Got: {result}"
 
     def test_update_tags_non_string_element_rejected(self, tmp_project: Path) -> None:
         """tags entries must all be strings — mixed types are rejected."""
         result = self._run_update(tmp_project, tags=["ok", 42, "also-ok"])
-        assert result.get("status") == "invalid"
-        assert "tags" in result.get("error", "").lower()
+        assert result.get("status") == "rejected"
+        assert "tags" in result.get("message", "").lower()
 
     def test_update_tags_wired_through_adapter(self, tmp_project: Path) -> None:
         """trw_learn's update mode passes tags kwarg through to adapter_update."""
@@ -290,6 +290,6 @@ def test_retired_feedback_key_is_rejected_not_ignored(
     """
     update, lid = live_learning
     result = update(learning_id=lid, metadata={"feedback": "helpful"})
-    assert result["status"] == "invalid"
-    assert "feedback" in result["error"]
+    assert result["status"] == "rejected"
+    assert "feedback" in result["message"]
     assert _outcome_rows(daemon_checkout.trw_dir) == []

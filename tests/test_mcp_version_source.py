@@ -122,8 +122,12 @@ def test_uv_lock_dependency_specifiers_match_pyproject() -> None:
     assert isinstance(requirements, list)
 
     declared = _pyproject_specifier("trw-memory")
-    locked = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "trw-memory"]
-    assert len(locked) == 1, f"expected exactly one trw-memory requirement, got {locked}"
+    every = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "trw-memory"]
+    # PRD-CORE-342 FR01: the `otel` extra adds `trw-memory[otel]` under an extra marker; the floor lives on the
+    # one unconditional requirement, and the extra requirement must not declare a different floor.
+    locked = [dep for dep in every if "marker" not in dep]
+    assert len(locked) == 1, f"expected exactly one unconditional trw-memory requirement, got {every}"
+    assert all(dep.get("specifier") in (None, declared) for dep in every), every
     assert locked[0].get("specifier") == declared, (
         f"uv.lock records trw-memory{locked[0].get('specifier')} but pyproject declares "
         f"trw-memory{declared}. Publish trw-memory first, then re-run `uv lock`."
@@ -216,8 +220,9 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
     assert isinstance(per_rule, dict)
     # No import is exempt from DEP001: tiktoken is no longer imported by trw-mcp, so `make dep-check` is blocking.
     assert "DEP001" not in per_rule
-    assert per_rule["DEP002"] == ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
-    assert per_rule["DEP003"] == ["opentelemetry"]
+    # PRD-CORE-342 FR01: distro and the gRPC meta exporter are gone; opentelemetry-api is a declared base dep.
+    assert per_rule["DEP002"] == ["starlette"]
+    assert "DEP003" not in per_rule
     # rank-bm25 is a trw-memory base dependency (PRD-CORE-302 FR08); trw-mcp neither imports nor declares it.
     assert "DEP004" not in per_rule
 

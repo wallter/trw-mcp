@@ -578,27 +578,32 @@ def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
     state_file = trw_dir / "context" / "injected_learning_ids.txt"
     state_file.write_text("".join(f"L-old-{i}\n" for i in range(_MAX_INJECTED_IDS)), encoding="utf-8")
 
+    import trw_mcp.tools._injected_ids as injected_ids
+
     reads: list[str] = []
     writes: list[str] = []
-    real_read, real_write = Path.read_text, Path.write_text
+    real_read, real_write = Path.read_text, injected_ids.write_checkout_file
 
     def _counting_read(self: Path, *a: object, **kw: object) -> str:
         reads.append(self.name)
         return real_read(self, *a, **kw)  # type: ignore[arg-type]
 
-    def _counting_write(self: Path, *a: object, **kw: object) -> int:
-        writes.append(self.name)
-        return real_write(self, *a, **kw)  # type: ignore[arg-type]
+    # The rewrite goes through the atomic, symlink-refusing checkout writer (security census slice 3a).
+    def _counting_write(root: Path, path: Path, data: str | bytes, **kw: object) -> None:
+        writes.append(path.name)
+        real_write(root, path, data, **kw)  # type: ignore[arg-type]
 
     with (
         patch.object(Path, "read_text", _counting_read),
-        patch.object(Path, "write_text", _counting_write),
+        patch.object(injected_ids, "write_checkout_file", _counting_write),
         patch.object(sqlite3, "connect", side_effect=AssertionError("the injected-ids write must open no database")),
     ):
         _write_session_start_ids(trw_dir, [{"id": "L-new"}])
 
     assert reads == ["injected_learning_ids.txt"], reads
-    assert writes == ["injected_learning_ids.txt.tmp"], writes
+    assert writes == ["injected_learning_ids.txt"], writes
+    # Atomic: the rewrite leaves the state file and nothing else (no temp file beside it).
+    assert sorted(p.name for p in state_file.parent.iterdir()) == ["injected_learning_ids.txt"]
     # The cap still holds, so the rewrite stays bounded however long the session
     # history is.
     assert len(state_file.read_text(encoding="utf-8").split()) == _MAX_INJECTED_IDS

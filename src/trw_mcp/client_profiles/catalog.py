@@ -79,12 +79,16 @@ def _format_ceremony_label(profile: ClientProfile) -> str:
 
 
 def _write_target_label(profile: ClientProfile) -> str:
-    """Doc-facing write-target path, first-match-wins over ``WriteTargets.PRECEDENCE``."""
+    """Doc-facing write-target path, first-match-wins over ``WriteTargets.PRECEDENCE``.
+
+    With no flag set, the profile's own ``instruction_path`` -- the file TRW actually writes. Codex and opencode
+    set no flag and used to fall through to ``AGENTS.md``, a file neither init writes (E2E-CODEX-INIT-ARTIFACTS).
+    """
     targets = profile.write_targets
     for flag, label in WriteTargets.PRECEDENCE:
         if getattr(targets, flag):
             return label
-    return WriteTargets.DEFAULT_LABEL
+    return targets.instruction_path or WriteTargets.DEFAULT_LABEL
 
 
 def _format_pool_weights(profile: ClientProfile) -> str:
@@ -531,6 +535,33 @@ def core_scaffold_relpaths() -> frozenset[str]:
     particular client.
     """
     return frozenset(surface.relpath for surface in (*_CORE_SURFACES, *_canon_root_surfaces()))
+
+
+#: Directory names that mark a registry surface as a client instruction carrier
+#: (``.cursor/rules``, ``.agents/rules/trw-ceremony.md``, ``.github/instructions/*``).
+_INSTRUCTION_DIR_NAMES: frozenset[str] = frozenset({"rules", "instructions"})
+
+
+def instruction_surface_relpaths() -> tuple[str, ...]:
+    """Repo-relative paths (files or directories) that carry TRW's instruction text.
+
+    What ``check-instructions`` scans: the generated ``.trw/INSTRUCTIONS.md``, the
+    shared root files, the per-client generated files, the legacy root
+    ``CLAUDE.md``, and every registry surface that sits in (or is) a ``rules`` /
+    ``instructions`` directory. All derived from the surfaces above, so a client
+    added to the registry is scanned without a second list to update.
+    """
+    from pathlib import PurePosixPath
+
+    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH
+
+    found: dict[str, None] = dict.fromkeys([INSTRUCTIONS_RELPATH, *(rel for _, rel in _ROOT_INSTRUCTION_SURFACES)])
+    found.update(dict.fromkeys(sorted(_generated_instruction_relpaths())))
+    for surface in uninstall_surfaces():
+        path = PurePosixPath(surface.relpath)
+        if surface.config_shape == "legacy-claude-md" or {path.name, path.parent.name} & _INSTRUCTION_DIR_NAMES:
+            found.setdefault(surface.relpath)
+    return tuple(found)
 
 
 def uninstall_surfaces() -> tuple[UninstallSurface, ...]:

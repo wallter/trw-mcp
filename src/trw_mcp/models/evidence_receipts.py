@@ -7,8 +7,7 @@ live in focused siblings to stay under the 350 effective-LOC gate:
   RunOwnedScope, ReceiptValidationResult, canonicalization primitives.
 - ``_evidence_plans.py`` — RequiredReviewPlan, RequiredValidationPlan,
   BuildCommandResult, verdict/outcome enums.
-- ``_evidence_records.py`` — ReviewReceipt, BuildReceipt, VerificationReceipt,
-  ReceiptTombstone.
+- ``_evidence_records.py`` — ReviewReceipt, BuildReceipt, VerificationReceipt.
 
 Downstream consumers (PRD-CORE-206/208) SHOULD import receipt types from THIS
 module so the split remains an internal refactor detail.

@@ -125,6 +125,22 @@ def memory_daemon_row(target: Path) -> tuple[str, str]:
     from trw_memory import __version__ as installed
 
     if info.version != installed:
+        from trw_mcp.server._doctor_version_skew import daemon_skew
+
+        skew = daemon_skew(installed, str(info.version), int(info.pid))
+        if skew is not None and skew.daemon_is_newer and not skew.incompatible:
+            return (
+                "WARN",
+                f"memory daemon pid {info.pid} runs trw-memory {info.version}, newer than this client's {installed} but the "
+                f"same major, so memory still works; upgrade this client when convenient.",
+            )
+        if skew is not None and skew.daemon_is_newer:
+            return (
+                "FAIL",
+                f"memory daemon pid {info.pid} runs trw-memory {info.version}, NEWER than this client's {installed}: "
+                f"their tool signatures differ, so this client can neither read nor write memory (memory_backend fails "
+                f"the same way). Fix: {skew.remedy()}.",
+            )
         # An upgrade leaves the old daemon serving old code until it exits (a pre-8.0 record carries no
         # start, so the installer cannot prove the pid and will not stop it); PASS here greened a stale verify.
         return (

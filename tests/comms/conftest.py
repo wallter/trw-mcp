@@ -46,6 +46,21 @@ def _fresh_process_incarnations() -> Any:
     _guidance._reset_for_test()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_pinned_reads() -> Any:
+    """Each test starts with an empty pinned-read fd cache (E2E-INC-103).
+
+    The cache is process-global and capped; every comms test pins its own mailbox files, and their
+    tmp dirs outlive the test, so a serial run of this directory reached the cap and later tests
+    saw ``PinnedReadCapacityExceeded`` (the dead-path sweep cannot help: those files still exist).
+    """
+    from tests._checkout_access_state import reset_pinned_reads
+
+    reset_pinned_reads()
+    yield
+    reset_pinned_reads()
+
+
 #: PRD-CORE-274-FR18 decoration every public response carries; stripped where a test
 #: pins the rest of a payload exactly (guidance itself is tested in test_guidance.py).
 FR18_DECORATION = ("state", "guidance_version", "guidance")

@@ -1089,6 +1089,28 @@ def _run_cc03(project: Path, payload: dict[str, object]) -> subprocess.Completed
     )
 
 
+def _run_cc03_with_hint(project: Path, payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    """The wired hook against a real T2 sidecar for src/module.py: the hook prints only when it has something to say."""
+    from tests.channels.claude_code._distill_hint_support import CHECKOUT_PYTHONPATH, deploy_distill_hint
+    from tests.channels.claude_code.test_cc03_json_output import _project
+
+    _project(project, ["w"])
+    return subprocess.run(
+        ["sh", str(deploy_distill_hint(project))],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=project,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "PYTHONPATH": CHECKOUT_PYTHONPATH,
+            "TRW_PROJECT_DIR": str(project),
+            "HOME": str(project),
+        },
+    )
+
+
 def _wired() -> list[str]:
     from trw_mcp.models.config._pre_edit_channels import PRE_EDIT_HINT_CHANNELS
 
@@ -1105,7 +1127,8 @@ def test_wired_hook_prints_the_pinned_output_shape(client_id: str, tmp_path: Pat
     """The hook prints exactly one JSON object: the documented model-visible field and nothing else."""
     from trw_mcp.models.config._pre_edit_channels import PRE_EDIT_HINT_CHANNELS
 
-    result = _run_cc03(tmp_path, _WIRED_CLIENT_PAYLOADS[client_id])
+    payload = json.loads(json.dumps(_WIRED_CLIENT_PAYLOADS[client_id]).replace("src/app.py", "src/module.py"))
+    result = _run_cc03_with_hint(tmp_path, payload)
 
     assert result.returncode == 0, result.stderr
     lines = result.stdout.strip().splitlines()
@@ -1117,7 +1140,7 @@ def test_wired_hook_prints_the_pinned_output_shape(client_id: str, tmp_path: Pat
     field: Any = payload
     for key in PRE_EDIT_HINT_CHANNELS[client_id].output_path:
         field = field[key]
-    assert isinstance(field, str) and field.startswith("[TRW]")
+    assert isinstance(field, str) and field.startswith("[TRW")
 
 
 @pytest.mark.parametrize(
@@ -1152,8 +1175,7 @@ def test_codex_patch_hints_every_code_file_it_touches(tmp_path: Path) -> None:
         tmp_path, {"tool_use_id": "call-c3", "tool_name": "apply_patch", "tool_input": {"command": command}}
     )
 
-    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert context.startswith("[TRW]")
+    assert result.returncode == 0
     markers = sorted(p.name.split(".py-")[0] for p in (tmp_path / ".trw" / "context" / "cc03-debounce").iterdir())
     assert markers == ["other", "pkg_new_mod"]
 

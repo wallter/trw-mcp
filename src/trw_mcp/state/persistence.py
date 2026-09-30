@@ -27,6 +27,7 @@ import structlog
 
 from trw_mcp._locking import _lock_ex, _lock_sh, _lock_un
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._containment import assert_trw_write_contained
 
 # PRD-CORE-001: Base MCP tool suite — atomic file state persistence
 
@@ -124,6 +125,10 @@ class FileStateReader:
 
     def read_yaml(self, path: Path, *, tolerate_identical_duplicates: bool = False) -> dict[str, object]:
         """Read and parse a YAML file.
+
+        NOT for evidence a blocking gate decides on: this opens by name (a symlink is followed) and returns
+        ``{}`` for an empty or ``null`` document, so corrupt evidence reads as an empty mapping. Fail-closed
+        gates use :func:`trw_mcp.state._evidence_bound_read.read_evidence_mapping` (E2E-INC-112).
 
         Args:
             path: Path to the YAML file.
@@ -290,6 +295,7 @@ class FileStateWriter:
             StateError: If write fails.
         """
         try:
+            assert_trw_write_contained(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write_text_file(path, ".yaml.tmp", lambda fh: _roundtrip_yaml().dump(data, fh))
             logger.debug("yaml_written", path=str(path))
@@ -312,6 +318,7 @@ class FileStateWriter:
         Raises:
             StateError: If append fails.
         """
+        assert_trw_write_contained(path)  # a ContainmentError is a StateError: raised as-is, not re-wrapped
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             line = json.dumps(record, default=json_serializer) + "\n"
@@ -344,6 +351,7 @@ class FileStateWriter:
             StateError: If write fails.
         """
         try:
+            assert_trw_write_contained(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write_text_file(path, ".tmp", lambda fh: fh.write(content))
         except StateError:
@@ -363,6 +371,7 @@ class FileStateWriter:
         Raises:
             StateError: If directory creation fails.
         """
+        assert_trw_write_contained(path)
         try:
             path.mkdir(parents=True, exist_ok=True)
         except OSError as exc:

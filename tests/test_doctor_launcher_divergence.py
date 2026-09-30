@@ -16,6 +16,13 @@ from trw_mcp.server._doctor_launcher_divergence import launcher_divergence_row
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _no_trw_on_path(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """These rows test the LOCATION rule. Which build a bare ``trw-mcp`` finds on the machine running them is the
+    version rule's input (``test_doctor_version_agreement``), so keep it out of here."""
+    monkeypatch.setenv("PATH", str(tmp_path_factory.mktemp("empty-path")))
+
+
 def _make_dev_checkout(root: Path) -> None:
     """A directory shaped like this monorepo's own dev checkout (FR01's own scope test)."""
     pkg = root / "trw-mcp" / "src" / "trw_mcp"

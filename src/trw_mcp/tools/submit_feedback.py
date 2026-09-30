@@ -33,6 +33,7 @@ from typing_extensions import TypedDict
 # Secret/PII redaction: the single trw-mcp redactor lives in ``telemetry.anonymizer`` (R2-014).
 from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
 from trw_mcp.telemetry.anonymizer import redact_metadata, redact_secrets
+from trw_mcp.tools import _feedback_outbox as _outbox
 
 __all__ = ["submit_feedback", "submit_feedback_via_http"]
 
@@ -100,6 +101,9 @@ class SubmitFeedbackResult(BaseModel):
     error: str = ""
     status_code: int = 0
     metadata_attached: dict[str, str] = Field(default_factory=dict)
+    # FEEDBACK-LOCAL-OUTBOX: the local record of this attempt, and the earlier report a duplicate matched.
+    outbox_id: str = ""
+    duplicate_of: dict[str, str] = Field(default_factory=dict)
 
 
 def _trw_mcp_version() -> str:
@@ -314,6 +318,7 @@ def _submit_feedback_impl(
     message: str,
     contact_email: str | None,
     metadata: dict[str, str] | None,
+    force: bool = False,
 ) -> SubmitFeedbackResult:
     """Core submission flow. May raise — wrapped by :func:`submit_feedback`."""
     # NFR01 chokepoint: redact every user-controlled field before it can leave
@@ -334,21 +339,9 @@ def _submit_feedback_impl(
         logger.info("submit_feedback_validation_failed", error=error, outcome="validation_rejected")
         return SubmitFeedbackResult(success=False, error=error, status_code=0)
 
-    # Lazy import so importing this module does not pull in heavy config.
-    from trw_mcp.models.config import get_config
-
-    cfg = get_config()
-    backend_url = (cfg.resolved_backend_url or "").strip()
-    api_key = (cfg.resolved_backend_api_key or "").strip()
-
+    backend_url, api_key = _backend()
     if not backend_url or not api_key:
-        return SubmitFeedbackResult(
-            success=False,
-            error=(
-                "backend not configured — set TRW_BACKEND_URL and TRW_BACKEND_API_KEY (or run install-trw to provision)"
-            ),
-            status_code=0,
-        )
+        return SubmitFeedbackResult(success=False, error=_NOT_CONFIGURED, status_code=0)
 
     final_metadata = _merge_metadata(metadata, _build_auto_metadata())
     payload: SubmissionPayload = {
@@ -362,14 +355,54 @@ def _submit_feedback_impl(
 
     from trw_mcp.state._paths import resolve_trw_dir
 
-    return submit_feedback_via_http(
-        backend_url=backend_url,
-        api_key=api_key,
-        payload=payload,
-        # Census-named exception: feedback is agent-typed, so its source is the caller's
-        # project, resolved once; no .trw there means nothing is sent.
-        source_trw_dir=resolve_trw_dir(),
+    trw_dir = resolve_trw_dir()  # the local outbox only; the send resolves its own source in _send_recorded
+    if not force:
+        prior = _outbox.find_duplicate(trw_dir, category, payload["subject"])
+        if prior is not None:
+            # A pending record was never delivered: the refusal must not say it was.
+            done = bool(prior.get("submission_id"))
+            hint = (
+                "pass force to send it again"
+                if done
+                else "not yet delivered; run `trw-mcp feedback flush` or pass force"
+            )
+            error = f"already {'reported' if done else 'queued'} as {prior['id']} ({prior['subject']!r}); {hint}"
+            return SubmitFeedbackResult(success=False, error=error, duplicate_of=prior)
+    # No .trw: nothing is stored (creating one would itself turn platform contact on).
+    # The contact address is never stored: a flushed retry goes without it (and says so).
+    stored = {k: v for k, v in payload.items() if k != "contact_email"}
+    record = _outbox.enqueue(trw_dir, stored, contact_dropped="contact_email" in payload) if trw_dir.is_dir() else None
+    return _send_recorded(backend_url, api_key, payload, record)
+
+
+_NOT_CONFIGURED = (
+    "backend not configured — set TRW_BACKEND_URL and TRW_BACKEND_API_KEY (or run install-trw to provision)"
+)
+
+
+def _backend() -> tuple[str, str]:
+    # Lazy import so importing this module does not pull in heavy config.
+    from trw_mcp.models.config import get_config
+
+    cfg = get_config()
+    return (cfg.resolved_backend_url or "").strip(), (cfg.resolved_backend_api_key or "").strip()
+
+
+def _send_recorded(
+    backend_url: str, api_key: str, payload: SubmissionPayload, record: Path | None
+) -> SubmitFeedbackResult:
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    # Census-named exception: feedback is agent-typed, so its source is the caller's
+    # project, resolved once; no .trw there means nothing is sent.
+    result = submit_feedback_via_http(
+        backend_url=backend_url, api_key=api_key, payload=payload, source_trw_dir=resolve_trw_dir()
     )
+    if record is None:
+        return result
+    _outbox.settle(record, success=result.success, submission_id=result.submission_id, error=result.error,
+                   status_code=result.status_code)  # fmt: skip
+    return result.model_copy(update={"outbox_id": _outbox.stem(record)})
 
 
 def submit_feedback(
@@ -379,6 +412,7 @@ def submit_feedback(
     message: str,
     contact_email: str | None = None,
     metadata: dict[str, str] | None = None,
+    force: bool = False,
 ) -> SubmitFeedbackResult:
     """Top-level callable used by both the MCP tool wrapper and tests.
 
@@ -403,6 +437,7 @@ def submit_feedback(
             message=message,
             contact_email=contact_email,
             metadata=metadata,
+            force=force,
         )
     except Exception as exc:  # never-raises contract is the whole point
         logger.warning(

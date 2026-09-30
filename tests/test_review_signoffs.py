@@ -183,6 +183,66 @@ class TestOperatorSignoffResolution:
 
         assert resolve_review_signoff(trw_dir, record.approval_id, [_REF]).verified is True
 
+    def test_correctly_signed_record_with_unparseable_dates_is_refused(self, trw_dir: Path) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: a valid HMAC over non-ISO dates never verifies (no window can be checked)."""
+        record = append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example")
+        for approved_at, expires_at in (("not-a-date", record.expires_at), (record.approved_at, "never")):
+            entry = {
+                "approval_id": record.approval_id,
+                "review_ref": _REF,
+                "approver": "ops@example",
+                "approved_at": approved_at,
+                "expires_at": expires_at,
+                "payload_version": "v1",
+                "signature": review_signoffs.sign_review_signoff(
+                    approval_id=record.approval_id,
+                    review_ref=_REF,
+                    approver="ops@example",
+                    approved_at=approved_at,
+                    expires_at=expires_at,
+                ),
+            }
+            signoffs_path(trw_dir).write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
+
+            resolution = resolve_review_signoff(trw_dir, record.approval_id, [_REF])
+            assert resolution.verified is False
+            assert resolution.reason == REASON_SIGNATURE_INVALID
+
+    @pytest.mark.parametrize("line", ['["a", "list"]', '"a string"'], ids=["list", "string"])
+    def test_non_object_journal_line_is_skipped_not_fatal(self, trw_dir: Path, line: str) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: valid JSON that is not an object is ignored; a valid neighbour still verifies."""
+        record = append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example")
+        path = signoffs_path(trw_dir)
+        path.write_text(line + "\n" + path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        assert resolve_review_signoff(trw_dir, record.approval_id, [_REF]).verified is True
+
+    def test_record_of_another_payload_version_is_never_resolved(self, trw_dir: Path) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: only ``v1`` records are read, whatever else the line carries."""
+        record = append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example")
+        path = signoffs_path(trw_dir)
+        entry = json.loads(path.read_text(encoding="utf-8").strip())
+        entry["payload_version"] = "v0"
+        path.write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
+
+        resolution = resolve_review_signoff(trw_dir, record.approval_id, [_REF])
+        assert resolution.verified is False
+        assert resolution.reason == REASON_UNRESOLVED
+
+    def test_unknown_id_in_a_present_journal_is_unresolved(self, trw_dir: Path) -> None:
+        """E2E-COV-SIGNOFF-RECEIPT: a readable journal that lacks the id is UNRESOLVED (not unreadable)."""
+        append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example")
+
+        resolution = resolve_review_signoff(trw_dir, "opsign-not-in-the-journal", [_REF])
+        assert resolution.verified is False
+        assert resolution.reason == REASON_UNRESOLVED
+
+    @pytest.mark.parametrize("hours", [0, -5])
+    def test_mint_rejects_a_ttl_below_one_hour_without_writing(self, trw_dir: Path, hours: int) -> None:
+        with pytest.raises(ValueError, match="ttl_hours"):
+            append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example", ttl_hours=hours)
+        assert not signoffs_path(trw_dir).exists()
+
     def test_mint_rejects_an_empty_reference_or_approver(self, trw_dir: Path) -> None:
         with pytest.raises(ValueError):
             append_review_signoff(trw_dir, review_ref="  ", approver="ops@example")
@@ -238,6 +298,33 @@ class TestMintCli:
         assert code == 0
         assert approval_id.startswith("opsign-")
         assert resolve_review_signoff(trw_dir, approval_id, [_REF]).verified is True
+
+    def test_mint_refuses_a_window_the_gate_would_refuse_without_writing(self, trw_dir: Path) -> None:
+        """E2E-INC-124: minting past review_signoff_ttl_hours produced an approval the gate then refused."""
+        cap = review_signoffs.configured_ttl_hours()
+
+        with pytest.raises(ValueError, match="exceeds review_signoff_ttl_hours"):
+            append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example", ttl_hours=cap + 1)
+        assert not signoffs_path(trw_dir).exists()
+
+        at_cap = append_review_signoff(trw_dir, review_ref=_REF, approver="ops@example", ttl_hours=cap)
+        assert resolve_review_signoff(trw_dir, at_cap.approval_id, [_REF]).verified is True
+
+    def test_approve_cli_refuses_an_over_cap_ttl_and_names_its_real_entry_point(
+        self, trw_dir: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cap = review_signoffs.configured_ttl_hours()
+        argv = ["approve", "--review-ref", _REF, "--approver", "ops@example", "--trw-dir", str(trw_dir)]
+
+        assert main([*argv, "--ttl-hours", str(cap + 1)]) == 2
+        assert "exceeds review_signoff_ttl_hours" in capsys.readouterr().err
+        assert not signoffs_path(trw_dir).exists()
+
+        with pytest.raises(SystemExit):
+            main(["--help"])
+        usage = capsys.readouterr().out
+        assert "python -m trw_mcp.state.review_signoffs" in usage
+        assert "trw-review-approve" not in usage  # not an installed command
 
     def test_approve_refuses_an_empty_approver_without_writing(
         self, trw_dir: Path, capsys: pytest.CaptureFixture[str]

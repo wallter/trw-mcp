@@ -19,6 +19,7 @@ from trw_mcp.comms._envelope import (
     InboxAction,
     MessageState,
     canonical_bytes,
+    clean_text,
     receipt,
 )
 from trw_mcp.comms._handoff import derive_handoff, handoff_inputs
@@ -122,10 +123,18 @@ def _handoff(
 
     Runtime caller: :func:`inbox_action` for ``trw_inbox`` accept, report and complete.
     """
-    if not ids or len(ids) > limit or any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
+    if not ids or len(ids) > limit:
         raise AdmissionError("invalid_inbox_arguments")
+    if any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
+        raise AdmissionError("invalid_message_id")
     normalized = list(dict.fromkeys(ids))
-    if (action == "report") != (next_read is not None) or (action == "report" and len(normalized) != 1):
+    if action == "report":
+        if next_read is None:
+            raise AdmissionError("report_needs_next_read")
+        if len(normalized) != 1:
+            raise AdmissionError("report_takes_one_message_id")
+        next_read = clean_text(next_read)
+    elif next_read is not None:
         raise AdmissionError("invalid_inbox_arguments")
     result = {"status": "ok", "delivery": "pull_only", _RESULT_KEY[action]: normalized}
     if not _paging.fits(result, max_bytes):
@@ -134,8 +143,8 @@ def _handoff(
         accept(conn, binding, normalized, now)
     elif action == "report":
         report(conn, binding, normalized[0], next_read, now)
-    else:
-        complete(conn, binding, normalized, now)
+    elif unresolved := complete(conn, binding, normalized, now):
+        result["unresolved_next_read"] = unresolved  # E2E-INC-092: the sender checks these pointers
     return result
 
 
@@ -160,8 +169,10 @@ def inbox_action(
     if next_read is not None:
         raise AdmissionError("invalid_inbox_arguments")
     if action == "ack":
-        if not ids or len(ids) > limit or any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
+        if not ids or len(ids) > limit:
             raise AdmissionError("invalid_ack_ids")
+        if any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
+            raise AdmissionError("invalid_message_id")
         normalized = list(dict.fromkeys(ids))
         rows = validate_ack(conn, binding, normalized)
         result = {"status": "ok", "delivery": "pull_only", "acknowledged_ids": normalized}

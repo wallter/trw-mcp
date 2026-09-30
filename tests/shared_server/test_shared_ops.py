@@ -439,7 +439,7 @@ def test_swap_cli_src_uses_this_interpreter_and_the_worktree_source(
 
     repo, worktree = _repo_with_worktree(tmp_path)
     calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(_cli, "_paths", lambda: (paths, None))
+    monkeypatch.setattr(_cli, "_paths", lambda: (paths, None, repo))
     monkeypatch.setattr(state_paths, "resolve_project_root", lambda: repo)
     monkeypatch.setattr(_ops, "swap", lambda *a, **k: calls.append({"args": a, **k}) or "ok")
     parser = argparse.ArgumentParser()

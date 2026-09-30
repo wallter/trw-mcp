@@ -97,11 +97,7 @@ class TelemetryConfig(BaseModel):
     otel_enabled: bool = False
     # otel_endpoint mirror field removed under PRD-CORE-291 (slice 2) with the
     # flat field it projected (_fields_telemetry.py): no consumer.
-    # PRD-INFRA-145: see _fields_telemetry.py for semantics. 'legacy' default
-    # preserves the current tool.*/trw.* span shape; 'gen_ai' opts into OTel
-    # GenAI semantic conventions. Message-body capture is off by default.
-    otel_semconv: Literal["legacy", "gen_ai"] = "legacy"
-    otel_capture_messages: bool = False
+    # otel_semconv / otel_capture_messages mirrors removed under PRD-CORE-344.
     # ceremony_alert_threshold / ceremony_alert_consecutive mirror fields
     # removed under PRD-CORE-291 (slice 2) with the flat fields they
     # projected (_fields_ceremony.py): no consumer anywhere.

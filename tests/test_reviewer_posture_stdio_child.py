@@ -160,6 +160,7 @@ def test_reviewer_child_refuses_a_forbidden_tool_with_a_typed_denial(
     )
     payload = result.get("structuredContent") or {}
     assert payload.get("error_type") == "tool_not_in_reviewer_surface"
+    assert result.get("isError") is True  # CODEX-P0-B: a refusal is an MCP error, not a success
     assert payload.get("tool_name") == _FORBIDDEN_TOOL
     assert sorted(payload.get("allowed_tools", [])) == sorted(REVIEWER_TOOLS)
     # The denial names no route to widen the surface (FR04): a bound the bounded

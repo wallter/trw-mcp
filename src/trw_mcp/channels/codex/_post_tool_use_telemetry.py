@@ -118,18 +118,110 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
             fh.write(json.dumps(event) + "\\n")
 
 
+    _APPLY_PATCH_MARKERS = ("*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: ")
+    _STREAM_SOFT_BYTES = 8 * 1024 * 1024
+    _STREAM_HARD_BYTES = 9 * 1024 * 1024
+    _MAX_PATH_CHARS = 4096
+    _MAX_FILES_PER_EDIT = 200
+    _MAX_SESSION_ID_CHARS = 200
+
+
+    def _patch_files(patch: str) -> list[str]:
+        \"\"\"File paths an apply_patch input touches.
+
+        An apply_patch envelope (``*** Begin Patch``) names files only through its own markers, at line start;
+        a line inside it that merely looks like a diff header is added text, not a file. Outside an envelope the
+        input is a unified diff and its ``+++ b/`` / ``--- a/`` headers name the files.
+        \"\"\"
+        enveloped = any(line.startswith("*** Begin Patch") for line in patch.splitlines())
+        found: list[str] = []
+        for line in patch.splitlines():
+            path = ""
+            if enveloped:
+                for marker in _APPLY_PATCH_MARKERS:
+                    if line.startswith(marker):
+                        path = line[len(marker) :].strip()
+            elif line.startswith(("+++ b/", "--- a/")):
+                path = line[6:].strip()
+            if path and len(path) <= _MAX_PATH_CHARS and path not in found:
+                found.append(path)
+        return found[:_MAX_FILES_PER_EDIT]
+
+
+    def _open_dir_below(parent_fd: int, name: str) -> int:
+        \"\"\"Open (creating if absent) directory *name* under *parent_fd*, refusing a symlink at that component.\"\"\"
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            return os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            os.mkdir(name, 0o755, dir_fd=parent_fd)
+            return os.open(name, flags, dir_fd=parent_fd)
+
+
+    def _record_file_modified(repo_root: Path, tool_name: str, file_paths: list[str], session_id: str) -> None:
+        \"\"\"Append one ``file_modified`` record per file to the session stream the deliver gate reads.
+
+        Same flat shape as data/hooks/post-tool-event.sh (INC-115): without it a Codex session that
+        edited files counted zero changes and trw_deliver succeeded with no build. Every component below
+        the repo root is opened relative to a pinned directory descriptor with no-follow, so a path swapped for
+        a symlink after a check cannot redirect the write. Between the soft and hard size cap only a
+        ``change_evidence_unknown`` record is appended (the gate then fails closed instead of reading zero);
+        past the hard cap nothing is. Best effort otherwise (never raises).
+        \"\"\"
+        if not file_paths:
+            return
+        ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        session_id = session_id[:_MAX_SESSION_ID_CHARS]
+        records: list[dict[str, object]] = []
+        for fp in file_paths:
+            path = Path(fp)
+            rel = os.path.relpath(path.parent.resolve() / path.name, repo_root.resolve()) if path.is_absolute() else fp
+            records.append(
+                {
+                    "ts": ts,
+                    "event": "file_modified",
+                    "tool": "codex:" + tool_name,
+                    "file": rel,
+                    "session_id": session_id,
+                    "pinned": False,
+                }
+            )
+        fds: list[int] = []
+        try:
+            fds.append(os.open(repo_root, os.O_RDONLY | os.O_DIRECTORY))
+            fds.append(_open_dir_below(fds[-1], ".trw"))
+            fds.append(_open_dir_below(fds[-1], "context"))
+            fds.append(
+                os.open(
+                    "session-events.jsonl",
+                    os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                    0o644,
+                    dir_fd=fds[-1],
+                )
+            )
+            size = os.fstat(fds[-1]).st_size
+            if size >= _STREAM_HARD_BYTES:
+                return
+            if size >= _STREAM_SOFT_BYTES:
+                records = [{"ts": ts, "event": "change_evidence_unknown", "reason": "stream_full"}]
+            os.write(fds[-1], "".join(json.dumps(r) + "\\n" for r in records).encode("utf-8"))
+        finally:
+            for fd in reversed(fds):
+                os.close(fd)
+
+
     def main() -> None:
         \"\"\"Main hook entrypoint — always exits 0.\"\"\"
         try:
             raw = _read_hook_input()
-            data = json.loads(raw)
-        except (json.JSONDecodeError, Exception):
+            data = json.loads(raw, strict=False)  # a raw newline inside a string must not drop the event
+        except (json.JSONDecodeError, Exception):  # trw-fail-silent-allow: a hook must never break or block the client
             print(_CONTINUE_RESPONSE)
             return
 
         try:
             tool_name = str(data.get("tool_name", ""))
-        except Exception:
+        except Exception:  # trw-fail-silent-allow: a hook must never break or block the client
             print(_CONTINUE_RESPONSE)
             return
 
@@ -145,22 +237,20 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
             # hook_runtime.rs section in codex-cli 0.133.0 Rust binary, 2026-05-28.
             # Defensive fallbacks kept for forward-compat with future Codex versions.
             # Worst case: null turn_id degrades correlation quality, never breaks.
-            turn_id = (
-                data.get("turn_id")
-                or data.get("turnId")
-                or data.get("thread_id")
-            )
+            turn_id = data.get("turn_id") or data.get("turnId") or data.get("thread_id")
             tool_use_id = data.get("tool_use_id")
 
             file_paths: list[str] = []
             if isinstance(tool_input, dict):
-                patch = tool_input.get("patch", "")
-                if patch:
-                    for line in str(patch).splitlines():
-                        if line.startswith("+++ b/") or line.startswith("--- a/"):
-                            fp = line[6:].strip()
-                            if fp and fp not in file_paths:
-                                file_paths.append(fp)
+                if tool_name == "apply_patch":
+                    # The envelope arrives as `command` on the codex versions seen so far; `patch`/`input`
+                    # are older or forward-compatible spellings.
+                    for key in ("patch", "input", "command", "cmd"):
+                        value = tool_input.get(key)
+                        if isinstance(value, str) and value:
+                            file_paths = _patch_files(value)
+                            if file_paths:
+                                break
                 cmd = tool_input.get("command", tool_input.get("cmd", ""))
                 if cmd and not file_paths:
                     file_paths = []
@@ -178,7 +268,14 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
 
             telemetry_path = _resolve_telemetry_path()
             _write_event(telemetry_path, event)
-        except Exception:
+            if tool_name == "apply_patch":
+                _record_file_modified(
+                    telemetry_path.parent.parent.parent,
+                    tool_name,
+                    file_paths,
+                    str(data.get("session_id") or os.environ.get("TRW_SESSION_ID") or ""),
+                )
+        except Exception:  # trw-fail-silent-allow: telemetry and change evidence are best effort; never break the client
             pass
 
         print(_CONTINUE_RESPONSE)

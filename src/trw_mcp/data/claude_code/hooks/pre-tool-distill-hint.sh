@@ -20,7 +20,7 @@
 # Hook latency budget: ≤ 3000ms registered timeout (NFR06).
 # Python subprocess: ≤ 2500ms, bounded by _trw_bounded_python (portable: the
 # program's own SIGALRM, plus `timeout` only where the box has it); fallback to
-# the T0 beacon on timeout (FR30).
+# silence on timeout (FR30).
 
 set -e
 trap 'exit 0' EXIT
@@ -41,6 +41,12 @@ _tool_name=""
 _agent_type=""
 
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
+# The project root, resolved ONCE before any read or write below (the gate in .trw/config.yaml, the interpreter,
+# .trw/context state, telemetry): Claude Code runs this hook in the shell's CWD, which may be a subdirectory, and
+# sets CLAUDE_PROJECT_DIR, not TRW_PROJECT_DIR; Codex sets neither. A bare $(pwd) fallback put .trw state into that
+# subdirectory and read the gate from a config that is not the project's (HOOK-CWD-STATE-LEAK).
+TRW_PROJECT_DIR="${TRW_PROJECT_DIR:-$(get_repo_root)}"
+export TRW_PROJECT_DIR
 _trw_has_json_parser || exit 0
 _tool_use_id=$(printf '%s' "$_payload" | _json_get .tool_use_id) || true
 _file_path=$(printf '%s' "$_payload" | _json_get .tool_input.file_path) || true
@@ -88,7 +94,7 @@ esac
 # patch stays inside the 2.5s budget; files past the cap are neither hinted nor
 # debounced. The FIRST surviving file names the CC-04 record.
 _TRW_MAX_HINT_FILES=5
-_repo="${TRW_PROJECT_DIR:-$(pwd)}"
+_repo="$TRW_PROJECT_DIR"
 _debounce_dir="${_repo}/.trw/context/cc03-debounce"
 
 # Sanitized name PLUS a checksum of the exact path. The sanitizer alone is
@@ -147,14 +153,12 @@ EOF_CANDIDATES
 _py=$(_get_python_path "$_repo" 2>/dev/null) || {
     # Auto mode with no interpreter: trw-distill cannot be importable, so the
     # hook is off (silent), exactly as the old standalone probe decided.
-    [ "$_cc03_probe" -eq 1 ] && exit 0
-    _format_t0_beacon
     exit 0
 }
 _wt_pythonpath=$(_worktree_pythonpath "$_repo" 2>/dev/null) || _wt_pythonpath=""
 
 # --- Call compute_before_edit_hint via Python subprocess (FR30) ---
-# Bounded at 2500ms by _trw_bounded_python; fall back to T0 beacon on failure/timeout.
+# Bounded at 2500ms by _trw_bounded_python; stay silent on failure/timeout.
 _hints_dir="${_repo}/.trw/context/cc03-hints"
 # Auto mode defers this to the Python program, after its probe says "on".
 [ "$_cc03_probe" -eq 1 ] || mkdir -p "$_hints_dir" 2>/dev/null || true
@@ -291,6 +295,8 @@ _hint_output=$(
     _trw_bounded_python "${TRW_CC03_BOUND_S:-2.5}" \
     PYTHONPATH="$_wt_pythonpath${_wt_pythonpath:+${PYTHONPATH:+:}}${PYTHONPATH:-}" \
     TRW_EMBEDDINGS_ENABLED=false \
+    TRW_PROJECT_ROOT="$_repo" \
+    TRW_REPO_ROOT="$_repo" \
     MEMORY_DAEMON_AUTOSTART="${TRW_CC03_DAEMON_AUTOSTART:-false}" \
     TRW_CC04_HINTS_DIR="$_hints_dir" \
     TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
@@ -363,8 +369,8 @@ try:
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "file_path": os.environ.get("TRW_CC04_FILE_PATH", ""),
             "tier": "T0",
-            "hint_emitted": True,
-            "tokens_emitted": 9,
+            "hint_emitted": False,
+            "tokens_emitted": 0,
             "distill_status": "timeout_fallback",
             "tool_use_id": _trw_tuid,
             "outcome_captured": False,
@@ -382,7 +388,7 @@ except Exception:
 try:
     from trw_mcp.tools._before_edit_hint_core import T2_STATUSES, compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
-        format_t0_beacon, format_t1_hint, format_t2_hint
+        format_t1_hint, format_t2_hint
     )
     file_path = os.environ.get("TRW_CC04_FILE_PATH", "")
     tool_use_id = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
@@ -446,9 +452,6 @@ try:
         # never the ones already written to this pipe.
         sys.stdout.write(formatted + "\n\n")
         sys.stdout.flush()
-    if not parts:
-        sys.stdout.write(format_t0_beacon())
-        sys.stdout.flush()
     # Disarm the 2.4s deadline: every compute+print above is already flushed
     # to the pipe, so nothing from here on should ever be cut off by it. Left
     # armed, a stray tick landing in the residual seconds between this point
@@ -465,7 +468,7 @@ try:
         signal.setitimer(signal.ITIMER_REAL, 0)
     except Exception:
         pass
-    output = "\n\n".join(parts) if parts else format_t0_beacon()
+    output = "\n\n".join(parts)
     result_status = first_status
     # FR29: write hint file with tool_use_id
     if tool_use_id:
@@ -480,7 +483,7 @@ try:
             tool_use_id=tool_use_id,
             file_path=file_path,
             tier=tier,
-            hint_emitted=True,
+            hint_emitted=bool(parts),
             tokens_emitted=len(output.split()),
             distill_status=result_status,
             duration_ms=_trw_duration_ms,
@@ -519,8 +522,8 @@ except Exception as _exc:
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                 "file_path": os.environ.get("TRW_CC04_FILE_PATH", ""),
                 "tier": "T0",
-                "hint_emitted": True,
-                "tokens_emitted": 9,
+                "hint_emitted": False,
+                "tokens_emitted": 0,
                 "distill_status": "exception_fallback",
                 "error": (type(_exc).__name__ + ": " + str(_exc))[:300],
                 # Elapsed until the exception, on the same monotonic clock as the
@@ -537,7 +540,6 @@ except Exception as _exc:
             }), encoding="utf-8")
     except Exception:
         pass
-    print("[TRW] Distill intelligence available — run trw_code(mode=\"hint\") for details.")
 ' 2>/dev/null
 ) && _hint_rc=0 || _hint_rc=$?
 
@@ -589,7 +591,7 @@ EOF_HINT_FILES
 fi
 
 if [ "$_hint_rc" -ne 0 ]; then
-    # Timeout or error: fall back to T0 beacon (FR30, FR31).
+    # Timeout or error: say nothing to the model (FR30, FR31).
     #
     # rc!=0 here is not only the truthful in-process 2.4s SIGALRM (already
     # disarmed before write_hint_file() runs, above) -- it is ALSO what the
@@ -619,8 +621,8 @@ if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "file_path": os.environ["TRW_CC04_FILE_PATH"],
         "tier": "T0",
-        "hint_emitted": True,
-        "tokens_emitted": 9,
+        "hint_emitted": False,
+        "tokens_emitted": 0,
         "distill_status": "timeout_fallback",
         "tool_use_id": tool_use_id,
         "outcome_captured": False,
@@ -635,7 +637,6 @@ if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
     (hints_dir / f"{tool_use_id}.json").write_text(json.dumps(record), encoding="utf-8")
 ' >/dev/null 2>&1 || true
     fi
-    _format_t0_beacon
     exit 0
 fi
 

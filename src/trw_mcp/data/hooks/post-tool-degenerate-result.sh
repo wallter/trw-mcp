@@ -7,7 +7,14 @@
 # tool failing — it is a tool succeeding with a result whose SHAPE cannot carry
 # the conclusion the reader is about to draw from it. Four shapes qualify:
 #
-#   1. EMPTY      — the rendered result is empty or whitespace-only.
+#   1. EMPTY      — the rendered result is empty or whitespace-only, from a LOOKUP
+#                   tool only (Read/Grep/Glob/Bash, or an mcp__ tool named like
+#                   recall/search/query/find/list/fetch/read/get; E2E-INC-063).
+#                   For Bash only
+#                   when the command could have hidden a failure (a pipe, `||`,
+#                   /dev/null) or was interrupted: a command that exited 0 and
+#                   printed nothing (git init -q, mkdir, cp, `echo x >> f`) did
+#                   look, and silent success is its normal shape.
 #   2. TRUNCATED  — it carries a marker from the configured truncation set.
 #   3. UNDATED    — the tool is Bash, its command matches the configured
 #                   freshness allowlist, and the output carries no YYYY-MM-DD or
@@ -38,12 +45,13 @@
 # BOUNDED, because an advisory the loop learns to ignore is worse than none. At
 # most one shape advisory per `degenerate_result_cooldown_calls` MATCHING results
 # per session, and independently, at most one size advisory per the same
-# `cooldown_calls` window per session. The fire rate is measured rather than
-# assumed: replaying every recorded live tool result through this hook with the
-# cooldown DISABLED holds well under the NFR06 budget of 5 per 100, so the
-# cooldown is margin rather than the thing that makes the budget. Counts, N and
-# date: .trw/compliance/degenerate-result-calibration.json
-# (regenerate with scripts/measure_degenerate_result_calibration.py).
+# `cooldown_calls` window per session. The recorded fire rate in
+# .trw/compliance/degenerate-result-calibration.json is STALE: that replay fed
+# the transcript's rendered text, where a silent Bash call is a client
+# placeholder, so it never exercised rule 1 on real empty output
+# (E2E-DEGENERATE-NUDGE-FP). scripts/measure_degenerate_result_calibration.py now
+# replays the structured tool_response; re-measuring is backlog row
+# DEGENERATE-CALIBRATION-REGEN. Until then the cooldown is the budget's guard.
 #
 # A JSON PARSER IS REQUIRED: jq, else python3 (PRD-FIX-156-FR04). All three
 # shape rules are shape tests over a structured field, and a sed approximation of
@@ -227,8 +235,80 @@ _dr_past_deadline && exit 0
 
 # --- rule 1: empty ------------------------------------------------------------
 _shape=''
-if [ -z "$(printf '%s' "$_rendered" | tr -d '[:space:]')" ]; then
+# E2E-INC-066: the built-in readers' responses ALWAYS carry a string leaf (Grep
+# `mode`, Read `type` and `filePath`), so "no string leaves" never matched a real empty
+# one. For Grep/Glob/Read emptiness comes from the tool's own count/content field,
+# read with `_json_get` (fields taken from captured Claude Code responses, see
+# tests/hooks/fixtures/real_tool_responses.json). yes/no is a verdict; '' means the
+# field was absent or the shape unknown, and the rendered-text test decides as before.
+# Only these three tools pay for the extra reads.
+_lookup_empty=''
+_lf=''
+case "$_tool" in
+  Grep)
+    _lm=$(printf '%s' "$_payload" | _json_get --strings .tool_response.mode) || _lm=''
+    case "$_lm" in
+      files_with_matches) _lf='.tool_response.numFiles' ;;
+      content) _lf='.tool_response.numLines' ;;
+      count) _lf='.tool_response.numMatches' ;;
+    esac
+    ;;
+  Glob) _lf='.tool_response.numFiles' ;;
+esac
+if [ -n "$_lf" ]; then
+  _lv=$(printf '%s' "$_payload" | _json_get --default '' "$_lf") || _lv=''
+  case "$_lv" in
+    0) _lookup_empty=yes ;;
+    '' | *[!0-9]*) ;;
+    *) _lookup_empty=no ;;
+  esac
+elif [ "$_tool" = "Read" ]; then
+  # An image or PDF Read has no `content`; only a present-but-empty one is empty.
+  _lv=$(printf '%s' "$_payload" | _json_get --default '<absent>' .tool_response.file.content) || _lv='<absent>'
+  case "$_lv" in
+    '') _lookup_empty=yes ;;
+    '<absent>') ;;
+    *) _lookup_empty=no ;;
+  esac
+fi
+if [ "$_lookup_empty" = yes ] \
+  || { [ "$_lookup_empty" != no ] && [ -z "$(printf '%s' "$_rendered" | tr -d '[:space:]')" ]; }; then
   _shape='empty'
+  # E2E-INC-063: "absent" vs "could not look" only means something for a LOOKUP.
+  # A ScheduleWakeup ack (`{"scheduledFor":…,"clamped":false}`) has no string leaf, so
+  # it rendered empty and drew the advisory; so would an Edit/Write/TaskStop ack. Only
+  # the built-in readers, Bash, and MCP tools named like a lookup can be "empty".
+  # Counting number/bool leaves as content was rejected: an empty Grep is
+  # `{"numFiles":0,"numLines":0,…}` and every Bash result carries `interrupted:false`,
+  # so it would silence the very results this rule exists for. Case matching only.
+  case "$_tool" in
+    Bash | Grep | Glob | Read) ;;
+    mcp__*)
+      case "$_tool" in
+        *recall* | *search* | *query* | *find* | *list* | *fetch* | *read* | *get*) ;;
+        *) _shape='' ;;
+      esac
+      ;;
+    *) _shape='' ;;
+  esac
+  # E2E-DEGENERATE-NUDGE-FP: PostToolUse runs for a Bash call that SUCCEEDED, so
+  # empty output is "could not look" only when the command could have masked the
+  # failure -- a pipeline reports its last stage, `||` swallows a status, a
+  # /dev/null redirect drops the error text -- or the call was interrupted.
+  # Substring tests on the command text with its quoted spans removed first, so
+  # the `|` of `echo "| a | b |" >> table.md` is not a pipe. Text only, never
+  # evaluated (NFR03); a quote the sed cannot pair leaves the text as is, which
+  # errs toward the advisory.
+  if [ "$_tool" = "Bash" ]; then
+    _unquoted=$(printf '%s\n' "$_command" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g') || _unquoted="$_command"
+    case "$_unquoted" in
+      *'|'* | *'/dev/null'*) ;;
+      *)
+        _interrupted=$(printf '%s' "$_payload" | _json_get .tool_response.interrupted) || _interrupted=''
+        [ "$_interrupted" = "true" ] || _shape=''
+        ;;
+    esac
+  fi
 fi
 
 # --- rule 2: truncated --------------------------------------------------------

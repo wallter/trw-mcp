@@ -76,8 +76,22 @@ def _review_gate_would_block(
         return False
 
 
-def _build_gate_ready(events: list[dict[str, object]]) -> bool:
-    """True when the deliver-time build gate would be satisfied (FR01).
+def _build_gate_ready(events: list[dict[str, object]], run_path: Path | None = None) -> bool:
+    """True when the deliver-time build gate would be satisfied; see :func:`_build_gate_findings`."""
+    return _build_gate_findings(events, run_path)[0]
+
+
+def _build_gate_findings(
+    events: list[dict[str, object]], run_path: Path | None = None
+) -> tuple[bool, str | None, str | None]:
+    """``(ready, note, advisory)``: whether deliver's build gate would pass, and why not.
+
+    ``note`` is deliver's own stale/missing typed-receipt warning (names the changed
+    paths for a working-tree change); ``advisory`` is set when the receipt is positive
+    but its working-tree binding is UNBOUND (E2E-INC-018). Both come from the SAME
+    function deliver calls, so the preview cannot drift from enforcement.
+
+    True when the deliver-time build gate would be satisfied (FR01).
 
     Reuses ``_delivery_build_gates._build_passed`` for the event predicate so
     the status-time readiness cannot drift from deliver-time enforcement. It
@@ -95,7 +109,7 @@ def _build_gate_ready(events: list[dict[str, object]]) -> bool:
         if not get_config().build_check_enabled:
             # trw:intentional build gate is disabled, so deliver would allow —
             # status must agree (ready) rather than emit a spurious BLOCKED.
-            return True
+            return True, None, None
     except Exception:  # justified: fail-open, config read failure falls back to the event check
         logger.debug("build_gate_config_read_failed", exc_info=True)
     # Preview-gate parity (codex cross-model review): the deliver-time build gate
@@ -105,8 +119,15 @@ def _build_gate_ready(events: list[dict[str, object]]) -> bool:
     # report build_gate_ready=True while deliver actually blocks, reintroducing
     # the exact false-signal divergence PRD-QUAL-105 exists to prevent.
     if not any(_build_passed(ev) for ev in events):
-        return False
-    return not _build_evidence_is_stale(events)
+        return False, None, None
+    if _build_evidence_is_stale(events):
+        return False, None, None
+    # The typed receipt is validated by the SAME function deliver calls, never restated here, so a
+    # receipt deliver refuses (e.g. static_checks_clean never recorded) is never previewed as READY.
+    from trw_mcp.tools._delivery_build_gates import build_receipt_gate_findings
+
+    warning, advisory = build_receipt_gate_findings(run_path)
+    return warning is None, warning, advisory
 
 
 def _build_gate_would_block(
@@ -135,6 +156,12 @@ def _build_gate_would_block(
     PREVIEW never asserts a block it did not compute (the gate, not the preview,
     is the authority).
     """
+    # trw_deliver's FR05 rule blocks on a latest FAILED build check whatever the gate mode
+    # (evaluate_build_authority), so the preview asks the same predicate first.
+    from trw_mcp.tools._delivery_event_checks import latest_build_check_failed
+
+    if events is not None and latest_build_check_failed(events) is True:
+        return True
     if not missing_build:
         return False
     try:
@@ -192,6 +219,8 @@ def _summarize_deliver_gate(
     review_would_block: bool,
     *,
     build_would_block: bool | None = None,
+    build_note: str | None = None,
+    build_advisory: str | None = None,
 ) -> str:
     """Render the single highest-priority blocking action, mirroring enforcement.
 
@@ -227,12 +256,14 @@ def _summarize_deliver_gate(
     """
     build_blocks = (not build_ready) if build_would_block is None else build_would_block
     if build_blocks:
-        return "BLOCKED: no passing build check — run trw_build_check()"
+        return f"BLOCKED: {build_note}" if build_note else "BLOCKED: no passing build check — run trw_build_check()"
     if review_would_block:
         return "BLOCKED: review required — run trw_review()"
     advisories = []
     if not build_ready:
-        advisories.append("no passing build check — run trw_build_check()")
+        advisories.append(build_note or "no passing build check — run trw_build_check()")
+    if build_advisory:  # positive but UNBOUND: say so, never a bare READY
+        advisories.append(f"build evidence not bound to the working tree ({build_advisory})")
     if not review_ready:
         advisories.append("no review recorded — run trw_review()")
     if advisories:
@@ -265,7 +296,7 @@ def compute_deliver_gate_status(
     (bool), and ``deliver_gate_summary`` (str).
     """
     state = read_ceremony_state(trw_dir)
-    build_ready = _build_gate_ready(events)
+    build_ready, build_note, build_advisory = _build_gate_findings(events, run_path)
     review_ready = _review_gate_ready(state)
     review_would_block = _review_gate_would_block(run_path, events)
     build_would_block = _build_gate_would_block(run_path, missing_build=not build_ready, events=events)
@@ -277,6 +308,8 @@ def compute_deliver_gate_status(
             review_ready,
             review_would_block,
             build_would_block=build_would_block,
+            build_note=build_note,
+            build_advisory=build_advisory,
         ),
     }
 

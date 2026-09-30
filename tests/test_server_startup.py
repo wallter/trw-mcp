@@ -42,7 +42,11 @@ class TestModuleImports:
         env = os.environ.copy()
         env["TRW_PROJECT_ROOT"] = str(tmp_path)
         result = subprocess.run(
-            [sys.executable, "-c", "import trw_mcp.server; print('ok')"],
+            [
+                sys.executable,
+                "-c",
+                "from trw_mcp.server._app import build_served_app; build_served_app(); print('ok')",
+            ],
             cwd=Path(__file__).resolve().parents[1],
             env=env,
             capture_output=True,
@@ -54,16 +58,17 @@ class TestModuleImports:
         assert result.stdout.strip() == "ok"
 
     def test_import_never_writes_to_the_caller_cwd(self, tmp_path: Path) -> None:
-        """Importing ``trw_mcp.server`` must not create ``.trw/`` as a side effect.
+        """Building the served app must not create ``.trw/`` as a side effect.
 
-        Two regressions, both module-level code triggered by IMPORT alone
-        (never calling ``serve()`` or a tool):
+        Import alone builds nothing since SERVER-LAZY-APP-IMPORT, so this builds
+        the served app exactly as a transport does (never ``run()`` or a tool).
+        Two regressions, both in app construction, once run by IMPORT alone:
 
         1. ``AnomalyDetector.__init__`` (constructed inside ``create_app()``)
            used to write ``.trw/security/mcp_shadow_start.yaml`` eagerly rather
            than on the first actual observation.
-        2. ``_tools.py``'s module-level ``_register_tools()`` used to eagerly
-           call ``freeze_live_process_fingerprint(mcp)``, which enumerates
+        2. ``_register_tools()`` used to call
+           ``freeze_live_process_fingerprint`` in a way that enumerated
            tools via FastMCP's public ``list_tools()`` — running the FULL
            middleware chain (FastMCP synthesizes its own ``Context`` for this
            self-check, so ``MCPSecurityMiddleware`` cannot tell it apart from a
@@ -77,7 +82,11 @@ class TestModuleImports:
         env = os.environ.copy()
         env.pop("TRW_PROJECT_ROOT", None)
         result = subprocess.run(
-            [sys.executable, "-c", "import trw_mcp.server; print('ok')"],
+            [
+                sys.executable,
+                "-c",
+                "from trw_mcp.server._app import build_served_app; build_served_app(); print('ok')",
+            ],
             cwd=str(tmp_path),
             env=env,
             capture_output=True,
@@ -88,12 +97,13 @@ class TestModuleImports:
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "ok"
         trw_dir = tmp_path / ".trw"
-        assert not trw_dir.exists(), f"import created {list(trw_dir.rglob('*'))}"
+        assert not trw_dir.exists(), f"building the served app created {list(trw_dir.rglob('*'))}"
 
     def test_import_app(self) -> None:
+        from tests._served_app import served_app
         from trw_mcp._logging import configure_logging
-        from trw_mcp.server._app import mcp
 
+        mcp = served_app()
         assert configure_logging is not None
         assert mcp is not None
 
@@ -153,26 +163,30 @@ class TestMcpInstance:
     """Verify the FastMCP server object is properly initialized."""
 
     def test_mcp_exists(self) -> None:
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         assert mcp is not None
 
     def test_mcp_name(self) -> None:
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         assert mcp.name == "trw"
 
     async def test_mcp_has_tools(self) -> None:
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         # Use _list_tools to bypass the security middleware allowlist filter —
         # this test verifies *tool registration*, not authorization scope.
         tools = await mcp._list_tools()
         assert len(tools) > 0, "No tools registered"
 
     async def test_mcp_has_expected_tools(self) -> None:
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         expected = {
@@ -189,8 +203,9 @@ class TestMcpInstance:
         assert not missing, f"Missing tools: {missing}"
 
     async def test_mcp_registers_review_tool(self) -> None:
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         assert {"trw_review"} <= tool_names
@@ -203,8 +218,9 @@ class TestMcpInstance:
         FIX-076 (and FIX-051 before it) these were registered tools; this now
         asserts the inverse against the real production ``mcp`` instance.
         """
-        from trw_mcp.server._app import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tools = await mcp._list_tools()
         tool_names = {t.name for t in tools}
         removed = {
@@ -425,18 +441,30 @@ class TestCliSubcommandOutput:
         )
         assert "update_progress" not in captured.out
 
-    def test_main_configures_logging_before_subcommand_dispatch(self) -> None:
+    @pytest.mark.parametrize(
+        ("argv", "level"),
+        [
+            # A self-reporting command prints its own failures as plain text, so library logs are quiet
+            # (E2E-DOCTOR-UNINIT-REMEDY); any other plain subcommand keeps WARNING.
+            (["update-project", "."], "CRITICAL"),
+            (["config-reference"], "WARNING"),
+        ],
+    )
+    def test_main_configures_logging_before_subcommand_dispatch(self, argv: list[str], level: str) -> None:
         from trw_mcp.server._cli import main
 
+        order: list[str] = []
         with (
-            patch("sys.argv", ["trw-mcp", "update-project", "."]),
-            patch("trw_mcp.server._cli.configure_logging") as mock_configure_logging,
-            patch("trw_mcp.server._cli.SUBCOMMAND_HANDLERS", {"update-project": lambda args: None}),
+            patch("sys.argv", ["trw-mcp", *argv]),
+            patch(
+                "trw_mcp.server._cli.configure_logging", side_effect=lambda **_kw: order.append("configure_logging")
+            ) as mock_configure_logging,
+            patch("trw_mcp.server._cli.SUBCOMMAND_HANDLERS", {argv[0]: lambda args: order.append("dispatch")}),
         ):
             main()
 
-        assert mock_configure_logging.called
-        assert mock_configure_logging.call_args.kwargs["log_level"] == "WARNING"
+        assert order[:2] == ["configure_logging", "dispatch"], order
+        assert mock_configure_logging.call_args.kwargs["log_level"] == level
 
 
 # ── Logging configuration ────────────────────────────────────────────

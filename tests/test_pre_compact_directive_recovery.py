@@ -1,4 +1,4 @@
-"""PRD-CORE-165 FR-01 — directive + context-anchor through pre-compaction.
+"""PRD-CORE-342 FR-01 — directive + context-anchor through pre-compaction.
 
 The pre-compact checkpoint tool must PERSIST a caller-supplied directive +
 context-anchor into the pre-compact state, and the recovery readback
@@ -38,7 +38,7 @@ def test_directive_and_anchor_persisted(tmp_path: Path) -> None:
         tmp_path,
         run_dir,
         run_dir / "meta" / "events.jsonl",
-        prd_scope=["PRD-CORE-165"],
+        prd_scope=["PRD-CORE-342"],
         phase="implement",
         formation="none active",
         failing_tests=[],

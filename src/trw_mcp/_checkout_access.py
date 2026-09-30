@@ -43,6 +43,15 @@ the lead pending worker-2's measurement of real replacement rates;
 PRD-CORE-316 preserves it unchanged (NFR04) for every descriptor still in
 use and does not revisit the eviction policy itself here.**
 
+**Dead-path sweep (E2E-INC-103).** Before that refusal stands, :func:`_evict_dead_paths` drops the
+bookkeeping (and, once no tracked path names an inode, the descriptor) of paths whose ``lstat`` raises
+``FileNotFoundError`` -- a deleted mailbox is not "a live descriptor another path still needs", and
+without the sweep a long-lived server that touched 64 distinct files could never read another. Only
+absence counts as dead: a path that still exists, even one now naming a DIFFERENT inode, is left to the
+ordinary retirement rules, so a swap is never made easier by the sweep. The ``lstat`` calls run with no
+lock held (a snapshot of ``_path_inode``, then a recheck under ``_map_lock`` that the path still maps to
+the inode that was snapshotted); retirement reuses :func:`_retire_locked`/:func:`_close_stale`.
+
 **Concurrency (PRD-CORE-316 FR01/NFR02).** Two locks, not one:
 
 - ``_map_lock`` guards only the shared dicts' own mutations (insert/retire
@@ -98,9 +107,14 @@ def _open_parent_dir(anchor: Path, relative_path: str) -> tuple[int, str]:
     by ``O_NOFOLLOW``) closes the currently-held ``parent`` before re-raising -- otherwise that
     descriptor would leak on every refused or missing path (core-316-sB round 2 review).
     """
-    parts = PurePosixPath(relative_path).parts
+    pure = PurePosixPath(relative_path)
+    parts = pure.parts
     if not parts:
         raise ValueError("relative_path must not be empty")
+    # O_NOFOLLOW refuses a symlink, but ``..`` is a real directory entry: only plain names stay below the anchor.
+    # PurePosixPath drops interior "." parts, so a "." in the raw text is refused here too (FACTORY-ANCHOR-DOTDOT).
+    if pure.is_absolute() or ".." in parts or "." in relative_path.split("/"):
+        raise ValueError(f"relative_path must stay below the anchor: {relative_path!r}")
     *directories, name = parts
     parent = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -225,6 +239,42 @@ def _close_stale(stale: tuple[tuple[int, int], int]) -> None:
             _inode_locks.pop(stale_key, None)
 
 
+def _evict_dead_paths() -> int:
+    """Forget every tracked path that no longer exists; return how many entries were dropped.
+
+    Runs only after a cap refusal, with no lock held. Snapshot ``_path_inode`` under ``_map_lock``,
+    ``lstat`` each path outside it (I/O), then under ``_map_lock`` re-confirm each dead path still maps to
+    the snapshotted inode and retire it through :func:`_retire_locked` (hard-link aware: a descriptor is
+    only returned for closing when its last tracked path is gone). Descriptors are closed afterwards via
+    :func:`_close_stale`, which waits out any in-flight ``pread`` on that inode. Only
+    ``FileNotFoundError`` marks a path dead; a symlink, a replaced file or any other error stays live.
+    """
+    with _map_lock:
+        snapshot = list(_path_inode.items())
+    dead: list[tuple[Path, tuple[int, int]]] = []
+    for path, key in snapshot:
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            dead.append((path, key))
+        except OSError:  # trw-fail-silent-allow: any error other than absence keeps the entry live
+            continue
+    stale: list[tuple[tuple[int, int], int]] = []
+    evicted = 0
+    with _map_lock:
+        for path, key in dead:
+            if _path_inode.get(path) != key:
+                continue  # re-read or replaced since the snapshot: no longer the entry we judged dead
+            retired = _retire_locked(path, (-1, -1))  # sentinel: "no inode", so previous is unlinked
+            del _path_inode[path]
+            evicted += 1
+            if retired is not None:
+                stale.append(retired)
+    for item in stale:
+        _close_stale(item)
+    return evicted
+
+
 def _pinned_fd_locked(path: Path) -> tuple[int, tuple[int, int], tuple[tuple[int, int], int] | None]:
     """Return `(fd, key, stale)` for *path*. Caller must already hold ``_map_lock``.
 
@@ -288,10 +338,19 @@ def _pinned_fd_for_io(path: Path) -> tuple[int, threading.Lock]:
     retirement (waiting on the new lock, not ours) could close the fd mid-``pread``: EBADF, or bytes
     from whatever file reuses that fd number next.
     """
+    swept = False
     while True:
-        with _map_lock:
-            fd, key, stale = _pinned_fd_locked(path)
-            lock = _inode_lock_locked(key)
+        try:
+            with _map_lock:
+                fd, key, stale = _pinned_fd_locked(path)
+                lock = _inode_lock_locked(key)
+        except PinnedReadCapacityExceeded:
+            # At the cap: reclaim entries whose path is gone, once per call, then retry; if nothing was
+            # dead the refusal stands (B71-08 unchanged for live descriptors).
+            if swept or _evict_dead_paths() == 0:
+                raise
+            swept = True
+            continue
         if stale is not None:
             _close_stale(stale)
         lock.acquire()

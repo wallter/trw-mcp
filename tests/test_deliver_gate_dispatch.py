@@ -12,6 +12,7 @@ must stay advisory after task-type/config policy resolution.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -29,6 +30,11 @@ from trw_mcp.tools._deliver_gate_dispatch import (
 _NO_RUN_DRIFT = {"scope": "not_declared", "prds": {}}
 
 
+#: A real Path to a .trw that does not exist. It was the str "/tmp/trw", so the self-computing gates' ``trw_dir /
+#: ...`` raised TypeError; that fault used to read as "no block" and now fails closed (DISPATCH-FAIL-CLOSED b1).
+_ABSENT_TRW = Path("/nonexistent-trw-dispatch-test/.trw")
+
+
 def _run(
     gate_result: dict[str, object], *, allow_unverified: bool = False, reason: str = ""
 ) -> tuple[bool, dict[str, Any], list[str]]:
@@ -39,7 +45,7 @@ def _run(
         cast("Any", results),
         errors,
         None,  # resolved_run=None → no event logging
-        cast("Any", "/tmp/trw"),
+        _ABSENT_TRW,
         allow_unverified,
         reason,
     )
@@ -427,7 +433,7 @@ def _dispatch(resolved_run: object, *, allow_unverified: bool = False, reason: s
     results: dict[str, Any] = {}
     errors: list[str] = []
     blocked = evaluate_delivery_gates(
-        {}, cast("Any", results), errors, cast("Any", resolved_run), cast("Any", "/tmp/trw"), allow_unverified, reason
+        {}, cast("Any", results), errors, cast("Any", resolved_run), _ABSENT_TRW, allow_unverified, reason
     )
     return blocked, results
 

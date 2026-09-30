@@ -40,6 +40,7 @@ def submit_local_feedback(
     subject: str,
     message: str,
     contact_email: str | None = None,
+    force: bool = False,
 ) -> dict[str, object]:
     """Submit feedback through the shared ``submit_feedback`` callable.
 
@@ -57,6 +58,7 @@ def submit_local_feedback(
         message=message,
         contact_email=contact_email,
         metadata={"source_identity": LOCAL_CLI_SOURCE_IDENTITY},
+        force=force,
     )
     payload: dict[str, object] = result.model_dump() if hasattr(result, "model_dump") else dict(result)
     _logger.info("local_feedback_submitted", category=category, success=bool(payload.get("success")))

@@ -31,9 +31,10 @@ DEGENERATE_RESULT_ADMISSIONS: dict[str, ConfigAdmission] = {
         consumer=_CONSUMER,
         default_rationale=(
             "Defaults to 20 matching results skipped after one advisory fires, per session. The "
-            "budget it serves is NFR06 (at most 5 advisories per 100 results); replaying every recorded "
-            "live tool result with the cooldown DISABLED already holds well under it (see .trw/compliance/degenerate-result-calibration.json), "
-            "so 20 buys margin rather than being the thing that makes the budget. "
+            "budget it serves is NFR06 (at most 5 advisories per 100 results). The recorded cooldown-disabled replay "
+            "in .trw/compliance/degenerate-result-calibration.json is stale (it replayed rendered text, which hides "
+            "empty Bash output; E2E-DEGENERATE-NUDGE-FP), so until DEGENERATE-CALIBRATION-REGEN re-measures it the "
+            "cooldown is the budget's guard, not just margin. "
             "Bounded ge=1 (0 would be a disable switch, which this is deliberately not) and le=200 "
             "so a mistyped value cannot silence the adapter for a whole session."
         ),

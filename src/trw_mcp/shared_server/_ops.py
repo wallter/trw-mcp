@@ -175,8 +175,8 @@ def build_version_venv(
     resolved spec (an explicit ``--with``: any difference; the auto-selected wheelhouse wheel: only if newer) is
     left untouched: a fresh ``venv-<version>+distill-<Y>`` is built (or reused when it already carries that
     distill), and the old venv stays as the fallback. A later plain ``swap --version V`` resolves the base
-    ``venv-V``, so an explicit ``--with`` pin does not persist; forks are not garbage-collected (remove old ones
-    manually to free disk). A venv absent at the path gets trw-mcp and trw-distill (*with_distill*, else the
+    ``venv-V``, so an explicit ``--with`` pin does not persist; old venvs and forks are never removed here --
+    ``trw-mcp env gc`` removes the ones no env uses (dry run unless ``--apply``). A venv absent at the path gets trw-mcp and trw-distill (*with_distill*, else the
     highest compatible wheelhouse wheel) installed offline, and only that new dir is removed if anything fails.
     With no distill wheel and no *with_distill*, trw-mcp alone is installed and stderr says distill was skipped.
     """

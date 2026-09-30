@@ -231,7 +231,6 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
     """Install Codex-specific bootstrap artifacts."""
     from ._codex import (
         codex_hooks_enabled,
-        codex_hooks_review_warning,
         generate_codex_config,
         generate_codex_hooks,
         install_codex_skills,
@@ -243,8 +242,8 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
     if codex_hooks_enabled(target_dir):
         hooks_result = generate_codex_hooks(target_dir, force=force)
         _extend_result(result, hooks_result, include_updated=True)
-        if hooks_result.get("created") or hooks_result.get("updated"):
-            result.setdefault("warnings", []).append(codex_hooks_review_warning())
+        # No hooks warning here: install_codex_distill_channels (below) emits it once every hook is written,
+        # counting the finished .codex/hooks.json (E2E-CODEX-INIT-ARTIFACTS).
 
     _extend_result(result, install_codex_skills(target_dir, force=force), include_updated=True)
 

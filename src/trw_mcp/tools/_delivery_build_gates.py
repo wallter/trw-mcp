@@ -9,6 +9,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._gate_fault import gate_fault_block
 
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +60,8 @@ def _build_pass_rejection(ev: dict[str, object]) -> str | None:
     if not _truthy(data.get("tests_passed")):
         return "tests_passed is not true"
     if "static_checks_clean" in data:
+        if data.get("static_checks_clean") is None:
+            return "static_checks_clean was not recorded"
         if not _truthy(data.get("static_checks_clean")):
             return "static_checks_clean is not true"
     elif "mypy_clean" in data and not _truthy(data.get("mypy_clean")):
@@ -225,7 +228,7 @@ def _check_build_and_work_events(
         from trw_mcp.models.config import get_config
 
         build_check_disabled = not get_config().build_check_enabled
-    except Exception:  # justified: fail-open, never let config read block delivery
+    except Exception:  # justified: fail-CLOSED, an unreadable config keeps the build gate ON
         logger.warning("build_gate_config_read_failed", exc_info=True)
         build_check_disabled = False
 
@@ -309,23 +312,33 @@ def _check_build_and_work_events(
                 total_events=len(events),
                 work_events=0,
             )
-    except Exception:  # justified: fail-open, build gate check must not block delivery
+    except Exception as exc:  # justified: fail-CLOSED, a faulting build gate must not pass (CONSTITUTION 1.a)
+        build_warning = gate_fault_block("build-check", exc)  # the verdict first; the diagnostics are best-effort
         logger.warning("maintenance_build_gate_failed", exc_info=True)
 
     return build_warning, premature_warning
 
 
 def build_receipt_content_stale_warning(run_path: Path | None) -> str | None:
+    """The blocking half of :func:`build_receipt_gate_findings`."""
+    return build_receipt_gate_findings(run_path)[0]
+
+
+def build_receipt_gate_findings(run_path: Path | None) -> tuple[str | None, str | None]:
     """CORE-205 FR04/FR05/FR08 — enforce the latest typed BuildReceipt.
 
-    In enforce mode, typed absence, malformed plans, incomplete command sets,
-    contradictions, failed commands, and stale content are all missing build
-    evidence. Observe mode retains only the typed-absent legacy fallback.
+    Returns ``(warning, advisory)``. In enforce mode, typed absence, malformed
+    plans, incomplete command sets, contradictions, failed commands, and stale
+    content are all missing build evidence (``warning``). Observe mode retains
+    only the typed-absent legacy fallback. ``advisory`` is set when the receipt
+    is positive but its whole-tree binding is UNBOUND (E2E-INC-018): edits made
+    outside the run's file-change journal could not be checked.
     """
     if run_path is None:
-        return None
+        return None, None
     try:
-        from trw_mcp.models._evidence_core import EvidenceMode, ReceiptState
+        from trw_mcp.models._evidence_core import EvidenceMode, ReceiptState, TreeStatus
+        from trw_mcp.state._evidence_gates import BUILD_STATIC_NOT_RECORDED
         from trw_mcp.state._paths import resolve_project_root
         from trw_mcp.tools import _delivery_helpers as _dh
         from trw_mcp.tools._evidence_gates import read_evidence_mode
@@ -334,25 +347,42 @@ def build_receipt_content_stale_warning(run_path: Path | None) -> str | None:
         mode = read_evidence_mode(_dh.get_config())
         outcome, _ = load_latest_build_evidence(run_path, resolve_project_root())
         if outcome.is_positive:
-            return None
+            if outcome.tree_status is TreeStatus.UNBOUND:
+                return None, f"{outcome.reason_code}: {outcome.diagnostics}"
+            return None, None
         if mode is EvidenceMode.OBSERVE and not outcome.typed_present:
-            return None
+            return None, None
+        if outcome.reason_code == BUILD_STATIC_NOT_RECORDED:
+            return (
+                "static_checks_clean was not recorded; record true/false from your project's static checks "
+                "with trw_build_check(static_checks_clean=...).",
+                None,
+            )
         if outcome.state is ReceiptState.STALE_CONTENT:
+            if outcome.reason_code == "bound_tree_changed":
+                return (
+                    f"Content-stale build evidence (reason: bound_tree_changed). {outcome.diagnostics} "
+                    "Record typed command_results with trw_build_check() before delivering.",
+                    None,
+                )
             return (
                 "Content-stale build evidence: a file bound by the latest trw_build_check receipt "
                 "changed after the check (reason: bound_content_changed). Re-run project-native "
-                "validation and record typed command_results with trw_build_check() before delivering."
+                "validation and record typed command_results with trw_build_check() before delivering.",
+                None,
             )
         return (
             "No valid content-bound BuildReceipt exists for this run "
             f"(reason: {outcome.reason_code}). Run project-native validation and record the server-required "
-            "tests and static_checks command_results with trw_build_check()."
+            "tests and static_checks command_results with trw_build_check().",
+            None,
         )
     except Exception:  # justified: resolution failure is non-positive typed evidence
         logger.warning("build_receipt_enforcement_failed", run=str(run_path), exc_info=True)
         return (
             "BuildReceipt enforcement could not validate typed evidence. Re-run project-native validation "
-            "and record typed command_results with trw_build_check()."
+            "and record typed command_results with trw_build_check().",
+            None,
         )
 
 

@@ -123,14 +123,16 @@ class TestAnchorMarshalling:
         assert anchors[0].symbol_type == "function"
         assert anchors[0].file == "src/mod.py"
 
-    def test_absolute_path_is_converted_not_dropped(self) -> None:
-        """``Anchor`` rejects absolute paths; converting keeps the anchor."""
+    def test_absolute_path_is_dropped_never_stored(self) -> None:
+        """An absolute machine path is never persisted; relativising is the caller's job (``resolve_learn_anchors``)."""
         anchors = _args(
-            anchors=[{"file": "/home/user/project/src/mod.py", "symbol_name": "abs_func"}],
+            anchors=[
+                {"file": "/home/user/project/src/mod.py", "symbol_name": "abs_func"},
+                {"file": "src/mod.py", "symbol_name": "kept"},
+            ],
         ).anchors
 
-        assert len(anchors) == 1
-        assert not anchors[0].file.startswith("/")
+        assert [a.symbol_name for a in anchors] == ["kept"]
 
     def test_no_anchors_produces_an_empty_list(self) -> None:
         assert _args().anchors == []

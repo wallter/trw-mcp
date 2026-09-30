@@ -191,13 +191,15 @@ def _batch_miss_action(file_path: str) -> str:
     """Remediation when a batch artifact exists but does not cover *file_path*.
 
     Names the batch artifact explicitly. "Regenerate the sidecar" is not
-    actionable when the reader cannot tell which of two artifacts was read, and
-    the post-commit refresh only covers the files a commit touched — so a file
-    absent from the batch is the expected, not the broken, case.
+    actionable when the reader cannot tell which of two artifacts was read. The
+    batch holds one hint per artifact of the map at the commit it was built from
+    (trw-distill ``compute_whole_map_batch``), so a file absent from it is new
+    since that commit or outside the map -- never "a file the last commit did not
+    touch" (E2E-INC-056).
     """
     return (
-        f"Batch sidecar does not cover {file_path!r} (it covers the files the last commit touched) — "
-        f"run: {_cli_remediation(file_path)}"
+        f"Batch sidecar does not cover {file_path!r} (it covers every file in the map at the commit it was"
+        f" built from, so this file is new since then or outside the map) — run: {_cli_remediation(file_path)}"
     )
 
 
@@ -363,7 +365,7 @@ def _collect_learnings(file_path: str, repo_root: str | None) -> tuple[list[Lear
     deadline_s = get_config().hint_recall_deadline_ms / 1000.0
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="hint-recall-budget")
-    future = executor.submit(collect_learnings, queries, anchor_file=anchor_file, single_page=True)
+    future = executor.submit(collect_learnings, queries, anchor_file=anchor_file, single_page=True, must_name=file_path)
     try:
         learnings = future.result(timeout=deadline_s)
     except concurrent.futures.TimeoutError:

@@ -22,7 +22,10 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 
 _SEED = 20260926
-_TRIALS = 2000
+# Each trial drives the whole served path (~2.5 ms of state I/O), so the count is sized to the smallest separation
+# asserted: the task tuple vs the client default contributes ~0.233 chi-square per draw, so 400 draws expect ~93
+# against the 16.27 critical value (and a correct tuple's fit is decided by the fixed seed, not by chance).
+_TRIALS = 400
 _POOLS = ("workflow", "learnings", "ceremony", "context")
 # chi-square critical value, df=3, alpha=0.001
 _CHI2_CRIT_DF3 = 16.266

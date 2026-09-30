@@ -59,3 +59,24 @@ def test_a_recall_response_runs_one_recall(
 
     assert result["learnings"], result
     assert recalls == ["database"], f"trw_recall ran {len(recalls)} recalls: {recalls}"
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "may_draw_a_learning"),
+    [
+        ("session_start", False),
+        ("recall", False),
+        ("learn", True),  # E2E-INC-010: filtered by relevance (nudge_relevance), not switched off
+        ("status", True),
+        ("checkpoint", True),
+        ("deliver", True),
+    ],
+)
+def test_only_session_start_and_recall_are_barred_from_drawing_a_learning(
+    tool_name: str, may_draw_a_learning: bool
+) -> None:
+    from trw_mcp.state._ceremony_nudge_selectors import nudge_may_recall
+    from trw_mcp.state._ceremony_state_model import NudgeContext
+
+    assert nudge_may_recall(NudgeContext(tool_name=tool_name)) is may_draw_a_learning
+    assert nudge_may_recall(None) is True

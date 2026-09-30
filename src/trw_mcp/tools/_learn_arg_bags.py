@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from trw_mcp._refusal_echo import key_name
+
 if TYPE_CHECKING:
     from trw_mcp.models.typed_dicts import LearnResultDict
 
@@ -80,7 +82,7 @@ def _listify(value: object) -> object:
     learning; every other shape is left for Pydantic to accept or reject.
     """
     if isinstance(value, str):
-        return [value] if value else []
+        return [value] if value.strip() else []  # a blank string clears the list, like tags=""
     return value
 
 
@@ -124,8 +126,11 @@ class LearnUpdateFields(BaseModel):
     which the flat signature could not express at all. Both still map to
     "unchanged" here, because that is the adapter's existing contract and
     quietly redefining an explicit null as "clear this field" would be a
-    destructive behaviour change hiding inside a signature refactor. Clearing
-    stays explicit: pass ``""`` or ``[]``.
+    destructive behaviour change hiding inside a signature refactor.
+
+    A blank (empty or whitespace-only) string value also means "unchanged": some
+    MCP clients send ``""`` for every unset optional string, so clear-by-``""``
+    silently wiped data. Only list fields clear, explicitly, with ``[]``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -143,6 +148,23 @@ class LearnUpdateFields(BaseModel):
     tags_add: list[str] | None = None
     assertions: list[dict[str, str]] | None = None
 
+    @field_validator(
+        "supersedes",
+        "nudge_line",
+        "expires",
+        "task_type",
+        "phase_origin",
+        "team_origin",
+        "protection_tier",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Normalize a blank string to ``None`` (unchanged) at the one parse point."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("domain", "phase_affinity", mode="before")
     @classmethod
     def _wrap_bare_string(cls, value: object) -> object:
@@ -157,7 +179,7 @@ def _format_error(param_name: str, model: type[BaseModel], detail: str) -> str:
 def _first_validation_problem(exc: ValidationError) -> str:
     """Summarize a ValidationError as one caller-actionable clause."""
     first = exc.errors()[0]
-    location = ".".join(str(part) for part in first.get("loc", ())) or "<root>"
+    location = ".".join(key_name(part) for part in first.get("loc", ())) or "<root>"  # a caller's key: only if clean
     return f"is invalid at '{location}': {first.get('msg', 'invalid value')}"
 
 
@@ -187,20 +209,21 @@ def parse_learn_update_fields(
 ) -> tuple[LearnUpdateFields, dict[str, str] | None]:
     """Parse the update mode's ``metadata``; return ``(values, rejection)``.
 
-    The rejection shape is the update mode's ``{"error", "status"}``, not the
-    create mode's ``{"status", "reason", "message"}``: each mode keeps the output
-    contract its callers already branch on.
+    The rejection has the create mode's shape ``{"status": "rejected", "reason", "message"}``: one rule, one
+    answer, whichever mode the caller used (E2E-INC-085 sweep).
     """
     mapping, error = _coerce_json(raw)
     if mapping is None:
         return LearnUpdateFields(), {
-            "error": _format_error("metadata", LearnUpdateFields, error or "is invalid"),
-            "status": "invalid",
+            "status": "rejected",
+            "reason": "invalid_metadata",
+            "message": _format_error("metadata", LearnUpdateFields, error or "is invalid"),
         }
     try:
         return LearnUpdateFields.model_validate(mapping), None
     except ValidationError as exc:
         return LearnUpdateFields(), {
-            "error": _format_error("metadata", LearnUpdateFields, _first_validation_problem(exc)),
-            "status": "invalid",
+            "status": "rejected",
+            "reason": "invalid_metadata",
+            "message": _format_error("metadata", LearnUpdateFields, _first_validation_problem(exc)),
         }

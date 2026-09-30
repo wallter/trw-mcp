@@ -172,7 +172,10 @@ def _run_init_project(args: argparse.Namespace) -> None:
     )
 
     for e in result["errors"]:
-        logger.error("init_project_error", op="init_project", error=str(e))
+        if detailed:
+            logger.error("init_project_error", op="init_project", error=str(e))
+        else:  # plain output: a sentence, not a JSON log line (E2E-INC-017)
+            print(f"Error: {e}", file=sys.stderr)
     if detailed:
         for w in result.get("warnings", []):
             logger.warning("init_project_warning", op="init_project", detail=str(w))
@@ -229,7 +232,10 @@ def _run_update_project(args: argparse.Namespace) -> None:
         _print_warning_block(result.get("warnings", []))
         _print_trashed(result.get("trashed", []))
     for e in result["errors"]:
-        logger.error("update_project_error", op="update_project", error=str(e))
+        if detailed:
+            logger.error("update_project_error", op="update_project", error=str(e))
+        else:  # plain output: the operator reads a sentence, not a JSON log line (E2E-INC-014)
+            print(f"Error: {e}", file=sys.stderr)
 
     total = len(result["updated"]) + len(result["created"])
     if not result["errors"]:
@@ -260,6 +266,20 @@ def _write_output(requested: Path, output: str) -> Path:
     return out_path
 
 
+def _emit_output(output: str, output_arg: str | None, *, op: str) -> None:
+    """A command's primary output: the document on stdout, or the file plus a ``Wrote <path>`` line on stderr.
+
+    INC-038: it went through ``logger.info``, so plain output (WARNING level) printed nothing at all without
+    ``--output``. Log level must never hide what a command was asked to produce.
+    """
+    if output_arg:
+        out_path = _write_output(Path(output_arg), output)
+        logger.info("cli_output_written", op=op, path=str(out_path))
+        print(f"Wrote {out_path}", file=sys.stderr)
+    else:
+        print(output)
+
+
 def _run_audit(args: argparse.Namespace) -> None:
     """Handle the ``audit`` subcommand."""
     from trw_mcp.audit import format_markdown, run_audit
@@ -276,27 +296,29 @@ def _run_audit(args: argparse.Namespace) -> None:
     else:
         output = format_markdown(result)
 
-    if args.output:
-        out_path = _write_output(Path(args.output), output)
-        logger.info("audit_report_written", op="audit", path=str(out_path))
-    else:
-        logger.info("audit_report_output", op="audit", output=output)
-
+    _emit_output(output, args.output, op="audit")
     sys.exit(0)
 
 
 def _run_export(args: argparse.Namespace) -> None:
     """Handle the ``export`` subcommand."""
     from trw_mcp.export import export_data
+    from trw_mcp.state._store_selection import StoreUnavailableError
 
     target = Path(args.target_dir).resolve()
-    result = export_data(
-        target,
-        args.scope,
-        fmt=args.format,
-        since=getattr(args, "since", None),
-        min_impact=getattr(args, "min_impact", 0.0),
-    )
+    try:
+        result = export_data(
+            target,
+            args.scope,
+            fmt=args.format,
+            since=getattr(args, "since", None),
+            min_impact=getattr(args, "min_impact", 0.0),
+        )
+    except StoreUnavailableError as exc:
+        # INC-075: the store being down is an expected condition whose message already names the fix; print that one
+        # line like every other verb, not a 40-line traceback in front of it.
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if result.get("status") == "failed":
         logger.error("export_failed", op="export", error=str(result.get("error", "unknown")))
@@ -308,18 +330,13 @@ def _run_export(args: argparse.Namespace) -> None:
     else:
         output = json.dumps(result, indent=2, default=str)
 
-    if args.output:
-        out_path = _write_output(Path(args.output), output)
-        logger.info("export_written", op="export", path=str(out_path))
-    else:
-        logger.info("export_output", op="export", output=output)
-
+    _emit_output(output, args.output, op="export")
     sys.exit(0)
 
 
 def _run_import_learnings(args: argparse.Namespace) -> None:
     """Handle the ``import-learnings`` subcommand."""
-    from trw_mcp.export import import_learnings
+    from trw_mcp.export import format_import_summary, import_learnings
 
     source = Path(args.source_file).resolve()
     target = Path(args.target_dir).resolve()
@@ -344,6 +361,7 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    print(format_import_summary(result))
     logger.info(
         "import_learnings_complete",
         op="import_learnings",
@@ -353,6 +371,7 @@ def _run_import_learnings(args: argparse.Namespace) -> None:
         imported=result.get("imported", 0),
         skipped_duplicate=result.get("skipped_duplicate", 0),
         skipped_filter=result.get("skipped_filter", 0),
+        refused=result.get("refused", 0),
     )
 
     sys.exit(0)
@@ -441,6 +460,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "config-reference": _run_config_reference,
     "local": _run_local,
     "code": _lazy_verb("trw_mcp.server._subcommands_code", "run_code"),
+    "handoff": _lazy_verb("trw_mcp.server._subcommands_handoff", "run_handoff"),
     "prepare-candidate": _run_prepare_candidate,
     "commit-candidate": _run_commit_candidate,
     "recover-candidate": _run_recover_candidate,
@@ -467,6 +487,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "meta-tune": _lazy_verb("trw_mcp.tools._experiment_cli", "run_meta_tune"),
     "delivery": _lazy_verb("trw_mcp.tools._delivery_cli", "run_delivery"),
     "telemetry": _lazy_verb("trw_mcp.tools._telemetry_cli", "run_telemetry"),
+    "feedback": _lazy_verb("trw_mcp.tools._feedback_cli", "run_feedback"),
     "prd": _lazy_verb("trw_mcp.tools._prd_cli", "run_prd"),
     "profile": _lazy_verb("trw_mcp.tools._profile_cli", "run_profile"),
     "run": _lazy_verb("trw_mcp.tools._run_cli", "run_run"),

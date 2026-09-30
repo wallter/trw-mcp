@@ -11,9 +11,9 @@ Precedence (highest wins):
 
 - client: explicit ``client`` > ``dispatch_default_client``. ``None`` after that -> error
   (a role never picks the client: it is a prompt preset only).
-- model: explicit ``model`` > ``dispatch_default_models[client]`` > the role's task-class tier
+- model: explicit ``model`` > ``dispatch_default_models[client]`` > Codex client default > the role's task-class tier
   where the client has a verified tier map (PRD-CORE-290-FR03).
-- effort: explicit ``effort`` > ``dispatch_default_effort`` > the role's task-class effort.
+- effort: explicit ``effort`` > ``dispatch_default_effort`` > Codex client default > the role's task-class effort.
 - timeout: explicit ``timeout_s`` (not None) > ``dispatch_default_timeout_s``.
 - read_only: an EXPLICIT ``read_only`` (True or False) is honored; ``None`` ->
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
@@ -162,7 +162,7 @@ def resolve_dispatch_request(
     """
     resolved_client = _resolve_client(client=client, dispatch_cfg=dispatch_cfg)
 
-    # Model and effort: explicit request > operator config > the role's task-class
+    # Model and effort: explicit request > operator config > Codex default > task-class
     # row (PRD-CORE-290-FR03); the winning source is recorded on the request.
     # Only what the operator set counts as "config" (DispatchConfig.operator_set).
     cfg = cast("DispatchConfig", dispatch_cfg)
@@ -171,7 +171,7 @@ def resolve_dispatch_request(
     config_turns = cfg.dispatch_default_max_turns if operator_set(cfg, "dispatch_default_max_turns") else None
     resolved_model, model_source = resolve_model(model, resolved_client, role, models)
     try:
-        resolved_effort, effort_source = resolve_effort(effort, role, config_effort)
+        resolved_effort, effort_source = resolve_effort(effort, role, config_effort, client=resolved_client)
     except ValueError as exc:
         raise DispatchResolutionError(str(exc), exit_code=2) from exc
     max_turns, max_turns_source = resolve_max_turns(config_turns, role)

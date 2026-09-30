@@ -187,7 +187,9 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     # alarm that warning on file size would have been.
     # An unknown age on a small WAL is a store that has simply not needed a
     # checkpoint yet -- PASS, never a fabricated fault (US-004 AC2).
-    status = "WARN" if (oversized and (behind or unreclaimed) and not never_checkpointed) else "PASS"
+    # ... but an OVERSIZED WAL with no marker at all is not unknown: the size is itself the evidence that nothing
+    # has reset the file (a checkpoint that ran would have recorded a marker), so it warns (E2E-INC-051).
+    status = "WARN" if (oversized and (never_checkpointed or behind or unreclaimed)) else "PASS"
 
     message = (
         f"engine {backend()} {sqlite_version()}, "
@@ -199,7 +201,9 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         f"last checkpoint that RESET the WAL {_age_text(reset_age)} ago."
     )
     if status == "WARN":
-        if behind:
+        if never_checkpointed:
+            message += f" Oversized, and no checkpoint has ever been recorded for this store (WAL threshold {config.wal_checkpoint_threshold_mb} MiB)."
+        elif behind:
             message += f" Oversized, and no checkpoint has cleared the WAL backlog for over {max_age}s."
         else:
             message += f" Oversized, and the WAL has not been reclaimed for over {max_age}s."
@@ -207,7 +211,9 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         # not cause a frame backlog -- PASSIVE writes frames back fine -- so
         # leading with the engine remedy on a `behind` store tells an operator
         # to do something that will not clear it.
-        if behind:
+        if never_checkpointed:
+            message += " Nothing has checkpointed it: check that the memory daemon is running (the memory_daemon row)."
+        elif behind:
             message += (
                 " Frames are being left behind by PASSIVE checkpoints, so suspect a reader"
                 " holding a snapshot: check wal_checkpoint_complete events for backlog_cleared=false."

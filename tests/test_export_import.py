@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests._test_export_support import _make_entry, _setup_project
+import pytest
+
+from tests._test_export_support import _setup_project
 from trw_mcp.export import import_learnings
+
+pytestmark = pytest.mark.usefixtures("fake_memory_store")
 
 
 class TestImportLearnings:
@@ -47,24 +51,52 @@ class TestImportLearnings:
         created = list(entries_dir.glob("*.yaml"))
         assert len(created) == 2
 
-    def test_dedup_skips_similar(self, tmp_path: Path) -> None:
+    def test_a_re_import_of_the_same_export_is_skipped_by_id_and_content(self, tmp_path: Path) -> None:
+        """E2E-INC-118: a duplicate is the same exported id with the same content, never a similar summary."""
         target = _setup_project(tmp_path / "target")
-        entries_dir = target / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Pydantic v2 use_enum_values changes comparison semantics")
-
-        source_data = [
-            {
-                "summary": "Pydantic v2 use_enum_values changes comparison semantics exactly",
-                "detail": "Same thing",
-                "impact": 0.8,
-            },
-        ]
+        row = {"id": "L-dup001", "summary": "Pydantic v2 use_enum_values changes comparisons", "detail": "Same thing"}
         source_file = tmp_path / "export.json"
-        source_file.write_text(json.dumps(source_data), encoding="utf-8")
+        source_file.write_text(json.dumps([{**row, "impact": 0.8}]), encoding="utf-8")
 
-        result = import_learnings(source_file, target)
-        assert result["skipped_duplicate"] >= 1
-        assert result["imported"] == 0
+        assert import_learnings(source_file, target)["imported"] == 1
+        again = import_learnings(source_file, target)
+        assert (again["imported"], again["skipped_duplicate"]) == (0, 1)
+
+    def test_a_similar_summary_from_a_different_learning_is_imported(self, tmp_path: Path) -> None:
+        """E2E-INC-118: summary similarity dropped a distinct learning (L-ekRS) as a "duplicate" of another."""
+        target = _setup_project(tmp_path / "target")
+        first = tmp_path / "first.json"
+        first.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "L-sim001",
+                        "summary": "Pydantic v2 use_enum_values changes comparisons",
+                        "detail": "Enum members compare as their values",
+                        "impact": 0.8,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        second = tmp_path / "second.json"
+        second.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "L-sim002",
+                        "summary": "Pydantic v2 use_enum_values changes comparisons",
+                        "detail": "A different finding: serialisation round-trips need the flag",
+                        "impact": 0.8,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert import_learnings(first, target)["imported"] == 1
+        result = import_learnings(second, target)
+        assert (result["imported"], result["skipped_duplicate"]) == (1, 0)
 
     def test_respects_min_impact(self, tmp_path: Path) -> None:
         target = _setup_project(tmp_path / "target")

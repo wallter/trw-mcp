@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -131,21 +132,25 @@ def _tests(tree: ast.Module) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunct
     return out
 
 
+def _bare_asserts(tests: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, bool]]) -> list[str]:
+    return [name for name, fn, marked in tests if marked and any(isinstance(n, ast.Assert) for n in ast.walk(fn))]
+
+
 def marked_tests_with_bare_asserts(source: str) -> list[str]:
+    return _bare_asserts(_tests(ast.parse(source)))
+
+
+def _budget_calls(tests: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, bool]]) -> list[str]:
     return [
         name
-        for name, fn, marked in _tests(ast.parse(source))
-        if marked and any(isinstance(n, ast.Assert) for n in ast.walk(fn))
+        for name, fn, marked in tests
+        if not marked
+        and any(isinstance(n, ast.Call) and ast.unparse(n.func).endswith("assert_budget") for n in ast.walk(fn))
     ]
 
 
 def unmarked_budget_calls(source: str) -> list[str]:
-    return [
-        name
-        for name, fn, marked in _tests(ast.parse(source))
-        if not marked
-        and any(isinstance(n, ast.Call) and ast.unparse(n.func).endswith("assert_budget") for n in ast.walk(fn))
-    ]
+    return _budget_calls(_tests(ast.parse(source)))
 
 
 def _is_fixed_bound(node: ast.expr) -> bool:
@@ -155,8 +160,12 @@ def _is_fixed_bound(node: ast.expr) -> bool:
 
 
 def unmarked_fixed_ceilings(source: str) -> list[str]:
+    return _fixed_ceilings(_tests(ast.parse(source)))
+
+
+def _fixed_ceilings(tests: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef, bool]]) -> list[str]:
     hits: list[str] = []
-    for name, fn, marked in _tests(ast.parse(source)):
+    for name, fn, marked in tests:
         if marked:
             continue
         for node in ast.walk(fn):
@@ -186,6 +195,35 @@ def _key(file_key: str, _path: Path, test: str) -> str:
     return f"{file_key}::{test}"
 
 
+@dataclass(frozen=True)
+class _SuiteScan:
+    bare_asserts: list[str]
+    budget_calls: list[str]
+    fixed_ceilings: list[str]
+    test_names: set[str]
+
+
+#: The four real-suite checks share one scan, so under xdist they run on one worker (POLICY-SUITE-SPEED).
+_SUITE_SCAN_GROUP = pytest.mark.xdist_group("timing_marker_suite_scan")
+
+
+@pytest.fixture(scope="module")
+def suite_scan() -> _SuiteScan:
+    """Every test module read and parsed ONCE for rules 2-4 and the deadline check (they used to parse it four
+    times, ~11 s of the policy suite); each rule still judges exactly the tests ``_tests`` finds in each file."""
+    bare: list[str] = []
+    budget: list[str] = []
+    ceilings: list[str] = []
+    names: set[str] = set()
+    for p, f in _test_files():
+        tests = _tests(ast.parse(f.read_text(encoding="utf-8")))
+        bare.extend(_key(p, f, t) for t in _bare_asserts(tests))
+        budget.extend(_key(p, f, t) for t in _budget_calls(tests))
+        ceilings.extend(_key(p, f, t) for t in _fixed_ceilings(tests))
+        names.update(_key(p, f, t) for t, _, _ in tests)
+    return _SuiteScan(bare, budget, ceilings, names)
+
+
 def _markers(pyproject: Path) -> list[str]:
     """The ``[tool.pytest.ini_options] markers`` names, without a TOML parser (py3.10 floor)."""
     text = pyproject.read_text(encoding="utf-8")
@@ -208,33 +246,30 @@ def test_marker_is_registered_and_perf_is_gone(label: str, tests_dir: Path, pypr
 # -- rules 2-4 over the real suites ------------------------------------------------------------
 
 
-def test_marked_tests_assert_only_through_assert_budget() -> None:
-    offenders = [
-        _key(p, f, t) for p, f in _test_files() for t in marked_tests_with_bare_asserts(f.read_text(encoding="utf-8"))
-    ]
+@_SUITE_SCAN_GROUP
+def test_marked_tests_assert_only_through_assert_budget(suite_scan: _SuiteScan) -> None:
+    offenders = suite_scan.bare_asserts
     assert offenders == [], "a marked test is skipped on CI, so its bare asserts leave the gate; split it"
 
 
-def test_assert_budget_is_only_called_from_marked_tests() -> None:
-    offenders = [_key(p, f, t) for p, f in _test_files() for t in unmarked_budget_calls(f.read_text(encoding="utf-8"))]
+@_SUITE_SCAN_GROUP
+def test_assert_budget_is_only_called_from_marked_tests(suite_scan: _SuiteScan) -> None:
+    offenders = suite_scan.budget_calls
     assert offenders == [], "a budget in an unmarked test gates CI on runner speed; mark it requires_local_timing"
 
 
-def test_no_unmarked_fixed_ceiling_on_a_measured_value() -> None:
-    offenders = [
-        key
-        for p, f in _test_files()
-        for t in unmarked_fixed_ceilings(f.read_text(encoding="utf-8"))
-        if (key := _key(p, f, t)) not in CORRECTNESS_DEADLINES
-    ]
+@_SUITE_SCAN_GROUP
+def test_no_unmarked_fixed_ceiling_on_a_measured_value(suite_scan: _SuiteScan) -> None:
+    offenders = [key for key in suite_scan.fixed_ceilings if key not in CORRECTNESS_DEADLINES]
     assert offenders == [], (
         "unmarked budget on a measured value: move it to a requires_local_timing test via assert_budget, "
         "or, if it is a correctness deadline, list it in CORRECTNESS_DEADLINES with the reason"
     )
 
 
-def test_correctness_deadlines_still_exist() -> None:
-    names = {_key(p, f, t) for p, f in _test_files() for t, _, _ in _tests(ast.parse(f.read_text(encoding="utf-8")))}
+@_SUITE_SCAN_GROUP
+def test_correctness_deadlines_still_exist(suite_scan: _SuiteScan) -> None:
+    names = suite_scan.test_names
     # Only the suites present are checked: the public layout ships trw-mcp alone, so an entry
     # for a sibling suite (``trw-memory/``, ``scripts/``) has nothing to be checked against there.
     absent = {"trw-memory", "scripts"} - {label for label, _, _ in _SUITES}

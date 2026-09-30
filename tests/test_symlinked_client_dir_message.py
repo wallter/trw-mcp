@@ -389,20 +389,20 @@ def _plant_fifo(skill: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 
 def _plant_changed_mid_run(skill: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """No real race fixture for the identity re-check, so drive it: SKILL.md's second identity read differs."""
-    import trw_mcp.bootstrap._uninstall_skill_dir as sd  # the skill-dir walk reads its own _identity
+    """Drive the race for real: SKILL.md is edited right after its bytes are proven TRW's, before the capture."""
+    import trw_mcp.bootstrap._uninstall_skill_dir as sd  # the skill-dir walk proves ownership here
 
-    real, calls = sd._identity, {"n": 0}
+    real = sd._not_owned_reason
+    target = skill / "SKILL.md"
 
-    def flaky(path: Path) -> tuple[int, int, int] | None:
-        identity = real(path)
-        if path == skill / "SKILL.md" and identity is not None:
-            calls["n"] += 1
-            return (identity[0], identity[1] + calls["n"], identity[2])
-        return identity
+    def proven_then_edited(path: Path, *args: object) -> str | None:
+        why = real(path, *args)  # type: ignore[arg-type]
+        if path == target and why is None:
+            target.write_bytes(target.read_bytes() + b"\nsaved mid-run\n")
+        return why
 
-    monkeypatch.setattr(sd, "_identity", flaky)
-    return skill / "SKILL.md"
+    monkeypatch.setattr(sd, "_not_owned_reason", proven_then_edited)
+    return target
 
 
 _RERUN_CASES = {
@@ -448,7 +448,10 @@ def test_every_rerun_can_change_reason_keeps_trw_exits_1_and_names_the_reason(
     out = capsys.readouterr()
     assert f"{planted.relative_to(project)} ({reason})" in out.out, "the emitted reason is the set literal"
     assert "Kept .trw because TRW files remain under .claude/skills/trw-audit" in out.err
-    assert _tree(project / ".trw") == trw_before, ".trw byte-identical"
+    # A capture linked back after a mid-run edit keeps its record in .trw/trash (remove_if_hash never unlinks;
+    # its data is the user's inode, not a copy); everything else under .trw is untouched.
+    after = {k: v for k, v in _tree(project / ".trw").items() if k != "trash" and not k.startswith("trash/")}
+    assert after == trw_before, ".trw byte-identical outside the capture area"
     manifest = yaml.safe_load((project / ".trw" / "managed-artifacts.yaml").read_text(encoding="utf-8"))
     assert _SKILL_KEY in manifest["content_hashes"], "the manifest record stays for the re-run"
     assert planted.exists() or planted.is_symlink()

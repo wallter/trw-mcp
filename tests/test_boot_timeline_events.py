@@ -134,10 +134,12 @@ def test_phase_names_and_order_are_the_declared_contract() -> None:
     )
 
 
-def test_import_phases_are_recorded_by_merely_importing_the_server() -> None:
-    """The first two phases are wired into the production import path, not a helper."""
-    import trw_mcp.server._tools  # noqa: F401  — the module whose import emits app_constructed
+def test_import_and_construction_phases_are_recorded_by_building_the_served_app() -> None:
+    """The first two phases are wired into the production path (import, then build_served_app), not a helper."""
+    from trw_mcp.server._app import build_served_app
     from trw_mcp.server._boot_timeline import recorded_boot_phases
+
+    build_served_app()
 
     recorded = [phase for phase, _ms in recorded_boot_phases()]
     assert "import_complete" in recorded
@@ -197,16 +199,26 @@ def test_emitted_event_carries_phase_elapsed_and_origin(captured_structlog: list
     assert set(event) == {"event", "log_level", "phase", "elapsed_ms", "origin"}
 
 
-def test_transport_ready_is_emitted_before_mcp_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wiring: the transport phase is on the real path, immediately before mcp.run()."""
+def test_transport_builds_the_app_then_emits_transport_ready_then_runs_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wiring: the transport builds the served app, then emits its phase immediately before that app's run()."""
     import structlog
 
     from trw_mcp.server import _transport
 
     order: list[str] = []
+
+    class _App:
+        def run(self) -> None:
+            order.append("app.run")
+
+    def _build() -> _App:
+        order.append("build_served_app")
+        return _App()
+
     monkeypatch.setattr(_transport, "emit_boot_phase", lambda phase: order.append(phase))
-    monkeypatch.setattr(_transport.mcp, "run", lambda: order.append("mcp.run"))
+    monkeypatch.setattr(_transport, "build_served_app", _build)
+    monkeypatch.setattr(_transport, "start_parent_watch", lambda: None)
 
     _transport.resolve_and_run_transport(debug=False, log=structlog.get_logger("test"))
 
-    assert order == ["transport_ready", "mcp.run"]
+    assert order == ["build_served_app", "transport_ready", "app.run"]

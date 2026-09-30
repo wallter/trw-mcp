@@ -159,5 +159,4 @@ def persist_snapshot(
         "promotion_session_id": promotion_session_id,
         "rollback_attempts": 0,
     }
-    state_dir.mkdir(parents=True, exist_ok=True)
-    (state_dir / f"{edit_id}.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    write_checkout_file(state_dir, state_dir / f"{edit_id}.json", json.dumps(snapshot))  # protects the leaf

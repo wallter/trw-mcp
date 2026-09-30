@@ -33,8 +33,12 @@ def test_profile_explain_returns_payload(tmp_path: Path) -> None:
     assert "layers_applied" in payload
     assert "tool_surface" in payload
     # Each field record carries the attribution contract.
+    # INC-078 adds one optional key, only where a value derives from the client profile (ceremony_tier).
     for record in payload["fields"]:
-        assert set(record) == {"field", "value", "origin_layer", "override_chain"}
+        extra = set(record) - {"field", "value", "origin_layer", "override_chain"}
+        assert {"field", "value", "origin_layer", "override_chain"} <= set(record)
+        assert extra <= {"derived_from"}
+        assert not extra or record["field"] == "ceremony_tier"
 
 
 @pytest.mark.parametrize("filename,domain,origin", [("org", None, "org"), ("domain-frontend", "frontend", "domain")])

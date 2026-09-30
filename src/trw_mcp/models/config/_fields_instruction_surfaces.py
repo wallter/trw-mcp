@@ -46,7 +46,7 @@ class _InstructionSurfaceFields:
     # PRD-FIX-123-FR04: how many pre-write copies of one instruction filename are
     # retained under ``instruction_backup_dir``. Oldest copies are pruned first.
     instruction_backup_retention: int = Field(
-        default=10,
+        default=5,
         ge=1,
         le=1000,
         description=(

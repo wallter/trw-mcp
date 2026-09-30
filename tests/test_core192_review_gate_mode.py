@@ -213,7 +213,7 @@ def _deliver(tmp_path: Path, run_dir: Path, *, mode: str, **kwargs: Any) -> dict
         patch("trw_mcp.tools._delivery_helpers.get_config", return_value=config),
         patch(
             "trw_mcp.tools.ceremony._do_reflect",
-            return_value={"status": "success", "events_analyzed": 0, "learnings_produced": 0},
+            return_value={"status": "success", "events_analyzed": 0, "mechanical_learnings_extracted": 0},
         ),
         patch(
             "trw_mcp.tools._deferred_delivery._do_index_sync",

@@ -51,6 +51,7 @@ _GATE_KEYS: tuple[str, ...] = (
     "integration_review_warning",
     "untracked_warning",
     "build_gate_warning",
+    "build_tree_binding_advisory",
     "build_gate_block",
     "build_gate_override",
     "warning",
@@ -125,6 +126,8 @@ def step_knowledge_sync(trw_dir: Path, results: DeliverResultDict) -> None:
         results["knowledge_sync"] = {"status": "failed", "error": str(exc)}
         return
 
+    _repair_legacy_anchors(trw_dir, results)
+
     # F5 suggestion 2: opportunistic, TIME-BOXED graph backfill on deliver.
     # Builds edges for entries still lacking them, capped by the configured
     # deadline so deliver latency stays bounded. Uses the singleton connection
@@ -140,6 +143,18 @@ def step_knowledge_sync(trw_dir: Path, results: DeliverResultDict) -> None:
         )
     except Exception:  # justified: fail-open — graph backfill must not block deliver
         logger.warning("deliver_graph_backfill_failed", exc_info=True)
+
+
+def _repair_legacy_anchors(trw_dir: Path, results: DeliverResultDict) -> None:
+    """E2E-INC-025: rewrite machine-path anchors stored before the fix (marker-gated, fail-open)."""
+    try:
+        from trw_mcp.state._anchor_repair import repair_legacy_anchors
+
+        note = repair_legacy_anchors(trw_dir, trw_dir.parent).review_note
+        if note:  # present only when there is something to review
+            results["knowledge_sync"]["anchor_review"] = note
+    except Exception:  # justified: fail-open — anchor repair must not block deliver
+        logger.warning("deliver_anchor_repair_failed", exc_info=True)
 
 
 def step_session_changelog(resolved_run: Path, results: DeliverResultDict) -> None:
@@ -162,11 +177,14 @@ def step_session_changelog(resolved_run: Path, results: DeliverResultDict) -> No
         trw_dir = cast("Path", resolve_trw_dir_fn())
         advisory_enabled = bool(getattr(config, "changelog_advisory_enabled", False))
         changelog_filename = str(getattr(config, "compliance_changelog_filename", "CHANGELOG.md"))
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+
         report_path, changelog = write_session_changelog(
             resolved_run,
             trw_dir,
             changelog_filename=changelog_filename,
             changelog_advisory_enabled=advisory_enabled,
+            learnings_recorded=read_ceremony_state(trw_dir).learnings_this_session,
         )
         results["session_changelog_path"] = str(report_path)
         if advisory_enabled:
@@ -254,15 +272,18 @@ def step_project_handoff(resolved_run: Path, results: DeliverResultDict) -> None
         results["project_handoff"] = status
         handoff_path = str(status.get("path") or resolve_handoff_path())
         final_md = resolved_run / "reports" / "final.md"
-        existing = final_md.read_text(encoding="utf-8") if final_md.is_file() else ""
+        # SYMLINK-WRITERS slice 2: never read or write THROUGH a planted link. The write below refuses one
+        # (UnsafeWriteError, reported fail-open as "failed"); skipping the read keeps its target's bytes out.
+        existing = final_md.read_text(encoding="utf-8") if final_md.is_file() and not final_md.is_symlink() else ""
         merged = merge_marked_section(
             existing,
             _render_remaining_work(accepted, handoff_path),
             REMAINING_WORK_START_MARKER,
             REMAINING_WORK_END_MARKER,
         )
-        final_md.parent.mkdir(parents=True, exist_ok=True)
-        final_md.write_text(merged, encoding="utf-8")
+        from trw_mcp._checkout_write import write_checkout_file
+
+        write_checkout_file(resolved_run, final_md, merged)  # the run directory is the trusted root
     except Exception as exc:  # justified: fail-open — the handoff write must not block deliver
         logger.warning("deliver_project_handoff_failed", error=str(exc), exc_info=True)
         results["project_handoff"] = {"status": "failed", "error": str(exc)}

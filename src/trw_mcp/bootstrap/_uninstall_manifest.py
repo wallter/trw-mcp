@@ -22,6 +22,7 @@ behavior for those, unchanged.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -80,6 +81,7 @@ class SurfaceDisposition:
     path: Path
     action: str  # "remove" | "kept" | "refused" (path_refusal said no: nothing was judged, residue may be TRW's)
     detail: str = ""
+    judged_sha256: str = ""  # the bytes a "remove" was judged on; the delete re-proves them (codex r2 P0)
 
 
 def plan_uncovered_surface(path: Path, relpath: str, root: Path) -> SurfaceDisposition:
@@ -112,9 +114,46 @@ def plan_uncovered_surface(path: Path, relpath: str, root: Path) -> SurfaceDispo
         current = path.read_bytes()
     except OSError:  # trw-fail-silent-allow: an unreadable file cannot be proven unedited, so it is kept
         return SurfaceDisposition(relpath, path, "kept", "unreadable; left in place")
-    if current == bundled:
-        return SurfaceDisposition(relpath, path, "remove", "")
+    if current == bundled or (relpath == "REVIEW.md" and _is_generated_review_md(current, root)):
+        # REVIEW.md is regenerated with the project's learnings on every sync, so its bytes are proven against
+        # the hash of TRW's last write (INC-080); any user edit, even in TRW's line format, keeps it.
+        return SurfaceDisposition(relpath, path, "remove", "", hashlib.sha256(current).hexdigest())
     return SurfaceDisposition(relpath, path, "kept", _UNCOVERED_NOTE)
+
+
+def remove_judged_surface(u: SurfaceDisposition, target: Path, captures: dict[str, list[str]]) -> tuple[str, str]:
+    """Delete a planned surface only if its bytes still hash to what planning judged: ``(status, detail)``.
+
+    *status* is "removed", "kept" (the bytes changed since planning: the user's now) or "error".
+
+    Planning and the delete are separated by the confirmation prompt, so an edit saved in between must
+    survive (HB-2): ``remove_if_hash`` captures the file, re-hashes the captured bytes and links them back
+    on any mismatch. Runtime caller: ``_subcommands_lifecycle`` for each uncovered "remove" disposition.
+    """
+    refusal = path_refusal(u.path, target)
+    if refusal:
+        return "error", refusal
+    outcome = remove_if_hash(u.path, target, u.judged_sha256, key=u.relpath)
+    if outcome.status == "removed":  # the capture joins apply_removal's, for the same move to the system Trash
+        captures.setdefault("trashed", []).append(str(u.path))
+        captures.setdefault("trashed_at", []).append(str(outcome.retained_at or ""))
+    if outcome.status in ("removed", "absent"):
+        return "removed", ""
+    edited = outcome.status == "kept" and outcome.reason.startswith("bytes differ")
+    if edited:
+        return "kept", "edited since the plan; left in place"
+    # codex r3 KI: name where the bytes are when they are not at the path, as apply_removal does.
+    where = f"; a copy is in {outcome.retained_at}" if outcome.retained_at is not None else ""
+    return "error", f"kept ({outcome.reason}){where}"
+
+
+def _is_generated_review_md(current: bytes, root: Path) -> bool:
+    from trw_mcp.state.claude_md._review_md import is_generated_review_md
+
+    try:
+        return is_generated_review_md(current.decode("utf-8"), root / ".trw")
+    except UnicodeDecodeError:  # trw-fail-silent-allow: undecodable bytes are not TRW's text, so the file is kept
+        return False
 
 
 def manifest_covers_surface(content_hashes: dict[str, str], surface_relpath: str) -> bool:
@@ -241,7 +280,7 @@ def apply_removal(
                     errors += 1
                     result.setdefault("errors", []).append(f"{d.path}: {refusal}")
                     continue
-                kept, failures, trw_left = _remove_skill_dir(d.path, target, d.recorded_hash, own_keys)
+                kept, failures, trw_left = _remove_skill_dir(d.path, target, d.recorded_hash, own_keys, result)
                 # A kept file that has its own disposition was already reported by it.
                 result.setdefault("preserved", []).extend(
                     f"{path} ({why})" for path, why in kept if path not in own_keys

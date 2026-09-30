@@ -403,14 +403,16 @@ def smart_merge_marker_section(
     start_span = find_marker_line_span(existing, start_marker, anchor="start")
     end_span = find_marker_line_span(existing, end_marker, anchor="end")
 
+    from trw_mcp.state.claude_md._exact_text import append_block, as_eol, file_eol
+
     if start_span is not None and end_span is not None and start_span[0] < end_span[0]:
-        merged = existing[: start_span[0]] + trw_section.rstrip("\n") + existing[end_span[1] :]
+        section = as_eol(trw_section.rstrip("\n"), file_eol(existing))
+        merged = existing[: start_span[0]] + section + existing[end_span[1] :]
         if merged == existing:
             return existing
         return merged
 
-    separator = "\n\n" if existing.strip() else ""
-    return existing.rstrip() + separator + trw_section + "\n"
+    return append_block(existing, trw_section)
 
 
 def write_instruction_file_with_merge(
@@ -460,7 +462,9 @@ def write_instruction_file_with_merge(
         return
     try:
         if existed and not force:
-            existing = target_path.read_text(encoding="utf-8")
+            from trw_mcp.state.claude_md._exact_text import read_exact
+
+            existing = read_exact(target_path)
             candidate = smart_merge_marker_section(
                 existing,
                 trw_section,
@@ -472,7 +476,9 @@ def write_instruction_file_with_merge(
                 return
         else:
             candidate = trw_section
-    except OSError as exc:
+    except (
+        OSError
+    ) as exc:  # trw-fail-silent-allow: the failure is recorded in result["errors"], which the caller surfaces
         result.setdefault("errors", []).append(f"Failed to write {target_path}: {exc}")
         return
 
@@ -541,7 +547,12 @@ def replace_marker_region(
     replace_start = start_span[0]
     if header:
         replace_start = _absorb_header_above(content, start_span[0], header)
-    return content[:replace_start] + new_block + content[end_span[1] :]
+    from trw_mcp.state.claude_md._exact_text import splice_block
+
+    # The block's own final newline IS the end marker line's newline (splice_block drops one of the two), and the
+    # block is rendered in the file's own line ending: keeping both grew a blank line on every second sync, and an
+    # LF block in a CRLF file made the two AGENTS.md writers take turns rewriting it.
+    return splice_block(content, replace_start, end_span[1], new_block)
 
 
 def _marker_line_indices(content: str, marker: str) -> list[tuple[int, int]]:

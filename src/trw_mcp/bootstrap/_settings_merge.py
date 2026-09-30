@@ -38,6 +38,34 @@ def _hook_entry_identity(entry: object) -> str:
     return json.dumps(entry, sort_keys=True)
 
 
+#: Claude Code's own default hook timeout, in seconds. A TRW hook's timeout above it can only be the legacy value that
+#: was written in milliseconds (5000 = 83 min); E2E-HOOK-TIMEOUT-UNITS.
+_LEGACY_TIMEOUT_FLOOR = 600
+
+
+def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[object]) -> None:
+    """Give a TRW hook (matched by command) the bundled timeout when its own is a legacy millisecond value.
+
+    The only in-place rewrite the merge does: a value at or below 600 s is the user's choice and is kept.
+    """
+    bundled_timeouts = {
+        str(hook.get("command")): hook["timeout"]
+        for entry in bundled_list
+        if isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+        for hook in entry["hooks"]
+        if isinstance(hook, dict) and isinstance(hook.get("timeout"), int)
+    }
+    for entry in existing_list:
+        if not (isinstance(entry, dict) and isinstance(entry.get("hooks"), list)):
+            continue
+        for hook in entry["hooks"]:
+            if not isinstance(hook, dict):
+                continue
+            timeout, command = hook.get("timeout"), str(hook.get("command"))
+            if isinstance(timeout, int) and timeout > _LEGACY_TIMEOUT_FLOOR and command in bundled_timeouts:
+                hook["timeout"] = bundled_timeouts[command]
+
+
 def _merge_settings_json(
     src: Path,
     dest: Path,
@@ -116,7 +144,7 @@ def _merge_settings_json(
     # PreToolUse entry silently lost the whole bundled PreToolUse list — including
     # newly bundled hooks. Identity is the entry's hook command(s), which are
     # unique per hook script in this repo's convention; the merge is additive and
-    # idempotent, and never rewrites or reorders an existing entry.
+    # idempotent, and never reorders an existing entry; the one rewrite is a TRW hook's legacy millisecond timeout.
     bundled_hooks = bundled.get("hooks", {})
     existing_hooks = existing.get("hooks", {})
     if isinstance(bundled_hooks, dict) and isinstance(existing_hooks, dict):
@@ -127,6 +155,7 @@ def _merge_settings_json(
                 continue
             if not isinstance(hook_list, list):
                 continue
+            _migrate_legacy_timeouts(existing_list, hook_list)
             known = {_hook_entry_identity(entry) for entry in existing_list}
             for entry in hook_list:
                 identity = _hook_entry_identity(entry)

@@ -176,20 +176,20 @@ def _write_version_yaml(
         registry = load_registry(bundled_manifest_bytes())
         framework_source = (_DATA_DIR / "framework.md").read_text(encoding="utf-8")
         aaref_source = (_DATA_DIR / "aaref.md").read_text(encoding="utf-8")
-        expected = {
-            Path(".trw/frameworks/FRAMEWORK.md"): framework_source.encode("utf-8"),
-            Path(".trw/frameworks/AARE-F-FRAMEWORK.md"): aaref_source.encode("utf-8"),
-        }
-        from ._framework_generation import framework_generation_current
+        from trw_mcp.framework_decision import deploy_decision
 
-        if framework_generation_current(target_dir, expected, registry.digest):
-            return
-        from trw_mcp.framework_integrity import newer_deployed_generation
-
-        newer = newer_deployed_generation(target_dir, framework_source=framework_source, aaref_source=aaref_source)
-        if newer is not None:
-            logger.warning("framework_deploy_skipped_stale_package", target=str(target_dir))
-            result["warnings"].append(f"Framework deploy skipped: {newer.nudge}")
+        decision = deploy_decision(
+            target_dir,
+            framework_source=framework_source,
+            aaref_source=aaref_source,
+            framework_version=config.framework_version,
+            aaref_version=config.aaref_version,
+            registry_digest=registry.digest,
+            package_version=pkg_version,
+        )
+        if decision.stale is not None:  # the warning below is the record; it also reaches the caller
+            result["warnings"].append(f"Framework deploy skipped: {decision.stale.nudge}")
+        if decision.action != "deploy":
             return
         repair_framework_runtime(
             target_dir,
@@ -198,7 +198,12 @@ def _write_version_yaml(
             framework_version=config.framework_version,
             aaref_version=config.aaref_version,
             registry_digest=registry.digest,
+            package_version=pkg_version,
         )
+        if decision.edited:
+            from ._framework_modified_guard import modified_warning
+
+            result["warnings"].append(modified_warning(list(decision.edited), target_dir, decision.edited_digests))
         logger.debug(
             "version_yaml_generated",
             path=str(version_path),

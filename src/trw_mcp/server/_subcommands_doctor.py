@@ -630,6 +630,13 @@ def _check_trw_trash(target: Path, config: TRWConfig) -> CheckResult:
     return CheckResult("trw_trash", *trash_row(target, config))
 
 
+def _check_codex_observation(_target: Path, _config: TRWConfig) -> CheckResult:
+    """Whether codex's own run record is readable (CODEX-P0-A S3). Never FAILs."""
+    from trw_mcp.server._doctor_codex_observation import codex_observation_row
+
+    return CheckResult("codex_observation", *codex_observation_row())
+
+
 def _check_hint_delivery(target: Path, config: TRWConfig) -> CheckResult:
     """RECORDED pre-edit hint tiers/fallback share; HINT-DELIVERY-CANARY. Never FAILs."""
     return CheckResult("hint_delivery", *_hint_delivery_row(target, config))

@@ -55,6 +55,23 @@ class TestTrwRecall:
         assert result["total_matches"] >= 1
         assert len(result["learnings"]) >= 1
 
+    def test_total_matches_is_the_pre_cap_count_not_the_returned_count(self, tmp_path: Path) -> None:
+        """E2E-INC-010: ``max_results=1`` over three matches returns one row but reports three matches."""
+        tools = _get_tools()
+        for topic in ("alpha", "beta", "gamma"):
+            tools["trw_learn"].fn(
+                summary=f"Sqlite {topic} pooling gotcha",
+                detail=f"Distinct {topic} detail about sqlite connection handling number {topic * 3}",
+                tags=["sqlite"],
+                impact=0.9,
+            )
+
+        capped = tools["trw_recall"].fn(query="sqlite", max_results=1)
+        uncapped = tools["trw_recall"].fn(query="sqlite", max_results=0)
+
+        assert len(capped["learnings"]) == 1
+        assert capped["total_matches"] == len(uncapped["learnings"]) == 3
+
     def test_no_matches(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_tools()
         result = tools["trw_recall"].fn(query="nonexistent-query-xyz")

@@ -54,8 +54,8 @@ def _parse_as_of(as_of: str | None) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
-    except (ValueError, TypeError) as exc:
-        raise ValueError(f"as_of must be an ISO-8601 datetime, got {as_of!r}") from exc
+    except (ValueError, TypeError):
+        raise ValueError("as_of must be an ISO-8601 datetime") from None  # never the value (E2E-INC-125)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed

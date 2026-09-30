@@ -73,18 +73,25 @@ __all__ = [
 ]
 
 
-def _abandon_under_lock(run_dir: Path) -> bool:
-    """Mark the run abandoned only if it is still active and unprotected under the lock."""
-    landed: list[bool] = []
+def _abandon_under_lock(run_dir: Path) -> str:
+    """Mark the run abandoned only if it is still active and unprotected under the lock.
+
+    Returns ``"abandoned"``, or why not: ``"protected"`` (a writer protected it) or ``"terminal"`` (no longer active),
+    so the sweep counts a run another writer protected mid-sweep as preserved, not as terminal.
+    """
+    outcome: list[str] = ["terminal"]
 
     def _abandon(data: dict[str, object]) -> None:
-        still_active = str(data.get("status", "")).strip().lower() == RunStatus.ACTIVE.value
-        if still_active and data.get("protected") is not True:
+        if str(data.get("status", "")).strip().lower() != RunStatus.ACTIVE.value:
+            outcome[0] = "terminal"
+        elif data.get("protected") is True:
+            outcome[0] = "protected"
+        else:
             data["status"] = RunStatus.ABANDONED.value
-            landed.append(True)
+            outcome[0] = "abandoned"
 
     update_run_yaml(run_dir, _abandon)
-    return bool(landed)
+    return outcome[0]
 
 
 @dataclass(frozen=True)
@@ -381,12 +388,16 @@ def sweep_stale_runs(
                 reason="yaml_write_failed",
             )
             continue
-        if not landed:
+        if landed != "abandoned":
             # A writer holding the run.yaml lock completed or protected the run
-            # after the final read above: its state wins, nothing is abandoned.
+            # after the final read above: its state wins, nothing is abandoned,
+            # and it is counted by what that writer did.
             abandoned_ids.pop()
             runs_abandoned -= 1
-            runs_skipped_terminal += 1
+            if landed == "protected":
+                runs_preserved_protected += 1
+            else:
+                runs_skipped_terminal += 1
             continue
 
         events_path = run_dir / "meta" / "events.jsonl"

@@ -202,6 +202,7 @@ async def test_mode_all_without_dispatch_flag_still_denies_dispatch_call(
     ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_dispatch"), fastmcp_context=_FakeContext())
     denied = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 # ── Masked call denied, naming the gating flag ──────────────────────────
@@ -454,6 +455,7 @@ async def test_real_chain_entrypoint_masks_and_denies(tmp_path: Path, monkeypatc
     denied = await mw.on_call_tool(deny_ctx, call_next_deny)  # type: ignore[arg-type]
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
     _reset_config()
 

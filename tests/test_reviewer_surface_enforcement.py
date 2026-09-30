@@ -199,6 +199,7 @@ async def test_a_direct_call_to_an_excluded_write_tool_is_denied(
     assert result is not _EXECUTED
     assert result.structured_content is not None
     assert result.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert result.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 async def test_an_excluded_write_tool_never_appears_in_the_reviewer_list(
@@ -278,6 +279,7 @@ async def test_reviewer_marked_process_fails_closed_on_resolution_error(
     assert result is not _EXECUTED
     assert result.structured_content is not None
     assert result.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert result.is_error is True  # CODEX-P0-B: a refusal is an MCP error
     assert any(entry.get("outcome") == "fail_closed_reviewer" for entry in logs), logs
 
 
@@ -318,6 +320,7 @@ async def test_a_raising_config_denies_under_the_env_marker(
     assert result is not _EXECUTED
     assert result.structured_content is not None
     assert result.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert result.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 async def test_reviewer_marked_list_fails_closed_to_the_reviewer_intersection(
@@ -460,6 +463,7 @@ async def test_the_env_marker_alone_bounds_a_session_with_a_hostile_config(
     assert denied is not _EXECUTED
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
     tools = _all_tools()
 

@@ -13,12 +13,15 @@ Shared helpers:
 
 from __future__ import annotations
 
+import hashlib
 import re
+import stat
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.typed_dicts._ceremony import ReviewMdResultDict
 
 logger = structlog.get_logger(__name__)
 
@@ -54,6 +57,50 @@ _REVIEW_TEMPLATE = """\
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+#: SHA-256 of the last REVIEW.md generate_review_md wrote, under ``.trw/context/``.
+_REVIEW_HASH_FILE = "review_md_sha256.txt"
+
+
+def _review_hash_path(trw_dir: Path) -> Path:
+    return trw_dir / "context" / _REVIEW_HASH_FILE
+
+
+def record_review_md(trw_dir: Path, content: str) -> None:
+    """Record the bytes TRW just wrote, so uninstall and sync can prove a later file is still TRW's."""
+    from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
+    path = _review_hash_path(trw_dir)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_checkout_file(trw_dir, path, hashlib.sha256(content.encode("utf-8")).hexdigest() + "\n")
+    except (
+        OSError,
+        ValueError,
+        UnsafeWriteError,
+    ):  # trw-fail-silent-allow: no record only means the file is later kept as the user's
+        logger.warning("review_md_hash_not_recorded", path=str(path))
+
+
+def is_generated_review_md(text: str, trw_dir: Path) -> bool:
+    """True only when *text* is byte-identical to a REVIEW.md TRW wrote (INC-080; codex P0 on the shape match).
+
+    Proven by bytes, never by shape: the install template, or the SHA-256 ``record_review_md`` stored for the
+    last generated write. A user rule in TRW's own line format still changes the bytes, so the file is kept.
+    """
+    from trw_mcp.bootstrap._config_templates import _minimal_review_md
+
+    if text == _minimal_review_md():
+        return True
+    record = _review_hash_path(trw_dir)
+    try:
+        if not stat.S_ISREG(record.lstat().st_mode):  # a FIFO or symlink would block or redirect the read
+            return False
+        recorded = record.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):  # trw-fail-silent-allow: no record proves nothing, so the file is kept
+        return False
+    return recorded == hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _sanitize_summary(summary: str) -> str:
@@ -100,3 +147,52 @@ def recall_learnings(
             exc_info=True,
         )
         return []
+
+
+def user_edited_review_kept(target_path: Path, trw_dir: Path) -> ReviewMdResultDict | None:
+    """The "kept" result when REVIEW.md exists and is not TRW's own generated file, else ``None``.
+
+    REVIEW-MD-USER-EDIT-OVERWRITE (HB-2): every sync used to rewrite REVIEW.md in full, silently destroying the
+    user's own review rules. A file TRW did not generate -- edited, or the user's own from before TRW -- is kept;
+    one TRW cannot read is kept too, since it cannot be proven to be TRW's. ``--force`` regenerates it.
+    """
+    if not target_path.is_file():
+        return None
+    try:
+        if is_generated_review_md(target_path.read_text(encoding="utf-8"), trw_dir):
+            return None
+    except (OSError, UnicodeDecodeError):  # trw-fail-silent-allow: unreadable is kept below, never overwritten
+        pass
+    logger.warning("review_md_kept_user_edit", path=str(target_path))
+    return {
+        "path": str(target_path),
+        "rules_count": 0,
+        "status": "skipped",
+        "kept_existing": "REVIEW.md kept: it has edits TRW did not generate (use --force to regenerate it)",
+    }
+
+
+def existing_review_kept(
+    target_path: Path, selected: list[dict[str, object]], skipped_reason: str | None, *, allow_empty: bool
+) -> ReviewMdResultDict | None:
+    """The "kept" result when an existing REVIEW.md must not be rebuilt without learnings, else ``None``.
+
+    An empty or unavailable store (a scratch HOME, a fresh clone) would otherwise replace the file's 20+
+    review rules with "No qualifying learnings". ``allow_empty`` is the explicit way to let it shrink, and a
+    project that turned learning recall off has asked for exactly that.
+    """
+    if allow_empty or selected or not target_path.is_file():
+        return None
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._recall_gate import learnings_injection_allowed
+
+    if not learnings_injection_allowed(get_config(), "passive"):
+        return None  # recall is switched off: an empty learnings section is what the operator asked for
+    reason = skipped_reason or "no qualifying learnings"
+    logger.warning("review_md_kept_existing", path=str(target_path), reason=reason)
+    return {
+        "path": str(target_path),
+        "rules_count": 0,
+        "status": "skipped",
+        "kept_existing": f"existing REVIEW.md kept: {reason} (use --force to rewrite it without learnings)",
+    }

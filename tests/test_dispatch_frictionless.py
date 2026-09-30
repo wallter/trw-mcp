@@ -94,6 +94,13 @@ def test_list_clients_covers_registry_and_roles() -> None:
     assert "critique" in out["roles"]  # type: ignore[operator]
 
 
+def test_list_clients_reports_provider_fallback_without_inventing_other_models() -> None:
+    out = list_clients()
+    clients = {c["client"]: c for c in out["clients"]}  # type: ignore[union-attr]
+    assert clients["codex"]["default_model"] == "gpt-6.1-sol"
+    assert all("default_model" not in c for cid, c in clients.items() if cid != "codex")
+
+
 def test_compact_result_keeps_answer_and_failure_context() -> None:
     good = compact_result("codex", {"ok": True, "text": "OK", "duration_s": 1.0, "structured": {"x": 1}})
     assert good == {"target": "codex", "ok": True, "text": "OK", "duration_s": 1.0}
@@ -114,7 +121,7 @@ def test_fanout_wait_runs_every_target_and_returns_compact_results(monkeypatch: 
 
     monkeypatch.setattr("trw_mcp.tools.dispatch.dispatch", fake)
     out = _tool()(prompt="critique this", client="codex,agy,grok:grok-4.7", role="critique", wait=True)
-    assert sorted(seen) == [("agy", None), ("codex", None), ("grok", "grok-4.7")] or ("codex", None) in seen
+    assert sorted(seen) == [("agy", None), ("codex", "gpt-6.1-sol"), ("grok", "grok-4.7")]
     assert ("grok", "grok-4.7") in seen
     assert out["status"] == "2/3 succeeded"
     targets = [r["target"] for r in out["results"]]

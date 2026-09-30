@@ -21,9 +21,11 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.state._ceremony_progress_state import NudgeContext
-from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content
+from trw_mcp.tools._ceremony_status_nudge import _try_learning_nudge_content, nudge_relevance
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.ceremony_progress import CeremonyState
 
@@ -85,6 +87,7 @@ def resolve_pool_content(
     cfg: TRWConfig,
     context: NudgeContext | None,
     effective_dir: Path,
+    response: Mapping[str, object] | None = None,
 ) -> str | None:
     """Render pool-specific content for the standard messenger.
 
@@ -99,7 +102,7 @@ def resolve_pool_content(
     )
 
     if pool == "learnings":
-        return _try_learning_nudge_content(effective_dir, state)
+        return _try_learning_nudge_content(effective_dir, state, nudge_relevance(effective_dir, context, response))
     if pool == "workflow":
         try:
             from trw_mcp.state._nudge_content import load_pool_message

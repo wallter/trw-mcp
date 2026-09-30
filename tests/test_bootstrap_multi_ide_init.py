@@ -168,6 +168,15 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / ".codex" / "hooks.json").exists()
         warnings = "\n".join(result.get("warnings", []))
         assert "Open /hooks" in warnings
-        assert "5 TRW-managed hooks" in warnings
+        # The count is the TRW hooks actually in the written hooks.json (ceremony + telemetry + pre-edit hint),
+        # not the ceremony payload's 5 (E2E-CODEX-INIT-ARTIFACTS).
+        written = json.loads((tmp_path / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        trw_hooks = sum(
+            len(group.get("hooks", []))
+            for groups in written["hooks"].values()
+            for group in groups
+            if str(group.get("description", "")).startswith("TRW managed:")
+        )
+        assert f"{trw_hooks} TRW-managed hooks" in warnings
         assert "[features].hooks" in warnings
         assert "[features].codex_hooks" in warnings

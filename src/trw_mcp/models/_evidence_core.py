@@ -78,6 +78,20 @@ class ReceiptState(str, Enum):
     UNKNOWN_MODE = "unknown_mode"
 
 
+class TreeStatus(str, Enum):
+    """Whole-working-tree binding state (E2E-INC-018).
+
+    ``BOUND`` means the recorded tree digest was compared against the current
+    tree and matched. ``STALE`` means it differs. ``UNBOUND`` means no comparison
+    was possible (not a git repo, git error, budget exceeded, legacy receipt): it
+    is reported as advisory and is never a claim that the tree is current.
+    """
+
+    BOUND = "bound"
+    STALE = "stale"
+    UNBOUND = "unbound"
+
+
 class EntryState(str, Enum):
     """Content-entry filesystem state."""
 
@@ -169,6 +183,14 @@ class ContentBinding(BaseModel):
     project_identity: str = Field(description="Server-resolved project root identity, not caller-supplied.")
     entries: tuple[ContentEntry, ...] = Field(default_factory=tuple)
     manifest_digest: str
+    # E2E-INC-018: the journal-derived ``entries`` miss edits made outside a
+    # Write/Edit hook (shell, other harness). ``tree_digest`` is a git tree id of
+    # the whole working tree (TRW state in ``tree_excludes`` removed), stable
+    # across commits. ``None`` + ``tree_unbound_reason`` means it could not be
+    # computed; both empty is a receipt written before the field existed.
+    tree_digest: str | None = None
+    tree_excludes: tuple[str, ...] = Field(default_factory=tuple)
+    tree_unbound_reason: str = ""
 
     @model_validator(mode="after")
     def _validate_binding(self) -> ContentBinding:
@@ -239,6 +261,10 @@ class ReceiptValidationResult(BaseModel):
         description="A typed receipt artifact existed (even if invalid). Blocks legacy fallback.",
     )
     diagnostics: str = Field(default="", description="Bounded, redacted human diagnostic.")
+    tree_status: TreeStatus | None = Field(
+        default=None,
+        description="Whole-tree binding outcome; UNBOUND is advisory and never 'current'.",
+    )
 
     @field_validator("diagnostics")
     @classmethod

@@ -261,6 +261,10 @@ def _sweep_cold_to_purge(
                         "impact": float(str(data.get("impact", 0.5))),
                         "summary": str(data.get("summary", "")),
                     }
+                    from trw_mcp.state._containment import trw_write_contained
+
+                    if not trw_write_contained(purge_audit_path):  # INC-034: no audit line, so no delete
+                        continue
                     purge_audit_path.parent.mkdir(parents=True, exist_ok=True)
                     with purge_audit_path.open("a", encoding="utf-8") as fh:
                         fh.write(json.dumps(audit_record) + "\n")

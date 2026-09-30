@@ -23,8 +23,9 @@ class TestToolDeregistration:
     """
 
     def test_knowledge_sync_tool_deregistered(self) -> None:
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tool_names = set(get_tools_sync(mcp).keys())
         assert "trw_knowledge_sync" not in tool_names
 
@@ -152,8 +153,9 @@ class TestRecallTopicFilter:
             {"id": "L-999", "summary": "Unrelated", "impact": 0.5, "tags": ["fastapi"], "status": "active"},
         ]
 
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
@@ -176,8 +178,9 @@ class TestRecallTopicFilter:
             {"id": "L-001", "summary": "Tip", "impact": 0.8, "tags": [], "status": "active"},
         ]
 
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
@@ -199,8 +202,9 @@ class TestRecallTopicFilter:
             {"id": "L-001", "summary": "Tip", "impact": 0.8, "tags": [], "status": "active"},
         ]
 
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tool = get_tools_sync(mcp)["trw_recall"]
 
         with (
@@ -220,8 +224,9 @@ class TestRecallTopicFilter:
             {"id": "L-001", "summary": "Tip", "impact": 0.8, "tags": [], "status": "active"},
         ]
 
-        from trw_mcp.server import mcp
+        from tests._served_app import served_app
 
+        mcp = served_app()
         tool = get_tools_sync(mcp)["trw_recall"]
 
         with (

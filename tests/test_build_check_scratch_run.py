@@ -148,7 +148,9 @@ def test_lost_pin_build_check_for_the_callers_own_run_releases_its_unpinned_deli
     assert _unpinned_delivery_blocked(tmp_project) is True, "non-vacuity: with no build record this delivery blocks"
     own_run = _run_dir(tmp_path / "runs", "mine")
 
-    build_check_invoke(tests_passed=True, test_count=4, scope="my own run", run_path=str(own_run))
+    build_check_invoke(
+        tests_passed=True, static_checks_clean=True, test_count=4, scope="my own run", run_path=str(own_run)
+    )
 
     assert _unpinned_delivery_blocked(tmp_project) is False, "the caller's own passing record was not written"
 

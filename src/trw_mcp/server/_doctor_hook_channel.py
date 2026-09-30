@@ -37,6 +37,24 @@ Status = Literal["PASS", "FAIL", "WARN"]
 _REMEDY = "Remedy: trw-mcp update-project (flag: cc03_hook_enabled in .trw/config.yaml)."
 
 
+def _reprovision_remedy(target: Path) -> str:
+    """The remedy for a deleted CC-03 script: ``update-project`` keeps a deleted managed file deleted (a tombstone).
+
+    Only ``--reprovision <path>`` brings back a tombstoned script, so the remedy names the tombstoned ones; a script
+    that was never recorded is written by a plain ``update-project``.
+    """
+    from trw_mcp.bootstrap._claude_code_distill_channels import _CC03_HOOKS
+    from trw_mcp.bootstrap._tombstones import detect_tombstones
+    from trw_mcp.bootstrap._version_manifest import _manifest_key_path, _read_manifest
+
+    tombstoned = {_manifest_key_path(key) for key in detect_tombstones(target, _read_manifest(target))}
+    paths = [f".claude/hooks/{name}" for name in _CC03_HOOKS if f".claude/hooks/{name}" in tombstoned]
+    if not paths:
+        return _REMEDY
+    flags = " ".join(f"--reprovision {path}" for path in paths)  # the flag takes one path each time it is given
+    return f"Remedy: trw-mcp update-project {flags} (flag: cc03_hook_enabled in .trw/config.yaml)."
+
+
 def _cc03_unwired_reason(target: Path, wired: list[str]) -> str | None:
     """Why the CC-03 hook is NOT actually wired for *wired*, or ``None`` when it is.
 
@@ -81,8 +99,9 @@ def hook_channel_row(target: Path) -> tuple[Status, str]:
     # hook-wired client gets the hint only through the instruction line.
     hook_off = wired and not read_cc03_config(target)["cc03_hook_enabled"]
     if wired and not hook_off and (unwired_reason := _cc03_unwired_reason(target, wired)) is not None:
+        remedy = _reprovision_remedy(target) if "missing" in unwired_reason else _REMEDY
         return "FAIL", (
-            f"cc03_hook_enabled is on for {', '.join(wired)} but the hook is not wired: {unwired_reason}. {_REMEDY}"
+            f"cc03_hook_enabled is on for {', '.join(wired)} but the hook is not wired: {unwired_reason}. {remedy}"
         )
     if not fallback and not unknown and not hook_off:
         channels = "; ".join(f"{client}: {PRE_EDIT_HINT_CHANNELS[client].channel}" for client in wired)

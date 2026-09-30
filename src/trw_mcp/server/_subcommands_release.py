@@ -26,6 +26,7 @@ import structlog
 from trw_mcp.server._version_status_layers import (
     historical_installer_layer,
     live_process_layer,
+    realize_process_surface,
 )
 from trw_mcp.server._version_status_manifests import (
     PACKAGE_JSON_KEYS,
@@ -88,8 +89,15 @@ def _explain_mismatches(mismatches: list[str], *, warnings: list[str], errors: l
     )
 
 
-def collect_version_status(project_root: Path | None = None) -> VersionStatus:
-    """Collect labeled package/framework/live-server version status."""
+def collect_version_status(project_root: Path | None = None, *, release_tree: bool = False) -> VersionStatus:
+    """Collect labeled package/framework/live-server version status.
+
+    ``release_tree`` measures a source tree about to be released (``publish-release.sh`` from a
+    worktree), not the machine: the version surfaces the tree itself carries (pyprojects, the
+    framework version, the live-server version the tree's code reports) are compared, and the three
+    comparisons that describe an installation (installed distributions vs the recorded manifest, the
+    running process's currentness) are NOT made, and the result says so in ``warnings``.
+    """
     from trw_mcp import __version__ as live_server_version
     from trw_mcp.models.config import TRWConfig
 
@@ -148,29 +156,39 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
     # failure, never "nothing to compare".
     from trw_mcp.bootstrap._version_manifest import resolved_package_versions
 
-    installed_packages = resolved_package_versions()
-    manifest_result = _read_manifest_packages(root)
-    manifest_packages = manifest_result.packages
-    if not manifest_result.present:
-        errors.append(manifest_result.error or "manifest packages missing")
-        mismatches.append("manifest_packages_missing")
-    for distribution in (PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY):
-        key = distribution.replace("-", "_")
-        installed = installed_packages.get(distribution)
-        recorded = manifest_packages.get(distribution)
-        if installed is None:
-            errors.append(f"{distribution} is not installed in this interpreter")
-            mismatches.append(f"{key}_not_installed")
-        if manifest_result.present and recorded is None:
-            errors.append(f"manifest packages has no {distribution} entry")
-            mismatches.append(f"{key}_manifest_entry_missing")
-        elif installed is not None and recorded is not None and installed != recorded:
-            mismatches.append(f"{key}_installed_vs_manifest")
-    live_process = live_process_layer()
-    live_currentness = str(live_process.get("currentness") or "unknown")
-    if live_currentness != "current":
-        mismatches.append(f"live_process_currentness_{live_currentness}")
-        errors.append(f"live process currentness is {live_currentness}; release requires current")
+    if release_tree:
+        installed_packages: dict[str, str] = {}
+        manifest_packages: dict[str, str] = {}
+        live_process: dict[str, object] = {"currentness": "not_measured", "reason": "release-tree scope"}
+        warnings.append(
+            "release-tree scope: installed distributions vs the recorded manifest and the running "
+            "process's currentness were not measured (they describe an installation, not this tree)"
+        )
+    else:
+        installed_packages = resolved_package_versions()
+        manifest_result = _read_manifest_packages(root)
+        manifest_packages = manifest_result.packages
+        if not manifest_result.present:
+            errors.append(manifest_result.error or "manifest packages missing")
+            mismatches.append("manifest_packages_missing")
+        for distribution in (PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY):
+            key = distribution.replace("-", "_")
+            installed = installed_packages.get(distribution)
+            recorded = manifest_packages.get(distribution)
+            if installed is None:
+                errors.append(f"{distribution} is not installed in this interpreter")
+                mismatches.append(f"{key}_not_installed")
+            if manifest_result.present and recorded is None:
+                errors.append(f"manifest packages has no {distribution} entry")
+                mismatches.append(f"{key}_manifest_entry_missing")
+            elif installed is not None and recorded is not None and installed != recorded:
+                mismatches.append(f"{key}_installed_vs_manifest")
+        realize_process_surface()
+        live_process = live_process_layer()
+        live_currentness = str(live_process.get("currentness") or "unknown")
+        if live_currentness != "current":
+            mismatches.append(f"live_process_currentness_{live_currentness}")
+            errors.append(f"live process currentness is {live_currentness}; release requires current")
     historical = historical_installer_layer(root)
     _explain_mismatches(mismatches, warnings=warnings, errors=errors)
     status: VersionStatus = {
@@ -221,9 +239,9 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
     return status
 
 
-def assert_version_status_compatible(project_root: Path | None = None) -> VersionStatus:
+def assert_version_status_compatible(project_root: Path | None = None, *, release_tree: bool = False) -> VersionStatus:
     """Return status or raise SystemExit when the release version gate fails."""
-    status = collect_version_status(project_root)
+    status = collect_version_status(project_root, release_tree=release_tree)
     compatible = bool(status["compatible"])
     mismatches = status["mismatches"]
     if not compatible:

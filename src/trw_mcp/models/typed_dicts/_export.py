@@ -92,7 +92,8 @@ class RoadmapSyncResult(TypedDict):
 class ImportLearningsResult(TypedDict, total=False):
     """Return shape of ``import_learnings()``.
 
-    ``imported``, ``skipped_duplicate``, ``skipped_filter``, ``total_source``,
+    ``imported``, ``skipped_duplicate``, ``skipped_filter``, ``refused`` (nameless or gate-rejected entries),
+    ``refused_reasons``, ``total_source``,
     ``imported_ids``, ``dry_run``, ``source_project``, and ``status`` are
     present on the success path.  ``error`` and ``status="failed"`` are the
     only keys present on the early-exit (no .trw / bad source file) path.
@@ -101,8 +102,11 @@ class ImportLearningsResult(TypedDict, total=False):
     imported: int
     skipped_duplicate: int
     skipped_filter: int
+    refused: int
+    refused_reasons: list[str]
     total_source: int
     imported_ids: list[str]
+    not_restored: list[str]  # E2E-INC-118: a status, supersession or confidence the import could not keep
     dry_run: bool
     source_project: str
     status: str

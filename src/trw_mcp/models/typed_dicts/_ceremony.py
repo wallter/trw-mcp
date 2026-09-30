@@ -117,6 +117,7 @@ class DeliveryGatesDict(TypedDict, total=False):
     integration_review_warning: str
     untracked_warning: str
     build_gate_warning: str
+    build_tree_binding_advisory: str
     build_gate_block: str
     build_gate_override: str
     checkpoint_blocker_warning: str
@@ -161,14 +162,16 @@ class ReflectResultDict(TypedDict):
 
     status: str
     events_analyzed: int
-    learnings_produced: int
+    mechanical_learnings_extracted: (
+        int  # learnings the reflection derived from error/repeat events, NOT the session count (INC-071)
+    )
     success_patterns: int
 
 
 class _ReviewMdResultRequired(TypedDict):
     """Return shape of ``generate_review_md()``."""
 
-    status: Literal["generated", "failed", "skipped"]  # skipped: a dry run (B71-110)
+    status: Literal["generated", "failed", "skipped"]  # skipped: a dry run (B71-110) or an existing file kept
     path: str | None
     rules_count: int
 
@@ -178,6 +181,7 @@ class ReviewMdResultDict(_ReviewMdResultRequired, total=False):
 
     error: str
     learnings_skipped: str
+    kept_existing: str
 
 
 class InstructionPointerSkipDict(TypedDict):

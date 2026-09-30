@@ -111,6 +111,7 @@ class TestMemoryToLearningDict:
             "outcome_history",
             "type",
             "nudge_line",
+            "evidence_level",
             "expires",
             "confidence",
             "task_type",

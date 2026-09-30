@@ -66,7 +66,10 @@ def test_over_threshold_warns_with_exact_wording(tmp_path: Path, monkeypatch: py
         fh.truncate(5 * 1024 * 1024)  # sparse
     status, msg = _row(tmp_path)
     assert status == "WARN"
-    assert msg == "`.trw/trash` holds 5.0 MB in 1 backups; delete it when you no longer need them"
+    trash = tmp_path / ".trw" / "trash"
+    assert msg == (
+        f"`.trw/trash` holds 5.0 MB in 1 backups; delete it when you no longer need them (remove with: rm -rf {trash})"
+    )
 
 
 def test_exactly_50mb_default_threshold(tmp_path: Path) -> None:
@@ -162,7 +165,10 @@ def test_nonempty_trash_survives_whole_and_is_reported(
     trash = tmp_path / ".trw" / "trash"
     assert (trash / ("20260101T000000Z-" + "a" * 32) / "data").read_bytes() == b"user bytes one"
     assert (trash / ("20260102T000000Z-" + "b" * 32) / "meta.json").is_file()
-    assert "Kept .trw/trash: it holds 2 backup(s) TRW could not remove automatically (see `trw-mcp doctor`)" in out
+    assert (
+        "Kept .trw/trash: it holds 2 backup(s) TRW could not remove automatically "
+        f"(see `trw-mcp doctor`; remove with: rm -rf {trash})" in out
+    )
     assert not (tmp_path / ".trw" / "config.yaml").exists()
     assert not (tmp_path / ".trw" / "sessions").exists()
 
@@ -300,3 +306,21 @@ def test_remove_trw_dir_swap_to_symlink_mid_walk_stays_in_project(tmp_path, monk
     uc.remove_trw_dir(trw, proj, lambda p, t: str(p))
     assert (outside / "b" / "keep.txt").read_bytes() == b"user"
     assert not (proj / ".trw-moved" / "b").exists()  # the fd stayed on the original directory
+
+
+def test_a_small_nonempty_trash_still_names_the_exact_remove_command(tmp_path: Path) -> None:
+    """E2E-INC-062: the purge command is named at ANY size, not only above WARN_BYTES."""
+    _capture(tmp_path, "a", b"tiny")
+    status, msg = _row(tmp_path)
+    assert status == "PASS"
+    assert f"remove with: rm -rf {tmp_path / '.trw' / 'trash'}" in msg
+
+
+def test_the_remove_command_quotes_a_path_with_spaces(tmp_path: Path) -> None:
+    import shlex
+
+    root = tmp_path / "my project"
+    _capture(root, "a", b"tiny")
+    _status, msg = _row(root)
+    assert f"rm -rf {shlex.quote(str(root / '.trw' / 'trash'))}" in msg
+    assert "'" in msg  # quoted, so the command is safe to paste

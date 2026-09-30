@@ -49,7 +49,7 @@ INSTRUCTION_WRITE_ADMISSIONS: dict[str, ConfigAdmission] = {
         owner="PRD-FIX-123-FR04",
         consumer="trw_mcp.state.claude_md._write_backup.backup_instruction_file",
         default_rationale=(
-            "Defaults to 10 pre-write copies per instruction filename — enough history to recover "
+            "Defaults to 5 pre-write copies per instruction filename — enough history to recover "
             "from an unnoticed sync several sessions later, bounded so a chatty bootstrap loop "
             "cannot fill the project directory."
         ),

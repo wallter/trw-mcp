@@ -36,7 +36,7 @@ from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 # (``trw_mcp.dispatch._enforcement_layers.enforcement_report``, the one place
 # that decides the tuple). An assumed or unmeasured layer is never a member of
 # this Literal's live values; it is named in ``mcp_role_note`` instead.
-EnforcementLayer = Literal["sandbox", "permissions_allowlist", "mcp_allowlist", "mcp_role", "mcp_absent"]
+EnforcementLayer = Literal["sandbox", "permissions_allowlist", "mcp_allowlist", "mcp_role", "mcp_absent", "mcp_started"]
 
 # Upper bound on a forwarded model-override string. A model name is concatenated
 # into argv; even within the benign charset an unbounded value is pointless and a
@@ -179,11 +179,11 @@ class DispatchRequest(BaseModel):
     )
     effort_source: str = Field(
         default="none",
-        description="Which precedence tier chose effort: request, config, table or none (PRD-CORE-290-FR03).",
+        description="Which precedence tier chose effort: request, config, default, table or none (PRD-CORE-290-FR03).",
     )
     model_source: str = Field(
         default="none",
-        description="Which precedence tier chose model: request, config, table, unsupported or none.",
+        description="Which precedence tier chose model: request, config, default, table, unsupported or none.",
     )
     max_turns: int | None = Field(
         default=None,

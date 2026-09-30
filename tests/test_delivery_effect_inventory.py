@@ -32,7 +32,9 @@ from trw_mcp.tools._delivery_effect_registry import (
 # D02 (the consolidation step) retired by PRD-CORE-302 FR03; D09/D10 by PRD-CORE-293.
 _RETIRED_DEFERRED = (2, 9, 10)
 _EXPECTED_IDS = frozenset(
-    [f"S{n:02d}" for n in range(1, 24)] + [f"D{n:02d}" for n in range(26) if n not in _RETIRED_DEFERRED]
+    [f"S{n:02d}" for n in range(1, 24)]
+    + ["S23b"]  # PRD-CORE-345 FR01: the deliver outcome record
+    + [f"D{n:02d}" for n in range(26) if n not in _RETIRED_DEFERRED]
 )
 
 # Every ``owner_call_point`` value that appears in the census, mapped to the
@@ -54,6 +56,7 @@ _OWNER_MODULES: dict[str, str] = {
     "write_override_ledger": "trw_mcp.tools._acceptable_failure_validation",
     "_log_gate_override": "trw_mcp.tools._deliver_gate_dispatch",
     "_persist_decision_set": "trw_mcp.tools._deliver_gate_dispatch",
+    "record_outcome": "trw_mcp.tools._deliver_outcome",
     "_do_reflect": "trw_mcp.tools._ceremony_runtime_helpers",
     "update_analytics": "trw_mcp.state.analytics.counters",
     "_do_checkpoint": "trw_mcp.tools.checkpoint",
@@ -122,7 +125,7 @@ def _resolve_owner_symbol(owner_call_point: str) -> object:
 def test_current_delivery_side_effect_inventory_is_exhaustive() -> None:
     """FR03: registry equals the approved §6.6 census with no gaps or duplicates."""
     assert all_effect_ids() == _EXPECTED_IDS
-    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 46
+    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 47
     # Every descriptor's own effect_id matches its dict key (no duplicate/orphan).
     for effect_id, descriptor in DELIVERY_EFFECT_REGISTRY.items():
         assert descriptor.effect_id == effect_id

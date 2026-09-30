@@ -1,0 +1,60 @@
+{
+  "ahr": "1.0-rc.1",
+  "type": "readback",
+  "readback_id": "01J9ZK5W1RB0000000000001",
+  "handoff": {
+    "handoff_id": "01J9ZK5W1STD000000000001",
+    "digest": "sha256:ddcd8aa819205a8baec80e246d0f47bfd0997de14feeda78f1545eac6fad1d45"
+  },
+  "by": {
+    "id": "integrator",
+    "kind": "agent",
+    "capability_tier": "frontier"
+  },
+  "at": "2026-09-28T21:18:00Z",
+  "goal_restated": "A dirty target must yield a refusal and leave the operator's files untouched.",
+  "done_when_restated": "Refusal seen on a dirty scratch tree, and a recorded full-suite pass.",
+  "first_action": {
+    "action_id": "a1",
+    "restated": "Run the whole suite for the package and record it."
+  },
+  "top_risk": {
+    "risk_id": "r1",
+    "restated": "The refusal might fire only after partial staging."
+  },
+  "pointer_checks": [
+    {
+      "index": 0,
+      "status": "no_digest"
+    },
+    {
+      "index": 1,
+      "status": "drift",
+      "observed_digest": "sha256:7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
+    }
+  ],
+  "reverified": [
+    {
+      "claim_id": "c2",
+      "result": "confirmed",
+      "evidence": {
+        "procedure": "pytest tests/test_swap.py -q",
+        "scope": "same file as sender",
+        "result": "supports",
+        "at": "2026-09-28T21:08:00Z",
+        "producer": "worker-w1"
+      }
+    }
+  ],
+  "discrepancies": [
+    {
+      "text": "swap.py bytes differ from the sender's digest; re-reading before acting."
+    }
+  ],
+  "questions": [],
+  "disposition": "ready",
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "digest": "sha256:9a85ad20d0b7b85bb653e302b6e02976792d67b50094a2d687435f32450589b8"
+  }
+}

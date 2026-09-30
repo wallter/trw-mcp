@@ -370,6 +370,8 @@ def finalize_session_start(
     # SessionStartResultDict is owned by another module, so the extra key is
     # written through a MutableMapping cast (same pattern as record_into).
     cast("MutableMapping[str, object]", results)["connection_fingerprint"] = build_connection_fingerprint()
+    if session_id:
+        results["session_id"] = session_id
 
     if config.effective_ceremony_mode == "light":
         results["framework_reminder"] = (

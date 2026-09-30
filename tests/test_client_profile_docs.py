@@ -118,7 +118,7 @@ def test_codex_quick_reference_row_matches_profile_contract() -> None:
     assert mode == profile.ceremony_mode
     assert context == _format_context_window_tokens(profile.context_window_tokens)
     assert ceremony == _format_ceremony_weights(profile.ceremony_weights)
-    assert write_target == "`AGENTS.md`"
+    assert write_target == f"`{profile.write_targets.instruction_path}`"
     assert review_weight == str(profile.ceremony_weights.review)
 
 
@@ -134,7 +134,7 @@ def test_opencode_quick_reference_row_matches_profile_contract() -> None:
     assert mode == profile.ceremony_mode
     assert context == _format_context_window_tokens(profile.context_window_tokens)
     assert ceremony == _format_ceremony_weights(profile.ceremony_weights)
-    assert write_target == "`AGENTS.md`"
+    assert write_target == f"`{profile.write_targets.instruction_path}`"
     assert review_weight == str(profile.ceremony_weights.review)
 
 
@@ -213,16 +213,13 @@ def test_default_capability_and_effort_posture_matches_runtime_profiles() -> Non
 def test_codex_docs_distinguish_cli_effort_from_gpt6_api_effort() -> None:
     section = _extract_section(_read_client_profiles_doc(), "## Codex Support Surface")
 
-    assert "`gpt-6-astra`" in section
-    assert "`gpt-6-sol`" in section
-    assert "`gpt-6-luna`" in section
-    assert "`dispatch_default_models.codex: gpt-6-sol`" in section
+    assert all(f"`{model}`" in section for model in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna"))
+    assert "`gpt-6.1-sol` and `low` effort" in section
     assert "`local-large` and `local-small` remain local capability classes" in section
-    assert "Codex CLI `model_reasoning_effort`" in section
+    assert "Codex CLI `model_reasoning_effort`" in section and "does not alter TRW ceremony depth" in section
     assert "`minimal|low|medium|high`" in section
     assert "Responses API uses `none|low|medium|high|xhigh|max`" in section
     assert "does not currently ship a direct Responses API effort adapter" in section
-    assert "does not alter TRW ceremony depth" in section
 
 
 @pytest.mark.unit
@@ -280,7 +277,7 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "Context": _format_context_window_tokens(profile.context_window_tokens),
         "Default model tier": f"`{profile.default_model_tier}`",
         "Ceremony weights": f"`{_format_ceremony_weights(profile.ceremony_weights)}`",
-        "Write target": "`AGENTS.md`",
+        "Write target": f"`{profile.write_targets.instruction_path}`",
         "Instructions path": f"`{profile.write_targets.instruction_path}`",
         "Nudges": "Enabled; standard messenger, default density, `60/30/0/10` pool weights",
         "Hooks": "Disabled",
@@ -296,14 +293,12 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
     assert "Agent teams" not in config_rows
     assert "current Codex runtime surfaces" in codex_section
     assert "shared `_light_profile(...)` contract" in codex_section
-    assert (
-        "The Codex profile models `.codex/INSTRUCTIONS.md` as its `instruction_path` "
-        "while keeping `AGENTS.md` as the profile's top-level write target."
-    ) in codex_section
-    assert (
-        "Hooks, framework reference content, and skills are "
-        "intentionally disabled in the profile contract; delegation content is enabled"
-    ) in codex_section
+    # E2E-CODEX-INIT-ARTIFACTS: the prose says what a codex init writes (no AGENTS.md; hooks.json and
+    # .agents/skills despite the profile's false flags) instead of claiming AGENTS.md and "hooks disabled".
+    assert "so a codex-only init writes no `AGENTS.md`" in codex_section
+    assert "Codex also reads a shared `AGENTS.md` natively when one exists" in codex_section
+    assert "a codex init still writes `.codex/hooks.json`" in codex_section
+    assert "Framework reference content is not rendered; delegation content is enabled" in codex_section
     assert "26,682 bytes" in codex_section
     assert (
         "`skills_enabled = false` is a profile-layer prompt/exposure setting; it does not suppress "
@@ -441,10 +436,12 @@ def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: 
 # declared precedence instead of its own hand-written if/elif chain.
 _FR05_WRITE_TARGET_LABEL_GOLDEN: dict[str, str] = {
     "claude-code": "AGENTS.md",
-    "opencode": "AGENTS.md",
+    # E2E-CODEX-INIT-ARTIFACTS (lead ruling): codex and opencode set no write_targets flag, and the label used to
+    # fall through to AGENTS.md, a file neither init writes. It is now their instruction_path.
+    "opencode": ".opencode/INSTRUCTIONS.md",
     "cursor-ide": ".cursor/rules/",
     "cursor-cli": "AGENTS.md",
-    "codex": "AGENTS.md",
+    "codex": ".codex/INSTRUCTIONS.md",
     "copilot": ".github/copilot-instructions.md",
     "antigravity-cli": "ANTIGRAVITY.md",
     "grok": "AGENTS.md",

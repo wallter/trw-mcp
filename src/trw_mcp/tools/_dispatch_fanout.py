@@ -82,7 +82,7 @@ def launch_fanout(
                 {
                     "target": t.label,
                     "ok": False,
-                    "error": f"timeout_s>{_f()._MAX_WAIT_TIMEOUT_S} needs wait=False",
+                    "error": f"timeout_s>{_f()._MAX_WAIT_TIMEOUT_S} needs wait=False; poll the returned job ids with action='status'",
                     "reason": "resolution_error",
                 }
             )

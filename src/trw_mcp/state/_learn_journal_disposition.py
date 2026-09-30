@@ -28,8 +28,10 @@ The policy, therefore:
 * **transient failure** (backend unavailable, DB lock, timeout) — retry, but
   with a BUDGET. After ``max_attempts`` the record dead-letters too, so no
   outcome is "forever".
-* Nothing is ever deleted. Dead-letter records keep the full original journal
-  shape, so moving one back into ``pending/`` re-arms it after a fix.
+* Nothing is ever deleted. Dead-letter records keep the original journal shape
+  with every credential masked (:func:`mask_credentials`): a refused learning is
+  usually refused BECAUSE it carries a secret, and that secret must not outlive the
+  refusal on disk. Moving one back into ``pending/`` re-arms the masked text.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from typing import Final, Literal, NamedTuple
 
 import structlog
 from trw_memory.exceptions import AuthorizationError, PIIBlockError, PoisoningError, SchemaValidationError
+from trw_memory.security.credentials import mask_credentials, mask_credentials_deep
 
 from trw_mcp.state._learn_journal_io import fsync_dir, read_record, write_record_atomic
 
@@ -154,11 +157,11 @@ def dead_letter(
     record is STILL pending — the caller must count it as retained rather than
     report a move that did not happen.
     """
-    record = read_record(path) or {}
+    record = {key: mask_credentials_deep(item) for key, item in (read_record(path) or {}).items()}
     record["dead_letter"] = {
         "reason": reason,
         "status": status,
-        "error": error,
+        "error": mask_credentials(error),
         "attempts": attempt,
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

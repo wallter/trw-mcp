@@ -16,6 +16,7 @@ regression can be localized to one migration.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,6 +87,42 @@ class GateDecision(BaseModel):
     @property
     def is_blocking(self) -> bool:
         return self.status is GateStatus.BLOCK
+
+
+class DeliverOutcome(BaseModel):
+    """One ``evaluate_delivery_gates`` outcome, pass or block (PRD-CORE-345 FR01).
+
+    Audit, never authority: written after the decision is made and never read back into one.
+    Stored as ``outcome-<uuid4>.json`` beside the ``gate-*`` decision receipts, so their readers are
+    unaffected. No free text: the acceptable-failure record's prose stays in its own ledger.
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True)
+
+    kind: str = "deliver_outcome"
+    schema_version: int = Field(default=SCHEMA_VERSION)
+    outcome_id: str
+    run_id: str
+    decision: Literal["pass", "pass_with_exception", "block"]
+    exit_site: Literal[
+        "no_escape",
+        "structured",
+        "build_authority",
+        "acceptance_integrity",
+        "plan_acceptance",
+        "formation",
+        "requirement_drift",
+        "advisory",
+    ]
+    blocked_gate_types: tuple[str, ...] = Field(default_factory=tuple)
+    overridden_gate_types: tuple[str, ...] = Field(default_factory=tuple)
+    override_refused: bool = False
+    available_receipt_ids: tuple[str, ...] = Field(default_factory=tuple)
+    exception_expires_at: str | None = None
+    policy_mode: str = ""
+    framework_version: str = ""
+    config_version_id: str = ""
+    evaluated_at: str = ""
 
 
 class DeliveryDecisionSet(BaseModel):

@@ -36,6 +36,7 @@ import structlog
 
 from trw_mcp.models._evidence_plans import RequiredReviewPlan, ReviewVerdict
 from trw_mcp.models._evidence_records import ReviewReceipt
+from trw_mcp.state._evidence_bound_read import EvidenceUnreadable, read_evidence_mapping
 from trw_mcp.state.review_signoffs import trw_dir_for_run
 from trw_mcp.tools._review_adversarial_source import adversarial_source_is_verified
 from trw_mcp.tools._review_receipt_writer import ADVERSARIAL_AUDIT_RUBRIC
@@ -63,9 +64,20 @@ _BLOCKING_MODES: frozenset[str] = frozenset({"block_coding", "block_all"})
 #: drift from what ``trw_review`` accepted (PRD-CORE-255-FR04 condition 4).
 _SUBSTANTIVE_SEVERITIES: frozenset[str] = frozenset({"critical", "warning"})
 
+#: Stem reported when the review-receipts directory itself cannot be listed.
+_RECEIPT_DIR_LABEL = "<review receipts directory>"
+
 _UNKNOWN_SCOPE_REMEDY = (
     "make the named PRD file readable under docs/requirements-aare-f/prds/ with parseable frontmatter, "
     "or correct the id in the run's prd_scope"
+)
+_UNKNOWN_RECEIPT_REMEDY = (
+    "repair or remove the unreadable file(s) under meta/receipts/review/ (a receipt is written by trw_review and "
+    "must stay parseable)"
+)
+_UNREADABLE_RUN_YAML_REMEDY = (
+    "repair meta/run.yaml so it is a readable YAML mapping (trw_init writes it; restore it from version control "
+    "or re-run trw_init for a fresh run)"
 )
 _NOT_DECLARED_ADVISORY = (
     "safety_critical: not_declared — this run names no PRD, so the adversarial-audit gate did not "
@@ -96,66 +108,132 @@ class ScopeResolution:
 
     value: bool | Literal["unknown", "not_declared"]
     unreadable: tuple[str, ...] = field(default=())
+    unreadable_receipts: tuple[str, ...] = field(default=())
 
 
-def _scope_from_run_yaml(run_path: Path) -> list[str]:
-    """``prd_scope`` entries from ``meta/run.yaml``.
+#: Label reported when ``meta/run.yaml`` exists but cannot be read as a scope declaration.
+_RUN_YAML_LABEL = "meta/run.yaml"
 
-    An absent or unreadable run file contributes NO entries rather than a
-    fail-closed verdict: it is indistinguishable from a run that declared no
-    scope, and a run that declared no scope is inert by policy — so corrupting
-    this file buys an evader nothing it could not get by declaring ``[]``.
+
+def _scope_from_run_yaml(run_path: Path) -> tuple[list[str], tuple[str, ...]]:
+    """``(prd_scope entries from meta/run.yaml, (label,) when the file exists but is unreadable)``.
+
+    An ABSENT run file contributes no entries (nothing was declared). A file that exists but cannot be read,
+    or whose ``prd_scope`` is not a list, is CORRUPTION, not an empty declaration: it is reported so the caller
+    fails CLOSED (lead ruling on E2E-INC-106; HB-1 -- report what cannot be read, never assume it is empty).
     """
-    from trw_mcp.state.persistence import FileStateReader
-
-    run_yaml = run_path / "meta" / "run.yaml"
-    if not run_yaml.is_file():
-        return []
     try:
-        raw = FileStateReader().read_yaml(run_yaml).get("prd_scope", [])
-    except Exception:  # justified: an unreadable run file declares no scope; the gate stays inert, not "safe"
+        data = read_evidence_mapping(run_path, _RUN_YAML_LABEL)  # E2E-EVIDENCE-BOUND-READ: lstat-bound, no-follow
+    except EvidenceUnreadable:  # an existing run.yaml always carries metadata: empty/null/list is corruption
         logger.warning("safety_critical_run_scope_unreadable", run=str(run_path), exc_info=True)
-        return []
-    return [str(entry) for entry in raw] if isinstance(raw, list) else []
+        return [], (_RUN_YAML_LABEL,)
+    if data is None:  # truly absent: nothing was declared
+        return [], ()
+    raw = data.get("prd_scope", [])
+    if not isinstance(raw, list):
+        logger.warning("safety_critical_run_scope_malformed", run=str(run_path), type=type(raw).__name__)
+        return [], (_RUN_YAML_LABEL,)
+    return [str(entry) for entry in raw], ()
 
 
-def _scope_from_receipts(run_path: Path) -> list[str]:
-    """``prd_ids`` recorded on every typed review receipt.
+def _scope_from_receipts(run_path: Path) -> tuple[list[str], tuple[str, ...]]:
+    """``(prd_ids on every typed review receipt, the stems of receipts that could not be read)``.
 
-    A malformed receipt stops the scan (its own ids are unknowable) but keeps the
-    ids already collected — those are declarations that really were made.
+    A malformed receipt never stops the scan and never shrinks the scope quietly:
+    its own ids are unknowable, so it is reported by stem (the caller fails
+    CLOSED on it) while every other receipt still contributes its ids. An
+    unlistable directory is reported the same way, under the stem
+    ``<review receipts directory>``.
     """
     directory = run_path / "meta" / "receipts" / "review"
     if not directory.is_dir():
-        return []
+        return [], ()
     entries: list[str] = []
-    for path in sorted(directory.glob("*.json")):
+    unreadable: list[str] = []
+    try:
+        # Match by NAME, case-insensitively (codex r1 P0): ``Path(".json").suffix`` is "" (a dotfile has no suffix),
+        # so a suffix test silently dropped a receipt literally named ``.json`` -- a way to make the gate inert.
+        # ``x.JSON`` counts (case-insensitive volumes); ``x.json.bak`` / ``x.json~`` do not, as with glob before.
+        paths = sorted(path for path in directory.iterdir() if path.name.lower().endswith(".json"))
+    except OSError:  # justified: fail-CLOSED, a directory that cannot be listed may hide receipts that widen the scope
+        logger.warning("safety_critical_receipt_dir_unreadable", run=str(run_path), exc_info=True)
+        return [], (_RECEIPT_DIR_LABEL,)
+    for path in paths:
+        if path.is_symlink():  # never read a receipt through a link (it may point outside the run): fail CLOSED
+            logger.warning("safety_critical_receipt_symlink", receipt=str(path))
+            unreadable.append(path.stem)
+            continue
         try:
             entries.extend(ReviewReceipt.model_validate_json(path.read_bytes()).prd_ids)
-        except Exception:  # justified: a malformed receipt contributes no ids; the ones already read still count
+        except Exception:  # justified: fail-CLOSED, the caller reports this receipt by stem; the rest still count
             logger.warning("safety_critical_receipt_scope_unreadable", receipt=str(path), exc_info=True)
-            return entries
-    return entries
+            unreadable.append(path.stem)
+    return entries, tuple(unreadable)
 
 
-def declared_scope_union(run_path: Path) -> list[str]:
-    """The run's declared PRD scope: ``run.yaml`` ``prd_scope`` united with every review receipt's ``prd_ids``.
+def _scope_from_events(run_path: Path) -> tuple[list[str], tuple[str, ...]]:
+    """``(every PRD the append-only log witnessed, (label,) when the log exists but cannot be trusted)``.
 
-    Sorted and de-duplicated, empty entries dropped; entries are returned as
-    declared (ids, paths or globs), unresolved. The ONE scope rule shared by this
+    EVIDENCE-DELETION-POLICY: a scope that was ever declared cannot be undeclared by deleting run.yaml or the
+    receipts -- the log still names it. An untrustworthy log is an UNKNOWN scope, never a smaller one.
+    """
+    from trw_mcp.state._evidence_witness import EVENTS, recorded_scope
+
+    try:
+        return recorded_scope(run_path), ()
+    except EvidenceUnreadable:
+        logger.warning("safety_critical_scope_witness_unreadable", run=str(run_path), exc_info=True)
+        return [], (EVENTS,)
+
+
+@dataclass(frozen=True)
+class DeclaredScope:
+    """The run's declared PRD scope plus the review receipts that could not contribute to it."""
+
+    union: list[str]
+    unreadable_receipts: tuple[str, ...] = ()
+
+
+def declared_scope(run_path: Path) -> DeclaredScope:
+    """The scope union and the unreadable receipts behind it — the ONE scope rule.
+
+    ``union`` is ``run.yaml`` ``prd_scope`` united with every readable review
+    receipt's ``prd_ids``, sorted and de-duplicated, empty entries dropped;
+    entries are returned as declared (ids, paths or globs), unresolved.
+    ``unreadable_receipts`` names each receipt whose ids are unknowable: a run
+    with any of them has an UNKNOWN scope, not a smaller one. Shared by this
     gate's :func:`_resolve_scope` (PRD-CORE-255-FR03) and
     ``trw_mcp.tools._deliver_requirement_drift.compute_requirement_drift``
     (PRD-CORE-321-FR05), so the two gates cannot disagree about which PRDs a run
     governs.
     """
-    return sorted({entry for entry in (*_scope_from_run_yaml(run_path), *_scope_from_receipts(run_path)) if entry})
+    run_entries, run_unreadable = _scope_from_run_yaml(run_path)
+    receipt_entries, receipts_unreadable = _scope_from_receipts(run_path)
+    witness_entries, witness_unreadable = _scope_from_events(run_path)
+    unreadable = (*run_unreadable, *receipts_unreadable, *witness_unreadable)
+    union = sorted({entry for entry in (*run_entries, *receipt_entries, *witness_entries) if entry})
+    return DeclaredScope(union, unreadable)
+
+
+def declared_scope_union(run_path: Path) -> list[str]:
+    """Only the readable part of :func:`declared_scope` (sorted, de-duplicated). Callers that gate must use ``declared_scope``."""
+    return declared_scope(run_path).union
 
 
 def _resolve_scope(run_path: Path | None) -> ScopeResolution:
     """FR03 resolution plus the unreadable ids behind an :data:`UNKNOWN_SCOPE`."""
     if run_path is None:
         return ScopeResolution(NOT_DECLARED)
-    union = declared_scope_union(run_path)
+    declared = declared_scope(run_path)
+    if declared.unreadable_receipts:
+        # A receipt that cannot be parsed may name a safety_critical PRD, and a
+        # smaller scope would make this gate LESS strict: fail CLOSED, even
+        # when run.yaml declares a scope (the receipt could have widened it).
+        logger.warning(
+            "safety_critical_scope_receipt_unreadable", run=str(run_path), receipts=declared.unreadable_receipts
+        )
+        return ScopeResolution(UNKNOWN_SCOPE, unreadable_receipts=declared.unreadable_receipts)
+    union = declared.union
     if not union:
         return ScopeResolution(NOT_DECLARED)
     from trw_mcp.tools._plan_acceptance_gate import _resolve_prd_scope
@@ -298,12 +376,28 @@ def safety_critical_gate_result(run_path: Path | None) -> SafetyCriticalOutcome:
         )
         return SafetyCriticalOutcome(resolution=scope.value, satisfying_receipt_id=satisfying)
 
-    scope_clause = (
-        f"the run's PRD scope names {', '.join(scope.unreadable)}, which could not be read or parsed "
-        f"({UNKNOWN_SCOPE}) — {_UNKNOWN_SCOPE_REMEDY}"
-        if scope.value == UNKNOWN_SCOPE
-        else "the run's PRD scope names a PRD declared safety_critical: true"
-    )
+    if scope.unreadable_receipts:
+        # E2E-INC-124: meta/run.yaml is run metadata, not a review receipt -- name it and point the remedy at it.
+        receipts = [label for label in scope.unreadable_receipts if label != _RUN_YAML_LABEL]
+        clauses = []
+        if _RUN_YAML_LABEL in scope.unreadable_receipts:
+            clauses.append(
+                f"the run's metadata file {_RUN_YAML_LABEL} could not be read or parsed ({UNKNOWN_SCOPE}), so the "
+                f"prd_scope it declares is unknown — {_UNREADABLE_RUN_YAML_REMEDY}"
+            )
+        if receipts:
+            clauses.append(
+                f"the run's review receipt(s) {', '.join(receipts)} could not be read or parsed "
+                f"({UNKNOWN_SCOPE}), so the PRDs they declare are unknown — {_UNKNOWN_RECEIPT_REMEDY}"
+            )
+        scope_clause = "; ".join(clauses)
+    elif scope.value == UNKNOWN_SCOPE:
+        scope_clause = (
+            f"the run's PRD scope names {', '.join(scope.unreadable)}, which could not be read or parsed "
+            f"({UNKNOWN_SCOPE}) — {_UNKNOWN_SCOPE_REMEDY}"
+        )
+    else:
+        scope_clause = "the run's PRD scope names a PRD declared safety_critical: true"
     detail = (
         f"Delivery blocked ({REASON_ADVERSARIAL_AUDIT_MISSING}): {scope_clause}, and no review receipt "
         f"records a settled, independently-verified adversarial audit. Remedy: {_MISSING_AUDIT_REMEDY}."
@@ -354,7 +448,9 @@ __all__ = [
     "NOT_DECLARED",
     "REASON_ADVERSARIAL_AUDIT_MISSING",
     "UNKNOWN_SCOPE",
+    "DeclaredScope",
     "SafetyCriticalOutcome",
+    "declared_scope",
     "declared_scope_union",
     "find_satisfying_adversarial_receipt",
     "safety_critical_gate_result",

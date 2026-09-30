@@ -116,7 +116,7 @@ class TestCompactionGate:
     async def test_failed_session_start_does_not_clear_gate(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
-        """Unsuccessful session_start must not activate the session or clear the marker."""
+        """A degraded session_start (errors) activates the session (E2E-INC-005) but never clears the marker or the gate."""
         trw_dir = _seed_compaction_marker(tmp_path)
         start_result = FakeToolResult(
             content=[TextContent(type="text", text='{"success": false, "errors": ["recall failed"]}')],
@@ -146,7 +146,7 @@ class TestCompactionGate:
 
         assert start_out.structured_content == {"success": False, "errors": ["recall failed"]}
         assert call_names == ["trw_session_start"]
-        assert not is_session_active("test-session-gate")
+        assert is_session_active("test-session-gate")  # it was called; no "has not been called" banner
         assert (trw_dir / "context" / "pre_compact_state.json").exists()
         assert probe_out.structured_content is not None
         assert probe_out.structured_content["error"] == "post_compaction_recovery_required"

@@ -200,3 +200,15 @@ class TestOpencodeAgentsMdWriter:
         assert f"Our block sits between `{START}` and `{END}`." in out
         assert "Trailing user note." in out
         assert "OLD BLOCK" not in out
+
+
+def test_replacing_a_region_is_a_fixed_point_and_keeps_the_line_after_the_end_marker() -> None:
+    """E2E-UPDATE-IDEMPOTENT: the block's final newline is the end marker line's own, never an extra blank line."""
+    block = f"{START}\nNEW\n{END}\n"
+    once = replace_marker_region(f"# Mine\n\n{START}\nOLD\n{END}\n", start=START, end=END, new_block=block)
+    assert once == f"# Mine\n\n{block}"
+    assert replace_marker_region(once, start=START, end=END, new_block=block) == once
+    # user text after the block is untouched, and a block at EOF without a newline keeps the block's own
+    kept = replace_marker_region(f"{START}\nOLD\n{END}\nafter\n", start=START, end=END, new_block=block)
+    assert kept == f"{block}after\n"
+    assert replace_marker_region(f"{START}\nOLD\n{END}", start=START, end=END, new_block=block) == block

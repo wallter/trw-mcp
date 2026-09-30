@@ -41,7 +41,13 @@ from trw_mcp.tools._learning_helpers import (
 )
 from trw_mcp.tools._learn_arg_bags import parse_learn_metadata, parse_learn_update_fields
 from trw_mcp.tools._learning_module_helpers import _build_call_ctx, _coerce_tags
-from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _is_solution_summary, _validate_learn_enums
+from trw_mcp.tools._learning_module_helpers import (
+    _coerce_learn_type,
+    _is_solution_summary,
+    _validate_learn_create_inputs,
+    _validate_learn_enums,
+    _validate_recall_status,
+)
 from trw_mcp.tools._learn_update_impl import execute_learn_update
 from trw_mcp.tools._learning_module_helpers import _read_injected_ids
 
@@ -77,10 +83,10 @@ def register_learning_tools(server: FastMCP) -> None:
         label uncertainty; update, never duplicate.
 
         Create (no learning_id): summary + detail required. tags: list or
-        comma/space string. impact 0-1, default 0.5. type:
+        comma/space string. impact 0-1. type:
         incident|pattern|convention|hypothesis|workaround|decision. confidence:
         unverified|low|medium|high|verified. evidence_level:
-        observed|verified|inferred|unknown (default unknown). scope: auto|project|user.
+        observed|verified|inferred|unknown. scope: auto|project|user.
 
         Update (learning_id): pass only changes. status:
         active|resolved|obsolete. tags replace; "" or [] clears.
@@ -93,7 +99,7 @@ def register_learning_tools(server: FastMCP) -> None:
         protection_tier.
 
         Output: create: status (recorded, skipped/merged, rejected), learning_id,
-        path. Update: status, learning_id, changes.
+        path. Update: status (updated, no_changes, rejected), learning_id, changes.
 
         See Also: trw_recall.
         """
@@ -106,8 +112,12 @@ def register_learning_tools(server: FastMCP) -> None:
         #   caller passing a removed name fails loudly rather than silently.
         #   metadata's accepted keys per mode are _learn_arg_bags' two models.
         if learning_id:
-            if evidence or scope != "auto":
-                return {"error": "evidence and scope apply only when creating a learning", "status": "invalid"}
+            if evidence or scope not in ("auto", ""):
+                return {
+                    "status": "rejected",
+                    "reason": "create_only_arguments",
+                    "message": "evidence and scope apply only when creating a learning; nothing was changed.",
+                }
             upd, fields_reject = parse_learn_update_fields(metadata)
             if fields_reject is not None:
                 return fields_reject
@@ -119,7 +129,7 @@ def register_learning_tools(server: FastMCP) -> None:
                 project_root=resolve_project_root,
                 learning_id=learning_id,
                 status=status or None,
-                # None is "not named"; an explicit "" clears the field (FR03 patch contract).
+                # None is "not named"; blank detail is unset, "" tags clears, a blank summary is rejected upstream.
                 summary=summary,
                 detail=detail,
                 impact=impact,
@@ -134,6 +144,9 @@ def register_learning_tools(server: FastMCP) -> None:
         from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
         from trw_mcp.tools._learn_impl import execute_learn
 
+        create_reject = _validate_learn_create_inputs(summary=summary, detail=detail, impact=impact)
+        if create_reject is not None:
+            return create_reject
         meta, meta_reject = parse_learn_metadata(metadata)
         if meta_reject is not None:
             return meta_reject
@@ -226,6 +239,9 @@ def register_learning_tools(server: FastMCP) -> None:
         #   "recorded for attribution" claim was also false: the only attribution
         #   sink (state.receipts.log_recall_receipt) is never called from this
         #   path, and its own shard_id kwarg has no production caller either.
+        status_error = _validate_recall_status(status)
+        if status_error is not None:
+            raise ToolError(status_error)
         from trw_mcp.tools._recall_impl import execute_recall
         from trw_mcp.tools._tool_options import RecallOptions, parse_options
 

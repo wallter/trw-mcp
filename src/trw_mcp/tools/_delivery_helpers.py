@@ -32,6 +32,7 @@ from trw_mcp.models.config import (
     get_config as get_config,  # re-exported: _delivery_review_gate + tests resolve get_config through this facade
 )
 from trw_mcp.models.typed_dicts import ComplianceArtifactsDict, DeliveryGatesDict
+from trw_mcp.state._evidence_bound_read import EvidenceUnreadable
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # PRD-CORE-184-FR03: task-type-aware deliver gate mode lives in a focused
@@ -45,6 +46,7 @@ from trw_mcp.tools._deliver_gate_mode import (
 from trw_mcp.tools._deliver_gate_mode import (
     resolve_deliver_gate_decision as resolve_deliver_gate_decision,
 )
+from trw_mcp.tools._gate_fault import gate_fault_block
 from trw_mcp.tools._delivery_build_gates import (
     _check_build_and_work_events as _check_build_and_work_events,
 )
@@ -125,24 +127,56 @@ def _check_integration_review_gate(
     warning: str | None = None
 
     integration_path = run_path / "meta" / "integration-review.yaml"
-    if integration_path.exists():
-        try:
-            int_data = reader.read_yaml(integration_path)
-            int_verdict = str(int_data.get("verdict", ""))
-            if int_verdict == "block":
-                raw_findings = int_data.get("findings", [])
-                int_findings = raw_findings if isinstance(raw_findings, list) else []
-                critical_list = [f for f in int_findings if isinstance(f, dict) and f.get("severity") == "critical"]
-                block = (
-                    f"Integration review verdict is 'block' with {len(critical_list)} critical finding(s). "
-                    f"Delivery blocked. Fix critical integration issues before delivering."
-                )
-            elif int_verdict == "warn":
-                warning = "Integration review has warnings. Review findings before merging."
-        except Exception:  # justified: fail-open, integration review check must not block delivery
-            logger.warning("maintenance_integration_review_failed", exc_info=True)
+    # E2E-INT-REVIEW-FAIL-CLOSED: only a truly absent artifact means "no integration review was run". One
+    # that exists but cannot be read is UNKNOWN and blocks: this is a NO_ESCAPE hard gate, and reading an
+    # unreadable ``verdict: block`` as "no review" made it inert (E2E-INC-111).
+    # ``reader`` stays in the signature for its callers; the artifact is read via the shared fail-closed reader
+    # (E2E-EVIDENCE-BOUND-READ), never FileStateReader.read_yaml (it follows symlinks and reads null as {}).
+    del reader
+    from trw_mcp.state._evidence_witness import integration_review_witness_block, read_integration_review
+
+    try:
+        # One bound read, judged and hashed as the same bytes; an emptied artifact reads like a deleted one,
+        # a null/list/scalar root is corrupt and blocks.
+        int_data, int_text = read_integration_review(run_path)
+    except EvidenceUnreadable:
+        return _integration_review_unreadable(integration_path), None
+    # EVIDENCE-DELETION-POLICY: a recorded review deleted, emptied or edited afterwards is a named block.
+    witnessed = integration_review_witness_block(run_path, int_text)
+    if witnessed is not None:
+        return witnessed, None
+    if int_data is None:  # never recorded and absent: no integration review was run
+        return None, None
+    try:
+        int_verdict = str(int_data.get("verdict", ""))
+        if int_verdict == "block":
+            raw_findings = int_data.get("findings", [])
+            int_findings = raw_findings if isinstance(raw_findings, list) else []
+            critical_list = [f for f in int_findings if isinstance(f, dict) and f.get("severity") == "critical"]
+            block = (
+                f"Integration review verdict is 'block' with {len(critical_list)} critical finding(s). "
+                f"Delivery blocked. Fix critical integration issues before delivering."
+            )
+        elif int_verdict == "warn":
+            warning = "Integration review has warnings. Review findings before merging."
+    except Exception:  # justified: fail-CLOSED, an unreadable integration review is unknown and blocks
+        return _integration_review_unreadable(integration_path), None
 
     return block, warning
+
+
+def _integration_review_unreadable(integration_path: Path) -> str:
+    """The block for an integration review that exists but cannot be read; logging is best-effort, after it."""
+    block = (
+        f"Delivery blocked: the integration review could not be read ({integration_path.name} exists but is "
+        "not a readable review mapping), so its verdict is UNKNOWN. Repair the artifact or re-run the "
+        "integration review with trw_review(); this gate has no allow_unverified escape."
+    )
+    try:
+        logger.warning("integration_review_unreadable", outcome="fail_closed", path=str(integration_path))
+    except Exception:  # trw-fail-silent-allow: logging is diagnostics; the block above already stands
+        pass
+    return block
 
 
 def _check_untracked_files(run_path: Path) -> str | None:
@@ -199,7 +233,7 @@ def _check_review_file_count_gate(
     was damaged. A substantive review artifact still satisfies the gate first,
     because that is direct evidence the review happened.
 
-    Fail-open otherwise: if anything goes wrong INSIDE the count, returns None.
+    Fail-CLOSED throughout: a fault INSIDE the count blocks, naming the exception type and this gate.
     """
     try:
         review_path = run_path / "meta" / "review.yaml"
@@ -232,8 +266,12 @@ def _check_review_file_count_gate(
                 f"Tasks modifying >{REVIEW_SCOPE_FILE_THRESHOLD} files require trw_review() before delivery. "
                 "Run trw_review() or /trw-audit before delivering."
             )
-    except Exception:  # justified: fail-open — review scope gate must not block delivery on errors
+    except Exception as exc:  # justified: fail-CLOSED, a faulting review-scope gate must not pass (CONSTITUTION 1.a)
+        verdict = gate_fault_block(
+            "review-scope", exc, "Run trw_review() so the review evidence stands on its own."
+        )  # the verdict first; the diagnostics are best-effort
         logger.warning("review_file_count_gate_failed", exc_info=True)
+        return verdict
 
     return None
 
@@ -427,11 +465,14 @@ def check_delivery_gates(
     # BuildReceipt's bound bytes changed after the check, surface a content-stale
     # warning even if timestamps did not order the edit after the build. Prefer
     # the content-bound reason over the timestamp-only message when both fire.
-    from trw_mcp.tools._delivery_build_gates import build_receipt_content_stale_warning
+    from trw_mcp.tools._delivery_build_gates import build_receipt_gate_findings
 
-    content_stale_warning = build_receipt_content_stale_warning(run_path)
+    content_stale_warning, tree_binding_advisory = build_receipt_gate_findings(run_path)
     if content_stale_warning:
         build_warning = content_stale_warning
+    if tree_binding_advisory:
+        # E2E-INC-018: advisory only; the build receipt is not bound to the working tree.
+        result["build_tree_binding_advisory"] = tree_binding_advisory
     if build_warning:
         result["build_gate_warning"] = build_warning
     if premature_warning:
@@ -449,6 +490,7 @@ def check_delivery_gates(
             result,
             run_data,
             count_session_changed_files(events=events, run_path=run_path, session_id=session_id),
+            reason=build_warning,
         )
 
     # Complexity drift detection (R-02 + R-05, uses shared events + run_data)

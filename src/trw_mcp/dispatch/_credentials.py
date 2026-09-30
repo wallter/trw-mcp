@@ -213,6 +213,13 @@ def _lock_held(client: str) -> bool:
         os.close(fd)
 
 
+def _expiry_text(minutes: object) -> str:
+    """ ", expires in N min", or ", expired N min ago" for a token already past its expiry (never "expires in -300 min")."""
+    if not isinstance(minutes, int):
+        return ""
+    return f", expires in {minutes} min" if minutes >= 0 else f", expired {-minutes} min ago"
+
+
 def credential_report(home: Path | None = None) -> tuple[str, str, list[dict[str, object]]]:
     """``(status, message, rows)`` for each OAuth dispatch client (PRD-CORE-304-FR04): metadata only, never a secret.
 
@@ -240,7 +247,7 @@ def credential_report(home: Path | None = None) -> tuple[str, str, list[dict[str
     labels = {"keychain": "keychain (not read)", "logged_in": "logged in"}
     message = "; ".join(
         f"{row['client']}: {labels.get(str(row['state']), row['state'])}"
-        + (f", expires in {row['expires_in_min']} min" if row["expires_in_min"] is not None else "")
+        + _expiry_text(row["expires_in_min"])
         + (", lock held" if row["lock"] == "held" else "")
         for row in rows
     )

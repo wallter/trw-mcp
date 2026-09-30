@@ -8,7 +8,11 @@ Covers:
 
 from __future__ import annotations
 
-from trw_mcp.models.learning import LearningEntry
+from datetime import date, datetime, timezone
+
+import pytest
+
+from trw_mcp.models.learning import LearningEntry, Pattern
 from trw_mcp.tools._learning_helpers import LearningParams
 
 
@@ -176,3 +180,30 @@ class TestLearningParamsNewFields:
         assert params.phase_affinity == ["VALIDATE"]
         assert params.team_origin == "sprint-80"
         assert params.task_type == "debugging"
+
+
+class _Clock(datetime):
+    """A clock at 01:30 UTC on the 30th, when a UTC-minus-7 machine still reads the 29th."""
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[no-untyped-def]
+        assert tz is timezone.utc
+        return datetime(2026, 9, 30, 1, 30, tzinfo=timezone.utc)
+
+
+class TestLearningEntryDatesAreUtc:
+    """E2E-INC-010: ``created``/``updated`` default to the UTC date, the one every other writer stamps."""
+
+    def test_defaults_follow_the_utc_date_not_the_local_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import trw_mcp.models.learning as learning_module
+
+        monkeypatch.setattr(learning_module, "datetime", _Clock)
+        entry = LearningEntry(id="L-utc", summary="s", detail="d")
+        assert (entry.created, entry.updated) == (date(2026, 9, 30), date(2026, 9, 30))
+
+    def test_first_seen_and_last_seen_of_a_pattern_are_utc_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import trw_mcp.models.learning as learning_module
+
+        monkeypatch.setattr(learning_module, "datetime", _Clock)
+        pattern = Pattern(name="n", domain="d", description="x")
+        assert (pattern.first_seen, pattern.last_seen) == (date(2026, 9, 30), date(2026, 9, 30))

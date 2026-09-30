@@ -62,6 +62,43 @@ def _is_user_customized_trw_entry(existing: object) -> bool:
     return bool(extra_keys)
 
 
+def mcp_json_refresh_loses_nothing(path: Path) -> bool:
+    """Whether refreshing *path*'s ``trw`` entry drops nothing of the user's, so an uncommitted copy need not come back whole.
+
+    True only for a JSON object whose ``mcpServers`` is an object and whose ``trw`` entry (if any) is exactly a
+    launcher TRW generates, character for character (``resolve_trw_mcp_launcher``): ``trw-mcp`` or the project
+    venv's launcher with no arguments, or ``python3`` / the venv interpreter running ``-m trw_mcp.server``. Any
+    other command (``./tools/trw-mcp`` included), custom arguments or extra keys, and any malformed document,
+    keep the uncommitted-changes guard (the merge would replace or discard them).
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):  # trw-fail-silent-allow: unreadable means keep the guard
+        return False
+    servers = data.get("mcpServers", {}) if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return False
+    entry = servers.get("trw")
+    if entry is None:
+        return True
+    if not isinstance(entry, dict) or set(entry) - {"command", "args"} or not isinstance(entry.get("command"), str):
+        return False
+    from ._utils import _PROJECT_VENV_LAUNCHERS, _PROJECT_VENV_PYTHONS
+
+    command, args = entry["command"], entry.get("args", [])
+    scripts = [
+        command_for.replace("/trw-mcp", f"/{script}")
+        for command_for in _PROJECT_VENV_LAUNCHERS
+        for script in ("trw-mcp", "trw-mcp-proxy")
+    ]
+    if command in ("trw-mcp", "trw-mcp-proxy", *scripts):
+        return bool(args == [])
+    return bool(
+        command in ("python3", *_PROJECT_VENV_PYTHONS)
+        and args in (["-m", "trw_mcp.server"], ["-m", "trw_mcp.shared_server"])
+    )
+
+
 def _merge_mcp_json(
     target_dir: Path,
     result: dict[str, list[str]],

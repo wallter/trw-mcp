@@ -28,6 +28,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -274,13 +275,26 @@ async def pump(proxy: Proxy, reader: asyncio.StreamReader, write: Callable[[byte
         await asyncio.wait(pending, timeout=5.0)
 
 
+def proxy_paths() -> tuple[SharedPaths, Path]:
+    """(paths, project root) of the shared records this proxy uses: the same resolver as swap and status.
+
+    PROXY-PROJECT-ROOT: the proxy used ``resolve_trw_dir()`` while the CLI used the git toplevel, so from a
+    subdirectory a swap wrote one record and the proxy's server was found through another.
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.shared_server._cli import shared_project_root
+    from trw_mcp.state._project_root_binding import project_bound
+
+    root = shared_project_root()
+    with project_bound(root):
+        config = get_config()
+    return SharedPaths.resolve(root / str(config.trw_dir), config.shared_mcp), root
+
+
 def run_proxy(env: str) -> None:
     """Serve stdio for one client session against *env*'s shared server."""
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-
-    paths = SharedPaths.resolve(resolve_trw_dir(), get_config().shared_mcp)
-    resolver = EnvResolver(paths, env, project_root=str(resolve_project_root()))
+    paths, root = proxy_paths()
+    resolver = EnvResolver(paths, env, project_root=str(root))
 
     async def main() -> None:
         reader = asyncio.StreamReader(limit=_MAX_LINE)

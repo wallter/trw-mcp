@@ -120,6 +120,7 @@ _json_object \
   --int active_tasks "${_active_tasks:-0}" \
   --str pending_decisions "$_pending_decisions" \
   --str ownership "$_ownership" \
+  --str session_key "$_session_id" \
   | _trw_safe_write "$_state_file" 2>/dev/null
 
 # PRD-FIX-149 FR06: one explicit diagnostic when neither jq nor python3 could read the

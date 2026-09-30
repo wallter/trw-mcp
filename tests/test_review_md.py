@@ -524,7 +524,7 @@ class TestReviewMdIntegration:
         ):
             execute_claude_md_sync(**args)  # type: ignore[arg-type]
 
-        mock_gen.assert_called_once_with(trw_dir, repo_root=tmp_path)
+        mock_gen.assert_called_once_with(trw_dir, repo_root=tmp_path, allow_empty=False, force=False)
 
 
 # ---------------------------------------------------------------------------

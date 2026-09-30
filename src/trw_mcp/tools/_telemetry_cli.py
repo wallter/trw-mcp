@@ -18,16 +18,14 @@ no server middleware was resolvable (e.g. every offline/test invocation
 already exercised this path).
 
 ``pipeline-health`` runs :func:`trw_mcp.tools._pipeline_health.step_pipeline_health`
-over the four compounding-pipeline signals. It exits 1 only when the probe
-itself could not run (``measured: False`` at the top level); a degraded signal
-is a result, reported in the document. The fail-closed gate on degradation is
-``make check`` (``pipeline-health`` target), a deliberately stricter contract.
+over the four compounding-pipeline signals and exits 0 healthy, 1 degraded, 2 unknown (nothing measured, or the
+probe crashed) -- E2E-INC-073; ``make check`` (``pipeline-health`` target) is the fail-closed gate.
 
 Output is one JSON document with ``--json``, otherwise ``key: value`` lines.
-None of the S3a five ever exits non-zero: each is a pure read of already-persisted
-state, and a "not found" / "no activity" / "could not resolve" outcome is a
-reported result, not an execution failure — matching what each did as an MCP
-tool, none of which ever raised.
+Every other verb exits 0 for a result (including "no activity") and 2 for misuse (INC-074): a
+``surface-diff`` snapshot id that does not exist, a ``--window-hours`` that is not a positive integer,
+or a ``--repo-root`` that is not a directory. Misuse used to print a result and exit 0, so a script
+could not tell a typo from an answer.
 """
 
 from __future__ import annotations
@@ -43,6 +41,22 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 _UNMEASURED_SIGNAL: dict[str, Any] = {"degraded": False, "measured": False, "advisory": "probe_error"}
+
+
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an integer") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive number of hours, got {value}")
+    return value
+
+
+def _existing_dir(text: str) -> str:
+    if not Path(text).is_dir():
+        raise argparse.ArgumentTypeError(f"{text!r} is not a directory")
+    return text
 
 
 def add_telemetry_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -66,8 +80,8 @@ def add_telemetry_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     security = verbs.add_parser("security", help="MCP security/trust-boundary status (read-only)")
 
     channel_stats = verbs.add_parser("channel-stats", help="Per-channel push->outcome correlation (read-only)")
-    channel_stats.add_argument("--window-hours", type=int, default=1)
-    channel_stats.add_argument("--repo-root", default=None)
+    channel_stats.add_argument("--window-hours", type=_positive_int, default=1)
+    channel_stats.add_argument("--repo-root", type=_existing_dir, default=None)
 
     health = verbs.add_parser("pipeline-health", help="Report the four compounding-pipeline health signals")
 
@@ -75,16 +89,16 @@ def add_telemetry_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
         parser.add_argument("--json", dest="as_json", action="store_true")
 
 
-def _emit(document: dict[str, Any], *, as_json: bool, failed: bool) -> None:
+def _emit(document: dict[str, Any], *, as_json: bool, exit_code: int) -> None:
     if as_json:
         print(json.dumps(document, default=str))
     else:
         for key, value in document.items():
             print(f"{key}: {value}")
-    sys.exit(1 if failed else 0)
+    sys.exit(exit_code)
 
 
-def _events(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _events(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     from trw_mcp.tools.query_tools import query_events
 
     filters: dict[str, Any] = {}
@@ -94,10 +108,10 @@ def _events(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         filters["event_type"] = args.event_type
     if args.emitter is not None:
         filters["emitter"] = args.emitter
-    return query_events(session_id=args.session_id, filters=filters or None), False
+    return query_events(session_id=args.session_id, filters=filters or None), 0
 
 
-def _classify(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _classify(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     from trw_mcp.meta_tune.surface_registry import classify_path
 
     classification = classify_path(Path(args.path))
@@ -106,22 +120,21 @@ def _classify(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "classification": "control" if classification.is_control else "advisory",
         "surfaces": [surface.value for surface in classification.surfaces],
         "rationale": classification.rationale,
-    }, False
+    }, 0
 
 
-def _surface_diff(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _surface_diff(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     from trw_mcp.tools.query_tools import surface_diff
 
-    # "snapshot_not_found" is a legitimate result (like a rejected promotion),
-    # not an execution failure — this never exits non-zero, matching the
-    # original tool, which never raised either.
+    # INC-074: a snapshot id that does not exist is misuse (a typo or a stale id), so exit 2 -- the document
+    # still says which side was missing.
     result = surface_diff(snapshot_id_a=args.snapshot_id_a, snapshot_id_b=args.snapshot_id_b)
-    return result, False
+    return result, 2 if result.get("error") == "snapshot_not_found" else 0
 
 
-def _security(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _security(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     del args
-    return security_status_document(), False
+    return security_status_document(), 0
 
 
 def security_status_document() -> dict[str, Any]:
@@ -137,14 +150,13 @@ def security_status_document() -> dict[str, Any]:
     return compute_security_status(events_dir=trw_dir / "context").model_dump()
 
 
-def _channel_stats(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+def _channel_stats(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     from trw_mcp.tools.channel_stats import compute_channel_stats_result
 
-    # Never raises and never exits non-zero, matching the original tool: an
-    # unresolvable repo root or an empty/missing log is a reported status, not
-    # a CLI execution failure.
+    # An empty/missing log is a reported status (exit 0); a bad --window-hours / --repo-root is refused by
+    # argparse (exit 2) before this runs.
     result = compute_channel_stats_result(window_hours=args.window_hours, repo_root=args.repo_root)
-    return result, False
+    return result, 0
 
 
 def safe_pipeline_health() -> dict[str, Any]:
@@ -164,6 +176,7 @@ def safe_pipeline_health() -> dict[str, Any]:
         logger.warning("pipeline_health_cli_failed", error=str(exc))
         return {
             "degraded": False,
+            "status": "unknown",
             "measured": False,
             "advisory": "health_probe_failed",
             "error": str(exc),
@@ -174,10 +187,15 @@ def safe_pipeline_health() -> dict[str, Any]:
         }
 
 
-def _pipeline_health(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+#: ``pipeline-health`` exit codes (lead ruling, E2E-INC-073): a script must never read "unmeasured" as healthy.
+PIPELINE_HEALTH_EXIT: dict[str, int] = {"healthy": 0, "degraded": 1, "unknown": 2}
+
+
+def _pipeline_health(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    """0 healthy, 1 degraded, 2 unknown (no probe measured, or the probe run crashed) -- same with ``--json``."""
     del args
     document = safe_pipeline_health()
-    return document, document.get("measured") is False
+    return document, PIPELINE_HEALTH_EXIT.get(str(document.get("status")), 2)
 
 
 _HANDLERS: dict[str, Any] = {
@@ -197,8 +215,8 @@ def run_telemetry(args: argparse.Namespace) -> None:
     if handler is None:
         print(f"usage: trw-mcp telemetry {{{'|'.join(_HANDLERS)}}}", file=sys.stderr)
         sys.exit(2)
-    document, failed = handler(args)
-    _emit(document, as_json=bool(getattr(args, "as_json", False)), failed=failed)
+    document, exit_code = handler(args)
+    _emit(document, as_json=bool(getattr(args, "as_json", False)), exit_code=exit_code)
 
 
 __all__ = ["add_telemetry_subcommands", "run_telemetry", "safe_pipeline_health", "security_status_document"]

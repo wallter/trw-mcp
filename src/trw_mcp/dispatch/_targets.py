@@ -120,8 +120,8 @@ def list_clients(default_models: dict[str, str] | None = None) -> dict[str, obje
         spec = CLIENT_SPECS[cid]
         installed = any(shutil.which(b) for b in spec.binary_names)
         entry: dict[str, object] = {"client": cid, "installed": installed}
-        if models.get(cid):
-            entry["default_model"] = models[cid]
+        if default_model := models.get(cid) or spec.default_model:
+            entry["default_model"] = default_model
         aliases = sorted(a for a, c in CLIENT_ALIASES.items() if c == cid)
         aliases += sorted(s for s, (c, _m) in MODEL_SHORTHANDS.items() if c == cid)
         if aliases:

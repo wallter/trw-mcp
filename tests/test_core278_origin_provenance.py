@@ -282,6 +282,94 @@ class TestNudgePoolPrecedence:
         assert content.startswith("Unverified: ")
 
 
+class TestLearningsPoolIsRelatedToTheCall:
+    """E2E-INC-010: on trw_learn / trw_status the learnings pool draws only learnings related to the call."""
+
+    @staticmethod
+    def _nudge(tmp_path: Path, rows: list[dict[str, Any]], relevance: Any) -> str | None:
+        from trw_mcp.state.ceremony_progress import CeremonyState
+        from trw_mcp.tools import _ceremony_status_nudge as nudge_module
+
+        with patch("trw_mcp.state.recall_factories.recall_for_nudge_pool", return_value=rows):
+            return nudge_module._try_learning_nudge_content(tmp_path, CeremonyState(phase="implement"), relevance)
+
+    @staticmethod
+    def _relevance(
+        tmp_path: Path, tool: str, response: dict[str, object], written: dict[str, Any] | None = None
+    ) -> Any:
+        from trw_mcp.state._ceremony_state_model import NudgeContext
+        from trw_mcp.tools._ceremony_status_nudge import nudge_relevance
+
+        with (
+            patch(
+                "trw_mcp.state._recall_admission.fetch_admitted",
+                return_value=[]
+                if written is None
+                else [
+                    type(
+                        "E",
+                        (),
+                        {"tags": written.get("tags", []), "anchors": [a["file"] for a in written.get("anchors", [])]},
+                    )()
+                ],
+            ),
+            patch(
+                "trw_mcp.state.recall_context.build_recall_context",
+                return_value=type("Ctx", (), {"modified_files": ["src/pool.py"]})(),
+            ),
+        ):
+            return nudge_relevance(tmp_path, NudgeContext(tool_name=tool), response)
+
+    def test_learn_never_surfaces_the_learning_just_written(self, tmp_path: Path) -> None:
+        written = _local("L-new", summary="Beta redis", tags=["redis"])
+        relevance = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        assert self._nudge(tmp_path, [written], relevance) is None
+
+    def test_learn_surfaces_a_learning_sharing_a_tag_as_unverified(self, tmp_path: Path) -> None:
+        written = _local("L-new", summary="Beta redis", tags=["redis"])
+        related = _local("L-old", summary="Redis eviction bites", tags=["redis"], nudge_line="Redis eviction bites")
+        relevance = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        content = self._nudge(tmp_path, [written, related], relevance)
+        assert content is not None and content.startswith("Unverified: ") and "Redis eviction" in content
+
+    def test_learn_never_surfaces_an_unrelated_learning(self, tmp_path: Path) -> None:
+        written = _local("L-new", summary="Beta redis", tags=["redis"])
+        unrelated = _local("L-alpha", summary="Alpha postgres index bloat", tags=["postgres"])
+        relevance = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        assert self._nudge(tmp_path, [unrelated], relevance) is None
+
+    def test_learn_matches_a_learning_naming_the_same_anchored_file(self, tmp_path: Path) -> None:
+        written = _local("L-new", tags=[], anchors=[{"file": "src/pool.py"}])
+        related = _local(
+            "L-old", summary="pool.py leaks", nudge_line="pool.py leaks", anchors=[{"file": "src/pool.py"}]
+        )
+        relevance = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        assert self._nudge(tmp_path, [related], relevance) is not None
+
+    def test_status_surfaces_only_a_learning_naming_the_working_tree_files(self, tmp_path: Path) -> None:
+        relevance = self._relevance(tmp_path, "status", {"task": "unknown"})
+        unrelated = _local("L-alpha", summary="Alpha postgres index bloat")
+        related = _local("L-pool", summary="src/pool.py exhausts", nudge_line="src/pool.py exhausts")
+        assert self._nudge(tmp_path, [unrelated], relevance) is None
+        content = self._nudge(tmp_path, [unrelated, related], relevance)
+        assert content is not None and "pool.py" in content
+
+    def test_learn_blank_tags_are_no_needle_and_padded_tags_are_stripped(self, tmp_path: Path) -> None:
+        """Codex r1 KI (W5): a whitespace tag must not become a needle; a padded one matches its trimmed form."""
+        written = _local("L-new", summary="Beta", tags=["   ", " redis "])
+        needles, _exclude = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        assert needles == ("redis",)
+        related = _local("L-old", summary="Redis eviction bites", tags=["redis"], nudge_line="Redis eviction bites")
+        relevance = self._relevance(tmp_path, "learn", {"learning_id": "L-new"}, written)
+        assert self._nudge(tmp_path, [related], relevance) is not None
+
+    @pytest.mark.parametrize("tool", ["recall", "session_start", "checkpoint", "deliver"])
+    def test_every_other_call_is_unfiltered(self, tmp_path: Path, tool: str) -> None:
+        assert self._relevance(tmp_path, tool, {"learning_id": "L-x"}) is None
+        unrelated = _local("L-alpha", summary="Alpha", nudge_line="Alpha postgres index bloat")
+        assert self._nudge(tmp_path, [unrelated], None) == "Unverified: Alpha postgres index bloat"
+
+
 class TestTotalAvailableIsUntouched:
     def test_attribution_reorders_but_never_changes_the_counts(self, tmp_path: Path) -> None:
         """CORE-278 NFR02 / CORE-282 FR01: the candidate pool keeps its size.

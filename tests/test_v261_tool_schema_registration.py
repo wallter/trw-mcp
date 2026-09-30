@@ -10,14 +10,15 @@ from pathlib import Path
 
 
 def _production_schemas(tmp_path: Path) -> dict[str, set[str]]:
-    """Import the eager production registry in a clean interpreter and list tools."""
+    """Build the production served app in a clean interpreter and list its tools."""
     # tool_resolution_mode=all makes SurfaceAuthorityMiddleware a strict no-op so
     # the full registered schema surface is advertised (PRD-CORE-218 FR04);
     # _run_registry_probe_raw writes that config.
     code = """
 import asyncio
 import json
-from trw_mcp.server._tools import mcp
+from trw_mcp.server._app import build_served_app
+mcp = build_served_app()
 
 tools = asyncio.run(mcp.list_tools())
 print(json.dumps({tool.name: sorted(tool.parameters.get("properties", {})) for tool in tools}))
@@ -37,7 +38,8 @@ def _production_param_descriptions(tmp_path: Path, tool: str, param: str) -> str
     code = f"""
 import asyncio
 import json
-from trw_mcp.server._tools import mcp
+from trw_mcp.server._app import build_served_app
+mcp = build_served_app()
 
 tools = asyncio.run(mcp.list_tools())
 for tool in tools:
@@ -63,7 +65,8 @@ def _production_tool_description(tmp_path: Path, tool: str) -> str:
     code = f"""
 import asyncio
 import json
-from trw_mcp.server._tools import mcp
+from trw_mcp.server._app import build_served_app
+mcp = build_served_app()
 
 tools = asyncio.run(mcp.list_tools())
 for tool in tools:

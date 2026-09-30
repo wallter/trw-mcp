@@ -45,6 +45,16 @@ NEXT_READ_MAX_BYTES = 512
 _LINE_BREAKS = frozenset({"Zl", "Zp"})
 
 
+def clean_text(value: str) -> str:
+    """Normalise a POINTER (next_read): strip it, so padding never reaches storage; a blank one is then refused.
+
+    Message bodies and request keys are caller DATA and identity: they are never rewritten. Their blank check is
+    ``not value.strip()`` in ``Envelope.validate`` (strip to judge, store verbatim). Non-strings pass through for
+    the validators to refuse.
+    """
+    return value.strip() if isinstance(value, str) else value
+
+
 def valid_next_read(value: object) -> bool:
     """True for 1..512 UTF-8 bytes with no category C* (control, format incl. bidi, surrogate...) or
     Zl/Zp character: U+2028/U+2029 are not "control" to Unicode but break a line wherever the
@@ -102,8 +112,10 @@ class Envelope:
             self.body.encode("utf-8")
         except UnicodeError as exc:
             raise AdmissionError("invalid_utf8") from exc
-        if not 1 <= len(key_bytes) <= 128:
+        if not 1 <= len(key_bytes) <= 128 or not self.request_key.strip():
             raise AdmissionError("invalid_request_key")
+        if not self.body.strip():
+            raise AdmissionError("invalid_message_body")
         # A request key is an identifier, not prose. Control characters in one
         # are either a mistake or an attempt to occupy the derived scoped-notify
         # namespace, which is built from a control separator so that it is

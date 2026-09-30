@@ -487,6 +487,109 @@ class TestUpdateLivePathPreservesUserEdits:
         assert after == before
 
 
+def _agents_state(root: Path) -> tuple[bytes, int]:
+    """AGENTS.md bytes and the count of its retained pre-write backups."""
+    backups = root / TRWConfig().instruction_backup_dir
+    copies = list(backups.glob("AGENTS.md.*")) if backups.is_dir() else []
+    return (root / "AGENTS.md").read_bytes(), len(copies)
+
+
+@pytest.mark.integration
+class TestUpdateProjectIsIdempotent:
+    """E2E-INC-015: an update that changes nothing writes nothing (no rewrite, no backup)."""
+
+    @staticmethod
+    def _add_user_footer(root: Path) -> None:
+        agents = root / "AGENTS.md"
+        footer = "\n## Footer\nuser text after the block\n"
+        agents.write_text(agents.read_text(encoding="utf-8") + footer, encoding="utf-8")
+
+    @pytest.mark.parametrize("second_client", [None, "codex"], ids=["claude-code", "claude-code+codex"])
+    def test_repeated_updates_leave_agents_md_and_backups_unchanged(
+        self, initialized_repo: Path, second_client: str | None
+    ) -> None:
+        if second_client is not None:
+            init_project(initialized_repo, ide=second_client)
+        self._add_user_footer(initialized_repo)
+        update_project(initialized_repo)  # settles the layout; may legitimately back up once
+        settled = _agents_state(initialized_repo)
+
+        for _ in range(3):
+            result = update_project(initialized_repo)
+            assert not result["errors"]
+            assert _agents_state(initialized_repo) == settled
+
+    @pytest.mark.parametrize("blank_lines", [0, 1, 2, 5])
+    def test_the_boundary_after_the_block_is_kept_byte_for_byte(self, initialized_repo: Path, blank_lines: int) -> None:
+        agents = initialized_repo / "AGENTS.md"
+        text = agents.read_text(encoding="utf-8").rstrip("\n")
+        agents.write_text(text + "\n" + "\n" * blank_lines + "## Footer\ntext\n", encoding="utf-8")
+
+        update_project(initialized_repo)
+        settled = _agents_state(initialized_repo)
+        update_project(initialized_repo)
+
+        assert _agents_state(initialized_repo) == settled
+        assert b"<!-- trw:end -->\n" + b"\n" * blank_lines + b"## Footer\ntext\n" in settled[0]
+
+
+@pytest.mark.integration
+class TestAgentsMdMergersAgree:
+    """E2E-INC-015: the two AGENTS.md block mergers must produce identical bytes for identical input.
+
+    ``generate_agents_md`` (bootstrap) and ``merge_trw_section`` (sync) each rewrote the block; a disagreement
+    at the ``trw:end`` boundary made them take turns rewriting, and backing up, the same file.
+    """
+
+    @pytest.mark.parametrize("blank_lines", [0, 1, 2, 4])
+    @pytest.mark.parametrize("terminal_newline", [True, False], ids=["eof-newline", "no-eof-newline"])
+    def test_alternating_writers_settle_without_new_backups(
+        self, tmp_path: Path, blank_lines: int, terminal_newline: bool
+    ) -> None:
+        from trw_mcp.bootstrap._opencode import generate_agents_md
+        from trw_mcp.state.claude_md import merge_trw_section
+        from trw_mcp.state.claude_md._instructions_link import agents_link_section
+
+        block = agents_link_section()
+        footer = "## Footer\nuser text" + ("\n" if terminal_newline else "")
+        agents = tmp_path / "AGENTS.md"
+        agents.write_text("# Rules\n\n" + block + "\n" * blank_lines + footer, encoding="utf-8")
+        (tmp_path / ".trw").mkdir()
+        generate_agents_md(tmp_path, client_id="claude-code")
+        merge_trw_section(agents, block, None, project_root=tmp_path)  # settle: may normalize the boundary once
+
+        for _ in range(3):
+            settled = agents.read_bytes()
+            generate_agents_md(tmp_path, client_id="claude-code")
+            assert agents.read_bytes() == settled, "generate_agents_md rewrote settled bytes"
+            verdict = merge_trw_section(agents, block, None, project_root=tmp_path)
+            assert agents.read_bytes() == settled, "merge_trw_section rewrote settled bytes"
+            assert verdict.backup_path is None
+        assert settled.endswith(footer.encode())
+
+
+@pytest.mark.integration
+class TestReinstallAfterUninstallIsByteStable:
+    """E2E-INC-015 (c): init -> uninstall -> init must not grow whitespace in a user's AGENTS.md."""
+
+    def test_repeated_reinstall_settles_after_one_normalization(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._opencode import generate_agents_md
+        from trw_mcp.state.claude_md._instructions_link import agents_link_section
+
+        agents = tmp_path / "AGENTS.md"
+        (tmp_path / ".trw").mkdir()
+        user = "# Team rules\n\nAlways use tabs.\n"
+        agents.write_text(user, encoding="utf-8")
+        seen = []
+        for _ in range(4):
+            generate_agents_md(tmp_path, client_id="claude-code")
+            seen.append(agents.read_bytes())
+            # what uninstall leaves: the block and its header gone, the user's text and the writer's blank lines
+            agents.write_text(user + "\n", encoding="utf-8")
+        assert len(set(seen)) == 1
+        assert seen[0].startswith(user.encode()) and agents_link_section().encode() in seen[0]
+
+
 class TestUpdateCreatesNewArtifacts:
     """Test that update_project creates new artifacts from newer versions."""
 

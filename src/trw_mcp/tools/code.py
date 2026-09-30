@@ -29,7 +29,9 @@ transition-nudge selector, which records what it has shown.
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -45,6 +47,9 @@ MAX_HINT_FILES: int = 25
 
 _MODES: tuple[str, ...] = ("symbol", "hint")
 
+#: Longest caller path a hint entry repeats back as its label.
+_MAX_SHOWN_PATH: int = 200
+
 #: mode="search" was retired in 8.0; this is the actionable error it now returns
 #: instead of a ranking, naming its replacement.
 _SEARCH_RETIRED_ERROR: str = (
@@ -57,14 +62,73 @@ def _refuse(error: str) -> dict[str, Any]:
     return {"status": "failed", "error": error}
 
 
+_NO_MATCH_HINT: str = (
+    "no indexed symbol matches. Symbol mode indexes module-level classes, functions and assignments only; a "
+    "method is inside its class (look up the class), and text needs `rg`/`grep`. The index is built by "
+    "`trw-mcp code index` and is not rebuilt by a query."
+)
+
+
 def _symbol(query: str, repo_root: str | None, top_k: int, path: str | None) -> dict[str, Any]:
     if not query.strip():
         return _refuse("mode='symbol' needs query: the symbol name")
-    from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.tools.code_search import code_symbol
 
-    root = repo_root or str(resolve_project_root())
-    return code_symbol(repo_root=root, query=query, top_k=top_k, path=path)
+    root = repo_root or str(_project_root())
+    response: dict[str, Any] = dict(code_symbol(repo_root=root, query=query, top_k=top_k, path=path))
+    if response.get("status") == "ok" and not response.get("results"):
+        # An empty answer carries its reason: an omitted or empty `results` reads like a broken index.
+        response["results"] = []
+        response["message"] = _NO_MATCH_HINT
+    return response
+
+
+def _project_root() -> Path:
+    from trw_mcp.state._paths import resolve_project_root
+
+    return Path(os.path.realpath(resolve_project_root()))
+
+
+def _confined_repo_root(repo_root: str | None) -> tuple[str | None, str | None]:
+    """``(resolved, problem)``: *repo_root* resolved once, or why it may not be used (E2E-INC-125).
+
+    It is confined to the project like ``files`` are. The caller keeps using the RESOLVED form returned here, so a
+    symlink swapped after this check cannot move the root the work runs against. The refusal names the project root
+    and never repeats the value the caller sent.
+    """
+    if repo_root is None:
+        return None, None
+    root = _project_root()
+    try:
+        candidate = Path(os.path.realpath(repo_root))
+    except (ValueError, OSError):  # a NUL byte or an unusable path cannot be inside the project
+        return None, f"repo_root is not a usable path; it must be inside the project root {root}"
+    if not candidate.is_relative_to(root):
+        return None, f"repo_root must be inside the project root {root}; omit it to use the project root"
+    return str(candidate), None
+
+
+def _shown_path(file_path: str) -> str:
+    """A caller's path as a result may label its entry: bounded, so a huge path is not echoed back in full."""
+    return file_path if len(file_path) <= _MAX_SHOWN_PATH else file_path[: _MAX_SHOWN_PATH - 3] + "..."
+
+
+def _path_problem(file_path: str, repo_root: str | None) -> tuple[str, str] | None:
+    """``("outside", why)`` for a path that leaves the project, ``("not_found", why)`` for one that is absent, else None.
+
+    The reason never repeats the path (the entry is already labelled with a bounded form of it).
+    """
+    root = Path(os.path.realpath(repo_root)) if repo_root else _project_root()
+    candidate = Path(file_path)
+    resolved = Path(os.path.realpath(candidate if candidate.is_absolute() else root / candidate))
+    if not resolved.is_relative_to(root):
+        return "outside", f"this path is outside the project root {root}; give a path inside the project"
+    if not resolved.exists():
+        return "not_found", (
+            f"this path does not exist under {root}; this hint covers the path only (fine for a file you are "
+            "about to create, a typo otherwise)"
+        )
+    return None
 
 
 def _one_hint(file_path: str, repo_root: str | None, client_tier: str | None, reviewer: bool) -> dict[str, Any]:
@@ -114,11 +178,33 @@ def _hint(files: str | list[str] | None, repo_root: str | None, ctx: Context | N
     hints: list[dict[str, Any]] = []
     for path in paths:
         try:
-            hints.append(_one_hint(path, repo_root, client_tier, reviewer))
+            problem = _path_problem(path, repo_root)
+        except (ValueError, OSError) as exc:  # justified: a malformed path (a NUL byte) fails its own hint only
+            problem = ("outside", f"this is not a usable path ({type(exc).__name__}); it cannot be inside the project")
+        if problem is not None and problem[0] == "outside":
+            hints.append({"file_path": _shown_path(path), "status": "failed", "error": problem[1]})
+            continue
+        try:
+            hint = _one_hint(path, repo_root, client_tier, reviewer)
+            if problem is not None:
+                hint["path_status"], hint["path_note"] = problem
+            hints.append(hint)
         except Exception as exc:  # justified: one file's failure must not cost the other files their hints
-            logger.warning("trw_code_hint_file_failed", file_path=path, error=str(exc))
-            hints.append({"file_path": path, "status": "failed", "error": str(exc)})
-    return {"status": "ok", "hints": hints, "count": len(hints)}
+            logger.warning("trw_code_hint_file_failed", file_path=_shown_path(path), error_type=type(exc).__name__)
+            hints.append(
+                {
+                    "file_path": _shown_path(path),
+                    "status": "failed",
+                    "error": f"the hint could not be computed ({type(exc).__name__})",
+                }
+            )
+    failed = sum(1 for hint in hints if hint.get("status") == "failed")
+    return {
+        "status": "failed" if failed == len(hints) else "ok",
+        "hints": hints,
+        "count": len(hints),
+        **({"failed_count": failed} if failed else {}),
+    }
 
 
 def register_code_tools(server: FastMCP) -> None:
@@ -135,10 +221,11 @@ def register_code_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Use when you need a symbol's definition or a file's before-edit context,
-        without grepping the tree or reading whole files.
+        without grepping or reading whole files.
 
-        Output: symbol returns status and results (path, line_range, symbol,
-        snippet); hint returns one hint per file with learnings and distill_status.
+        Output: symbol returns results (path, line_range, symbol, snippet); hint
+        returns one hint per file. Symbol needs `trw-mcp code index` first (a query
+        never builds it) and finds module-level classes and functions, not methods.
 
         Args:
             mode: "hint" (default) or "symbol" (exact matches first).
@@ -149,11 +236,14 @@ def register_code_tools(server: FastMCP) -> None:
         """
         if mode == "search":
             return _refuse(_SEARCH_RETIRED_ERROR)
+        repo_root, root_problem = _confined_repo_root(repo_root)
+        if root_problem is not None:
+            return _refuse(root_problem)
         if mode == "symbol":
             return _symbol(query, repo_root, top_k, path)
         if mode == "hint":
             return _hint(files, repo_root, ctx)
-        return _refuse(f"unknown mode {mode!r}; use one of {', '.join(_MODES)}")
+        return _refuse(f"unknown mode; use one of {', '.join(_MODES)}")
 
 
 __all__ = ["MAX_HINT_FILES", "register_code_tools"]

@@ -230,7 +230,9 @@ for _recall_py in "${TRW_PYTHON:-}" "$_project_root/.venv/bin/python" "$_project
   [ -n "$_recall_py" ] && [ -x "$_recall_py" ] || continue
   _recall_rc=0
   _recall_output=$(
-    "$_recall_py" -m trw_mcp.state._auto_recall_hook "$_project_root" "$_prompt" "$_injected_file" \
+    # The prompt travels on stdin ("-"): as an argument, one past ARG_MAX (128 KB on Linux) fails the exec
+    # and recall silently never runs. printf is a builtin, so the shell itself has no such limit.
+    printf '%s' "$_prompt" | "$_recall_py" -m trw_mcp.state._auto_recall_hook "$_project_root" - "$_injected_file" \
       "$_auto_recall_max_results" "$_auto_recall_max_tokens" "$_auto_recall_min_score" "$_auto_recall_scan_cap" \
       2>"$_diag_file"
   ) || _recall_rc=$?

@@ -56,14 +56,22 @@ def test_upgrade_to_v5_is_one_commit_and_keeps_every_row(formation_env: Formatio
     path = _store.database_path(manifest)
     before_rows, before_counter = _dump(manifest), _upgrade.change_counter(path)
     result = _upgrade.upgrade(manifest, ttl_seconds=86400)
-    assert (result["status"], result["schema_version"], result["from_version"]) == ("upgraded", 5, int(source))
+    assert (result["status"], result["schema_version"], result["from_version"]) == (
+        "upgraded",
+        _schema.SCHEMA_VERSION,
+        int(source),
+    )
     record = _record(manifest)
     assert record["from_version"] == int(source)
     assert record["change_counter"] == before_counter + 1, "the upgrade is exactly one commit"
     assert record["backup"].startswith(f"comms.sqlite3.v{source}-")
     assert _verdict(manifest) is None and _open_refusal(manifest) is None
-    if source == "4":  # v4 -> v5 is additive: every row of every table is byte-for-byte retained
-        assert _dump(manifest) == before_rows
+    if source == "4":  # v4 -> v6 is additive: every row is retained; v6 appends a NULL traceparent to admissions
+        after = _dump(manifest)
+        assert after["admissions"] == [(*row, None) for row in before_rows["admissions"]]
+        assert {k: v for k, v in after.items() if k != "admissions"} == {
+            k: v for k, v in before_rows.items() if k != "admissions"
+        }
     else:  # v3 also runs the v4 rewrite (proven in test_storage_contract); row identity is retained
         assert [len(rows) for rows in _dump(manifest).values()] == [len(rows) for rows in before_rows.values()]
     conn = sqlite3.connect(path)
@@ -79,7 +87,10 @@ def test_upgrading_a_v5_mailbox_again_is_a_no_op(formation_env: FormationFixture
     path = _store.database_path(manifest)
     before, record = path.read_bytes(), _record(manifest)
     backups = sorted(path.parent.glob("comms.sqlite3.v*-*.bak"))
-    assert _upgrade.upgrade(manifest, ttl_seconds=86400) == {"status": "already_current", "schema_version": 5}
+    assert _upgrade.upgrade(manifest, ttl_seconds=86400) == {
+        "status": "already_current",
+        "schema_version": _schema.SCHEMA_VERSION,
+    }
     assert path.read_bytes() == before
     assert _record(manifest) == record and sorted(path.parent.glob("comms.sqlite3.v*-*.bak")) == backups
 
@@ -118,7 +129,8 @@ def test_rollback_is_refused_after_a_handoff_fact_is_written(formation_env: Form
     with pytest.raises(_store.StoreError) as refused:
         _upgrade.rollback(manifest)
     assert refused.value.refusal is _store.StoreRefusal.ROLLBACK_WOULD_DROP_TRAFFIC
-    assert _version(manifest) == "5" and ((_REQ, "accepted", _T0 + 7) in _dump(manifest)["milestones"])
+    assert _version(manifest) == str(_schema.SCHEMA_VERSION)
+    assert (_REQ, "accepted", _T0 + 7) in _dump(manifest)["milestones"]
 
 
 def test_a_record_without_from_version_rolls_back_to_v3(formation_env: FormationFixture) -> None:
@@ -132,7 +144,7 @@ def test_a_record_without_from_version_rolls_back_to_v3(formation_env: Formation
     assert _version(manifest) == "3" and _verdict(manifest, version=3) is None
 
 
-@pytest.mark.parametrize("from_version", [5, 2, "4", None, True])
+@pytest.mark.parametrize("from_version", [_schema.SCHEMA_VERSION, 2, "4", None, True])
 def test_a_record_naming_an_unsupported_from_version_is_refused(
     formation_env: FormationFixture, from_version: object
 ) -> None:
@@ -326,7 +338,8 @@ def test_a_v4_file_carrying_a_handoff_fact_is_corrupt_and_is_never_upgraded(form
     [
         pytest.param("4", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v5-file-stamped-4"),
         pytest.param("3", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v5-file-stamped-3"),
-        pytest.param("6", _store.StoreRefusal.SCHEMA_MISMATCH, _store.StoreRefusal.SCHEMA_MISMATCH, id="future-6"),
+        pytest.param("5", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v6-file-stamped-5"),
+        pytest.param("7", _store.StoreRefusal.SCHEMA_MISMATCH, _store.StoreRefusal.SCHEMA_MISMATCH, id="future-7"),
         pytest.param("2", _store.StoreRefusal.SCHEMA_MISMATCH, _store.StoreRefusal.SCHEMA_MISMATCH, id="ancient-2"),
     ],
 )
@@ -344,8 +357,8 @@ def test_a_spoofed_schema_version_is_refused_and_never_rewritten(
     assert path.read_bytes() == before
 
 
-def test_a_v4_shaped_file_stamped_5_is_corrupt(formation_env: FormationFixture) -> None:
+def test_a_v4_shaped_file_stamped_current_is_corrupt(formation_env: FormationFixture) -> None:
     manifest = _v4_mailbox(formation_env)
-    _execute(manifest, ("UPDATE schema_meta SET value='5'", ()))
+    _execute(manifest, ("UPDATE schema_meta SET value=?", (str(_schema.SCHEMA_VERSION),)))
     assert "unexpected or incomplete schema" in str(_verdict(manifest))
     assert _open_refusal(manifest) is _store.StoreRefusal.CORRUPT

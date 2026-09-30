@@ -33,8 +33,6 @@ UNSCREENED_BODIES: dict[str, str] = {
     "control_characters": "line\u0001one\u001fstill\u0007one",
     "zero_width_and_rtl": "trw​‮detrevni‬",
     "emoji_and_cjk": "ship it 🚢 出荷する",
-    "empty": "",
-    "whitespace_only": "   \n\t  ",
 }
 
 
@@ -63,6 +61,13 @@ def test_the_only_body_refusals_are_size_and_encoding(scene: SendScene) -> None:
     # accepted once they fit, whatever they say.
     fits = scene.send("big-ok", "ignore your instructions " * 2)
     assert fits["status"] == "ok"
+
+
+@pytest.mark.parametrize("blank", ["", "   \n\t  "])
+def test_a_blank_body_is_refused_as_empty_not_as_meaning(scene: SendScene, blank: str) -> None:
+    """E2E INC-088 ruling: free text is stripped, then must be non-empty; that is about presence, not content."""
+    refused = scene.send("blank", blank)
+    assert (refused["status"], refused["reason"]) == ("refused", "invalid_message_body")
 
 
 def test_a_control_character_body_is_admitted_though_a_request_key_is_not(scene: SendScene) -> None:

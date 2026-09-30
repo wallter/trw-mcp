@@ -349,5 +349,29 @@ def handle_auto_mode(
         if integration_data is not None:
             integration_path = resolved_run / "meta" / "integration-review.yaml"
             writer.write_yaml(integration_path, integration_data)
+            _witness_integration_review(resolved_run, integration_path, writer)
 
     return result
+
+
+def _witness_integration_review(run_path: Path, integration_path: Path, writer: FileStateWriter) -> None:
+    """EVIDENCE-DELETION-POLICY: append the verdict and content hash of the review just written.
+
+    The NO_ESCAPE integration-review gate reads this witness, so deleting, emptying or editing the artifact
+    after the fact is a named block, never "no review was requested".
+    """
+    from trw_mcp.state._evidence_witness import INTEGRATION_REVIEW_RECORDED
+    from trw_mcp.state.persistence import FileEventLogger
+
+    digest = hashlib.sha256(integration_path.read_bytes()).hexdigest()
+    verdict = ""
+    try:
+        from trw_mcp.state._evidence_bound_read import read_evidence_mapping
+
+        data = read_evidence_mapping(run_path, "meta/integration-review.yaml") or {}
+        verdict = str(data.get("verdict", ""))
+    except Exception:  # trw-fail-silent-allow: the hash alone binds the artifact; the verdict is a label
+        logger.warning("integration_review_witness_verdict_unread", run=str(run_path))
+    FileEventLogger(writer).log_event(
+        run_path / "meta" / "events.jsonl", INTEGRATION_REVIEW_RECORDED, {"verdict": verdict, "sha256": digest}
+    )

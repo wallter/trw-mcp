@@ -233,7 +233,7 @@ generated_by: trw-mcp
 channel_id: {AG02_CHANNEL_ID}
 sha: {sidecar_sha}
 tier: {tier}
-regenerate: trw-mcp init-project --client antigravity-cli
+regenerate: trw-mcp init-project --ide antigravity-cli
 -->
 
 ## Distill Intelligence — Codebase Hotspots ({tier})

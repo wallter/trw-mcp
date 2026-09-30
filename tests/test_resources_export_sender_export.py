@@ -36,7 +36,10 @@ class TestLoadProjectConfig:
         assert result["status"] == "ok"
         meta = result.get("metadata")
         assert isinstance(meta, dict)
-        assert meta.get("trw_version") == "v99.0_CUSTOM"
+        from trw_mcp import __version__
+
+        # E2E-INC-076: the metadata names the trw-mcp package that wrote the export, not the config's framework version.
+        assert meta.get("trw_version") == __version__ != "v99.0_CUSTOM"
 
 
 class TestCollectLearningsEdgeCases:
@@ -241,7 +244,7 @@ class TestExportAllScope:
         assert "runs" in result
         assert "analytics" in result
 
-    def test_export_csv_for_all_scope_gives_json_not_csv(self, tmp_path: Path) -> None:
+    def test_export_csv_for_all_scope_fails_loudly(self, tmp_path: Path) -> None:
         from trw_mcp.export import export_data
 
         project = _setup_project(tmp_path)
@@ -253,6 +256,5 @@ class TestExportAllScope:
         ):
             result = export_data(project, "all", fmt="csv")
 
-        assert "learnings" in result
-        assert isinstance(result["learnings"], list)
-        assert "learnings_csv" not in result
+        assert result["status"] == "failed" and "csv exports learnings only" in str(result["error"])
+        assert "learnings" not in result and "learnings_csv" not in result

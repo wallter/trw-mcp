@@ -5,7 +5,7 @@ Belongs to the ``channels/claude_code`` package (PRD-DIST-2405 FR06, FR29).
 Provides:
 - ``_CEREMONY_MODE_FIELD``: authoritative config field name (FR06).
 - ``read_cc03_config()``: reads CC-03 opt-in flag and skip extensions.
-- ``format_t0_beacon()``, ``format_t1_hint()``, ``format_t2_hint()``:
+- ``format_t1_hint()``, ``format_t2_hint()``:
   tier-appropriate hook output formatters.
 - ``write_hint_file()``: writes per-hint context JSON keyed on tool_use_id (FR29).
 - ``prune_hint_files()``: removes hint files older than TTL (FR35).
@@ -38,7 +38,6 @@ __all__ = [
     "_CEREMONY_MODE_FIELD",
     "HintAsOf",
     "as_of_line",
-    "format_t0_beacon",
     "format_t1_hint",
     "format_t2_hint",
     "prune_hint_files",
@@ -157,11 +156,6 @@ def read_cc03_config(repo_root: Path) -> dict[str, Any]:
         log.debug("cc03_config_read_failed", config_path=str(config_path), error=str(exc))
 
     return defaults
-
-
-def format_t0_beacon() -> str:
-    """Format T0 presence beacon output (≤ 20 tokens)."""
-    return '[TRW] Distill intelligence available — run trw_code(mode="hint") for details.'
 
 
 def format_t1_hint(learnings: list[dict[str, Any]]) -> str:

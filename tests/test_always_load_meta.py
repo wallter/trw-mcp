@@ -44,8 +44,9 @@ pytestmark = pytest.mark.unit
 
 async def _wire_meta() -> dict[str, dict[str, Any]]:
     """Return ``{tool_name: _meta}`` exactly as the MCP client receives it."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     out: dict[str, dict[str, Any]] = {}
     for tool in await mcp._list_tools():
         dumped = tool.to_mcp_tool().model_dump(by_alias=True, exclude_none=True)
@@ -55,8 +56,9 @@ async def _wire_meta() -> dict[str, dict[str, Any]]:
 
 async def _restoring(names: frozenset[str]) -> dict[str, dict[str, Any]]:
     """Snapshot ``Tool.meta`` for *names* (the registry is a process singleton)."""
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     saved: dict[str, dict[str, Any]] = {}
     for name in names:
         tool = await mcp.get_tool(name)
@@ -66,8 +68,9 @@ async def _restoring(names: frozenset[str]) -> dict[str, dict[str, Any]]:
 
 
 async def _restore(saved: dict[str, dict[str, Any]]) -> None:
-    from trw_mcp.server._app import mcp
+    from tests._served_app import served_app
 
+    mcp = served_app()
     for name, meta in saved.items():
         tool = await mcp.get_tool(name)
         tool.meta = meta
@@ -143,9 +146,10 @@ async def test_nothing_outside_the_floor_is_marked_by_default() -> None:
 
 async def test_apply_preserves_existing_meta_and_is_idempotent() -> None:
     """Re-applying must not clobber FastMCP's own ``_meta`` namespace or duplicate."""
+    from tests._served_app import served_app
     from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, always_load_names, apply_always_load_meta
-    from trw_mcp.server._app import mcp
 
+    mcp = served_app()
     meta_before = await _wire_meta()
     applied = await apply_always_load_meta(mcp)
     expected = always_load_names() & set(meta_before)
@@ -214,18 +218,19 @@ async def test_flag_gated_tool_is_marked_whatever_its_boot_flag(
     on mid-session surfaced the tool without the key, deferred until a restart.
     The surface mask hides it while the flag is off, so the key costs nothing.
     """
+    from tests._served_app import served_app
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.server import _tools
     from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY
-    from trw_mcp.server._app import mcp
 
+    mcp = served_app()
     saved = await _restoring(frozenset({tool_name, "trw_dispatch"}))
     try:
         (await mcp.get_tool(tool_name)).meta = {k: v for k, v in saved[tool_name].items() if k != ALWAYS_LOAD_META_KEY}
         cfg = TRWConfig(**{flag: False, "dispatch_tools_exposed": True})
         monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
         monkeypatch.delenv("TRW_JEV_ENABLED", raising=False)
-        await asyncio.to_thread(_tools._apply_always_load_meta)
+        await asyncio.to_thread(_tools._apply_always_load_meta, mcp)
         wire = await _wire_meta()
     finally:
         await _restore(saved)
@@ -239,12 +244,13 @@ async def test_a_flag_enabled_mid_session_lists_its_tool_always_loaded(
 ) -> None:
     """PRD-CORE-305-FR04 end to end: boot with comms off, turn it on in the file,
     and the next list shows ``trw_send`` WITH the key, no restart."""
+    from tests._served_app import served_app
     from trw_mcp.middleware.surface_authority import SurfaceAuthorityMiddleware, reset_surface_authority_state
     from trw_mcp.models.config import reload_config
     from trw_mcp.server import _tools
     from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY
-    from trw_mcp.server._app import mcp
 
+    mcp = served_app()
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.delenv("TRW_COMMS_ENABLED", raising=False)
     config = tmp_path / ".trw" / "config.yaml"
@@ -268,7 +274,7 @@ async def test_a_flag_enabled_mid_session_lists_its_tool_always_loaded(
         (await mcp.get_tool("trw_send")).meta = {
             k: v for k, v in saved["trw_send"].items() if k != ALWAYS_LOAD_META_KEY
         }
-        await asyncio.to_thread(_tools._apply_always_load_meta)
+        await asyncio.to_thread(_tools._apply_always_load_meta, mcp)
         assert "trw_send" not in await listed()
         config.write_text("comms_enabled: true\n", encoding="utf-8")
         now = await listed()

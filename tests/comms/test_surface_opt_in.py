@@ -88,6 +88,7 @@ async def test_enabled_public_calls_repeat_without_needing_a_grant(
     denied = await comms_server.call_tool("trw_inbox", {"action": "heartbeat"})
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 @pytest.mark.parametrize("mode", ["standard", "all"])
@@ -125,6 +126,7 @@ async def test_reviewer_still_refuses_comms_with_opt_in(
     denied = await comms_server.call_tool(tool, arguments)
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_reviewer_surface"
+    assert denied.is_error is True  # CODEX-P0-B: a refusal is an MCP error
 
 
 async def test_fr11_wait_seconds_parameter_does_not_grow_the_comms_pack_or_register_a_new_tool(

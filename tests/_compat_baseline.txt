@@ -133,7 +133,6 @@ trw-mcp/tests/test_observability_gaps.py
 trw-mcp/tests/test_offline_parity.py
 trw-mcp/tests/test_orchestration_branches.py
 trw-mcp/tests/test_orchestration_waves.py
-trw-mcp/tests/test_otel_wrapper.py
 trw-mcp/tests/test_p0_p1_reaudit_fixes.py
 trw-mcp/tests/test_p1_quality_fixes.py
 trw-mcp/tests/test_per_client_instructions.py

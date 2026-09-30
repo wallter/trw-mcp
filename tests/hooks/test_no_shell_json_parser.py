@@ -190,7 +190,9 @@ def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> Non
         "active_tasks",
         "pending_decisions",
         "ownership",
+        "session_key",  # E2E-INC-031: a shared marker is replayed only for the session that wrote it
     }
+    assert snapshot["session_key"] == SESSION_ID
     assert snapshot["run_path"] == f"{own}/"
     assert snapshot["trigger"] == "manual"
     assert snapshot["ownership"] == "owned"
@@ -295,6 +297,9 @@ _JQ_WORD = re.compile(r"\bjq\b")
 #: hook no longer breaks the census, while a new call, or an edit to a listed one, still fails
 #: until it is reviewed here (rc9; the sqlite census moved the same way in 78edb34cc).
 _JQ_ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("hooks/session-start.sh", "", "neither jq nor python3 is on PATH"): (
+        "user-facing degraded notice text (E2E-INC-033), not a jq call"
+    ),
     # FR06 decision: keep. lib-intent-guard.sh deliberately never sources
     # lib-trw.sh in the deciding shell; without jq both reads return 1 and the
     # slower Python decision runs instead -- correct, only slower.

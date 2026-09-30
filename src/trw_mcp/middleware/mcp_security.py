@@ -359,5 +359,6 @@ class MCPSecurityMiddleware(Middleware):
                     "tool": decision.tool,
                     "reason": decision.reason,
                 },
+                is_error=True,  # a blocked call is an error to the client, not a success (CODEX-P0-B)
             )
         return await call_next(context)
