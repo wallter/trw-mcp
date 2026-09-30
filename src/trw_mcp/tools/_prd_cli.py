@@ -59,7 +59,9 @@ def add_prd_create_diff_subcommands(
     diff.add_argument("--after-path", required=True)
 
     validate = prd_verbs.add_parser(
-        "validate", help="Score a PRD against the validation suite (same engine as trw_prd_validate)"
+        "validate",
+        help="Score a PRD against the validation suite (same engine as trw_prd_validate); not read-only: it caches "
+        "the result under .trw/ for the next validate and records ceremony progress",
     )
     validate.add_argument("--prd-path", required=True, help="Path to the PRD markdown file")
     validate.add_argument("--fast", action="store_true", help="Text-only score; skips repo-grounded checks")

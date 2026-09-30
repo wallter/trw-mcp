@@ -17,7 +17,8 @@ __all__ = ["ResponseOptimizerMiddleware"]
 
 import io
 import json
-from typing import cast
+import re
+from typing import Any, cast
 
 import structlog
 from fastmcp.server.middleware.middleware import (
@@ -28,6 +29,7 @@ from fastmcp.server.middleware.middleware import (
 from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 from ruamel.yaml import YAML
+from ruamel.yaml.representer import SafeRepresenter
 
 from trw_mcp.middleware._lossless_tools import LOSSLESS_COMMS_TOOLS
 
@@ -54,8 +56,27 @@ def _compact(data: object) -> object:
 
 logger = structlog.get_logger(__name__)
 
+#: YAML 1.1 reads these plain scalars as booleans or null; ruamel emits YAML 1.2 and leaves them bare (INC-126 (d):
+#: the surface's ``off:`` key parsed as ``false``). Quoted, every parser reads the same string.
+_YAML11_SPECIAL = re.compile(
+    r"^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|~|null|Null|NULL)$"
+)
+
+
+class _Yaml11SafeRepresenter(SafeRepresenter):
+    """The safe representer, quoting YAML 1.1 special words -- a subclass, so no other dumper changes."""
+
+    def represent_str(self, data: str) -> Any:
+        if _YAML11_SPECIAL.match(data):
+            return self.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+        return super().represent_str(data)
+
+
+_Yaml11SafeRepresenter.add_representer(str, _Yaml11SafeRepresenter.represent_str)
+
 # Shared YAML instance — typ="safe" ensures no !!python/ tags in output.
 _yaml = YAML(typ="safe")
+_yaml.Representer = _Yaml11SafeRepresenter
 _yaml.default_flow_style = False
 
 

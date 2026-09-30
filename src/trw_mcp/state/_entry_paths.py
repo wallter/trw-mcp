@@ -95,10 +95,11 @@ def resolve_entry_file(
     if not summary or not created:
         return None
     for candidate_date in _candidate_dates(created):
-        candidate = entries_dir / entry_filename(summary, candidate_date)
-        data = _entry_at(reader, candidate)
-        if data is not None and str(data.get("id", "")) == entry_id:
-            return candidate, data
+        for name in (entry_filename(summary, candidate_date), entry_filename(summary, candidate_date, entry_id)):
+            candidate = entries_dir / name
+            data = _entry_at(reader, candidate)
+            if data is not None and str(data.get("id", "")) == entry_id:
+                return candidate, data
     logger.debug("entry_path_unresolved", entry_id=entry_id, created=created)
     return None
 

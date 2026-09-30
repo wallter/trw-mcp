@@ -188,6 +188,9 @@ def two_run_project(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[
     reap_daemons_under(root, wait=True, by_process=True)
 
 
+# One xdist worker runs the module-scoped ``two_run_project`` (and its one real daemon autostart) once;
+# under per-test distribution every worker that drew one of these tests rebuilt it (~8 s and a daemon each).
+@pytest.mark.xdist_group(name="bootstrap_manifest_two_run_project")
 class TestTwoRunPreservation:
     """FR02/FR03: a preserved edit survives the SECOND run, and the fifth."""
 

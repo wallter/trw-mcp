@@ -115,7 +115,12 @@ def save_learning_entry(
     if inferred:
         entry = entry.model_copy(update={"tags": list(entry.tags) + inferred})
 
-    entry_path = _ac._entries_path(trw_dir) / _ac.entry_filename(entry.summary, entry.created.isoformat())
+    entries_dir = _ac._entries_path(trw_dir)
+    entry_path = entries_dir / _ac.entry_filename(entry.summary, entry.created.isoformat())
+    holder = _ac._entry_file_id(entry_path)
+    if holder is not None and holder != entry.id:
+        # INC-119 h: the plain name is another learning's sidecar. Keep both; never overwrite it.
+        entry_path = entries_dir / _ac.entry_filename(entry.summary, entry.created.isoformat(), entry.id)
     FileStateWriter().write_yaml(entry_path, model_to_dict(entry))
     logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
 

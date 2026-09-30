@@ -295,9 +295,10 @@ def _restore_supersession(
     """Link each superseded learning to its closer, both by their ids in THIS project; report what cannot be linked.
 
     Runs over every exported learning this import matched, new or already here, so re-running an interrupted import
-    completes its links. A prior that is already closed is left alone, and so is one the project wrote itself. Each
-    prior is the row its own export entry became; a closer is linked only when its exported id names exactly one
-    learning of this import (a file may carry different learnings under one id).
+    completes its links. A prior that is already closed is left alone. Each prior is the row its own export entry
+    became; a closer is linked only when its exported id names exactly one learning of this import (a file may carry
+    different learnings under one id). Neither end may be a learning the project wrote itself: the link is written
+    through the closer, so a native closer is reported, never corrected from a file.
     """
     from trw_mcp.state._memory_update import update_learning
 
@@ -315,7 +316,13 @@ def _restore_supersession(
             )
             problems.append(f"{prior}: superseded by {closer}, {why}")
             continue
-        done = update_learning(trw_dir, next(iter(closers)), supersedes=prior)
+        (closer_row,) = closers
+        if closer_row not in repairable:
+            problems.append(
+                f"{prior}: superseded by {closer}, which is this project's own learning ({closer_row}); not changed"
+            )
+            continue
+        done = update_learning(trw_dir, closer_row, supersedes=prior)
         if "error" in done:
             problems.append(f"{prior}: supersession by {closer} not restored: {done['error']}")
         else:

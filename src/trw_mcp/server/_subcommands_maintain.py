@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 
 def _run_maintain_verify(args: argparse.Namespace) -> None:
@@ -14,9 +15,15 @@ def _run_maintain_verify(args: argparse.Namespace) -> None:
     latency. Batches bound acquisition, not runtime or a concurrent snapshot.
     """
 
+    from trw_mcp.state._store_selection import StoreUnavailableError
     from trw_mcp.tools._maintain_verify import run_maintain_verify_for_project
 
-    summary = run_maintain_verify_for_project(namespace=getattr(args, "namespace", None))
+    try:
+        summary = run_maintain_verify_for_project(namespace=getattr(args, "namespace", None))
+    except StoreUnavailableError as exc:
+        # INC-121 (b): the store being down is expected and its message names the fix -- one line, as export (INC-075).
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     payload = summary.as_dict()
     if bool(getattr(args, "as_json", False)):

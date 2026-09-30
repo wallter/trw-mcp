@@ -7,6 +7,7 @@ builder under the 350 effective-LOC module gate (PRD-DIST-243).
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
 
@@ -41,6 +42,19 @@ _RETIRED_IDE_HINTS: dict[str, str] = {
 }
 
 
+def _init_target(value: str) -> str:
+    """argparse ``type`` for init-project's target: a client id that is not an existing path meant ``--ide``.
+
+    INC-121 (h): ``init-project claude-code`` silently created ``./claude-code/`` and installed there.
+    """
+    if value in SUPPORTED_IDES and not Path(value).exists():
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is a client id, not an existing directory: did you mean --ide {value}? "
+            "(the positional argument is the target directory; pass . for the current one)"
+        )
+    return value
+
+
 def _ide_choice(value: str) -> str:
     """argparse ``type`` for ``--ide`` that distinguishes retired from unknown.
 
@@ -64,6 +78,7 @@ def add_project_subcommands(
         "target_dir",
         nargs="?",
         default=".",
+        type=_init_target,
         help="Target project directory (default: current directory)",
     )
     init_parser.add_argument(

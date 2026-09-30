@@ -252,7 +252,7 @@ class TestExternalRepoNeverWidensGrounding:
 
         monkeypatch.setattr("trw_mcp.tools.requirements.resolve_project_root", lambda: trusted_root)
 
-        with pytest.raises(StateError, match="escapes project root"):
+        with pytest.raises(StateError, match="outside the project root"):
             run_prd_validate(prd_path=str(prd_path))
 
 

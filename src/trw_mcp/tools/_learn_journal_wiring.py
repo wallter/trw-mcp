@@ -9,12 +9,16 @@ module is the thin adapter between them and the learn orchestrator.
 
 from __future__ import annotations
 
+import copy
+import re
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from trw_memory.exceptions import DaemonError
 from trw_memory.security.credentials import credential_spans, mask_low_confidence
 
 from trw_mcp.state import learn_journal
@@ -127,6 +131,66 @@ def _mask_leaves(value: object) -> Any:
     if isinstance(value, (list, tuple)):
         return [_mask_leaves(item) for item in value]
     return value
+
+
+_REDACTION_MARK = re.compile(r"<REDACTED:(\w+)>")
+
+
+def redaction_note(before: dict[str, object], after: dict[str, object]) -> str | None:
+    """Name what :func:`store_bound_text` masked: KINDS and a count, never a value or a length (INC-119 d).
+
+    Counts placeholders that *after* holds beyond those *before* already held, so a replayed, already-masked
+    learning claims nothing.
+    """
+
+    def marks(payload: dict[str, object]) -> Counter[str]:
+        return Counter(
+            m for key in _STORED_TEXT_KEYS for leaf in _leaves(payload.get(key)) for m in _REDACTION_MARK.findall(leaf)
+        )
+
+    added = marks(after) - marks(before)
+    if not added:
+        return None
+    return (
+        f"{sum(added.values())} credential-shaped span(s) ({', '.join(sorted(added))}) were masked before storing; "
+        "the stored learning holds <REDACTED:...> placeholders, not the original text."
+    )
+
+
+def queued_unavailable_error(error: Exception, learning_id: str) -> Exception:
+    """*error* rewritten to be true for a learning that IS journaled (INC-119 e).
+
+    The daemon client says "No memory was read or written" for any operation; for a learn the write-ahead journal
+    already holds the accepted record, so that sentence is false and the learning's fate is unstated.
+    """
+    return error.__class__(
+        str(error).replace("No memory was read or written", "Nothing was stored in memory")
+        + f" The learning was NOT lost: it is journaled as {learning_id} in .trw/learnings/pending/ and is stored by a "
+        "later session start (or `trw-mcp memory learn-drain`) once the daemon is reachable."
+    )
+
+
+def failed_store_result(learning_id: str, store_result: dict[str, object]) -> LearnResultDict:
+    """The response for a store that returned ``error`` or ``rate_limited``; no sidecar exists for either.
+
+    A rate-limited write used to look stored (an id and a ``sqlite://`` locator) although no row exists (INC-119 a).
+    """
+    failed: dict[str, object] = {
+        "learning_id": learning_id,
+        "path": str(store_result.get("path", f"sqlite://{learning_id}")),
+        "status": str(store_result["status"]),
+        "distribution_warning": "",
+    }
+    if failed["status"] == "rate_limited":
+        failed["path"] = ""
+        failed["message"] = (
+            "NOT stored yet: the memory write was rate-limited (or collided with a concurrent write). The learning is "
+            "held in .trw/learnings/pending/ and is stored by a later session start or `trw-mcp memory learn-drain`; "
+            "retry after the delay in retry_after (seconds) if you need it now."
+        )
+        if isinstance(store_result.get("retry_after"), (int, float)):
+            failed["retry_after"] = store_result["retry_after"]
+    return cast("LearnResultDict", failed)
 
 
 def store_bound_text(payload: dict[str, object]) -> LearnResultDict | None:
@@ -316,3 +380,43 @@ def replay_journaled_learn(
     )
     status = result.get("status", "") if isinstance(result, dict) else ""
     return str(status)
+
+
+def masked_store_bound_text(payload: dict[str, object]) -> tuple[LearnResultDict | None, str | None]:
+    """:func:`store_bound_text`, plus the :func:`redaction_note` for what it masked (``None`` when nothing was)."""
+    before = copy.deepcopy(payload)
+    rejection = store_bound_text(payload)
+    return rejection, redaction_note(before, payload)
+
+
+def store_with_journal_truth(
+    store: Callable[..., Any],
+    trw_dir: Path,
+    store_kwargs: dict[str, object],
+    learning_id: str,
+    *,
+    journaled: bool,
+) -> Any:
+    """Run the store; a daemon failure on a JOURNALED learning says the learning is queued, not unwritten."""
+    from trw_mcp.tools._learn_side_effects import _store_accepts_positional_trw_dir
+
+    try:
+        if _store_accepts_positional_trw_dir(store):
+            return store(trw_dir, **store_kwargs)
+        return store(trw_dir=trw_dir, **store_kwargs)
+    except DaemonError as exc:
+        if not journaled:
+            raise
+        raise queued_unavailable_error(exc, learning_id) from exc
+
+
+def attach_response_notes(result: dict[str, Any], masking_note: str | None, store_result: dict[str, object]) -> None:
+    """Add what the store did beyond the request to a recorded-learning response (INC-119 d, f).
+
+    *masking_note*: kinds and a count of masked spans, never a value or length. ``auto_added_tags``: topic tags the
+    store appended that the caller did not ask for.
+    """
+    if masking_note is not None:
+        result["redaction_note"] = masking_note
+    if store_result.get("auto_added_tags"):
+        result["auto_added_tags"] = store_result["auto_added_tags"]

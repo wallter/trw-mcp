@@ -44,8 +44,39 @@ class TestCheckInstructionsCLI:
     def test_no_instruction_files_exit_zero_and_says_so(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        (tmp_path / ".trw").mkdir()  # a TRW project with no carriers yet
         assert _run(tmp_path) == 0
         assert "no instruction files found" in capsys.readouterr().out
+
+    def test_outside_a_project_with_nothing_to_check_is_not_ok(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """INC-126 (c): 'OK: no instruction files found' rc 0 in a non-project dir was a CI false pass."""
+        assert _run(tmp_path) == 2
+        out = capsys.readouterr()
+        assert "not a TRW project" in out.err and "nothing was checked" in out.err and "OK" not in out.out
+
+    def test_a_carrier_symlinked_out_of_the_target_is_a_named_skip_not_ok(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """INC-126 (c): a TRW carrier skipped for resolving outside the target was reported as OK, rc 0."""
+        project = tmp_path / "proj"
+        (project / ".trw").mkdir(parents=True)
+        _write(project, "CLAUDE.md", "Use trw_session_start().\n")
+        outside = tmp_path / "elsewhere.md"
+        outside.write_text("Call trw_dispatch.\n", encoding="utf-8")
+        (project / "AGENTS.md").symlink_to(outside)
+        assert _run(project) == 1
+        out = capsys.readouterr().out
+        assert "AGENTS.md: SKIPPED" in out and "outside the target" in out and "OK" not in out
+
+    def test_a_file_given_as_the_target_is_named_as_a_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _write(tmp_path, "AGENTS.md", "x\n")
+        assert _run(tmp_path / "AGENTS.md") == 2
+        err = capsys.readouterr().err
+        assert "is a file, not a directory" in err and "does not exist" not in err
 
     def test_missing_target_is_an_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         assert _run(tmp_path / "nope") == 2
@@ -125,7 +156,8 @@ class TestCheckInstructionsScope:
         project = tmp_path / "proj"
         project.mkdir()
         (project / "CLAUDE.md").symlink_to(outside)
-        assert _check_instructions_core(project) == (0, {})
+        # Not read (its trw_dispatch mention is not reported) -- and, INC-126 (c), not an OK either.
+        assert _check_instructions_core(project) == (1, {})
 
     def test_with_a_manifest_only_trw_written_rules_are_scanned(self, tmp_path: Path) -> None:
         _write(tmp_path, ".cursor/rules/trw-ceremony.mdc", "Call trw_dispatch.\n")
@@ -207,3 +239,26 @@ class TestCheckInstructionsScope:
         exit_code, mismatches = _check_instructions_core(tmp_path)
         assert exit_code == 1
         assert mismatches == {".cursor/rules/trw-ceremony.mdc": ["trw_dispatch"]}
+
+
+def test_an_unreadable_manifest_is_explained_in_words(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write(tmp_path, ".trw/managed-artifacts.yaml", "version: [\n")
+    _write(tmp_path, "AGENTS.md", "Project notes.\n")
+    assert _run(tmp_path) == 0
+    assert "ownership is unknown and every rule file was scanned" in capsys.readouterr().err
+
+
+def test_a_carrier_name_with_terminal_controls_is_printed_escaped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """codex r1 KI (INC-126): a skipped carrier's name reached the terminal raw, escape sequences included."""
+    project = tmp_path / "proj"
+    (project / ".trw").mkdir(parents=True)
+    outside = tmp_path / "elsewhere.mdc"
+    outside.write_text("x\n", encoding="utf-8")
+    rules = project / ".cursor" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "evil\x1b[31mred.mdc").symlink_to(outside)
+    assert _run(project) == 1
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "evil\\x1b[31mred.mdc: SKIPPED" in out

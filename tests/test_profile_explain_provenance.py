@@ -78,3 +78,14 @@ def test_the_cli_prints_each_note_loudly_in_human_mode(
 
     err = capsys.readouterr().err
     assert "NOTE: TRW_CLIENT_PROFILE='bogus' is set" in err
+
+
+def test_a_default_profile_is_not_claimed_to_come_from_a_config_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """INC-126 (a): the field's default ['claude-code'] was reported as 'target_platforms[0] in .trw/config.yaml'
+    even when no config file exists; the source is only the file when the file (or env) actually set it."""
+    monkeypatch.delenv("TRW_CLIENT_PROFILE", raising=False)
+    monkeypatch.delenv("TRW_TARGET_PLATFORMS", raising=False)
+    payload = explain_surface(TRWConfig(), run_dir=None, trw_dir=None)
+    client = payload["client_profile"]
+    assert client["id"] == "claude-code"  # type: ignore[index]
+    assert client["source"] == "default: no target_platforms set"  # type: ignore[index]

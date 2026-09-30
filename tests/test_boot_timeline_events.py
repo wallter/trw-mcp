@@ -208,7 +208,8 @@ def test_transport_builds_the_app_then_emits_transport_ready_then_runs_it(monkey
     order: list[str] = []
 
     class _App:
-        def run(self) -> None:
+        def run(self, *, show_banner: bool = True) -> None:
+            assert show_banner is False  # FASTMCP-BANNER-OFF: a client-spawned stdio server prints no banner
             order.append("app.run")
 
     def _build() -> _App:

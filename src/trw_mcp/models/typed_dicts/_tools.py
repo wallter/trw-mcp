@@ -47,6 +47,10 @@ class RecallResultDict(TypedDict, total=False):
     omitted: int
     #: Requested ``ids`` no store holds; only with ``ids=``.
     missing_ids: list[str]
+    # ids= lookups (INC-119 b): what missing_ids means and how to look for a closed learning.
+    ids_note: str
+    # Present when a query ran without semantic ranking (INC-119 c).
+    retrieval_note: str
     remote_recall: dict[str, object]  # remote failure/incompleteness or unevaluated temporal coverage
     store_unavailable: str  # the memory store could not be opened; empty results are not "nothing learned"
     # Non-empty only when a requested topic filter was a no-op; explains why.
@@ -314,6 +318,12 @@ class LearnResultDict(TypedDict, total=False):
     # Present on rejection (noise filter):
     reason: str
     message: str
+    # Present on a rate-limited write (INC-119 a): seconds until the window clears, when the store reported it.
+    retry_after: float
+    # Present when masking changed the stored text (INC-119 d): kinds and a count, never values.
+    redaction_note: str
+    # Topic tags the store added that the caller did not ask for (INC-119 f).
+    auto_added_tags: list[str]
     # PRD-CORE-244-FR05: advisory window proposal for a state-asserting learning.
     # Advisory ONLY — the persisted ``expires`` is exactly what the caller supplied.
     validity_window_nudge: str

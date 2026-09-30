@@ -30,7 +30,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state._paths import resolve_project_root as resolve_project_root
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 logger = structlog.get_logger(__name__)
 
@@ -223,7 +223,6 @@ def scan_all_runs(
         and parse_errors.
     """
     config = get_config()
-    writer = FileStateWriter()
 
     project_root = resolve_project_root()
     runs_root = project_root / config.runs_root
@@ -269,16 +268,8 @@ def scan_all_runs(
         "parse_errors": parse_errors,
     }
 
-    # Cache to analytics-report.yaml (best-effort)
-    try:
-        trw_dir = resolve_trw_dir()
-        cache_dir = trw_dir / config.context_dir
-        writer.ensure_dir(cache_dir)
-        cache_path = cache_dir / "analytics-report.yaml"
-        writer.write_yaml(cache_path, dict(report))
-    except Exception:  # justified: fail-open, cache write is best-effort optimization
-        logger.warning("analytics_report_cache_write_failed", exc_info=True)
-
+    # INC-121 (c): no analytics-report.yaml cache. `audit` and `export --scope runs` wrote it as an undocumented side
+    # effect of reading, and its one reader (export's ceremony_aggregates) got whatever the LAST scan left behind.
     return report
 
 

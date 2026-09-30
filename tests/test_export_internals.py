@@ -120,15 +120,12 @@ class TestCollectAnalytics:
         assert isinstance(analytics, dict)
         assert analytics["sessions"] == 5
 
-    def test_report_yaml_loaded(self, tmp_path: Path) -> None:
-        """analytics-report.yaml with aggregate key populates ceremony_aggregates."""
+    def test_ceremony_aggregates_come_from_a_fresh_scan_not_a_stale_cache(self, tmp_path: Path) -> None:
+        """INC-121 (c): a leftover analytics-report.yaml is ignored; the aggregate is scanned now."""
+        from unittest.mock import patch
+
         project = _setup_project(tmp_path)
-        context_dir = project / ".trw" / "context"
-        _writer.write_yaml(
-            context_dir / "analytics-report.yaml",
-            {"aggregate": {"total_runs": 12, "avg_score": 75}},
-        )
-        config = TRWConfig()
-        result = _collect_analytics(project, project / ".trw", config)
-        assert "ceremony_aggregates" in result
-        assert result["ceremony_aggregates"]["total_runs"] == 12
+        _writer.write_yaml(project / ".trw" / "context" / "analytics-report.yaml", {"aggregate": {"total_runs": 12}})
+        with patch("trw_mcp.export.scan_all_runs", return_value={"aggregate": {"total_runs": 3}}):
+            result = _collect_analytics(project, project / ".trw", TRWConfig())
+        assert result["ceremony_aggregates"]["total_runs"] == 3

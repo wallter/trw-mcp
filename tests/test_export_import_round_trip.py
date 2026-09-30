@@ -355,3 +355,41 @@ def test_a_malformed_evidence_level_on_a_verified_row_is_handled_per_row(
     assert (result["status"], result["imported"]) == ("ok", 2), result
     if not dry_run:
         assert _copies(root)["L-bad"][0]["confidence"] == "high"
+
+
+# -- EVIDENCE-DELETION-POLICY r2 known issue (INC-118-SUPERSEDE-REPAIR) ------------------------------------------------
+
+
+def test_an_import_never_writes_supersession_onto_the_projects_own_closer(
+    daemon_checkout: DaemonCheckout, tmp_path: Path
+) -> None:
+    from trw_mcp.export import export_data
+    from trw_mcp.export_import import _store_entry
+    from trw_mcp.state._helpers import load_project_config
+    from trw_mcp.state._project_root_binding import project_bound
+
+    root = daemon_checkout.trw_dir.parent
+    native_row = {
+        "summary": "Native: queue consumers ack after commit",
+        "detail": "Seen on the billing path.",
+        "impact": 0.7,
+    }
+    with project_bound(root):
+        native = _store_entry(native_row, daemon_checkout.trw_dir, load_project_config(daemon_checkout.trw_dir), "here")
+    native_id = str(native["learning_id"])
+
+    def native_as_exported() -> dict[str, Any]:
+        return next(row for row in export_data(root, "learnings")["learnings"] if row["id"] == native_id)
+
+    before = native_as_exported()
+    rows = [
+        _row("L-imp", "Imported: consumers ack on receipt", type_="pattern", superseded=True, invalidated_by=native_id),
+        {**native_row, "id": native_id, "type": "pattern", "status": "active"},
+    ]
+
+    result = _import(rows, root, tmp_path / "native-closer.json")
+
+    assert (result["imported"], result["skipped_duplicate"]) == (1, 1), result
+    assert any(native_id in note and "own learning" in note for note in result["not_restored"]), result["not_restored"]
+    assert native_as_exported() == before, "the project's own learning must not be changed by an import"
+    assert not _copies(root)["L-imp"][0].get("superseded")

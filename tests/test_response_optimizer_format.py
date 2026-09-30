@@ -187,3 +187,25 @@ class TestYamlFormatInMiddleware:
         parsed = json.loads(out.content[0].text)
         assert parsed["score"] == 0.88
         assert "meta" not in parsed
+
+
+def test_yaml_quotes_yaml_1_1_boolean_words_so_every_parser_reads_strings() -> None:
+    """INC-126 (d): the surface YAML emitted a bare ``off:`` key, which YAML 1.1 parsers read as boolean false."""
+    import yaml as yaml11  # PyYAML implements YAML 1.1
+
+    from trw_mcp.middleware.response_optimizer import _yaml_dump
+
+    data = {"off": ["on", "x"], "modes": {"yes": "no", "n": "Y"}, "plain": "value", "count": 3, "flag": True}
+    assert yaml11.safe_load(_yaml_dump(data)) == data
+
+
+def test_the_quoting_is_scoped_to_the_response_serializer() -> None:
+    import io
+
+    from ruamel.yaml import YAML
+
+    from trw_mcp.middleware import response_optimizer  # noqa: F401 -- importing it must not change other dumpers
+
+    buf = io.StringIO()
+    YAML(typ="safe").dump({"k": "off"}, buf)
+    assert "'off'" not in buf.getvalue()

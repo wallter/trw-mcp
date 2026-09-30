@@ -45,6 +45,12 @@ def add_backup_subcommands(
         "--yes", action="store_true", help="Replace the store without asking (it is archived first either way)"
     )
     restore_parser.add_argument(
+        "--keep-derived",
+        dest="keep_derived",
+        action="store_true",
+        help="Leave the project's warm-tier and learning-YAML copies in place instead of moving them aside",
+    )
+    restore_parser.add_argument(
         "--no-snapshot",
         dest="no_snapshot",
         action="store_true",

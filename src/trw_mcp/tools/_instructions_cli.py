@@ -12,8 +12,10 @@ nothing, records no sync hash), exiting 1 when a target would change or a write 
 ``git diff --exit-code``, so a script or CI step can gate on instruction-file drift.
 
 Output is one JSON document with ``--json``, otherwise ``key: value`` lines.
-``sync`` exits 1 when ``status`` is ``"refused"`` and 0 otherwise; a
-``"dry_run"`` or ``"unchanged"`` result is a result, not a failure.
+``sync`` exits 1 when ``status`` is ``"refused"`` and 0 otherwise; ``sync --dry-run`` reports ``would_change`` and
+exits like ``check`` (1 when anything would change). ``*_synced: true`` in a real sync's result means the target is
+IN SYNC afterwards (the result schema ``trw_deliver``'s own sync step shares), not that a file was written: a no-op
+sync reports it too (INC-126; a CLI-only ``changed`` field is BACKLOG INC-126-SYNC-CHANGED-FIELD).
 """
 
 from __future__ import annotations
@@ -80,16 +82,22 @@ def _render(args: argparse.Namespace, *, dry_run: bool, force: bool) -> dict[str
     return result
 
 
+def _with_drift(result: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Stamp ``would_change`` (any non-empty diff or refusal) -- the ONE drift rule for check and sync --dry-run."""
+    drift = any(entry.get("diff") for entry in result.get("diffs") or []) or bool(result.get("refusals"))
+    result["would_change"] = drift
+    return result, drift
+
+
 def _sync(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
-    result = _render(args, dry_run=bool(args.dry_run), force=bool(args.force))
+    if args.dry_run:  # INC-126 (b): a preview answers like check -- would_change, exit 1 when anything would change
+        return _with_drift(_render(args, dry_run=True, force=bool(args.force)))
+    result = _render(args, dry_run=False, force=bool(args.force))
     return result, result.get("status") == "refused"
 
 
 def _check(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
-    result = _render(args, dry_run=True, force=False)
-    drift = any(entry.get("diff") for entry in result.get("diffs") or []) or bool(result.get("refusals"))
-    result["would_change"] = drift
-    return result, drift
+    return _with_drift(_render(args, dry_run=True, force=False))
 
 
 def run_instructions(args: argparse.Namespace) -> None:

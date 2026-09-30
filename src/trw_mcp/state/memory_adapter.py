@@ -217,6 +217,8 @@ def store_learning(
                 error=str(store_result.get("error", "")),
             )
             result["error"] = str(store_result.get("error", store_result.get("status", "store rejected")))
+            if isinstance(store_result.get("retry_after"), (int, float)):
+                result["retry_after"] = store_result["retry_after"]
         elif status == "rejected":
             result["reason"] = str(store_result.get("status"))
             result["message"] = str(store_result.get("error", "the memory store refused the learning"))
@@ -230,12 +232,15 @@ def store_learning(
         impact=impact,
         tier="user" if is_user_write else "project",  # PRD-CORE-185 FR05 NFR06
     )
-    return {
+    recorded: dict[str, object] = {
         "learning_id": learning_id,
         "path": f"sqlite://{learning_id}",
         "status": "recorded",
         "distribution_warning": "",
     }
+    if inferred:
+        recorded["auto_added_tags"] = list(inferred)  # INC-119 f: tags the caller did not ask for
+    return recorded
 
 
 # recall_learnings + _rank_wildcard_by_utility extracted to _memory_recall.py

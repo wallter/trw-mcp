@@ -356,3 +356,29 @@ def test_trw_mcp_env_gc_runs_end_to_end_through_the_real_cli(
 
     assert "removed venv-1.0.0" in applied
     assert sorted(p.name for p in env_dir.iterdir() if not p.name.endswith(".lock")) == ["venv-2.0.0", "venv-3.0.0"]
+
+
+def test_env_create_says_exists_for_an_existing_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """INC-126 (e): a second `env create` repeated 'created' for an env that already existed."""
+    import argparse
+
+    from trw_mcp.shared_server import _cli, _ops, _records
+
+    def memory_dir(_paths: object, env: str) -> Path:
+        return tmp_path / "envs" / env
+
+    def ensure(_paths: object, env: str, *, seed_from: str | None) -> Path:
+        memory_dir(_paths, env).mkdir(parents=True, exist_ok=True)
+        return memory_dir(_paths, env)
+
+    monkeypatch.setattr(_cli, "_paths", lambda: (object(), None, tmp_path))
+    monkeypatch.setattr(_ops, "_memory_dir", memory_dir)
+    monkeypatch.setattr(_ops, "ensure_env", ensure)
+    monkeypatch.setattr(_records, "serving_env_path", lambda _p, env: tmp_path / f"{env}.serving")
+    args = argparse.Namespace(env_command="create", name="canary", seed_from=None)
+    _cli.run_env(args)
+    _cli.run_env(args)
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("created ") and out[1].startswith("exists ")

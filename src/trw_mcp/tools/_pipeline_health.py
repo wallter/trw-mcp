@@ -293,7 +293,7 @@ def pipeline_status(*, degraded_count: int, unmeasured_count: int, total: int) -
     return "degraded" if degraded_count > 0 else "healthy"
 
 
-def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHealthResult:
+def step_pipeline_health(trw_dir: Path, config: Any | None = None, *, self_hint: bool = True) -> PipelineHealthResult:
     """Run all four compounding-pipeline probes and aggregate the result.
 
     Each probe is individually fail-open: an exception returns a safe default
@@ -355,13 +355,13 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHe
         degraded_count=len(degraded_signals), unmeasured_count=len(unmeasured_signals), total=len(named_signals)
     )
     advisory = ""
+    # INC-121 (e): the pointer is for other surfaces (session start); the command itself already shows the detail.
+    hint = " — run `trw-mcp telemetry pipeline-health` for detail" if self_hint else ""
     if status == "unknown":
-        advisory = (
-            "pipeline health unknown: no probe could be measured — run `trw-mcp telemetry pipeline-health` for detail"
-        )
+        advisory = f"pipeline health unknown: no probe could be measured{hint}"
     if degraded:
         signals_str = ", ".join(degraded_signals)
-        advisory = f"pipeline degraded: {signals_str} — run `trw-mcp telemetry pipeline-health` for details"
+        advisory = f"pipeline degraded: {signals_str}{hint}"
         logger.warning(
             "pipeline_health_degraded",
             signals=degraded_signals,

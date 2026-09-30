@@ -403,7 +403,7 @@ def is_success_event(event: dict[str, object]) -> bool:
     return any(kw in event_type for kw in _SUCCESS_KEYWORDS)
 
 
-def entry_filename(summary: str, created_iso: str) -> str:
+def entry_filename(summary: str, created_iso: str, entry_id: str | None = None) -> str:
     """Build the sidecar filename a learning entry is written under.
 
     THE single source of truth for the ``{created}-{slug}.yaml`` convention.
@@ -411,9 +411,26 @@ def entry_filename(summary: str, created_iso: str) -> str:
     resolver (``state/_entry_paths.py``) reads through it, so the two can never
     disagree about where an entry lives — which is the whole reason the lookup
     can be O(1) instead of a linear scan of the corpus.
+
+    *entry_id* names the collision form ``{created}-{slug}-{id}.yaml``: a second learning whose summary slugs the same
+    on the same date (INC-119 h) is written there instead of over the first one's sidecar.
     """
     slug = re.sub(r"[^a-z0-9]+", "-", summary[:_SLUG_MAX_LEN].lower()).strip("-")
-    return f"{created_iso}-{slug}.yaml"
+    return f"{created_iso}-{slug}-{entry_id}.yaml" if entry_id else f"{created_iso}-{slug}.yaml"
+
+
+def _entry_file_id(path: Path) -> str | None:
+    """The id held by the sidecar at *path*; ``None`` when it does not exist, ``""`` when it exists but is unreadable.
+
+    An unreadable file counts as a holder of ANOTHER id: overwriting what cannot be read would destroy it.
+    """
+    if not path.is_file():
+        return None
+    try:
+        data = FileStateReader().read_yaml(path)
+    except Exception:  # justified: fail-CLOSED, an unreadable sidecar is treated as someone else's and kept
+        return ""  # trw-fail-silent-allow: "" is the closed direction: the unreadable file is kept, not overwritten
+    return str(data.get("id", "")) if isinstance(data, dict) else ""
 
 
 def find_entry_by_id(

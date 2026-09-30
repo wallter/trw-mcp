@@ -343,11 +343,13 @@ def test_ff_a_squatted_evidence_path_reads_as_not_enrolled_on_both_sides(tmp_pat
 
 @pytest.fixture
 def blob_stub(tmp_path: Path) -> Path:
-    """A ``git`` that answers everything EXCEPT ``rev-parse <rev>:<path>``.
+    """A ``git`` that answers everything EXCEPT ``rev-parse <rev>:<path>`` and ``cat-file --batch``.
 
-    Deliberately narrow: it is the ONLY query ``read_blob`` uses to locate a blob,
-    so every other check in the package keeps working and the measurement isolates
-    the erased distinction rather than a generally-broken git.
+    Deliberately narrow: those are the ONLY queries ``read_blob`` uses to locate a blob
+    (the detectors share one ``cat-file --batch`` and fall back to per-spawn
+    ``rev-parse`` when it cannot answer), so every other check in the package keeps
+    working and the measurement isolates the erased distinction rather than a
+    generally-broken git.
     """
     stub_dir = tmp_path / "stubbin"
     stub_dir.mkdir()
@@ -356,7 +358,8 @@ def blob_stub(tmp_path: Path) -> Path:
     stub.write_text(
         # `_git_run` puts `-c core.precomposeunicode=false` before the subcommand: skip that pair to find it.
         f'#!/bin/sh\nif [ "$1" = -c ]; then sub=$3; arg=$4; else sub=$1; arg=$2; fi\n'
-        f'case "$sub" in rev-parse) case "$arg" in *:*) exit 128;; esac;; esac\nexec {real_git} "$@"\n',
+        f'case "$sub" in rev-parse) case "$arg" in *:*) exit 128;; esac;; cat-file) case "$arg" in --batch*) exit 128;; esac;; esac\n'
+        f'exec {real_git} "$@"\n',
         encoding="utf-8",
     )
     stub.chmod(0o755)

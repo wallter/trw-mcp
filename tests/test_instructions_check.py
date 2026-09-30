@@ -59,6 +59,31 @@ def test_check_exits_1_only_when_something_would_change(
     assert f'"would_change": {"true" if would_change else "false"}' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("rendered", "expected_exit", "would_change"),
+    [
+        ({"status": "dry_run", "diffs": []}, 0, False),
+        ({"status": "dry_run", "diffs": [{"file": "AGENTS.md", "diff": "@@ -1 +1 @@\n-a\n+b\n"}]}, 1, True),
+        ({"status": "dry_run", "diffs": [], "refusals": [{"file": "AGENTS.md", "reason": "content_loss"}]}, 1, True),
+    ],
+)
+def test_sync_dry_run_has_check_parity(
+    rendered: dict[str, Any],
+    expected_exit: int,
+    would_change: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """INC-126 (b): sync --dry-run had no would_change and exited 0 when it would change files; check had both."""
+    from trw_mcp.tools import _instructions_cli
+
+    monkeypatch.setattr(_instructions_cli, "_render", lambda _a, *, dry_run, force: dict(rendered))
+    with pytest.raises(SystemExit) as exited:
+        _instructions_cli.run_instructions(_args(instructions_command="sync", dry_run=True, force=False))
+    assert exited.value.code == expected_exit
+    assert f'"would_change": {"true" if would_change else "false"}' in capsys.readouterr().out
+
+
 def test_instructions_is_a_self_reporting_command() -> None:
     from trw_mcp.server._cli import _SELF_REPORTING_COMMANDS
 

@@ -33,7 +33,14 @@ from trw_memory.testing.daemon_reaper import daemon_env_passthrough, reap_daemon
 from trw_mcp.bootstrap._update_transaction import _is_surface_path
 from trw_mcp.bootstrap._utils import _DATA_DIR
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.timeout(600)]
+# One xdist worker builds the module-scoped project once; under per-test distribution every worker that
+# drew a test rebuilt it (~10 s each).
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.slow,
+    pytest.mark.timeout(600),
+    pytest.mark.xdist_group(name="update_project_determinism"),
+]
 
 _RUNNER = """
 import json, sys

@@ -224,13 +224,25 @@ def _keep_current_store(base_dir: Path, db_path: Path) -> None:
 
 
 def _run_backup_restore(args: argparse.Namespace) -> None:
+    """Restore the store from an archive: verify it, then keep the current store, then swap (INC-127, INC-129).
+
+    The archive is decompressed and checked (gzip, sha256 sidecar, SQLite header and ``integrity_check``, the
+    ``memories`` table) BEFORE the live store is opened or archived, so a refused source leaves it byte-identical
+    and writes no pre-restore archive. The pre-restore copy is taken right before the swap.
+    """
     from trw_memory.exceptions import StoreBusyError
-    from trw_memory.storage._backup_archive import BackupArchiveError, restore_from_archive
+    from trw_memory.storage._backup_archive import BackupArchiveError, verified_archive
+    from trw_memory.storage._snapshot import SnapshotError, restore_from_snapshot
 
     base_dir, db_path = _resolve_base_and_db(args)
     source = str(getattr(args, "restore_from", "")).strip()
     if not source:
         print("backup restore: --from is required ('latest' or a local archive path)", file=sys.stderr)
+        sys.exit(2)
+    if getattr(args, "no_snapshot", False) and not getattr(args, "yes", False):
+        print(
+            "backup restore: --no-snapshot needs --yes (it replaces the store without keeping a copy)", file=sys.stderr
+        )
         sys.exit(2)
 
     remote_key: str | None = None
@@ -253,22 +265,22 @@ def _run_backup_restore(args: argparse.Namespace) -> None:
             sys.exit(1)
         staged = archive_path
     else:
-        archive_path = Path(source).resolve()
+        archive_path = Path(os.path.abspath(source))  # NOT resolved: a symlinked archive is refused, not followed
 
-    if getattr(args, "no_snapshot", False) and not getattr(args, "yes", False):
-        print(
-            "backup restore: --no-snapshot needs --yes (it replaces the store without keeping a copy)", file=sys.stderr
-        )
-        sys.exit(2)
-    _confirm_replace(db_path, args)
-    if getattr(args, "no_snapshot", False):
-        print(
-            f"WARNING: --no-snapshot: NO copy of the current store was kept before replacing {db_path}", file=sys.stderr
-        )
-    elif db_path.exists():
-        _keep_current_store(base_dir, db_path)
     try:
-        restore_from_archive(archive_path, db_path)
+        with verified_archive(archive_path, db_path) as verified:
+            _confirm_replace(db_path, args)
+            if getattr(args, "no_snapshot", False):
+                print(
+                    f"WARNING: --no-snapshot: NO copy of the current store was kept before replacing {db_path}",
+                    file=sys.stderr,
+                )
+            elif db_path.exists():
+                _keep_current_store(base_dir, db_path)
+            try:
+                restore_from_snapshot(db_path.parent, verified, db_path)
+            except SnapshotError as exc:
+                raise BackupArchiveError(f"backup restore failed: {exc}") from exc
     except (BackupArchiveError, StoreBusyError) as exc:
         print(f"Backup restore failed: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -281,6 +293,15 @@ def _run_backup_restore(args: argparse.Namespace) -> None:
         print(f"Restored {db_path} from remote backup {remote_key}")
     else:
         print(f"Restored {db_path} from {archive_path}")
+    from trw_mcp.server._backup_derived_tiers import restore_derived_tiers, restore_store_warm_tiers
+
+    keep = bool(getattr(args, "keep_derived", False))
+    if (store_notice := restore_store_warm_tiers(db_path.parent, keep=keep)) is not None:
+        print(store_notice)
+    for trw_dir in dict.fromkeys((_invoking_trw_dir(), payload_trw_dir(db_path))):
+        notice = restore_derived_tiers(trw_dir, keep=keep)  # INC-128: recall must agree with the restored store
+        if notice is not None:
+            print(notice)
 
 
 def run_backup(args: argparse.Namespace) -> None:
@@ -292,7 +313,7 @@ def run_backup(args: argparse.Namespace) -> None:
         return
     print(
         "Usage: trw-mcp backup create [--db PATH]\n"
-        "       trw-mcp backup restore --from latest|PATH [--yes [--no-snapshot]] [--db PATH]",
+        "       trw-mcp backup restore --from latest|PATH [--yes [--no-snapshot]] [--keep-derived] [--db PATH]",
         file=sys.stderr,
     )
     sys.exit(2)

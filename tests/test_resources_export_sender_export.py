@@ -193,12 +193,11 @@ class TestCollectAnalyticsEdgeCases:
 
         project = _setup_project(tmp_path)
         trw_dir = project / ".trw"
-        _writer.write_yaml(
-            trw_dir / "context" / "analytics-report.yaml",
-            {"aggregate": {"avg_ceremony_score": 72.5, "runs_analyzed": 10}},
-        )
-
-        with patch("trw_mcp.export.compute_reflection_quality", return_value=0.6):
+        fresh = {"aggregate": {"avg_ceremony_score": 72.5, "runs_analyzed": 10}}
+        with (
+            patch("trw_mcp.export.compute_reflection_quality", return_value=0.6),
+            patch("trw_mcp.export.scan_all_runs", return_value=fresh),
+        ):
             result = export_data(project, "analytics")
 
         analytics = result.get("analytics", {})
@@ -212,10 +211,12 @@ class TestCollectAnalyticsEdgeCases:
 
         project = _setup_project(tmp_path)
         trw_dir = project / ".trw"
-        bad = trw_dir / "context" / "analytics-report.yaml"
-        bad.write_text("!!python/object:os.system [ls]", encoding="utf-8")
+        from trw_mcp.exceptions import StateError
 
-        with patch("trw_mcp.export.compute_reflection_quality", return_value=0.6):
+        with (
+            patch("trw_mcp.export.compute_reflection_quality", return_value=0.6),
+            patch("trw_mcp.export.scan_all_runs", side_effect=StateError("unreadable runs root")),
+        ):
             result = export_data(project, "analytics")
 
         assert result["status"] == "ok"

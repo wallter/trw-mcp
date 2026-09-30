@@ -288,8 +288,9 @@ def _run_audit(args: argparse.Namespace) -> None:
     result = run_audit(target, fix=args.fix)
 
     if result.get("status") == "failed":
-        logger.error("audit_failed", op="audit", error=str(result.get("error", "unknown")))
-        sys.exit(1)
+        # audit is self-reporting (its log lines are dropped), so the failure is printed, escaped (INC-121 codex r1/r2).
+        reason = str(result.get("error", "unknown")).encode("unicode_escape").decode()
+        sys.exit(f"Error: audit failed: {reason}")  # printed to stderr, exit 1
 
     if args.format == "json":
         output = json.dumps(result, indent=2, default=str)

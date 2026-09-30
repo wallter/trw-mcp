@@ -889,3 +889,17 @@ def test_probe_that_cannot_measure_logs_no_traceback(
     assert not [e for e in warnings if e.get("exc_info")], "warnings must not carry a traceback"
     probe_warnings = [e for e in warnings if e["event"] == "pipeline_probe_graph_edges_failed"]
     assert len(probe_warnings) == (0 if unreachable_store else 1)
+
+
+def test_the_pipeline_health_command_does_not_tell_you_to_run_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INC-121 (e): `telemetry pipeline-health` printed '... run `trw-mcp telemetry pipeline-health` for detail'."""
+    from trw_mcp.tools._pipeline_health import step_pipeline_health
+
+    monkeypatch.setattr("trw_mcp.tools._pipeline_health.pipeline_status", lambda **_k: "unknown")
+    (tmp_path / ".trw").mkdir(exist_ok=True)
+    for_session_start = step_pipeline_health(tmp_path / ".trw")
+    for_the_command = step_pipeline_health(tmp_path / ".trw", self_hint=False)
+    assert "telemetry pipeline-health" in for_session_start["advisory"]
+    assert for_the_command["advisory"] and "telemetry pipeline-health" not in for_the_command["advisory"]

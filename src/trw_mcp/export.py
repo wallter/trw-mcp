@@ -159,14 +159,13 @@ def _collect_analytics(
     except (OSError, RuntimeError, StateError, ValueError, TypeError, ZeroDivisionError):
         logger.debug("reflection_quality_compute_failed", exc_info=True)
 
-    # Ceremony aggregates (from cached report or fresh scan)
-    report_path = trw_dir / config.context_dir / "analytics-report.yaml"
-    if report_path.exists():
-        try:
-            cached = reader.read_yaml(report_path)
-            analytics["ceremony_aggregates"] = cast("dict[str, object]", cached.get("aggregate", {}))
-        except (OSError, StateError):
-            logger.debug("ceremony_aggregates_load_failed", exc_info=True)
+    # Ceremony aggregates from a fresh scan (INC-121 (c): no stale analytics-report.yaml cache any more)
+    try:
+        aggregate = _collect_runs(target_dir).get("aggregate")
+        if isinstance(aggregate, dict) and aggregate:
+            analytics["ceremony_aggregates"] = cast("dict[str, object]", aggregate)
+    except (OSError, StateError, ValueError):
+        logger.debug("ceremony_aggregates_scan_failed", exc_info=True)
 
     return analytics
 

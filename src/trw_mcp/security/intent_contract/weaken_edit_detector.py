@@ -43,7 +43,13 @@ from pathlib import Path
 from trw_mcp.security.intent_contract._anchors import anchor_matches, claims_matching_path
 from trw_mcp.security.intent_contract._atomic_json import locked
 from trw_mcp.security.intent_contract._control_plane import configured_contract_path
-from trw_mcp.security.intent_contract._git_run import BlobUnreadable, GitCommandError, run_git, run_git_bytes
+from trw_mcp.security.intent_contract._git_run import (
+    BlobUnreadable,
+    GitCommandError,
+    blob_batch,
+    run_git,
+    run_git_bytes,
+)
 from trw_mcp.security.intent_contract._models import Contract, MustNotHappenClaim, WeakenEditFinding
 from trw_mcp.security.intent_contract._revisions import (
     RangeResolutionError,
@@ -261,7 +267,15 @@ def _scan_pair(
 def detect_same_commit_weaken(
     repo_root: Path, commit_sha: str, session_id: str | None = None
 ) -> WeakenEditFinding | None:
-    """The L-2EW1 shape: one commit edits protected code AND weakens its claim."""
+    """The L-2EW1 shape: one commit edits protected code AND weakens its claim.
+
+    Every detector's blob reads share one ``git cat-file --batch`` (see :func:`blob_batch`).
+    """
+    with blob_batch(repo_root):
+        return _detect_same_commit_weaken(repo_root, commit_sha, session_id)
+
+
+def _detect_same_commit_weaken(repo_root: Path, commit_sha: str, session_id: str | None) -> WeakenEditFinding | None:
     try:
         edited = _changed_paths(repo_root, commit_sha)
         if not edited:
@@ -278,6 +292,11 @@ def detect_same_commit_weaken(
 
 def detect_staged_weaken(repo_root: Path, session_id: str | None = None) -> WeakenEditFinding | None:
     """Pre-commit-stage variant: HEAD vs the currently-staged tree."""
+    with blob_batch(repo_root):
+        return _detect_staged_weaken(repo_root, session_id)
+
+
+def _detect_staged_weaken(repo_root: Path, session_id: str | None) -> WeakenEditFinding | None:
     try:
         staged = tuple(p for p in run_git(repo_root, "diff", "--cached", "--name-only", "-z").split("\0") if p)
         staged_diff = run_git_bytes(repo_root, "diff", "--cached")
@@ -342,6 +361,13 @@ def detect_range_weaken_then_edit(
     repo_root: Path, base_sha: str | None, head_sha: str, session_id: str | None = None
 ) -> list[WeakenEditFinding]:
     """Split-commit escape: A weakens, B edits the anchors later in the range."""
+    with blob_batch(repo_root):
+        return _detect_range_weaken_then_edit(repo_root, base_sha, head_sha, session_id)
+
+
+def _detect_range_weaken_then_edit(
+    repo_root: Path, base_sha: str | None, head_sha: str, session_id: str | None
+) -> list[WeakenEditFinding]:
     try:
         pairs = enumerate_revision_pairs(repo_root, base_sha, head_sha)
     except RangeResolutionError as exc:

@@ -111,8 +111,9 @@ def run_prd_validate(
     # QUAL-042-FR03: Path containment --- prevent reading files outside project.
     project_root = _req.resolve_project_root()
     if not path.is_relative_to(project_root):
+        # INC-121 (f): name the root and the fix; containment stays first, so nothing outside is probed for existence.
         raise StateError(
-            f"PRD path escapes project root: {path}",
+            f"PRD path is outside the project root {project_root}: {path} -- pass a PRD path inside the project",
             path=str(path),
         )
 

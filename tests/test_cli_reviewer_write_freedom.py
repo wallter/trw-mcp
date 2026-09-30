@@ -223,6 +223,13 @@ def _setup_feedback_outbox(project_root: Path, _home: Path, _monkeypatch: pytest
     return []
 
 
+def _setup_instruction_carrier(project_root: Path, _home: Path, _monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    (project_root / ".trw").mkdir(parents=True, exist_ok=True)
+    # No tool mentions: the bounded lanes expose different surfaces, and the census is about writes, not the verdict.
+    (project_root / "AGENTS.md").write_text("Project notes for agents.\n", encoding="utf-8")
+    return []
+
+
 def _setup_runs_root(project_root: Path, _home: Path, _monkeypatch: pytest.MonkeyPatch) -> list[str]:
     (project_root / ".trw" / "runs").mkdir(parents=True, exist_ok=True)
     return []
@@ -235,7 +242,8 @@ _PRD_AFTER = str(_GOLDEN_PRDS / "tier_approved.md")
 #: substituted with setup's return value (index 0) when present.
 CASES: list[Case] = [
     Case("config-reference", ["config-reference"]),
-    Case("check-instructions", ["check-instructions", "."]),
+    # INC-126 (c): with nothing to check outside a project the verb refuses (exit 2), so give it a real carrier.
+    Case("check-instructions", ["check-instructions", "."], setup=_setup_instruction_carrier),
     Case("tendencies", ["tendencies"]),
     Case("local status", ["local", "status", "--run-path", "{0}"], setup=_setup_local_run),
     # "local recall" is deliberately NOT a case here: it needs a real,
@@ -471,3 +479,4 @@ def test_hook_flags_and_doctor_and_memory_migrate_preview_are_not_in_the_census(
     assert "doctor" not in allowed
     assert "memory migrate" not in allowed
     assert "feedback flush" not in allowed  # it resends and moves records: a write and a dial
+    assert "prd validate" not in allowed  # INC-121 (f): caches its result and records ceremony progress

@@ -53,21 +53,32 @@ main(["serve", "http"])
 """
 
 
+#: Cache locations that would override the keyword-only daemon's own empty hub cache.
+_OTHER_MODEL_CACHES = frozenset({"HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"})
+
+
 @contextmanager
 def running_daemon(user_dir: Path, *, keyword_only: bool = True, hash_embedder: bool = False) -> Iterator[DaemonPaths]:
     """Start a daemon whose files live under *user_dir* and yield its paths.
 
-    *keyword_only* (the test default) points the daemon at an empty local model
-    directory; a benchmark passes ``False`` so it embeds as a user's daemon does.
-    *hash_embedder* gives it a deterministic encoder instead of a model.
+    *keyword_only* (the test default) points the daemon at a model id its own, empty
+    hub cache does not hold, so the cache probe refuses it before any model runtime is
+    imported (EMBED-PROBE-FAST-PATH; an empty model directory cost each session daemon a
+    ~4 s torch import on its first embed); a benchmark passes ``False`` so it embeds as a
+    user's daemon does. *hash_embedder* gives it a deterministic encoder instead of a model.
     """
     keyword_only = keyword_only and not hash_embedder
-    model_dir = user_dir / "unavailable-local-model"
-    model_dir.mkdir(parents=True, exist_ok=True)
+    hub_cache = user_dir / "empty-hub-cache"
+    hub_cache.mkdir(parents=True, exist_ok=True)
+    inherited = {k: v for k, v in os.environ.items() if not keyword_only or k not in _OTHER_MODEL_CACHES}
     env = {
-        **os.environ,
+        **inherited,
         "TRW_USER_DIR": str(user_dir),
-        **({"MEMORY_EMBEDDING_MODEL": str(model_dir)} if keyword_only else {}),
+        **(
+            {"MEMORY_EMBEDDING_MODEL": "trw-test/keyword-only-no-model", "HF_HOME": str(hub_cache)}
+            if keyword_only
+            else {}
+        ),
         # One daemon serves every test in a worker, so its per-session write limiter
         # would carry state across tests; in-process, each test had a fresh store.
         # trw-memory tests the limiter itself.

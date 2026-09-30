@@ -22,7 +22,7 @@ from trw_mcp.security.intent_contract._control_plane import (
     configured_contract_path,
     control_plane_findings,
 )
-from trw_mcp.security.intent_contract._git_run import BlobUnreadable, GitCommandError, read_blob, run_git
+from trw_mcp.security.intent_contract._git_run import BlobUnreadable, GitCommandError, blob_batch, read_blob, run_git
 from trw_mcp.security.intent_contract._models import Contract, SignedCommitViolation, WeakenedClaim
 from trw_mcp.security.intent_contract._revisions import (
     RangeResolutionError,
@@ -153,8 +153,13 @@ def check_commit_range(
 
     An unresolvable range (pruned/rewritten base) yields a single
     ``unresolvable_range`` violation — the push is rejected rather than silently
-    passing an unverifiable baseline.
+    passing an unverifiable baseline. The walk's blob reads share one ``git cat-file --batch``.
     """
+    with blob_batch(repo_root):
+        return _check_commit_range(repo_root, base_sha, head_sha)
+
+
+def _check_commit_range(repo_root: Path, base_sha: str | None, head_sha: str) -> list[SignedCommitViolation]:
     try:
         pairs = enumerate_revision_pairs(repo_root, base_sha, head_sha)
     except RangeResolutionError as exc:

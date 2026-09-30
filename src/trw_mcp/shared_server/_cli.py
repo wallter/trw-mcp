@@ -40,7 +40,7 @@ def add_shared_subcommands(subparsers: Any) -> None:
     )
     swap.add_argument("--expect-version", default=None, help="refuse unless the interpreter runs this version")
     status = subparsers.add_parser("status", help="shared-server status: `trw-mcp status --shared`")
-    status.add_argument("--shared", action="store_true", required=True)
+    status.add_argument("--shared", action="store_true", required=True, help="Required: report the shared-server envs")
     env = subparsers.add_parser("env", help="per-env memory dirs for shared servers")
     env_sub = env.add_subparsers(dest="env_command", required=True)
     create = env_sub.add_parser("create", help="create an env's memory dir (grants copied, store empty)")
@@ -221,10 +221,14 @@ def run_env(args: argparse.Namespace) -> None:
         return
 
     def act() -> None:
+        from trw_mcp.shared_server._ops import _memory_dir
+
+        existed = args.name != "stable" and _memory_dir(paths, args.name).is_dir()
         created = ensure_env(paths, args.name, seed_from=args.seed_from)
         # A (re)created env forgets the serving environment recorded for its previous life; swap never clears it.
         serving_env_path(paths, args.name).unlink(missing_ok=True)
-        print(f"created {created}")
+        # INC-126 (e): an env that was already there is not "created" again.
+        print(f"exists {created} (grants refreshed)" if existed else f"created {created}")
 
     _refusing(act)
 

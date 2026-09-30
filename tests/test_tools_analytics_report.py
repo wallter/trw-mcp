@@ -74,7 +74,7 @@ class TestAnalyticsIntegration:
         writer: FileStateWriter,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """T-20: scan_all_runs writes cache to .trw/context/analytics-report.yaml."""
+        """T-20 (INC-121 (c)): scan_all_runs is a read -- it writes no analytics-report.yaml cache."""
         trw_dir = tmp_path / ".trw"
         (trw_dir / "context").mkdir(parents=True)
 
@@ -93,12 +93,7 @@ class TestAnalyticsIntegration:
         scan_all_runs()
 
         cache_path = trw_dir / "context" / "analytics-report.yaml"
-        assert cache_path.exists(), "Cache file not written"
-
-        from trw_mcp.state.persistence import FileStateReader
-
-        cached = FileStateReader().read_yaml(cache_path)
-        assert cached["runs_scanned"] == 1
+        assert not cache_path.exists(), "scan_all_runs wrote a cache as a side effect"
 
     def test_since_malformed_reports_parse_error(
         self,

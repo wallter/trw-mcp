@@ -210,6 +210,7 @@ def test_a_nested_subdir_of_a_non_git_project_walks_up_to_it(tmp_path: Path, cwd
     nested = project / "a" / "b"
     nested.mkdir(parents=True)
     cwd_env.chdir(nested)
+    cwd_env.setenv("HOME", str(tmp_path))  # the walk runs only beneath $HOME
     cwd_env.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
 
     assert trw_project_root() == project.resolve()
@@ -228,3 +229,102 @@ def test_the_walk_up_never_climbs_above_home(tmp_path: Path, cwd_env: pytest.Mon
     cwd_env.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
 
     assert trw_project_root() is None
+
+
+def _walk_from(start: Path, cwd_env: pytest.MonkeyPatch, *, home: str | None, ceiling: Path) -> Path | None:
+    from trw_mcp.shared_server._project_root import trw_project_root
+
+    if home is None:
+        cwd_env.delenv("HOME", raising=False)
+    else:
+        cwd_env.setenv("HOME", home)
+    cwd_env.chdir(start)
+    cwd_env.setenv("GIT_CEILING_DIRECTORIES", str(ceiling))
+    return trw_project_root()
+
+
+def test_a_start_outside_home_never_walks(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    """Codex P1 (W5): HOME never appears among an outside-HOME start's parents, so the stop never fired."""
+    _trw_project(tmp_path / "srv", git=False)  # a project above an outside-HOME start
+    start = tmp_path / "srv" / "team" / "sub"
+    start.mkdir(parents=True)
+    (tmp_path / "home" / "user").mkdir(parents=True)
+
+    assert _walk_from(start, cwd_env, home=str(tmp_path / "home" / "user"), ceiling=tmp_path) is None
+
+
+def test_a_start_outside_home_still_finds_itself(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    project = _trw_project(tmp_path / "srv" / "proj", git=False)
+    (tmp_path / "home" / "user").mkdir(parents=True)
+
+    assert _walk_from(project, cwd_env, home=str(tmp_path / "home" / "user"), ceiling=tmp_path) == project.resolve()
+
+
+@pytest.mark.parametrize("home", [None, "", "relative/home"])
+def test_an_unusable_home_disables_the_walk(tmp_path: Path, cwd_env: pytest.MonkeyPatch, home: str | None) -> None:
+    project = _trw_project(tmp_path / "proj", git=False)
+    nested = project / "a"
+    nested.mkdir()
+
+    assert _walk_from(nested, cwd_env, home=home, ceiling=tmp_path) is None
+    assert _walk_from(project, cwd_env, home=home, ceiling=tmp_path) == project.resolve()
+
+
+def test_home_itself_can_be_the_project(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    home = _trw_project(tmp_path / "home" / "user", git=False)
+    work = home / "work"
+    work.mkdir()
+
+    assert _walk_from(work, cwd_env, home=str(home), ceiling=tmp_path) == home.resolve()
+
+
+def test_the_nearest_of_nested_projects_wins(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    outer = _trw_project(tmp_path / "home" / "outer", git=False)
+    inner = _trw_project(outer / "inner", git=False)
+    start = inner / "src"
+    start.mkdir()
+
+    assert _walk_from(start, cwd_env, home=str(tmp_path / "home"), ceiling=tmp_path) == inner.resolve()
+
+
+def test_a_symlinked_trw_dir_is_not_a_project(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    """Codex P1 (W5): parent/.trw -> another project's .trw made `parent` a project with no .trw of its own."""
+    other = _trw_project(tmp_path / "home" / "other", git=False)
+    parent = tmp_path / "home" / "parent"
+    start = parent / "sub"
+    start.mkdir(parents=True)
+    (parent / ".trw").symlink_to(other / ".trw", target_is_directory=True)
+
+    assert _walk_from(start, cwd_env, home=str(tmp_path / "home"), ceiling=tmp_path) is None
+    assert _walk_from(parent, cwd_env, home=str(tmp_path / "home"), ceiling=tmp_path) is None
+
+
+def test_malformed_markers_are_not_a_project(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    as_file = home / "as-file"
+    as_file.mkdir(parents=True)
+    (as_file / ".trw").write_text("not a dir\n", encoding="utf-8")
+    config_dir = home / "config-dir"
+    (config_dir / ".trw" / "config.yaml").mkdir(parents=True)
+
+    assert _walk_from(as_file, cwd_env, home=str(home), ceiling=tmp_path) is None
+    assert _walk_from(config_dir, cwd_env, home=str(home), ceiling=tmp_path) is None
+
+
+def test_the_proxy_and_the_cli_agree_from_non_git_subdirs(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
+    from trw_mcp.shared_server import _cli, _proxy
+
+    home = tmp_path / "home"
+    project = _trw_project(home / "proj", git=False)
+    (project / "a").mkdir()
+    (project / "b" / "c").mkdir(parents=True)
+    cwd_env.setenv("HOME", str(home))
+    cwd_env.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    cwd_env.chdir(project / "a")
+    cli_paths, _config, cli_root = _cli._paths()
+    cwd_env.chdir(project / "b" / "c")
+    proxy_paths, proxy_root = _proxy.proxy_paths()
+
+    assert proxy_root == cli_root == project.resolve()
+    assert proxy_paths.record("canary") == cli_paths.record("canary")
+    assert not (project / "a" / ".trw").exists() and not (project / "b" / "c" / ".trw").exists()

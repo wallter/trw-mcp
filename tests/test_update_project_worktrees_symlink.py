@@ -21,7 +21,13 @@ from trw_memory.testing.daemon_reaper import daemon_env_passthrough, reap_daemon
 
 from tests._fs_hazards import assert_user_bytes_preserved, snapshot_user_bytes
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow, pytest.mark.timeout(600)]
+# One xdist worker builds the module-scoped base project once instead of one per worker that drew a test.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.slow,
+    pytest.mark.timeout(600),
+    pytest.mark.xdist_group(name="update_project_worktrees_symlink"),
+]
 
 _RUNNER = """
 import json, sys

@@ -185,7 +185,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         dest="global_config",
         action="store_true",
         help=(
-            "Also remove TRW's entry from user-global client configs (e.g. mcpServers.trw in "
+            "Also remove TRW's entry from user-global client configs (e.g. antigravity-cli's mcpServers.trw in "
             "~/.gemini/config/mcp_config.json). That entry is shared by every project on this machine, "
             "so without this flag uninstall leaves it in place and only reports it"
         ),

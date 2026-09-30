@@ -220,7 +220,7 @@ def register_learning_tools(server: FastMCP) -> None:
 
         options (unknown keys rejected): topic, min_impact, as_of,
         include_superseded, include_tiers, graph_depth, graph_edge_types,
-        graph_limit, record_type.
+        graph_limit, record_type. A supersedes link writes no graph edge.
 
         See Also: trw_learn.
         """

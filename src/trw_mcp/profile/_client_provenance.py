@@ -28,9 +28,19 @@ def client_profile_provenance(config: TRWConfig) -> dict[str, object]:
     valid = ", ".join(sorted(_PROFILES))
     platforms = list(config.target_platforms or [])
     profile = config.client_profile
+    # INC-126 (a): the field has a default (['claude-code']), so a non-empty list is not evidence of a config file.
+    # Only a value the loaded settings actually set is named as coming from .trw/config.yaml (or the env var).
+    configured = "target_platforms" in config.model_fields_set and bool(platforms)
+    from_env = configured and bool(os.environ.get("TRW_TARGET_PLATFORMS", "").strip())
     out: dict[str, object] = {
         "id": profile.client_id,
-        "source": "target_platforms[0] in .trw/config.yaml" if platforms else "default: no target_platforms set",
+        "source": (
+            "TRW_TARGET_PLATFORMS[0] (environment)"
+            if from_env
+            else "target_platforms[0] in .trw/config.yaml"
+            if configured
+            else "default: no target_platforms set"
+        ),
         "ceremony_mode": profile.ceremony_mode,
     }
     notes: list[str] = []

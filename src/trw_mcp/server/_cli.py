@@ -167,7 +167,28 @@ def _register_thread_dump_signal(dump_dir: Path | None = None) -> bool:
 
 
 #: Subcommands whose handlers report every failure on stdout/stderr as plain text, so plain output shows no logs.
-_SELF_REPORTING_COMMANDS = frozenset({"local", "doctor", "init-project", "update-project", "instructions"})
+# INC-121 (d): audit ended with a raw sqlite_fallback_to_yaml JSON line (an escaped traceback) when the daemon was off;
+# the YAML fallback is automatic and the report stays valid, so the verb reports for itself like the others here.
+_SELF_REPORTING_COMMANDS = frozenset({"local", "doctor", "init-project", "update-project", "instructions", "audit"})
+
+
+def _parse_cli_args(parser: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
+    """``parse_args``, but an unrecognized argument is reported by the deepest sub-verb it reached (INC-121 (g)).
+
+    argparse reports leftovers from the ROOT parser, so ``trw-mcp feedback list --bogus`` printed the ~1 KB root
+    usage; the same exit 2, with the usage of the verb the caller was actually using.
+    """
+    args, extras = parser.parse_known_args(argv)
+    if not extras:
+        return args
+    target = parser
+    for token in argv:
+        actions = [a for a in target._actions if isinstance(a, argparse._SubParsersAction)]
+        chosen = next((a.choices[token] for a in actions if token in a.choices), None)
+        if chosen is not None:
+            target = chosen
+    target.error(f"unrecognized arguments: {' '.join(extras)}")
+    raise AssertionError("unreachable: ArgumentParser.error exits")
 
 
 def main() -> None:
@@ -189,7 +210,7 @@ def main() -> None:
     )
 
     parser = _build_arg_parser()
-    args = parser.parse_args()
+    args = _parse_cli_args(parser, _sys.argv[1:])
 
     # PRD-CORE-305-FR05 sol round-2 P1: the bounded-lane guard runs BEFORE
     # ANYTHING else touches disk -- including logging setup below, which

@@ -74,19 +74,23 @@ def add_telemetry_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     classify.add_argument("--path", required=True, help="Repository-relative or absolute path to classify")
 
     surface_diff = verbs.add_parser("surface-diff", help="Diff two recorded surface snapshots (read-only)")
-    surface_diff.add_argument("--snapshot-id-a", required=True)
-    surface_diff.add_argument("--snapshot-id-b", required=True)
+    surface_diff.add_argument("--snapshot-id-a", required=True, help="The first surface snapshot to compare")
+    surface_diff.add_argument("--snapshot-id-b", required=True, help="The second surface snapshot to compare")
 
     security = verbs.add_parser("security", help="MCP security/trust-boundary status (read-only)")
 
     channel_stats = verbs.add_parser("channel-stats", help="Per-channel push->outcome correlation (read-only)")
-    channel_stats.add_argument("--window-hours", type=_positive_int, default=1)
-    channel_stats.add_argument("--repo-root", type=_existing_dir, default=None)
+    channel_stats.add_argument(
+        "--window-hours", type=_positive_int, default=1, help="How many recent hours to count (default 1)"
+    )
+    channel_stats.add_argument(
+        "--repo-root", type=_existing_dir, default=None, help="Repository to read (default: this project)"
+    )
 
     health = verbs.add_parser("pipeline-health", help="Report the four compounding-pipeline health signals")
 
     for parser in (events, classify, surface_diff, security, channel_stats, health):
-        parser.add_argument("--json", dest="as_json", action="store_true")
+        parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
 
 
 def _emit(document: dict[str, Any], *, as_json: bool, exit_code: int) -> None:
@@ -171,7 +175,7 @@ def safe_pipeline_health() -> dict[str, Any]:
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.tools._pipeline_health import step_pipeline_health
 
-        return step_pipeline_health(resolve_trw_dir())
+        return step_pipeline_health(resolve_trw_dir(), self_hint=False)
     except Exception as exc:  # justified: fail-open, this must never crash a caller
         logger.warning("pipeline_health_cli_failed", error=str(exc))
         return {

@@ -7,6 +7,8 @@ gave one project two roots, and every canary swap went to a record no server use
 
 from __future__ import annotations
 
+import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -18,8 +20,9 @@ def trw_project_root() -> Path | None:
 
     ``resolve_project_root`` (install binding > TRW_PROJECT_ROOT > CWD), mapped to its git toplevel: a
     subdirectory resolves to its project and a linked worktree to its OWN toplevel. With no usable git (absent,
-    hung, or not a repository) the parents are walked to the first TRW project, stopping at $HOME or the root. It must carry ``<trw_dir>/config.yaml`` (init-project
-    always writes it; a stray ``.trw`` from a hook leak does not count), read with the root's own config.
+    hung, or not a repository) the parents of a start under $HOME are walked to the first TRW project, never above
+    $HOME. A project carries ``<trw_dir>/config.yaml`` in a real (unlinked) directory: init-project always writes
+    it, and a stray ``.trw`` from a hook leak does not count. It is read with the root's own config.
     """
     from trw_mcp.state._paths import resolve_project_root
 
@@ -37,21 +40,41 @@ def trw_project_root() -> Path | None:
         toplevel = ""
     if toplevel:
         return _trw_project_at(Path(toplevel).resolve())
-    # No git (INC-126 e): walk parents to the FIRST TRW project, never above $HOME nor past the filesystem root.
-    home = Path.home().resolve()
+    # No git (INC-126 e): walk parents to the FIRST TRW project, only from a start under a usable (absolute) $HOME
+    # and never above it. Outside HOME, or with no usable HOME, only the start itself can be the project.
+    home = _walk_ceiling()
+    if home is None or not start.is_relative_to(home):
+        return _trw_project_at(start)
     for candidate in (start, *start.parents):
         if (found := _trw_project_at(candidate)) is not None:
             return found
-        if candidate == home or candidate.parent == candidate:
+        if candidate == home:
             break
     return None
 
 
+def _walk_ceiling() -> Path | None:
+    """The resolved $HOME the walk stops at, or ``None`` (no walk) when HOME is unset, empty or relative."""
+    raw = os.environ.get("HOME", "")
+    return Path(raw).resolve() if raw and os.path.isabs(raw) else None
+
+
+def _real_dir(path: Path) -> bool:
+    """A directory that is not a symlink (a linked ``.trw`` would borrow another project's config and records)."""
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)
+    except OSError:  # trw-fail-silent-allow: absent or unreadable is not a project marker
+        return False
+
+
 def _trw_project_at(root: Path) -> Path | None:
-    """*root* when it carries ``<trw_dir>/config.yaml`` (read with the root's own config), else ``None``."""
+    """*root* when it carries ``<trw_dir>/config.yaml`` in a real directory (read with the root's own config)."""
     from trw_mcp.models.config import get_config
     from trw_mcp.state._project_root_binding import project_bound
 
+    default_dir = root / ".trw"  # the loader reads <root>/.trw/config.yaml: refuse a link BEFORE loading through it
+    if os.path.lexists(default_dir) and not _real_dir(default_dir):
+        return None
     with project_bound(root):
-        marker = root / str(get_config().trw_dir) / "config.yaml"
-    return root if marker.is_file() else None
+        trw_dir = root / str(get_config().trw_dir)
+    return root if _real_dir(trw_dir) and (trw_dir / "config.yaml").is_file() else None

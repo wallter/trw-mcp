@@ -141,6 +141,7 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
 
 def run_formation(args: argparse.Namespace) -> None:
     """Dispatch one formation verb. Exits non-zero on every refusal."""
+    from trw_mcp.exceptions import StateError
     from trw_mcp.formation import FormationError
 
     command = getattr(args, "formation_command", None)
@@ -177,6 +178,9 @@ def run_formation(args: argparse.Namespace) -> None:
             sys.exit(2)
     except FormationError as exc:
         print(f"formation: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except StateError as exc:  # INC-121 (a): no pinned run is a refusal with a remedy, not a traceback
+        print(f"formation: {exc}; pin a run (trw_init / `trw-mcp run adopt`) or pass --run <run dir>", file=sys.stderr)
         sys.exit(1)
     sys.exit(0)
 

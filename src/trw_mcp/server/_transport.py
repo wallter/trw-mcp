@@ -38,4 +38,7 @@ def resolve_and_run_transport(
     # takes over and the client's first frame decides what happens next.
     emit_boot_phase("transport_ready")
     start_parent_watch()
-    app.run()
+    # show_banner=False: fastmcp's banner prints a logo and "Update available" notice to stderr and checks PyPI for a
+    # newer fastmcp on every start. A stdio server started by a client has no terminal to read it and no reason to
+    # make a network call.
+    app.run(show_banner=False)

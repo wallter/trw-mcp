@@ -39,34 +39,42 @@ def add_experiment_subcommands(subparsers: argparse._SubParsersAction[argparse.A
     run = probe_verbs.add_parser("run", help="Run a sandboxed probe; gated by TRW_PROBE_ENABLED")
     run.add_argument("--hypothesis", required=True, help="The claim the probe checks")
     run.add_argument("--command", dest="probe_argv", required=True, help="The command to run, as one shell string")
-    run.add_argument("--timeout-s", type=int, default=30)
-    run.add_argument("--memory-mb", type=int, default=256)
-    run.add_argument("--allow-network", action="store_true")
-    run.add_argument("--hypothesis-id", default=None)
+    run.add_argument("--timeout-s", type=int, default=30, help="Time limit for the probe, in seconds (default 30)")
+    run.add_argument(
+        "--memory-mb", type=int, default=256, help="Memory limit passed to the sandbox, in MB (default 256)"
+    )
+    run.add_argument("--allow-network", action="store_true", help="Let the probe use the network (off by default)")
+    run.add_argument("--hypothesis-id", default=None, help="Optional id recorded with the probe result")
     budget = probe_verbs.add_parser("budget", help="Report a run's probe budget usage; read-only")
     for parser in (run, budget):
-        parser.add_argument("--run-id", default="unknown")
-        parser.add_argument("--json", dest="as_json", action="store_true")
+        parser.add_argument("--run-id", default="unknown", help="The run whose probe budget this uses or reports")
+        parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
 
-    meta = subparsers.add_parser("meta-tune", help="SAFE-001 promotion and rollback; Linux only")
+    meta = subparsers.add_parser(
+        "meta-tune", help="SAFE-001 promotion and rollback; Linux only (elsewhere the subsystem is disabled)"
+    )
     meta_verbs = meta.add_subparsers(dest="meta_tune_command")
     propose = meta_verbs.add_parser("propose", help="Promote a candidate through sandbox and review")
-    propose.add_argument("--target-path", required=True)
+    propose.add_argument("--target-path", required=True, help="The file the candidate would replace")
     content = propose.add_mutually_exclusive_group(required=True)
-    content.add_argument("--candidate-content")
+    content.add_argument("--candidate-content", help="The candidate content, inline")
     content.add_argument("--candidate-file", help="Read the candidate content from this file")
-    propose.add_argument("--proposer-id", required=True)
+    propose.add_argument("--proposer-id", required=True, help="Who proposes the change (recorded in the audit log)")
     propose.add_argument("--sandbox-command", required=True, help="The replay command, as one shell string")
-    propose.add_argument("--reviewer-id", default=None)
+    propose.add_argument("--reviewer-id", default=None, help="Who reviewed it (recorded in the audit log)")
     propose.add_argument("--approval-ts", default=None, help="ISO 8601 timestamp")
-    propose.add_argument("--declared-metric-delta", type=float, default=None)
-    propose.add_argument("--promotion-session-id", default=None)
+    propose.add_argument(
+        "--declared-metric-delta", type=float, default=None, help="The metric change the proposer claims (recorded)"
+    )
+    propose.add_argument("--promotion-session-id", default=None, help="The session the promotion is attributed to")
     rollback = meta_verbs.add_parser("rollback", help="Restore a promoted proposal's prior content")
-    rollback.add_argument("--proposal-id", required=True)
-    rollback.add_argument("--audit-log-path", default=None)
+    rollback.add_argument("--proposal-id", required=True, help="The promoted proposal to restore")
+    rollback.add_argument(
+        "--audit-log-path", default=None, help="Write the audit record here instead of the configured path"
+    )
     for parser in (propose, rollback):
-        parser.add_argument("--state-dir", default=None)
-        parser.add_argument("--json", dest="as_json", action="store_true")
+        parser.add_argument("--state-dir", default=None, help="Where meta-tune keeps its state (default: configured)")
+        parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
 
 
 def _emit(document: dict[str, Any], *, as_json: bool, failed: bool) -> None:

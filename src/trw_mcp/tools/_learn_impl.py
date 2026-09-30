@@ -22,11 +22,14 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 # Re-exported so existing test imports continue to work.
 from trw_mcp.tools._learn_anchors import resolve_learn_anchors
 from trw_mcp.tools._learn_journal_wiring import (
+    attach_response_notes,
     capture_journal_payload,
     consume_journal,
     dead_letter_refused,
+    failed_store_result,
     journal_accepted,
-    store_bound_text,
+    masked_store_bound_text,
+    store_with_journal_truth,
 )
 from trw_mcp.tools._learn_preflight import resolve_learn_deps, run_accept_gates
 from trw_mcp.tools._learn_side_effects import (
@@ -203,7 +206,7 @@ def execute_learn(
     # only on a store error, which the replay retries).
     # BLOCK is decided on the ORIGINAL payload (every field, nested ones included); the journal then
     # holds exactly the store-bound (masked) text. See ``store_bound_text``.
-    pii_rejection = store_bound_text(_journal_payload)
+    pii_rejection, masking_note = masked_store_bound_text(_journal_payload)
     if pii_rejection is not None:
         return pii_rejection
     summary, detail = str(_journal_payload["summary"]), str(_journal_payload["detail"])
@@ -352,10 +355,8 @@ def execute_learn(
         "session_id": session_id,
         "scope": scope,  # PRD-CORE-185 FR07: write-tier override
     }
-    if _store_accepts_positional_trw_dir(deps.store):
-        store_result = deps.store(trw_dir, **store_kwargs)
-    else:
-        store_result = deps.store(trw_dir=trw_dir, **store_kwargs)
+    journaled = config.learn_journal_enabled and not _from_journal
+    store_result = store_with_journal_truth(deps.store, trw_dir, store_kwargs, learning_id, journaled=journaled)
     advance("poststore")
     store_result_dict = store_result if isinstance(store_result, dict) else {}
     if store_result_dict.get("status") == "quarantined":
@@ -398,12 +399,7 @@ def execute_learn(
             learning_id=learning_id,
             error=str(store_result_dict.get("error", "")),
         )
-        return {
-            "learning_id": learning_id,
-            "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
-            "status": str(store_result_dict["status"]),
-            "distribution_warning": "",
-        }
+        return failed_store_result(learning_id, store_result_dict)
     # The SQLite row is now durable (source of truth per D8). The write-ahead
     # journal has done its job — retire the pending record so it is not replayed.
     consume_journal(trw_dir, config, learning_id)
@@ -470,6 +466,8 @@ def execute_learn(
         None,
         incomplete,
     )
+
+    attach_response_notes(cast("dict[str, Any]", result_dict), masking_note, store_result_dict)
 
     # PRD-CORE-244-FR05: offer a validity window for a state-asserting learning.
     # This runs AFTER a successful store and does NOT touch the ``expires`` value

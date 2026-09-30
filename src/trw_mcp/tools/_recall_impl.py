@@ -35,6 +35,7 @@ from trw_mcp.state.recall_context import (
 )
 from trw_mcp.state.surface_tracking import log_surface_event
 from trw_mcp.tools._recall_gate import learnings_injection_allowed
+from trw_mcp.tools._recall_retrieval_note import retrieval_note
 
 logger = structlog.get_logger(__name__)
 
@@ -209,6 +210,9 @@ def execute_recall(
         recall_result["topic_filter_warning"] = topic_filter_warning
     if remote_recall_status is not None:
         recall_result["remote_recall"] = remote_recall_status
+    retrieval = retrieval_note(trw_dir, query)
+    if retrieval is not None:
+        recall_result["retrieval_note"] = retrieval
     if store_error:
         # An unopenable store is not an empty one: say so, or zero results read as "nothing learned".
         recall_result["store_unavailable"] = store_error
@@ -288,7 +292,14 @@ def recall_by_ids(
         "total_matches": len(rows),
     }
     if missing:
+        # INC-119 b: "missing" also covers a row the requested status filtered out. FR01 keeps a refused row
+        # indistinguishable from an absent one, so say what the list means instead of confirming anything.
         result["missing_ids"] = missing
+        result["ids_note"] = (
+            f"missing_ids: no row with status={status or 'active'} was found for these ids (they may not exist, or may be "
+            "closed, expired, superseded or in another namespace). To look for a resolved or obsolete learning pass "
+            "status='resolved' or status='obsolete'."
+        )
     return result
 
 
