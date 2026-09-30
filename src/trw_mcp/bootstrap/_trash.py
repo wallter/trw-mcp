@@ -130,10 +130,11 @@ def _sha256_stable(fd: int, expected: str, cfd: int) -> bool:
     return same and still_named and total == after.st_size and digest.hexdigest() == expected.lower()
 
 
-def _write_meta(cfd: int, rel: str, key: str | None, captured_at: str) -> None:
+def _write_meta(cfd: int, rel: str, key: str | None, captured_at: str, sha256: str) -> None:
     fd = os.open("meta.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=cfd)
     try:
-        payload = {"v": 1, "path": rel, "key": key, "captured_at": captured_at}
+        # ``sha256`` is the hash TRW recorded for these bytes; an uninstall off macOS re-proves it before deleting.
+        payload = {"v": 1, "path": rel, "key": key, "captured_at": captured_at, "sha256": sha256}
         os.write(fd, json.dumps(payload).encode("utf-8"))
         os.fsync(fd)
     finally:
@@ -221,7 +222,7 @@ def _capture(
     folder, cfd = _make_capture_dir(tfd, time.strftime("%Y%m%dT%H%M%SZ", now))
     fds.append(cfd)
     data_path = trash_dir(root) / folder / "data"
-    _write_meta(cfd, rel, key, captured_at)
+    _write_meta(cfd, rel, key, captured_at, expected_sha256.lower())
     try:
         os.rename(name, "data", src_dir_fd=pfd, dst_dir_fd=cfd)
     except FileNotFoundError:

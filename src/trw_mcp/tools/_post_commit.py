@@ -25,12 +25,13 @@ depends on.
 
 So this module is now a controller around those two steps:
 
-* **one worker at a time per store**, via an ``O_CREAT | O_EXCL`` lock held in the
+* **one worker at a time per store**, via an ``fcntl.flock`` lock held in the
   trw directory the sweep will actually open (not merely the repository — they
   can differ, and locking the wrong one leaves two workers on one database);
-* **crash recovery**, by recording the owning PID and reclaiming a lock whose
-  owner is gone. A LIVE owner is never evicted on age: the owner's own budget is
-  what bounds how long it may hold the lock;
+* **crash recovery**, by the kernel: it drops an ``flock`` when its owner dies, so
+  the next arrival simply takes it (no liveness probe, no reclaim-by-unlink). A
+  LIVE owner is never evicted on age: the owner's own budget is what bounds how
+  long it may hold the lock;
 * **coalescing without loss**, via a pending marker. An arrival that cannot get
   the lock records itself; the owner consumes the marker and runs exactly ONE
   follow-up pass. Arrivals during that follow-up leave the marker for the next
@@ -60,6 +61,11 @@ import structlog
 
 from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 
+try:
+    import fcntl
+except ImportError:  # Windows: no flock, so the sweep runs unlocked and the receipt says so
+    fcntl = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -85,12 +91,6 @@ PENDING_REL_PATH = Path("runtime") / "post-commit-pending.json"
 HEAD_ENV_VAR = "TRW_POST_COMMIT_HEAD"
 BUDGET_ENV_VAR = "TRW_POST_COMMIT_BUDGET_SECONDS"
 _DEFAULT_BUDGET_SECONDS = 300.0
-
-#: A lock file whose record cannot be read is reclaimed only once it is older
-#: than this. The gap between ``O_CREAT | O_EXCL`` and the record write is a
-#: single ``write``; without a grace period a second arrival could read that
-#: momentary empty file as abandoned and both would own the lock.
-_UNREADABLE_LOCK_GRACE_SECONDS = 30.0
 
 
 class _SweepDeadline(BaseException):
@@ -194,84 +194,57 @@ def _sweep_trw_dir(repo_root: Path) -> Path:
         return repo_root / ".trw"
 
 
-def _owner_is_alive(pid: int) -> bool:
-    """Is *pid* a running process on THIS host?
+def _acquire_lock(lock_path: Path, head_sha: str) -> tuple[str | None, int]:
+    """Take the single-flight lock; ``(None, -1)`` when another worker holds it.
 
-    ``PermissionError`` means the PID exists and belongs to another user, which
-    is alive. Only ``ProcessLookupError`` proves absence. PID identity is local:
-    this lock is specified for a local filesystem on a single host, which is
-    what a git hook is.
+    Returns ``("acquired" | "reclaimed" | "unlocked", fd)``. The kernel drops an ``flock`` when its owner
+    dies, so there is no liveness check and no reclaim-by-unlink: a crashed owner's leftover record is only
+    reported (``reclaimed``). ``unlocked`` (no ``fcntl``, or the lock file cannot be created) runs the sweep
+    WITHOUT the guarantee rather than skipping maintenance, and the receipt says so.
     """
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:  # trw-fail-silent-allow: False IS the answer to "is this PID running" -- an absent process is the finding, not a swallowed failure
-        return False
-    except OSError:
-        return True
-    return True
-
-
-def _lock_is_abandoned(lock_path: Path) -> bool:
-    """True when the next arrival may take over an existing lock."""
-    try:
-        record = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        record = None
-    if isinstance(record, dict) and isinstance(record.get("pid"), int):
-        return not _owner_is_alive(int(record["pid"]))
-    # No readable owner. That is either a crash mid-write or the millisecond
-    # between create and write, and only age tells them apart.
-    try:
-        age = time.time() - lock_path.stat().st_mtime
-    except OSError:  # trw-fail-silent-allow: fail CLOSED -- a lock we cannot stat is not a lock we have proven abandoned, and stealing it would re-create the concurrent-sweep defect
-        return False
-    return age > _UNREADABLE_LOCK_GRACE_SECONDS
-
-
-def _acquire_lock(lock_path: Path, head_sha: str) -> str | None:
-    """Take the single-flight lock; ``None`` when a live owner holds it.
-
-    Returns ``"acquired"``, ``"reclaimed"``, or ``"unlocked"`` (the lock could
-    not be created, so the caller runs WITHOUT the guarantee rather than skipping
-    maintenance entirely).
-    """
-    state = "acquired"
-    for _attempt in (1, 2):
+    if fcntl is None:
+        return "unlocked", -1
+    for _attempt in range(3):
         try:
             lock_path.parent.mkdir(parents=True, exist_ok=True)
-            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            if not _lock_is_abandoned(lock_path):
-                return None
-            with contextlib.suppress(OSError):
-                lock_path.unlink()
-            state = "reclaimed"
-            continue
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except OSError:
             logger.warning("post_commit_lock_unavailable", lock=str(lock_path), exc_info=True)
-            return "unlocked"
-        # Publish ownership through the SAME descriptor the exclusive create
-        # returned, so the empty window is one write wide.
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            json.dump({"pid": os.getpid(), "started_at": _now_iso(), "head_sha": head_sha}, stream)
-        return state
-    return None
+            return "unlocked", -1
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:  # trw-fail-silent-allow: EWOULDBLOCK is the answer -- a live worker holds the lock, the caller defers and marks pending
+            os.close(fd)
+            return None, -1
+        try:
+            # A holder that unlinked the path on release leaves a lock on a dead inode; only the inode at the path counts.
+            if os.fstat(fd).st_ino != os.stat(lock_path).st_ino:
+                os.close(fd)
+                continue
+        except OSError:  # trw-fail-silent-allow: the path vanished between lock and stat; retry against a fresh file
+            os.close(fd)
+            continue
+        state = "reclaimed" if os.fstat(fd).st_size else "acquired"
+        # The record is diagnostics only; the flock is the lock. A failed write must not strand the descriptor.
+        try:
+            os.ftruncate(fd, 0)
+            os.write(
+                fd, json.dumps({"pid": os.getpid(), "started_at": _now_iso(), "head_sha": head_sha}).encode("utf-8")
+            )
+        except OSError:
+            logger.warning("post_commit_lock_record_unwritable", lock=str(lock_path), exc_info=True)
+        return state, fd
+    return "unlocked", -1
 
 
-def _release_lock(lock_path: Path) -> None:
-    """Delete the lock only while it still names this process."""
-    try:
-        record = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        record = None
-    if isinstance(record, dict) and record.get("pid") != os.getpid():
-        # Someone reclaimed it; deleting now would strip THEIR lock.
-        logger.warning("post_commit_lock_reclaimed_by_another_owner", lock=str(lock_path))
+def _release_lock(lock_path: Path, fd: int) -> None:
+    """Remove the lock file while still holding it, then drop the lock."""
+    if fd < 0:
         return
     with contextlib.suppress(OSError):
-        lock_path.unlink()
+        if os.fstat(fd).st_ino == os.stat(lock_path).st_ino:
+            lock_path.unlink()
+    os.close(fd)
 
 
 def _mark_pending(trw_dir: Path, head_sha: str) -> bool:
@@ -439,7 +412,7 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
     lock_path = trw_dir / LOCK_REL_PATH
     pending_path = trw_dir / PENDING_REL_PATH
 
-    lock_state = _acquire_lock(lock_path, head_sha)
+    lock_state, lock_fd = _acquire_lock(lock_path, head_sha)
     if lock_state is None:
         receipt.lock_state = "deferred"
         receipt.pending_marked = _mark_pending(trw_dir, head_sha)
@@ -493,7 +466,7 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
             errors=len(receipt.errors),
         )
     finally:
-        _release_lock(lock_path)
+        _release_lock(lock_path, lock_fd)
     return receipt
 
 

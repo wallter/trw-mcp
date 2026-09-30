@@ -16,7 +16,7 @@ import argparse
 import json
 import os
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -217,7 +217,7 @@ def test_telemetry_queue_rewrite_keeps_only_unsent_consented_lines(
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     root = tmp_path / "repo"
     (root / ".trw" / "runtime").mkdir(parents=True)
     monkeypatch.delenv(pc.HEAD_ENV_VAR, raising=False)
@@ -225,12 +225,23 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(pc, "_sweep_trw_dir", lambda _root: root / ".trw")
     monkeypatch.setattr(pc, "_head_sha", lambda _root: "cafebabe")
     monkeypatch.setattr(pc, "_run_pass", lambda *_a: None)
-    return root
+    yield root
+    while _HELD:
+        os.close(_HELD.pop())
+
+
+_HELD: list[int] = []
 
 
 def _hold_lock(repo: Path) -> None:
+    """A live owner: the lock file exists and is flock-held on a separate descriptor (closed by the fixture)."""
+    import fcntl
+
     lock = repo / ".trw" / pc.LOCK_REL_PATH
     lock.write_text(json.dumps({"pid": os.getpid(), "started_at": "now", "head_sha": "owner"}), encoding="utf-8")
+    fd = os.open(lock, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    _HELD.append(fd)
 
 
 def test_post_commit_pending_marker_refuses_a_symlink_and_reports_it(repo: Path, tmp_path: Path) -> None:

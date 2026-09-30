@@ -82,6 +82,10 @@ _ALLOWLIST: dict[str, str] = {
         "own-state -- remove_if_hash anchors dir fds for rename/link and reads/writes only TRW's own "
         "trash capture (meta.json, data); _checkout_access pinning would hold fds on captured user bytes."
     ),
+    "bootstrap/_trash_purge.py": (
+        "own-state -- uninstall re-reads only TRW's own trash capture (meta.json, data) through O_NOFOLLOW fds to "
+        "prove it unchanged before deleting it; no checkout content enters TRW state."
+    ),
 }
 
 #: Modules whose direct opens are censused unless allowlisted (FR07 rule 1).

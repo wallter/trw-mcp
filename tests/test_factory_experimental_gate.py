@@ -49,7 +49,15 @@ def set_state(project: Path, monkeypatch: pytest.MonkeyPatch, state: str) -> Non
 def project(tmp_path: Path) -> Path:
     repo = tmp_path / "project"
     repo.mkdir()
-    for cmd in (["init", "-q"], ["config", "user.email", "t@e.com"], ["config", "user.name", "T"]):
+    # gc.auto=0 / maintenance.auto=false: auto-maintenance leaves a transient .git/objects/maintenance.lock that a
+    # before/after snapshot of the project dir (.git included) would see on Linux CI.
+    for cmd in (
+        ["init", "-q"],
+        ["config", "user.email", "t@e.com"],
+        ["config", "user.name", "T"],
+        ["config", "gc.auto", "0"],
+        ["config", "maintenance.auto", "false"],
+    ):
         subprocess.run(["git", "-C", str(repo), *cmd], check=True, capture_output=True)
     (repo / ".gitignore").write_text(".trw/\n", encoding="utf-8")
     (repo / "one.py").write_text("one = 1\n", encoding="utf-8")

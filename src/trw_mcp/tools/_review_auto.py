@@ -31,6 +31,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._review_advisory_severity import log_advisory_severity
 
 # Re-exported for back-compat: these moved to _review_cross_model.py but callers
 # and tests import them from here. ``X as X`` is required — a plain re-export is
@@ -181,6 +182,7 @@ def handle_auto_mode(
     # Compute verdict from surfaced findings only
     surfaced_for_verdict: list[dict[str, str]] = [{"severity": str(f.get("severity", "info"))} for f in surfaced]
     verdict = _helpers._compute_verdict(surfaced_for_verdict)
+    log_advisory_severity(surfaced)  # XC-01: advisory, logged only; the verdict above never reads it
 
     # Count critical findings among surfaced for downstream ceremony tracking
     critical_count = sum(

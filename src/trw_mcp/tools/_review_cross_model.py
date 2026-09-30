@@ -27,6 +27,7 @@ import structlog
 from trw_mcp.models.typed_dicts import CrossModelReviewResult
 from trw_mcp.tools import _review_helpers as _helpers
 from trw_mcp.tools._client_detection import resolve_client_profile
+from trw_mcp.tools._review_advisory_severity import log_advisory_severity
 from trw_mcp.tools._review_validation import normalize_review_findings
 
 if TYPE_CHECKING:
@@ -282,6 +283,7 @@ def handle_cross_model_mode(
     # critical findings passed the delivery gate and reported p0_count=0 to the
     # ceremony state — suppressing the "P0 findings detected" remediation nudge.
     verdict = _helpers._compute_verdict(verdict_findings)
+    log_advisory_severity(verdict_findings)  # XC-01: advisory, logged only; the verdict never reads it
     critical_count = sum(1 for f in verdict_findings if f.get("severity") == "critical")
 
     substantive = not auto_analysis_limited

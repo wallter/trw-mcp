@@ -552,8 +552,11 @@ def _run_init_phases(
     # 7. Generate root-level files (Claude Code: .mcp.json, AGENTS.md)
     _generate_root_files(target_dir, force, result, ide_targets, on_progress, ide_explicit=ide_explicit)
 
-    # 7a. Claude Code distill channels (always installed — claude-code is the default)
-    if "claude-code" in ide_targets or not ide_targets:
+    # 7a. Claude Code distill channels, for exactly the projects that record claude-code (the same predicate that
+    # writes its AGENTS.md block): a detected list alone can omit it while the record names it, and doctor then FAILed.
+    from ._template_claude_md import claude_code_is_claimed as _cc_claimed
+
+    if not ide_targets or _cc_claimed(target_dir, ide_targets if ide_explicit else None):
         try:
             from ._claude_code_distill_channels import install_claude_code_distill_channels
 

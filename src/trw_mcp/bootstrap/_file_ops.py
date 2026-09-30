@@ -449,9 +449,15 @@ def write_instruction_file_with_merge(
     matches this helper's existing contract: the caller decides whether a refused
     instruction write is fatal.
     """
+    from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
     from trw_mcp.state.claude_md._write_guard import guarded_instruction_write
 
     existed = target_path.exists()
+    # PRD-CORE-243-FR07: a single-source pointer is the user's layout; never append a block. dry_run: classify
+    # only, never heal -- heal_pointer cuts at an unanchored marker prefix and can delete a user's import.
+    if existed and pointer_skip_guard(target_path, dry_run=True) is not None:
+        result.setdefault("preserved", []).append(rel_path)
+        return
     try:
         if existed and not force:
             existing = target_path.read_text(encoding="utf-8")

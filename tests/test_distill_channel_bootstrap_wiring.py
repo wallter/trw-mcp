@@ -595,3 +595,42 @@ def test_init_project_wires_claude_code_distill_channels(tmp_path: Path) -> None
 
     # No unexpected errors
     assert not result["errors"], f"Got errors: {result['errors']}"
+
+
+# ---------------------------------------------------------------------------
+# DOCTOR-HOOK-CHANNEL-UNLICENSED: the CC-03 pair follows the recorded claude-code, not the detected list
+# ---------------------------------------------------------------------------
+
+
+def _init_with_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, detected: list[str], ide: str | None) -> None:
+    from trw_mcp.bootstrap import _init_project
+    from trw_mcp.channels.claude_code import _hook_helpers
+
+    monkeypatch.setattr(_hook_helpers, "_distill_importable", lambda: True)
+    monkeypatch.setattr(_init_project, "resolve_ide_targets", lambda *_a, **_k: list(detected))
+    (tmp_path / ".git").mkdir()
+    assert not _init_project.init_project(tmp_path, ide=ide)["errors"]
+
+
+@pytest.mark.usefixtures("no_memory_daemon")
+def test_a_bare_init_that_detects_only_cursor_still_ships_the_recorded_claude_code_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare init records claude-code even when detection found only cursor; doctor's hook_channel then read the
+    flag as on with no script on disk and FAILed."""
+    from trw_mcp.bootstrap._claude_code_distill_channels import cc03_hook_scripts_present, cc03_registered_in_settings
+    from trw_mcp.server._doctor_hook_channel import hook_channel_row
+
+    _init_with_detected(tmp_path, monkeypatch, ["cursor-cli", "cursor-ide"], ide=None)
+    assert cc03_hook_scripts_present(tmp_path) and cc03_registered_in_settings(tmp_path)
+    assert hook_channel_row(tmp_path)[0] != "FAIL"
+
+
+@pytest.mark.usefixtures("no_memory_daemon")
+def test_an_explicit_cursor_only_init_ships_no_claude_code_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.bootstrap._claude_code_distill_channels import cc03_hook_scripts_present
+
+    _init_with_detected(tmp_path, monkeypatch, ["cursor-cli"], ide="cursor-cli")
+    assert not cc03_hook_scripts_present(tmp_path)

@@ -135,7 +135,7 @@ def test_failed_read_of_the_capture_puts_the_file_back(tmp_path: Path, monkeypat
 def test_uninstall_summarises_removed_files_and_keeps_no_trash(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Uninstall moves TRW's own unchanged captures to the system Trash (lead ruling 2026-09-29): one line."""
+    """Uninstall moves (macOS) or, off macOS, deletes TRW's own unchanged captures (lead ruling 2026-09-29): one line."""
     from trw_mcp.bootstrap import init_project
     from trw_mcp.server import _subcommands_lifecycle as lifecycle
 
@@ -146,8 +146,9 @@ def test_uninstall_summarises_removed_files_and_keeps_no_trash(
     )
     out = capsys.readouterr().out
     assert "  Moved to .trw/trash: " not in out
-    summary = [line for line in out.splitlines() if " unchanged TRW file(s) to the system Trash: " in line]
-    assert len(summary) == 1 and summary[0].startswith("  Moved ")
+    # macOS renames the captures into the system Trash; elsewhere they are deleted after a hash proof.
+    summary = [line for line in out.splitlines() if " unchanged TRW file(s) " in line]
+    assert len(summary) == 1 and summary[0].startswith(("  Moved ", "  Removed "))
     assert list((tmp_path / ".trw" / "trash").glob("*/data")) == []
 
 

@@ -148,8 +148,9 @@ def _write_hook_env_file(
     Whether hooks run at all is ``hooks_enabled`` in ``TRWConfig``, published
     separately to ``.trw/runtime/hook-flags``.
 
-    Idempotent: safe to rewrite on every sync. Permissions are 0644
-    (world-readable; hooks only need read access). Creates ``runtime/hook-env.d``
+    Idempotent: safe to rewrite on every sync. Permissions are 0600
+    (the file is sourced as shell by the user's own hooks, so nobody else needs read access, and
+    ``lib-trw.sh`` refuses one that is group- or world-writable). Creates ``runtime/hook-env.d``
     if missing.
 
     ``key`` overrides the profile-derived namespace -- used only by tests that
@@ -192,7 +193,7 @@ def _write_hook_env_file(
     )
     # Every hook sources this file; an atomic replace never shows one a
     # truncated script.
-    write_text_atomic(path, content, mode=0o644)
+    write_text_atomic(path, content, mode=0o600)
     legacy_shared_path = trw_dir / "runtime" / "hook-env.sh"
     if _installed_lib_predates_hook_env_split(trw_dir):
         # An old installed library still sources this file directly. Keep it
@@ -200,7 +201,7 @@ def _write_hook_env_file(
         # last-writer-wins across multiple clients, exactly the pre-split
         # behavior, so this is no worse than status quo for a project that has
         # not yet refreshed its hook scripts.
-        write_text_atomic(legacy_shared_path, content, mode=0o644)
+        write_text_atomic(legacy_shared_path, content, mode=0o600)
     else:
         # No installed library, or an already-upgraded one: TRW-generated,
         # never user content, and no hook reads it any more -- deleted

@@ -57,9 +57,50 @@ if [ -z "$_trw_hook_env_key" ] && [ -n "${_hook_dir:-}" ]; then
     '' | *[!A-Za-z0-9_-]*) _trw_hook_env_key="" ;;
   esac
 fi
-if [ -n "$_trw_hook_env_key" ] && [ -f "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" ]; then
-  # shellcheck source=/dev/null
-  . "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" 2>/dev/null || true
+# _trw_hook_env_refusal: print why the generated hook-env file must NOT be sourced, or nothing when it
+# may be. Sourcing runs the file as shell, and a checkout can ship one (a hostile branch or PR that
+# force-adds `.trw/runtime/hook-env.d/<key>.sh`), so the file is sourced only when TRW itself could
+# have written it: a regular file whose path holds no symlink from `.trw` down, owned by this user,
+# not group- or world-writable, and not tracked by git (the generated file never is). $1 = the
+# checkout root, $2 = the key. Never fails the hook: the caller skips the file and carries on.
+_trw_hook_env_refusal() {
+  _the_root="$1"
+  _the_file="$_the_root/.trw/runtime/hook-env.d/$2.sh"
+  for _the_part in "$_the_root/.trw" "$_the_root/.trw/runtime" "$_the_root/.trw/runtime/hook-env.d" "$_the_file"; do
+    if [ -L "$_the_part" ]; then
+      printf 'a symlink at %s' "${_the_part#"$_the_root"/}"
+      return 0
+    fi
+  done
+  if [ ! -f "$_the_file" ]; then
+    printf 'not a regular file'
+    return 0
+  fi
+  if [ -z "$(find "$_the_file" -prune -user "$(id -u 2>/dev/null)" 2>/dev/null)" ]; then
+    printf 'not owned by the current user'
+    return 0
+  fi
+  # Positive test, so a find that fails leaves the answer empty and the file refused, not trusted.
+  if [ -z "$(find "$_the_file" -prune ! -perm -020 ! -perm -002 2>/dev/null)" ]; then
+    printf 'writable by group or others (or its mode could not be read)'
+    return 0
+  fi
+  if git -C "$_the_root" ls-files --error-unmatch -- ".trw/runtime/hook-env.d/$2.sh" >/dev/null 2>&1; then
+    printf 'tracked by git (the generated file never is)'
+    return 0
+  fi
+  return 0
+}
+
+if [ -n "$_trw_hook_env_key" ] && [ -e "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" -o -L "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" ]; then
+  _trw_hook_env_why="$(_trw_hook_env_refusal "$_trw_hook_env_root" "$_trw_hook_env_key")"
+  if [ -z "$_trw_hook_env_why" ]; then
+    # shellcheck source=/dev/null
+    . "$_trw_hook_env_root/.trw/runtime/hook-env.d/$_trw_hook_env_key.sh" 2>/dev/null || true
+  else
+    printf 'TRW: not sourcing .trw/runtime/hook-env.d/%s.sh: %s\n' "$_trw_hook_env_key" "$_trw_hook_env_why" >&2
+  fi
+  unset _trw_hook_env_why
 fi
 unset _trw_hook_env_key
 NUDGE_ENABLED="${NUDGE_ENABLED:-true}"

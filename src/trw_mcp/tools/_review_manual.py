@@ -25,6 +25,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._review_advisory_severity import log_advisory_severity
 from trw_mcp.tools._review_helpers import ReviewDiffUnavailableError
 from trw_mcp.tools._review_validation import normalize_review_findings
 
@@ -91,6 +92,7 @@ def handle_manual_mode(
     rejected_count = len(raw_findings) - len(validated)
     critical_count, warning_count, info_count = count_by_severity(validated)
     verdict = _helpers._compute_verdict(cast("list[dict[str, str]]", validated))
+    log_advisory_severity(validated)  # XC-01: advisory, logged only; the verdict never reads it
     # CORE-205 FR02: a completed, fully covered review may honestly have zero
     # findings.  Empty-by-default remains non-substantive; the explicit
     # completion assertion records that the server-issued manual rubric was

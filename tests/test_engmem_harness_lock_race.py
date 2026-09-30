@@ -40,7 +40,14 @@ from typing import Any
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT
+
 pytestmark = pytest.mark.unit
+
+# ``engmem_mcp`` imports ``benchmarks.engmem``, which lives in the monorepo's trw-memory/ and is not in the
+# public trw-mcp mirror: skip there instead of failing at collection.
+if MONOREPO_ROOT is None:
+    pytest.skip("benchmarks.engmem is monorepo-only (absent from the public mirror)", allow_module_level=True)
 
 _MODULE_PATH = Path(__file__).resolve().parents[1] / "benchmarks" / "engmem_mcp.py"
 _spec = importlib.util.spec_from_file_location("engmem_mcp", _MODULE_PATH)

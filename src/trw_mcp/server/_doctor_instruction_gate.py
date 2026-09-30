@@ -72,6 +72,36 @@ def _extract_trw_block(content: str) -> str | None:
     return None
 
 
+_IMPORT_CAP = 512 * 1024
+
+
+def _imported_text(target: Path, block: str) -> str:
+    """Text of the project files a block pulls in with a line-leading ``@relative/path`` import (one hop).
+
+    The generated AGENTS.md block states the gate by importing ``.trw/INSTRUCTIONS.md``, so a check that ignored
+    the import failed every fresh project. Only regular, non-symlink files under *target* are read; a missing
+    or unsafe import contributes nothing, so a surface importing a retired sidecar still fails.
+    """
+    root = target.resolve()
+    parts: list[str] = []
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("@") or " " in stripped or stripped.startswith("@/"):
+            continue
+        rel = Path(stripped[1:])
+        if ".." in rel.parts:
+            continue
+        candidate = root / rel
+        try:
+            if candidate.is_symlink() or not candidate.is_file() or not candidate.resolve().is_relative_to(root):
+                continue
+            with candidate.open("rb") as handle:
+                parts.append(handle.read(_IMPORT_CAP).decode("utf-8", errors="replace"))
+        except OSError:  # trw-fail-silent-allow: an unreadable import contributes nothing, so the gate check fails
+            continue
+    return "\n".join(parts)
+
+
 def instruction_gate_report(target: Path) -> tuple[str, str]:
     """Report deliver-gate-phrase presence across every scanned instruction surface."""
     from trw_mcp.state.claude_md._instruction_carrier import (
@@ -107,9 +137,9 @@ def instruction_gate_report(target: Path) -> tuple[str, str]:
             block = content  # TRW owns the whole file: the gate must be in it.
         if block is None:
             continue  # no TRW-managed block in this surface — nothing to assert.
-        # An ``@`` import is not followed: the gate must be stated inline, so a
-        # surface still importing a retired ``.trw`` sidecar fails here.
-        if DELIVER_GATE_PHRASE not in block:
+        # The gate may be stated inline or in a project file the block imports (``@.trw/INSTRUCTIONS.md``);
+        # a surface importing a retired or gate-less sidecar still fails here.
+        if DELIVER_GATE_PHRASE not in block and DELIVER_GATE_PHRASE not in _imported_text(target, block):
             missing_gate.append(rel)
 
     if not present:

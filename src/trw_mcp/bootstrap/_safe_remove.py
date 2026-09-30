@@ -162,6 +162,9 @@ from ._trash import (  # noqa: E402
 from ._trash import (  # noqa: E402
     remove_if_hash as remove_if_hash,
 )
+from ._trash_purge import (  # noqa: E402
+    delete_proven_unchanged_captures as delete_proven_unchanged_captures,
+)
 from ._trash import (  # noqa: E402
     trash_dir as trash_dir,
 )

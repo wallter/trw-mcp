@@ -214,9 +214,10 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
     assert deptry["extend_exclude"] == ["scripts/install-trw.template.py"]
     per_rule = deptry["per_rule_ignores"]
     assert isinstance(per_rule, dict)
-    assert per_rule["DEP001"] == ["tiktoken"]
+    # No import is exempt from DEP001: tiktoken is no longer imported by trw-mcp, so `make dep-check` is blocking.
+    assert "DEP001" not in per_rule
     assert per_rule["DEP002"] == ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
-    assert per_rule["DEP003"] == ["opentelemetry", "tiktoken"]
+    assert per_rule["DEP003"] == ["opentelemetry"]
     # rank-bm25 is a trw-memory base dependency (PRD-CORE-302 FR08); trw-mcp neither imports nor declares it.
     assert "DEP004" not in per_rule
 

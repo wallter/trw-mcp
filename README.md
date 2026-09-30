@@ -67,12 +67,11 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 ## What's new in 8.x
 <!-- whats-new: 8.0.0 -->
 
-- **Half the instruction weight, every turn.** One shared renderer writes every client's instructions; the per-turn block fell from about 3,400 tokens to 1,500-1,700 (claude-code 3,421 → 1,713).
-- **One stable import path.** `trw_mcp.api` is the public, compatibility-promised module, and 280 dead symbols and nine unread config keys are gone.
-- **Lessons with their context.** `trw_recall` names a lesson's source, scope and successor.
-- **`trw_code` text search retired.** `mode="search"` (full-text lexical search) is gone; use `rg`/`grep` for text search or the `trw-distill` CLI for codebase intelligence. `mode="symbol"` and `mode="hint"` (now the default) stay.
-- **Writes that can't be redirected.** Project state and credentials files refuse a planted symlink, and credentials are created owner-only (0600) from the first byte.
+- **Lighter instructions, every turn.** `AGENTS.md` links TRW's instructions in `.trw/INSTRUCTIONS.md` instead of embedding them, and lessons reach agents on demand instead of living in instruction files.
+- **Updates that keep your edits.** `update-project` leaves hand-edited files in place and adopts a client only when every file it would overwrite is provably TRW's own.
 - **AGENTS.md for Claude Code.** The claude-code profile writes `AGENTS.md`, which Claude Code reads natively, and `update-project` removes a TRW-only `CLAUDE.md`.
+- **An uninstall that tells you first.** `uninstall` names any of your own files it would remove from `.trw/`, and `uninstall --global` removes TRW's entry from the shared Gemini config.
+- **Writes that can't be redirected.** Project state and credentials files refuse a planted symlink, and credentials are created owner-only (0600) from the first byte.
 - **Failures that name their fix.** A failed dispatch says why (capacity, quota, auth) and retries a transient failure once; `trw-mcp doctor` checks credential health and the memory daemon.
 - **Nothing phones home by default.** The in-process self-updater is gone. Telemetry, learning sharing, team sync and remote backup each stay off until you turn them on.
 

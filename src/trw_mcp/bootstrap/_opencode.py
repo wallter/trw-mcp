@@ -408,7 +408,13 @@ def generate_agents_md(
             return result
         new_block = agents_link_section()
 
-        if agents_md_path.exists() and not force:
+        # PRD-CORE-243-FR07: a single-source pointer AGENTS.md is the user's layout, even under ``force``.
+        # dry_run: classify only, never heal (heal_pointer's cut is not line-anchored; codex r1 P0).
+        from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
+
+        if agents_md_path.exists() and pointer_skip_guard(agents_md_path, dry_run=True) is not None:
+            result["preserved"].append("AGENTS.md")
+        elif agents_md_path.exists() and not force:
             content = agents_md_path.read_text(encoding="utf-8")
             # Shared line-anchored replacer — never a raw substring scan.
             markers = ((_TRW_START_MARKER, "start"), (_TRW_END_MARKER, "end"))

@@ -13,9 +13,12 @@ the lock or by re-entering from inside a stubbed maintenance step.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,8 @@ import pytest
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 from trw_mcp.tools import _post_commit as pc
+
+fcntl = pytest.importorskip("fcntl", reason="flock is Unix-only; Windows runs the sweep unlocked")
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +69,18 @@ def _pending(repo: Path) -> Path:
     return repo / ".trw" / pc.PENDING_REL_PATH
 
 
+@contextlib.contextmanager
+def _live_owner(repo: Path) -> Iterator[Path]:
+    """Another worker mid-sweep: the lock file exists AND is flock-held on its own descriptor."""
+    path = _write_lock(repo, {"pid": os.getpid(), "started_at": "now", "head_sha": "deadbeef"})
+    fd = os.open(path, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        yield path
+    finally:
+        os.close(fd)
+
+
 def _write_lock(repo: Path, record: object) -> Path:
     path = _lock(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,12 +93,12 @@ def _write_lock(repo: Path, record: object) -> Path:
 
 def test_a_second_run_defers_while_a_live_owner_holds_the_lock(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     passes = _stub_passes(monkeypatch)
-    _write_lock(repo, {"pid": os.getpid(), "started_at": "now", "head_sha": "deadbeef"})
     receipt_path = repo / pc.RECEIPT_REL_PATH
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     receipt_path.write_text('{"marker": "owner"}', encoding="utf-8")
 
-    receipt = pc.run_post_commit(repo)
+    with _live_owner(repo):
+        receipt = pc.run_post_commit(repo)
 
     assert receipt.lock_state == "deferred"
     assert passes == [], "a deferred arrival must not sweep"
@@ -148,6 +165,32 @@ def test_an_unwritable_runtime_dir_still_sweeps_and_says_so(repo: Path, monkeypa
     assert passes == [1]
 
 
+def test_a_failed_record_write_still_holds_and_releases_the_lock(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The PID record is diagnostics: an ENOSPC on it must neither leak the descriptor nor drop the lock."""
+    passes = _stub_passes(monkeypatch)
+    opened: list[int] = []
+    real_open = os.open
+
+    def _track(path: Any, flags: int, mode: int = 0o777, **kw: Any) -> int:
+        fd = real_open(path, flags, mode, **kw)
+        opened.append(fd)
+        return fd
+
+    def _full(_fd: int, _data: bytes) -> int:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(pc.os, "open", _track)
+    monkeypatch.setattr(pc.os, "write", _full)
+
+    receipt = pc.run_post_commit(repo)
+
+    assert receipt.lock_state == "acquired" and passes == [1]
+    assert not _lock(repo).exists()
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)  # every descriptor the run opened is closed
+
+
 # --- FR02: crashed / wedged owner recovery ---------------------------------
 
 
@@ -171,60 +214,62 @@ def test_a_crashed_owner_lock_is_reclaimed(repo: Path, monkeypatch: pytest.Monke
     assert not _lock(repo).exists()
 
 
-def test_an_unreadable_lock_is_reclaimed_only_once_it_is_old(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The create/write window must not read as abandonment."""
-    passes = _stub_passes(monkeypatch)
-    path = _write_lock(repo, "")
-
-    fresh = pc.run_post_commit(repo)
-    assert fresh.lock_state == "deferred", "an empty lock written a moment ago may be mid-publication"
-    assert passes == []
-
-    stale = time.time() - pc._UNREADABLE_LOCK_GRACE_SECONDS - 5
-    os.utime(path, (stale, stale))
-    reclaimed = pc.run_post_commit(repo)
-    assert reclaimed.lock_state == "reclaimed"
-    assert passes == [1]
-
-
-def test_a_live_owner_is_never_stolen_on_age(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A long sweep is a long sweep, not an abandoned one."""
-    passes = _stub_passes(monkeypatch)
-    path = _write_lock(repo, {"pid": os.getpid(), "started_at": "ages ago", "head_sha": "x"})
-    ancient = time.time() - 86_400
-    os.utime(path, (ancient, ancient))
-
-    receipt = pc.run_post_commit(repo)
-
-    assert receipt.lock_state == "deferred"
-    assert passes == []
-
-
 def test_release_does_not_strip_another_owners_lock(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If our lock was reclaimed mid-run, the reclaimer keeps it."""
 
     def _steal(_repo: Path, _env: Any, _receipt: pc.PostCommitReceipt) -> None:
+        _lock(repo).unlink()
         _write_lock(repo, {"pid": os.getpid() + 1, "started_at": "now", "head_sha": "other"})
 
     monkeypatch.setattr(pc, "_run_pass", _steal)
     pc.run_post_commit(repo)
 
-    assert _lock(repo).exists(), "a lock that no longer names us is not ours to delete"
+    assert _lock(repo).exists(), "a lock file that is no longer ours (a different inode) is not ours to delete"
 
 
-@pytest.mark.parametrize("pid", [0, -1])
-def test_a_nonsense_pid_is_not_alive(pid: int) -> None:
-    assert pc._owner_is_alive(pid) is False
+def test_two_arrivals_after_a_dead_owner_never_sweep_together(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """INFRA-186 reclaim race: with reclaim-by-unlink both arrivals judged the stale lock abandoned, one unlinked
+    the other's fresh lock, and both swept. The kernel-held flock admits one."""
+    _write_lock(repo, {"pid": _dead_pid(), "started_at": "old", "head_sha": "gone"})
+    # Widen the old check-then-unlink window (a no-op once the liveness probe is gone).
+    real_alive = getattr(pc, "_owner_is_alive", None)
+    if real_alive is not None:
 
+        def _slow_alive(pid: int) -> bool:
+            time.sleep(0.3)
+            return bool(real_alive(pid))
 
-def test_a_permission_error_means_alive(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A PID owned by another user is running, not absent."""
+        monkeypatch.setattr(pc, "_owner_is_alive", _slow_alive)
 
-    def _kill(_pid: int, _sig: int) -> None:
-        raise PermissionError("not yours")
+    gate = threading.Barrier(2)
+    running = 0
+    peak = 0
+    guard = threading.Lock()
 
-    monkeypatch.setattr(pc.os, "kill", _kill)
-    assert pc._owner_is_alive(4242) is True
+    def _sweep(_repo: Path, _env: Any, _receipt: pc.PostCommitReceipt) -> None:
+        nonlocal running, peak
+        with guard:
+            running += 1
+            peak = max(peak, running)
+        time.sleep(0.6)
+        with guard:
+            running -= 1
+
+    monkeypatch.setattr(pc, "_run_pass", _sweep)
+    states: list[str] = []
+
+    def _arrive() -> None:
+        gate.wait()
+        states.append(pc.run_post_commit(repo).lock_state)
+
+    threads = [threading.Thread(target=_arrive) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert peak == 1, f"two sweeps ran at once (lock states {states})"
+    assert sorted(states) == ["deferred", "reclaimed"]
 
 
 # --- FR03: exactly one follow-up -------------------------------------------

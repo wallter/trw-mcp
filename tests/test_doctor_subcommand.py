@@ -333,6 +333,67 @@ def test_instruction_gate_present_pass(tmp_path: Path) -> None:
     assert instr.status == "PASS"
 
 
+def _pointer_block(imported: str | None, gate: bool, tmp_path: Path) -> None:
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
+
+    (tmp_path / "AGENTS.md").write_text(
+        "<!-- trw:start -->\n\nTRW workflow: see the import below.\n@.trw/INSTRUCTIONS.md\n\n<!-- trw:end -->\n",
+        encoding="utf-8",
+    )
+    if imported is not None:
+        (tmp_path / ".trw").mkdir()
+        body = f"{DELIVER_GATE_PHRASE} a green build." if gate else "no gate here"
+        (tmp_path / ".trw" / imported).write_text(f"## Deliver Gate\n{body}\n", encoding="utf-8")
+
+
+def test_instruction_gate_followed_through_the_import(tmp_path: Path) -> None:
+    """The generated AGENTS.md block states the gate by importing .trw/INSTRUCTIONS.md (fresh-project doctor FAIL)."""
+    _pointer_block("INSTRUCTIONS.md", gate=True, tmp_path=tmp_path)
+    assert _status_of(_doctor_core(tmp_path, _make_config(tmp_path)), "instruction").status == "PASS"
+
+
+@pytest.mark.parametrize("imported", [None, "OTHER.md"], ids=["import-missing", "wrong-file"])
+def test_instruction_gate_fails_when_the_import_is_missing(tmp_path: Path, imported: str | None) -> None:
+    _pointer_block(imported, gate=True, tmp_path=tmp_path)
+    assert _status_of(_doctor_core(tmp_path, _make_config(tmp_path)), "instruction").status == "FAIL"
+
+
+def test_instruction_gate_fails_when_the_imported_file_has_no_gate(tmp_path: Path) -> None:
+    _pointer_block("INSTRUCTIONS.md", gate=False, tmp_path=tmp_path)
+    assert _status_of(_doctor_core(tmp_path, _make_config(tmp_path)), "instruction").status == "FAIL"
+
+
+def test_instruction_gate_does_not_follow_a_symlinked_import(tmp_path: Path) -> None:
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
+
+    _pointer_block(None, gate=False, tmp_path=tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.md"
+    outside.write_text(DELIVER_GATE_PHRASE, encoding="utf-8")
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "INSTRUCTIONS.md").symlink_to(outside)
+    assert _status_of(_doctor_core(tmp_path, _make_config(tmp_path)), "instruction").status == "FAIL"
+
+
+@pytest.mark.usefixtures("no_memory_daemon")
+def test_a_fresh_init_project_doctors_with_no_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """init-project then doctor: nothing it just wrote may FAIL (`release_public.py verify trw-mcp 8.0.0`).
+
+    The pre-edit hook default follows whether trw-distill is importable; pin it off so the row is the public
+    install's (a licence-less importable distill is a separate axis).
+    """
+    from trw_mcp.bootstrap import init_project
+    from trw_mcp.channels.claude_code import _hook_helpers
+
+    monkeypatch.setattr(_hook_helpers, "_distill_importable", lambda: False)
+    (tmp_path / ".git").mkdir()
+    assert not init_project(tmp_path, ide="claude-code")["errors"]
+    results = _doctor_core(tmp_path, _make_config(tmp_path))
+    # memory_backend is out: the no_memory_daemon fixture deliberately leaves the trw-memory daemon unreachable.
+    failing = [(r.name, r.message) for r in results if r.status == "FAIL" and r.name != "memory_backend"]
+    assert failing == []
+    assert _status_of(results, "instruction_surface").status == "PASS"
+
+
 def test_instruction_absent_warn(tmp_path: Path) -> None:
     """No instruction surface yet (pre-init) -> WARN, not FAIL."""
     results = _doctor_core(tmp_path, _make_config(tmp_path))
@@ -606,10 +667,11 @@ def test_no_production_endpoint_in_messages(tmp_path: Path) -> None:
 
 
 class TestInstructionGateReadsTheInlineBlock:
-    """The gate reads the marker region itself and never follows an ``@`` import.
+    """The gate is read in the marker region, or in a project file that region imports (one hop, in-project).
 
-    PRD-QUAL-143-FR01 retired the ``.trw/INSTRUCTIONS.md`` sidecar: the block is
-    inline again, so a region that only imports its gate states it zero times.
+    PRD-QUAL-143-FR01 retired the first ``.trw/INSTRUCTIONS.md`` sidecar; PRD-CORE-341 reintroduced it as a
+    regenerated file that AGENTS.md links, so the generated block states the gate by import. An import that
+    is missing, escapes the project, is a symlink or lacks the gate still leaves the gate stated zero times.
     """
 
     def test_inline_gate_passes(self, tmp_path: Path) -> None:
@@ -622,10 +684,10 @@ class TestInstructionGateReadsTheInlineBlock:
 
         assert result.status == "PASS", result.message
 
-    def test_import_only_block_fails(self, tmp_path: Path) -> None:
+    def test_import_of_a_gate_less_file_fails(self, tmp_path: Path) -> None:
         trw = tmp_path / ".trw"
         trw.mkdir()
-        (trw / "INSTRUCTIONS.md").write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
+        (trw / "INSTRUCTIONS.md").write_text("no gate in this stale sidecar\n", encoding="utf-8")
         (tmp_path / "AGENTS.md").write_text(
             "# Project\n\nUser prose.\n\n<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
             encoding="utf-8",

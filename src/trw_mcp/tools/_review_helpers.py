@@ -537,6 +537,8 @@ _REEXPORT_MAP: dict[str, str] = {
     "_count_frs_in_prd": "trw_mcp.tools._review_manual",
     # _review_multi.py
     "_run_multi_reviewer_analysis": "trw_mcp.tools._review_multi",
+    # _review_advisory_severity.py (XC-01: logged only, never read by _compute_verdict)
+    "log_advisory_severity": "trw_mcp.tools._review_advisory_severity",
 }
 
 

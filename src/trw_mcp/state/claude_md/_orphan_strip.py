@@ -13,6 +13,7 @@ strictly inside the TRW markers (CONSTITUTION HB-2).
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -91,9 +92,17 @@ def _strip_trw_section(content: str) -> tuple[bool, str]:
     # backticks would otherwise open the region and this function DELETES what it
     # spans. Same shape that destroyed 705 ROADMAP lines; this was the last
     # substring matcher left on the instruction-file path.
+    # The start marker must stand alone on its line (or be the collapsed ``START END`` form):
+    # beginning a line is not enough -- a prose line "<!-- trw:start --> is the sentinel" opened
+    # the region and heal_pointer deleted the user's imports below it (HEAL-POINTER-ANCHOR).
     from trw_mcp.bootstrap._file_ops import find_marker_line_span
 
-    start_span = find_marker_line_span(content, TRW_MARKER_START, anchor="start")
+    start_line = re.compile(
+        rf"^[ \t]*(?P<m>{re.escape(TRW_MARKER_START)})[ \t]*(?:{re.escape(TRW_MARKER_END)}[ \t]*)?\r?$",
+        flags=re.MULTILINE,
+    )
+    start_match = start_line.search(content)
+    start_span = (start_match.start("m"), start_match.end("m")) if start_match else None
     end_span = find_marker_line_span(content, TRW_MARKER_END, anchor="end")
     if start_span is None or end_span is None or end_span[1] <= start_span[0]:
         return False, content

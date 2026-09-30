@@ -7,10 +7,15 @@ Belongs to the ``_subcommands_lifecycle.py`` ``_run_uninstall`` facade. Split ou
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from trw_mcp.bootstrap._safe_remove import move_captures_to_os_trash, trash_dir
+from trw_mcp.bootstrap._safe_remove import (
+    delete_proven_unchanged_captures,
+    move_captures_to_os_trash,
+    trash_dir,
+)
 
 
 def _move_matched_captures_to_os_trash(
@@ -18,15 +23,24 @@ def _move_matched_captures_to_os_trash(
 ) -> None:
     """Uninstall is an explicit full removal: TRW's own unchanged captures leave ``.trw/trash`` for the macOS
     system Trash by rename (nothing is unlinked, so a late fd write survives there); the rest stay and are listed.
+    Off macOS there is no system Trash: a capture whose ``meta.json`` hash still matches its bytes is deleted, and
+    any capture that cannot be proven unchanged stays in ``.trw/trash`` with the reason printed.
     """
     pairs = list(zip(apply_result.get("trashed", []), apply_result.get("trashed_at", []), strict=True))
     captures = [Path(at) for _orig, at in pairs if at]
-    dest, kept = move_captures_to_os_trash(target, captures)
-    if dest is not None:
-        print(f"  Moved {len(captures) - len(kept)} unchanged TRW file(s) to the system Trash: {dest}")
-    left = {str(data) for data, _why in kept}
+    if sys.platform == "darwin":
+        dest, kept = move_captures_to_os_trash(target, captures)
+        if dest is not None:
+            print(f"  Moved {len(captures) - len(kept)} unchanged TRW file(s) to the system Trash: {dest}")
+    else:
+        deleted, kept = delete_proven_unchanged_captures(target, captures)
+        if deleted:
+            print(f"  Removed {deleted} unchanged TRW file(s) (byte-identical to what TRW wrote; no system Trash here)")
+    left = {str(data): why for data, why in kept}
     for orig, at in pairs:
-        if not at or at in left:
+        if at and at in left and sys.platform != "darwin":
+            print(f"  Kept in .trw/trash: {display(Path(orig), target)} ({left[at]}; see doctor)")
+        elif not at or at in left:
             print(f"  Moved to .trw/trash: {display(Path(orig), target)} (unchanged TRW file; see doctor)")
     # Every capture moved on: leave no empty .trw/trash behind, even on a refused run that keeps .trw.
     if captures and not kept:

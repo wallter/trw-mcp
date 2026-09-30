@@ -172,12 +172,13 @@ def test_malicious_display_name_is_shell_escaped(tmp_path: Path) -> None:
     assert out.stdout == profile.display_name
 
 
-def test_file_permissions_are_readable(tmp_path: Path) -> None:
+def test_file_permissions_are_owner_only(tmp_path: Path) -> None:
+    """The file is sourced as shell, so only its owner may read or write it (H1, lib-trw.sh refuses wider)."""
     profile = resolve_client_profile("claude-code")
     written = _write_hook_env_file(tmp_path / ".trw", profile)
-    # 0o644 = rw-r--r--
+    # 0o600 = rw-------
     mode = written.stat().st_mode & 0o777
-    assert mode == 0o644
+    assert mode == 0o600
 
 
 def _reads_during_publish(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[str]:
@@ -213,7 +214,7 @@ def test_a_sourcing_hook_never_sees_a_partial_hook_env(tmp_path: Path, monkeypat
 
     assert seen[0] == before  # the old script stays whole until the replace (later peeks: config, flags)
     assert "export NUDGE_ENABLED=false" in _read(path)
-    assert (path.stat().st_mode & 0o777) == 0o644
+    assert (path.stat().st_mode & 0o777) == 0o600
     assert sorted(p.name for p in path.parent.iterdir() if p.name.endswith(".tmp")) == []
 
 
@@ -225,7 +226,7 @@ def test_hook_env_is_published_where_os_has_no_fchmod(tmp_path: Path, monkeypatc
     written = _write_hook_env_file(tmp_path / ".trw", resolve_client_profile("claude-code"))
 
     assert "export NUDGE_ENABLED=true" in _read(written)
-    assert (written.stat().st_mode & 0o777) == 0o644
+    assert (written.stat().st_mode & 0o777) == 0o600
 
 
 @pytest.mark.parametrize("hookless", ["opencode", "grok"])

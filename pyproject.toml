@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "8.0.0"
+version = "8.0.1"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -194,14 +194,11 @@ extend_exclude = ["scripts/install-trw.template.py"]
 package_module_name_map = { "opentelemetry-distro" = "opentelemetry_distro", "opentelemetry-exporter-otlp" = "opentelemetry_exporter_otlp" }
 
 [tool.deptry.per_rule_ignores]
-# Optional tokenizer: hotspot segment estimates use tiktoken when present and
-# intentionally fall back to char/4 when absent.
-DEP001 = ["tiktoken"]
 # Optional OpenTelemetry installers are exercised through namespace imports and
 # runtime environment, not direct package-name imports. Starlette is an
 # intentional direct security-floor pin for FastMCP's transitive web surface.
 DEP002 = ["opentelemetry-distro", "opentelemetry-exporter-otlp", "starlette"]
-DEP003 = ["opentelemetry", "tiktoken"]
+DEP003 = ["opentelemetry"]
 
 [tool.ruff]
 # Style target, NOT the support floor (requires-python is >=3.11). Raising it to py311 makes ruff want

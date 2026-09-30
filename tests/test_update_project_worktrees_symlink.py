@@ -36,11 +36,16 @@ else:
     sys.exit(1 if result["errors"] else 0)
 """
 _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+# git's background auto-maintenance creates and removes .git/objects/maintenance.lock after a commit; a test that
+# copies or hashes the whole project (.git included) then races it on Linux CI. Fixture repos never need a gc.
+_NO_AUTO_GC = ("-c", "gc.auto=0", "-c", "maintenance.auto=false")
 
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, capture_output=True
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *_NO_AUTO_GC, *args],
+        check=True,
+        capture_output=True,
     )
 
 
