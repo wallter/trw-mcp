@@ -293,14 +293,13 @@ def _write_installer_metadata(
             on_progress("Error", str(meta_path))
 
 
-def _verify_installation(
-    target_dir: Path,
-    result: dict[str, list[str]],
-) -> None:
+def _verify_installation(target_dir: Path, result: dict[str, list[str]], *, expects_mcp_json: bool = True) -> None:
     """Run lightweight post-update health checks.
 
     Verifies hooks are executable, .mcp.json has trw entry, and
     client instruction file has TRW markers.  Adds warnings for any failures.
+    *expects_mcp_json* is False for a project whose clients keep their MCP entry elsewhere (codex, cursor,
+    copilot, ...): a missing ``.mcp.json`` is then the expected state, not a warning.
     """
     # Check hooks are executable
     hooks_dir = target_dir / ".claude" / "hooks"
@@ -318,7 +317,7 @@ def _verify_installation(
                 result["warnings"].append(".mcp.json missing 'trw' server entry")
         except (json.JSONDecodeError, OSError):
             result["warnings"].append(".mcp.json is not valid JSON")
-    else:
+    elif expects_mcp_json:
         result["warnings"].append(".mcp.json not found")
 
     codex_config = target_dir / ".codex" / "config.toml"

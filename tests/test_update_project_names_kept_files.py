@@ -152,12 +152,15 @@ class TestTheCliNamesWhatItKept:
 
 class TestAnEditedLibraryIsReportedByARealUpdate:
     @pytest.mark.usefixtures("no_memory_daemon")
-    def test_update_project_records_the_kept_hook_and_the_cli_names_it(
+    def test_update_project_backs_up_the_edited_lib_and_the_cli_names_the_backup(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """FB-INSTALL-01 replaced "keep an edited lib-trw.sh" (its refreshed hooks then called functions the kept
+        lib lacked): the user's copy goes to .trw/trash byte for byte, the bundled lib is installed, and the run
+        names the backup. Naming it is still this file's contract."""
         import subprocess
 
-        from trw_mcp.bootstrap import init_project, update_project
+        from trw_mcp.bootstrap import init_project
         from trw_mcp.server._subcommands import _run_update_project
 
         root = tmp_path / "proj"
@@ -165,11 +168,16 @@ class TestAnEditedLibraryIsReportedByARealUpdate:
         assert not init_project(root, ide="claude-code")["errors"]
         lib = root / ".claude" / "hooks" / "lib-trw.sh"
         lib.write_text(lib.read_text(encoding="utf-8") + "\n# my local tweak\n", encoding="utf-8")
+        edited = lib.read_bytes()
 
-        assert str(lib) in update_project(root, ide="claude-code")["modified"]
         with pytest.raises(SystemExit):
             _run_update_project(_args(root))
-        assert "WARNING: kept .claude/hooks/lib-trw.sh:" in capsys.readouterr().out
+
+        out = capsys.readouterr().out
+        assert ".claude/hooks/lib-trw.sh: your edited copy was moved to" in out
+        assert b"# my local tweak" not in lib.read_bytes()
+        saved = [p for p in (root / ".trw" / "trash").rglob("data") if p.read_bytes() == edited]
+        assert saved, "the user's edited bytes must survive in .trw/trash"
 
 
 # ── Retired artifacts are reported as trashed ────────────────────────────

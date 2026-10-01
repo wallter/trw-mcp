@@ -73,6 +73,7 @@ def drive_main(
     project_setup: bool = False,
     semantic: str | None = "ok",
     stop_daemon: bool = False,
+    interactive: bool = False,
 ) -> MainRun:
     """Run the real ``main()`` against *target* with all I/O phases stubbed.
 
@@ -84,6 +85,8 @@ def drive_main(
     runs the real phase, so the caller stubs its probe/fetch leaves instead.
     ``stop_daemon=True`` runs the real ``--upgrade`` memory-daemon stop, in a
     child process of this interpreter, against the ``TRW_USER_DIR`` in *env*.
+    ``interactive=True`` drops ``--script`` and reports a controlling terminal, with no readable
+    ``/dev/tty``, so every prompt answers its own default and a test can see which phases asked.
     """
     run = MainRun()
 
@@ -92,7 +95,11 @@ def drive_main(
     for name, value in (env or {}).items():
         monkeypatch.setenv(name, value)
 
-    monkeypatch.setattr(installer.sys, "argv", ["install-trw.py", str(target), "--script", *extra_argv])
+    mode_args = () if interactive else ("--script",)
+    monkeypatch.setattr(installer.sys, "argv", ["install-trw.py", str(target), *mode_args, *extra_argv])
+    if interactive:
+        monkeypatch.setattr(installer, "_has_controlling_tty", lambda: True)
+        monkeypatch.setattr(installer, "_open_tty", lambda: None)
 
     def _record(key: str, result: Any) -> Any:
         def _stub(*args: Any, **kwargs: Any) -> Any:

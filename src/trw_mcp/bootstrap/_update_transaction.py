@@ -241,6 +241,12 @@ def _collect_transaction_symlinks(target_dir: Path, *, denied_is_marker: bool = 
     return list(found.items())
 
 
+def _symlink_kind(target_dir: Path, links: list[tuple[str, str]]) -> str:
+    """``directory``, ``file`` or ``file or directory``: what each refused link points at, for the Fix line."""
+    kinds = {"directory" if (target_dir / rel).is_dir() else "file" for rel, _link_target in links}
+    return kinds.pop() if len(kinds) == 1 else "file or directory"
+
+
 def _validate_transaction_surface(target_dir: Path, *, denied_is_marker: bool = False) -> None:
     """Fail closed before update/restore when any managed path is redirected.
 
@@ -258,7 +264,7 @@ def _validate_transaction_surface(target_dir: Path, *, denied_is_marker: bool = 
         "transaction directory contains a symlinked directory (or a managed surface is a symlink); "
         "TRW never writes through symlinks and updated nothing:\n"
         f"{listing}\n"
-        "Fix: replace each symlink with a real directory (copy its contents in), then re-run."
+        f"Fix: replace each symlink with a real {_symlink_kind(target_dir, links)} (copy its contents in), then re-run."
     )
 
 

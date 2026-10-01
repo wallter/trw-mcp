@@ -62,9 +62,11 @@ class GlobalConfigs:
             outcome = f"no matching TRW entry; {will} be kept"
         return f"    entry {display(p, target)} ({outcome})"
 
-    def strip(self, p: Path, root: Path, shape: str) -> str | None:
+    def strip(self, p: Path, root: Path, shape: str, captures: dict[str, list[str]]) -> str | None:
         """The real strip of a merged config; a global file is re-read just before it is written."""
-        return _strip_trw_from_merged_config(p, root, dry_run=False, shape=shape, verify_unchanged=p in self.paths)
+        return _strip_trw_from_merged_config(
+            p, root, dry_run=False, shape=shape, verify_unchanged=p in self.paths, captures=captures
+        )
 
     def refusals(self, managed: list[Path], merged: list[tuple[Path, Path, str]], *rest: Any) -> list[Path]:
         """What a ``--dry-run`` predicts would be refused; the listing already checked the global files."""

@@ -272,6 +272,19 @@ class UI:
         self.quiet = quiet
         self._spinner: _Spinner | None = None
         self._deferred_warnings: list[str] = []
+        self._seen_child_warnings: set[str] = set()
+
+    def first_sighting(self, msg: str) -> bool:
+        """True the first time *msg* is shown in this install, False for every repeat.
+
+        ``update-project`` runs once per configured client and each run prints the same project-wide
+        notices (e.g. ``retired_artifact_present`` for every retired file), so four clients showed
+        every notice four times. A repeat adds no information, so it is dropped.
+        """
+        if msg in self._seen_child_warnings:
+            return False
+        self._seen_child_warnings.add(msg)
+        return True
 
     def info(self, msg: str) -> None:
         if not self.quiet:
@@ -313,7 +326,11 @@ class UI:
         refusals (the operator's only signal that their AGENTS.md was left
         stale) disappeared in interactive mode. With no spinner running there is
         nothing to wait for, so the warning is emitted immediately.
+
+        A warning already shown in this install is not shown again (see :meth:`first_sighting`).
         """
+        if not self.first_sighting(msg):
+            return
         if self._spinner is None:
             self.step_warn(msg)
             return
@@ -1840,6 +1857,10 @@ def run_with_progress(
             for line in proc.stdout:
                 if output is not None:
                     output.append(line.strip())
+                if _WARNING_LINE_RE.match(line.strip()) and not ui.first_sighting(
+                    _WARNING_LINE_RE.sub("", line.strip(), count=1)
+                ):
+                    continue  # the same notice every earlier per-client run already showed
                 if not ui.quiet:
                     print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
 
@@ -2821,6 +2842,23 @@ def _telemetry_state_line(telemetry_enabled: bool, learning_sharing_enabled: boo
     return f"Telemetry: {usage} · Learning sharing: {sharing}"
 
 
+#: The served bootstrap. It reuses the stored API key, so re-running it is the upgrade.
+_BOOTSTRAP_INSTALL_COMMAND = "curl -fsSL https://trwframework.com/install.sh | bash"
+
+
+def _upgrade_command() -> str:
+    """The command that upgrades this install, as the user can actually run it.
+
+    ``python3 install-trw.py --upgrade`` only exists when the user downloaded the installer under that
+    name. The ``curl | bash`` bootstrap runs a ``mktemp`` copy (``install-trw-XXXXXX``) and deletes it on
+    exit, so the old hint named a file the user never had.
+    """
+    script = Path(sys.argv[0]) if sys.argv and sys.argv[0] not in ("", "-") else None
+    if script is not None and script.name == "install-trw.py" and script.is_file():
+        return "python3 install-trw.py --upgrade"
+    return _BOOTSTRAP_INSTALL_COMMAND
+
+
 def show_success_banner(
     ui: UI,
     platform_status: str,
@@ -2907,7 +2945,7 @@ def show_success_banner(
         print(f"  {DIM}\u25b8 Tip: {tip}{NC}")
 
         print()
-        print(f"  {DIM}Upgrade anytime: python3 install-trw.py --upgrade{NC}")
+        print(f"  {DIM}Upgrade anytime: {_upgrade_command()}{NC}")
         print(f"  {DIM}Full docs: {DOCS_BASE}/quickstart{NC}")
     else:
         print()
@@ -3479,8 +3517,11 @@ def phase_install_extras(
 
 # \u2500\u2500 Proprietary package install (PRD-INFRA-126; PRD-INFRA-128 adds the meta-harness, renamed trw-harness -> trw-metaharness 2026-06-10) \u2500\u2500
 PROPRIETARY_PACKAGES_TUPLE: tuple[str, ...] = (
-    "trw-distill",
+    # Dependencies first: pass 2 counts a private package as available only once it INSTALLED, so
+    # trw-distill (requires trw-llm and trw-metaharness) must come after both.
+    "trw-llm",
     "trw-metaharness",
+    "trw-distill",
     "trw-loop",
     "trw-swarm",
 )
@@ -3727,8 +3768,7 @@ _PROPRIETARY_PRECONDITION_ERROR: str = (
     "is then used as the credential for POST /proprietary/entitlement — the "
     "platform key is never sent directly to the entitlement endpoint. "
     "Authenticate first (run install-trw.py without --with-proprietary), or "
-    "pass --license-key=<key> / TRW_LICENSE_KEY explicitly. "
-    "See proprietary-distribution.md §8."
+    "pass --license-key=<key> / TRW_LICENSE_KEY explicitly."
 )
 
 
@@ -3824,8 +3864,8 @@ def _resolve_proprietary_license(
                 " This is a permanent denial (org plan, key scope, or unknown "
                 "key). A platform key auto-derives a proprietary:install-scoped "
                 "license; a 403 wrong-scope means the derive step did not run or "
-                "the org plan lacks entitlement — see proprietary-distribution.md "
-                "§8, fix the cause, then re-run."
+                "the org plan lacks entitlement. Check the key's scope and your "
+                "plan's proprietary access, fix the cause, then re-run."
             )
         else:
             hint = " Re-run with --with-proprietary once the backend is reachable."
@@ -4019,9 +4059,13 @@ def _install_proprietary_wheel(
 
     Removes any pre-existing copy of the package from target_dir before
     reinstalling to prevent the silent PyPI downgrade documented in
-    L-82faa67c. Uses --find-links so transitive dependencies still resolve
-    from PyPI (L-6f488d41 fix). Routes through the resolved install backend
-    so a uv-managed Python (no pip) works too.
+    L-82faa67c. The wheel itself installs with ``--no-index --no-deps``, and
+    only its PUBLIC requirements then resolve from the index (L-6f488d41), so
+    a proprietary name never falls through to PyPI, where anyone could
+    register it (PROPRIETARY-PIPELINE-ROT). The caller checks that every
+    proprietary requirement was downloaded (_missing_proprietary_requirements).
+    Routes through the resolved install backend so a uv-managed Python (no
+    pip) works too.
     """
     pkg_module = package.replace("-", "_")
     if target_dir:
@@ -4031,16 +4075,43 @@ def _install_proprietary_wheel(
                 shutil.rmtree(stale, ignore_errors=True)
             elif stale.is_file():
                 stale.unlink(missing_ok=True)
-    cmd = build_install_cmd(
-        python,
-        ui,
-        [str(wheel_path)],
-        target_dir=target_dir,
-        find_links=str(wheel_path.parent),
-        no_warn_script_location=True,
-        upgrade=False,
-        quiet=False,
-    )
+    common = {"target_dir": target_dir, "no_warn_script_location": True, "upgrade": False, "quiet": False}
+    cmds = [build_install_cmd(python, ui, [str(wheel_path)], no_index=True, no_deps=True, **common)]
+    public = [req for name, req in _wheel_requirements(wheel_path) if name not in PROPRIETARY_PACKAGES_TUPLE]
+    if public:
+        cmds.append(build_install_cmd(python, ui, public, **common))
+    return all(_run_proprietary_pip(cmd, package, target_dir, ui, log_root) for cmd in cmds)
+
+
+def _wheel_requirements(wheel_path: Path) -> list[tuple[str, str]]:
+    """``(normalized name, requirement text)`` for each non-extra ``Requires-Dist`` of *wheel_path*.
+
+    Stdlib only (the installer may run before ``packaging`` exists); pip evaluates any remaining marker.
+    """
+    try:
+        with zipfile.ZipFile(wheel_path) as wheel:
+            metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
+            metadata = BytesParser().parsebytes(wheel.read(metadata_name))
+    except (OSError, StopIteration, zipfile.BadZipFile, KeyError):  # trw-fail-silent-allow: the --no-index pip install of this same wheel fails loudly
+        return []
+    requirements = []
+    for text in metadata.get_all("Requires-Dist", []):
+        match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", text)
+        if match and not re.search(r"\bextra\s*==", text.partition(";")[2]):
+            requirements.append((re.sub(r"[-_.]+", "-", match.group(1)).lower(), text.strip()))
+    return requirements
+
+
+def _missing_proprietary_requirements(wheel_path: Path, available: set[str]) -> list[str]:
+    """Proprietary requirements of *wheel_path* that are not among *available* (downloaded or already current)."""
+    return [
+        name
+        for name, _ in _wheel_requirements(wheel_path)
+        if name in PROPRIETARY_PACKAGES_TUPLE and name not in available
+    ]
+
+
+def _run_proprietary_pip(cmd: list[str], package: str, target_dir: str, ui: UI, log_root: Path | None) -> bool:
     # PRD-INFRA-129 FR04: capture stderr (instead of routing to DEVNULL via
     # _run_quiet) so a non-zero exit leaves a self-service diagnostic trail.
     # The success path stays quiet (no warn, no log) — only failures surface.
@@ -4056,7 +4127,7 @@ def _install_proprietary_wheel(
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         _surface_proprietary_pip_failure(package, str(exc), target_dir, ui, log_root=log_root)
-        return False
+        return False  # trw-fail-silent-allow: surfaced above (console tail + per-package log); moved from _install_proprietary_wheel
     if result.returncode == 0:
         return True
     _surface_proprietary_pip_failure(package, result.stderr or "", target_dir, ui, log_root=log_root)
@@ -4072,8 +4143,8 @@ def _surface_proprietary_pip_failure(
     the captured stderr and writes the FULL stderr to
     ``<target_dir>/.trw/logs/install-pip-fail-<package>.log`` so an operator can
     diagnose a packaging break without reverse-engineering the installer
-    (NFR06). The proprietary pip command installs from a local ``--find-links``
-    wheel dir and never receives a license/API key in argv, so the captured
+    (NFR06). The proprietary pip commands install a local wheel (``--no-index``)
+    or its public requirements and never receive a license/API key in argv, so the captured
     stderr carries no plaintext secret (NFR07).
     """
     # Prefer the PROJECT root (log_root) — the pip --target dir / cwd
@@ -4139,9 +4210,9 @@ def phase_install_proprietary(
     installed_meta: list[dict[str, str]] = []
     failed_packages: list[str] = []
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-proprietary-"))
-    # Two-pass: download every wheel first so cross-package deps (e.g.
-    # trw-distill depending on trw-metaharness) resolve via pip --find-links
-    # regardless of which order the packages appear in the tuple.
+    # Two-pass: download every wheel first so pass 2 can refuse a wheel whose
+    # proprietary requirement (e.g. trw-distill -> trw-llm) was not fetched,
+    # instead of letting it resolve from a public index.
     downloaded: list[tuple[str, Path, str, str]] = []  # (package, wheel_path, resolved_version, sha256)
     # PRD-INFRA-126 NFR05 idempotency: the marker records what a prior run
     # installed, so a re-run can skip a package the entitlement resolves to the
@@ -4184,12 +4255,24 @@ def phase_install_proprietary(
                 ui.step_warn(f"proprietary_install_partial_failure: {package}: {exc}")
                 failed_packages.append(package)
 
-        # Pass 2 \u2014 install every fetched wheel. find-links now has every
-        # package available so cross-dependent installs resolve correctly.
+        # Pass 2 \u2014 install every fetched wheel, in tuple order (dependencies
+        # first). A wheel whose proprietary requirement is neither already current
+        # nor installed earlier in this pass is refused: it must never resolve from
+        # a public index, and a prerequisite that failed to install is not available.
+        available = {entry.split(" ", 1)[0] for entry in installed}
         for package, wheel, resolved_version, wheel_sha256 in downloaded:
+            missing = _missing_proprietary_requirements(wheel, available)
+            if missing:
+                ui.step_warn(
+                    f"proprietary_install_partial_failure: {package}: requires {', '.join(missing)}, "
+                    "which this install could not fetch or install (never resolved from a public index)"
+                )
+                failed_packages.append(package)
+                continue
             try:
                 ui.start_spinner(f"Installing {package}...")
                 if _install_proprietary_wheel(python, wheel, package, target_dir, ui, log_root=project_dir):
+                    available.add(package)
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
                     installed_meta.append(
@@ -4225,29 +4308,85 @@ def phase_install_proprietary(
     # license-gated proprietary package commands resolve their module under
     # --target (mirrors the bin/trw-mcp wrapper). No-op for non-target installs.
     _write_proprietary_console_wrappers(python, target_dir, installed, ui)
-    _print_distill_repo_intel_hint(ui, installed)
+    _print_distill_repo_intel_hint(ui, installed, python=python, target=target_dir)
     return installed
 
 
-def _print_distill_repo_intel_hint(ui: "UI", installed: list[str]) -> None:
+#: (importable module, pip requirement) for the extras that give trw-distill full map fidelity.
+_DISTILL_MAP_EXTRAS: tuple[tuple[str, str], ...] = (
+    ("tree_sitter", "tree-sitter>=0.24"),
+    ("tree_sitter_python", "tree-sitter-python>=0.21"),
+    ("tree_sitter_typescript", "tree-sitter-typescript>=0.21"),
+    ("jedi", "jedi>=0.19"),
+)
+
+
+def _probe_missing_modules(python: str, modules: list[str], target: str) -> list[str] | None:
+    """The *modules* the *python* interpreter (plus the ``--pip-target`` dir) cannot import, or None when unknown.
+
+    Imports rather than only locating each module, so a wheel that is present but broken for this
+    interpreter counts as missing. None means the probe itself could not run.
+    """
+    code = (
+        "import importlib, sys\n"
+        "target = sys.argv[1]\n"
+        "if target:\n"
+        "    sys.path.insert(0, target)\n"
+        "for name in sys.argv[2:]:\n"
+        "    try:\n"
+        "        importlib.import_module(name)\n"
+        "    except Exception:\n"
+        "        print(name)\n"
+    )
+    try:
+        result = subprocess.run(  # noqa: S603  # trw:intentional fixed argv; python is the interpreter the install used
+            [python, "-B", "-c", code, target, *modules], capture_output=True, text=True, timeout=60, check=False
+        )
+    except (OSError, subprocess.SubprocessError):  # trw-fail-silent-allow: unknown -> the caller advises everything
+        return None
+    if result.returncode != 0:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _missing_distill_map_extras(python: str, target: str) -> tuple[list[str], bool]:
+    """``(pip requirements this interpreter cannot import, whether that was measured)``.
+
+    When the probe cannot run every requirement is returned with ``False``: not knowing is not the same
+    as present, and the caller must not report a guess as a finding.
+    """
+    missing = _probe_missing_modules(python, [module for module, _req in _DISTILL_MAP_EXTRAS], target)
+    if missing is None:
+        return [requirement for _module, requirement in _DISTILL_MAP_EXTRAS], False
+    return [requirement for module, requirement in _DISTILL_MAP_EXTRAS if module in missing], True
+
+
+def _print_distill_repo_intel_hint(ui: "UI", installed: list[str], python: str = "", target: str = "") -> None:
     """Print a short next-steps hint when trw-distill installed successfully.
 
     trw-distill is the repo-intelligence package; the bare wheel works for
     the LLM-free commands (scan/map/dead-code-scan) out of the box, but full
-    map fidelity needs the [ast]/[lsp] extras and cold-start synthesis
-    (run/bootstrap) needs a local LLM. Surfacing this here saves the operator
-    a trip to the runbook. Pure stdout — no network, no disk writes.
+    map fidelity needs the Tree-sitter and jedi extras and cold-start synthesis
+    (run/bootstrap) needs a local LLM. The pip line is printed only for the extras
+    the target interpreter cannot import, and the help pointer is a command the
+    user can run, not a path in the TRW repo. No network, no disk writes.
     """
     if not any(entry.split(" ", 1)[0] == "trw-distill" for entry in installed):
         return
     ui.info("trw-distill installed — repo intelligence is ready:")
     ui.info("  trw-distill map  --repo .   # codebase map (LLM-free)")
     ui.info("  trw-distill scan --repo .   # git-history mining (LLM-free)")
-    ui.info("  Full map fidelity (Tree-sitter + jedi):")
-    ui.info('    python -m pip install "tree-sitter>=0.24" "tree-sitter-python>=0.21" \\')
-    ui.info('        "tree-sitter-typescript>=0.21" "jedi>=0.19"')
+    missing, verified = _missing_distill_map_extras(python or sys.executable, target)
+    if missing:
+        ui.info(
+            "  Full map fidelity needs these packages, which this Python cannot import yet:"
+            if verified
+            else "  Full map fidelity needs these packages (could not check which are already installed):"
+        )
+        quoted = " ".join(f'"{requirement}"' for requirement in missing)
+        ui.info(f"    python -m pip install {quoted}")
     ui.info("  Cold-start synthesis (trw-distill run/bootstrap) needs a local LLM (Ollama).")
-    ui.info("  See docs/deployment/proprietary-distribution.md §4.5.")
+    ui.info("  All commands and options: trw-distill --help")
 
 
 def _emit_install_completed_event(
@@ -4635,8 +4774,10 @@ def run_install_doctor(
 
     Returns True when the deployed framework is healthy (no FAIL check). On any
     FAIL check, emit a LOUD, non-silent warning naming the failing checks and the
-    single remediation command — never a silent green success line. Fail-open: a
-    doctor that cannot run or parse warns but never aborts the install.
+    single remediation command — never a silent green success line. A WARN row
+    does not fail the install, but it is never reported as "passed" either: the
+    line gives the count and the names, so it matches the doctor's own verdict.
+    Fail-open: a doctor that cannot run or parse warns but never aborts the install.
     """
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     cmd = trw_cmd + ["doctor", str(target_dir), "--format", "json"]
@@ -4652,14 +4793,27 @@ def run_install_doctor(
         ui.step_warn("Could not parse 'trw-mcp doctor' output; verify the install manually.")
         return False
     failed = [
-        str(check.get("name", "?")) for check in checks if isinstance(check, dict) and check.get("status") == "FAIL"
+        (str(check.get("name", "?")), str(check.get("message", "")))
+        for check in checks
+        if isinstance(check, dict) and check.get("status") == "FAIL"
     ]
     if failed:
         ui.step_warn("trw-mcp doctor reported problems with the installed framework:")
-        for name in failed:
-            ui.step_warn(f"  FAIL: {name}")
+        for name, message in failed:
+            # FB-INSTALL-01: the row's own message says what broke and how to fix it (the generic fix
+            # below does not repair e.g. a hook family whose lib is out of date).
+            ui.step_warn(f"  FAIL: {name}: {message}" if message else f"  FAIL: {name}")
         ui.step_warn("Fix: run 'git init && trw-mcp init-project .' in this directory.")
         return False
+    warned = [
+        str(check.get("name", "?")) for check in checks if isinstance(check, dict) and check.get("status") == "WARN"
+    ]
+    if warned:
+        noun = "warning" if len(warned) == 1 else "warnings"
+        ui.step_warn(
+            f"Framework health check: {len(warned)} {noun} ({', '.join(warned)}); run 'trw-mcp doctor' for details"
+        )
+        return True
     ui.step_ok("Framework health check passed (trw-mcp doctor: no failures)")
     return True
 
@@ -4936,7 +5090,7 @@ def phase_configure(
     if interactive:
         if prior_config.get("project_name"):
             project_name = str(prior_config["project_name"])
-            ui.step_ok(f"Project: {project_name} (from prior install)")
+            ui.step_ok(f"Project: {project_name} (installation_id in .trw/config.yaml, from prior install)")
         else:
             draw_divider("Project Identity")
             print()
@@ -5338,7 +5492,7 @@ def main() -> None:
         "--with-proprietary",
         action="store_true",
         help=(
-            "Install trw-distill, trw-metaharness, trw-loop, trw-swarm. "
+            "Install trw-llm, trw-metaharness, trw-distill, trw-loop, trw-swarm. "
             "Auto-derives a license from the platform_api_key in "
             ".trw/config.yaml; falls back to --license-key for explicit overrides."
         ),
@@ -5594,7 +5748,9 @@ def main() -> None:
                 proprietary_pins,
                 backend_url,
                 target_dir=args.pip_target,
-                auto_confirm=not interactive,
+                # An explicit --with-proprietary / TRW_WITH_PROPRIETARY is the consent (PRD-INFRA-126 FR02);
+                # only a path inferred from the marker, or an interactive run that never asked, still prompts.
+                auto_confirm=not interactive or proprietary_requested,
                 project_dir=target_dir,
             )
             write_proprietary_marker(target_dir, proprietary_installed)

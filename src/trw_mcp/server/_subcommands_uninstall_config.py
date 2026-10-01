@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -17,6 +18,7 @@ from trw_mcp.bootstrap._git_hooks import SHIM_PREAMBLE as _GIT_HOOK_SHIM_PREAMBL
 from trw_mcp.bootstrap._opencode_instructions import (
     OPENCODE_INSTRUCTIONS_REL as _OPENCODE_INSTRUCTIONS_REL,
 )
+from trw_mcp.bootstrap._safe_remove import remove_if_hash
 from trw_mcp.bootstrap._user_file_edit import (
     atomic_write_text,
     is_generated_entry,
@@ -213,8 +215,32 @@ def _resolve_strip_strategy(shape: str, suffix: str) -> StripStrategy | None:
     return _STRIP_STRATEGIES.get(resolved)
 
 
+def _delete_judged(path: Path, root: Path, raw: str, rel: Path, captures: dict[str, list[str]] | None) -> str:
+    """Remove *path* only while it still holds the bytes *raw* that were judged to be TRW's alone.
+
+    ``remove_if_hash`` captures the file into ``.trw/trash``, re-hashes the captured bytes and links them back
+    under the name on any mismatch, so an edit saved since the read survives (HB-2). The capture joins
+    *captures*, for the move on to the system Trash. Returns ``"removed"`` or ``"refused"`` (reason recorded).
+    """
+    outcome = remove_if_hash(path, root, hashlib.sha256(raw.encode("utf-8")).hexdigest(), key=rel.as_posix())
+    if outcome.status == "removed" and captures is not None:
+        captures.setdefault("trashed", []).append(str(path))
+        captures.setdefault("trashed_at", []).append(str(outcome.retained_at or ""))
+    if outcome.status in ("removed", "absent"):
+        return "removed"
+    where = f"; your edited bytes are in {outcome.retained_at}" if outcome.status == "retained" else ""
+    REFUSAL_REASONS[path] = f"kept: the file changed while uninstall ran ({outcome.reason}); left as found{where}"
+    return "refused"
+
+
 def _strip_trw_from_merged_config(
-    path: Path, root: Path, dry_run: bool, *, shape: str = "", verify_unchanged: bool = False
+    path: Path,
+    root: Path,
+    dry_run: bool,
+    *,
+    shape: str = "",
+    verify_unchanged: bool = False,
+    captures: dict[str, list[str]] | None = None,
 ) -> str | None:
     """Strip ONLY TRW-owned entries from a merged client config file.
 
@@ -225,8 +251,13 @@ def _strip_trw_from_merged_config(
     on uninstall — we parse the file, drop only the TRW-owned entries via the
     structural strategy named by ``shape``, and write the rest back.
 
-    A hook-group file that contains nothing user-owned after stripping is
-    deleted (it held only TRW artifacts); every other shape is always preserved.
+    A project file that holds nothing user-owned once TRW's entries are gone (an empty ``{}``, an empty
+    hook map, an empty ``[mcp_servers]`` table) is TRW's own shell and is removed (INC-117); any key, server,
+    hook or table the user owns keeps the file, and so does ``opencode.json``'s ``$schema``/``permission``/
+    ``tools``: those are content whose origin (TRW's seed or the user's own file) cannot be proven without an
+    install-time record. Known limit: a user's own empty ``{}`` that held TRW's entry is indistinguishable from
+    a shell TRW created. The machine-global file (*verify_unchanged*) is the user's client config and is never
+    removed.
 
     Returns ``"stripped"`` when TRW entries were removed (user content kept),
     ``"removed"`` when nothing user-owned remained (file deleted), ``None`` when
@@ -284,10 +315,10 @@ def _strip_trw_from_merged_config(
                 "uninstall_merged_config_changed_during_run", path=str(path), action="left_untouched"
             )
             return "changed"
+    if not (delete or verify_unchanged) and path.suffix.lower() == ".json" and rendered.strip() == "{}":
+        delete = True  # nothing the user owns is left: the file is only TRW's shell
     if delete:
-        if not dry_run:
-            path.unlink()
-        return "removed"
+        return "removed" if dry_run else _delete_judged(path, root, raw, rel, captures)
     if not dry_run:
         atomic_write_text(path, rendered)
     return "stripped"
@@ -414,6 +445,8 @@ def _strip_trw_toml(raw: str, root: Path) -> tuple[bool, str, bool]:
     rendered, removed, refusal = strip_toml_table(raw, f"{_TOML_MCP_KEY}.{_TRW_SERVER_KEY}", toml_table_texts(root))
     if refusal:
         _entry_changed("config.toml", refusal)
+    if removed and {line.strip() for line in rendered.splitlines()} <= {"", f"[{_TOML_MCP_KEY}]"}:
+        return True, "", True  # only an empty ``[mcp_servers]`` header is left: TRW's own file
     return (True, rendered, False) if removed else (False, raw, False)
 
 

@@ -69,6 +69,9 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "test-strategy": "trw-test-strategy",
         # PRD-CORE-092: Dropped skill post-consolidation
         "trw-review-pr": None,
+        # trw_decision became trw_assess (clean break, no alias), so the old skill directs a tool that is gone.
+        # None, not "trw-assess": that skill is conditional (assess_enabled) and the old one must go either way.
+        "trw-decision": None,
     },
     "agents": {
         # PRD-FIX-032: Non-prefixed → trw- prefixed migration

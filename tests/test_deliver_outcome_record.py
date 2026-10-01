@@ -111,7 +111,8 @@ def _observed(
     blocked: bool, results: dict[str, Any], errors: list[str], exit_name: str
 ) -> tuple[bool, list[str], list[str]]:
     shown = ["<parse error>"] if exit_name == "structured_refused" and errors else list(errors)
-    return blocked, sorted(results), shown
+    # outcome_record (PRD-CORE-345 B1) is additive; its own tests below pin it, the oracle pins the rest
+    return blocked, sorted(k for k in results if k != "outcome_record"), shown
 
 
 @pytest.mark.parametrize("exit_name", sorted(_EXITS))
@@ -314,3 +315,51 @@ def test_a_refused_unsafe_write_lands_in_the_logged_branch_and_never_changes_the
         for entry in logs
     )
     assert list(outside.rglob("outcome-*.json")) == []  # nothing was written through the link
+
+
+# --------------------------------------------------------------------------- #
+# PRD-CORE-345 B1 (operator-confirmed 2026-09-30): a record fault is surfaced in the response
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("exit_name", ["no_escape", "advisory_clean", "structured_overridden"])
+def test_a_written_record_is_reported_as_written(
+    exit_name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _blocked, results, _errors = _evaluate(exit_name, monkeypatch, _run_dir(tmp_path), tmp_path / ".trw")
+    assert results["outcome_record"] == "written"
+
+
+@pytest.mark.parametrize("exit_name", ["no_escape", "advisory_clean"])
+def test_no_run_is_reported_as_skipped(exit_name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _blocked, results, _errors = _evaluate(exit_name, monkeypatch, None, tmp_path / ".trw")
+    assert results["outcome_record"] == "skipped:no-run"
+
+
+@pytest.mark.parametrize("exit_name", ["no_escape", "structured_overridden", "advisory_clean", "formation"])
+@pytest.mark.parametrize("step", ["write", "build"])
+def test_a_record_fault_is_surfaced_in_the_response_and_the_decision_stands(
+    exit_name: str, step: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import trw_mcp._checkout_write as checkout_write
+    import trw_mcp.tools._deliver_outcome as outcome
+
+    real = checkout_write.write_checkout_file
+
+    def boom_write(root: Path, path: Path, *a: object, **k: object) -> None:
+        if Path(path).name.startswith("outcome-"):
+            raise OSError("disk full")
+        real(root, path, *a, **k)  # type: ignore[arg-type]
+
+    def boom_build(*_a: object, **_k: object) -> object:
+        raise ValueError("cannot build")
+
+    if step == "write":
+        monkeypatch.setattr(checkout_write, "write_checkout_file", boom_write)
+        expected = "failed:OSError"
+    else:
+        monkeypatch.setattr(outcome, "_build", boom_build)
+        expected = "failed:ValueError"
+    blocked, results, errors = _evaluate(exit_name, monkeypatch, _run_dir(tmp_path), tmp_path / ".trw")
+    assert results["outcome_record"] == expected
+    assert _observed(blocked, results, errors, exit_name) == _ORACLE[exit_name]

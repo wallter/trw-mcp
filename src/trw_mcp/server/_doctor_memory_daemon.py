@@ -89,6 +89,14 @@ def memory_daemon_row(target: Path) -> tuple[str, str]:
         )
     result = read_discovery_result(paths)
     if isinstance(result, DiscoveryAbsent):
+        from trw_memory.models.config import MemoryConfig
+
+        if not MemoryConfig().memory_daemon_autostart:  # no memory call starts one, and memory_backend says so
+            return (
+                "WARN",
+                f"no memory daemon running and auto-start is off (MEMORY_DAEMON_AUTOSTART=false), so no memory "
+                f"call starts one: start it with: {DAEMON_START_COMMAND}. store: {paths.user_memory_dir}",
+            )
         return (
             "PASS",
             f"no memory daemon running; the next memory call starts one (it exits when idle), "

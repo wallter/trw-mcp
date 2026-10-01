@@ -23,7 +23,8 @@ from trw_mcp.models.config import TRWConfig
 
 __all__ = ["distill_row"]
 
-_PROPRIETARY_DOC = "docs/deployment/proprietary-distribution.md"
+#: Where an operator applies for the proprietary tools; the TRW repo's own docs are not in an installed project.
+_PROPRIETARY_ACCESS_URL = "https://trwframework.com/waitlist"
 
 
 def _installed_version() -> str:
@@ -40,7 +41,7 @@ def distill_row(_target: Path, _config: TRWConfig) -> tuple[Literal["PASS", "WAR
     if importlib.util.find_spec("trw_distill") is None:
         return (
             "SKIP",
-            f"trw-distill not installed (optional, proprietary tier). See {_PROPRIETARY_DOC} for how to obtain it.",
+            f"trw-distill not installed (optional, proprietary tier). Apply for access at {_PROPRIETARY_ACCESS_URL}.",
         )
     version = _installed_version()
     if shutil.which("trw-distill") is None:

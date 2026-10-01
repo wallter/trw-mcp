@@ -279,6 +279,24 @@ def _migrate_legacy_marker_block(content: str) -> str:
     return before or after
 
 
+def split_around_trw_block(
+    content: str,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> tuple[str, str] | None:
+    """``(text above, text below)`` the first well-formed TRW block of *content*, byte for byte, else ``None``.
+
+    The auto-comment directly above the start marker belongs to the block. Line-anchored matching only (see
+    :func:`_marker_line_index`); *content* is the exact text, line endings untouched.
+    """
+    lines = content.splitlines()
+    start_idx = _marker_line_index(lines, markers[0])
+    end_idx = _marker_line_index(lines, markers[1], after=start_idx) if start_idx is not None else None
+    if start_idx is None or end_idx is None:
+        return None
+    kept = content.splitlines(keepends=True)
+    return "".join(kept[: _block_cut_index(lines, start_idx)]), "".join(kept[end_idx + 1 :])
+
+
 def render_merged_content(
     target: Path,
     trw_section: str,
@@ -310,20 +328,13 @@ def render_merged_content(
         # and trw_deliver call for CLAUDE.md and AGENTS.md. The bootstrap sibling
         # (_template_claude_md.py) had already been hardened with
         # find_marker_line_span; this copy never was.
-        existing_lines = existing.splitlines()
-        kept_lines = existing.splitlines(keepends=True)
-        marker_start, marker_end = markers
-        start_idx = _marker_line_index(existing_lines, marker_start)
-        end_idx = _marker_line_index(existing_lines, marker_end, after=start_idx) if start_idx is not None else None
-        if start_idx is not None and end_idx is not None:
-            cut = _block_cut_index(existing_lines, start_idx)
+        sides = split_around_trw_block(existing, markers)
+        if sides is not None:
             # Both sides of the block are the user's and are kept BYTE-FOR-BYTE: line endings, blank lines and
             # the terminal newline included -- the same boundary contract as the bootstrap ``replace_marker_region``.
             # Re-deciding either (one blank line, LF) made the two AGENTS.md writers take turns rewriting, and
             # backing up, the same file on every sync (E2E-INC-015), and converted a CRLF file to LF.
-            before = "".join(kept_lines[:cut])
-            after = "".join(kept_lines[end_idx + 1 :])
-            new_content = before + block_text(trw_section, file_eol(existing)) + after
+            new_content = sides[0] + block_text(trw_section, file_eol(existing)) + sides[1]
         else:
             new_content = append_block(existing, trw_section)
     else:

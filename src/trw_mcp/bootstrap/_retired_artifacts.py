@@ -17,6 +17,7 @@ names each path.
 
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 from typing import Literal
@@ -43,12 +44,50 @@ _AGENT_MEMORY_WHY = (
 _GENERATED_AGENT_NAMES = ("trw-distill-explorer",)
 
 
+def _retired_trw_names(kind: str) -> list[str]:
+    """The ``trw-`` skills or agents TRW dropped outright: ``PREDECESSOR_MAP[kind]`` rows with no successor.
+
+    Only TRW's own namespace: a bare name (``simplify``, ``reviewer-style``) may be the project's own artifact.
+    """
+    from ._version_migration import PREDECESSOR_MAP
+
+    return sorted(
+        name.removesuffix(".md")
+        for name, successor in PREDECESSOR_MAP[kind].items()
+        if successor is None and name.startswith("trw-")
+    )
+
+
 def _trw_agent_memory_dirs() -> tuple[str, ...]:
-    """``.claude/agent-memory/<name>`` for every agent TRW installs, bundled or generated."""
+    """``.claude/agent-memory/<name>`` for every agent TRW installs or ever installed, bundled, generated or retired."""
     from ._utils import _DATA_DIR
 
     names = {path.stem for path in (_DATA_DIR / "agents").glob("*.md")} | set(_GENERATED_AGENT_NAMES)
+    names |= set(_retired_trw_names("agents"))
     return tuple(f"{RETIRED_AGENT_MEMORY_DIR}/{name}" for name in sorted(names))
+
+
+_RETIRED_SKILL_WHY = (
+    "TRW retired this skill and removes only unchanged copies it wrote, so this one, edited or unrecorded, stayed"
+)
+
+
+def _retired_skill_mirrors(target_dir: Path) -> list[tuple[str, str]]:
+    """Retired ``trw-`` skills still present in a client skills directory.
+
+    A live ``.claude/skills/<name>`` directory is the project's own skill (a retired name it kept), and its
+    mirrors follow it (PRD-FIX-139-FR03, the same ``is_dir`` test the sweep uses, so a dangling link does not
+    count); only a mirror whose source is gone is a leftover.
+    """
+    from ._version_migration_predecessors import CLIENT_SKILL_ROOTS
+
+    return [
+        (rel, _RETIRED_SKILL_WHY)
+        for name in _retired_trw_names("skills")
+        if not (target_dir / ".claude" / "skills" / name).is_dir()
+        for rel in (f"{root}/{name}" for root in CLIENT_SKILL_ROOTS)
+        if os.path.lexists(target_dir / rel)
+    ]
 
 
 #: cursor-cli's copy of the cursor rule file. Before PRD-CORE-301-FR14 a cursor-cli install wrote the protocol here AND
@@ -79,8 +118,8 @@ def _retired_artifacts() -> tuple[tuple[str, str], ...]:
     )
 
 
-def _removal_command(target_dir: Path, relpath: str) -> str:
-    """A shell command rooted in *target_dir*, never a bare relative path.
+def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
+    """``(what it holds, shell command)`` fitted to what *relpath* is; the command is rooted in *target_dir*.
 
     codex sol fix-delta round 1 on lane-infra-200-b: a relative operand is
     ambiguous outside the inspected project -- ``trw-mcp doctor /projects/B``
@@ -91,24 +130,49 @@ def _removal_command(target_dir: Path, relpath: str) -> str:
     round 2: ``shlex.quote`` (not a bare ``f"'{path}'"``) -- a project path
     containing a single quote otherwise breaks out of the quoting and lets the
     printed advice tokenize as more than one shell command if followed literally.
+
+    A file gets ``rm``; a symlink ``rm`` (the link, never its target); an empty directory ``rmdir``; a directory
+    with files ``rm -r`` and the count, so six agent-written notes are not advised away like an empty folder.
     """
     absolute = target_dir.resolve() / relpath
-    verb = "rm -r" if absolute.is_dir() else "rm"
-    return f"{verb} {shlex.quote(str(absolute))}"
+    quoted = shlex.quote(str(absolute))
+    if absolute.is_symlink():
+        return "it is a symlink; removing it leaves what it points at alone", f"rm {quoted}"
+    if not absolute.is_dir():
+        return "", f"rm {quoted}"
+    try:
+        entries = any(absolute.iterdir())
+    except OSError:  # trw-fail-silent-allow: unreadable, so say nothing about its contents; advice only, never deleted
+        return "", f"rm -r {quoted}"
+    if not entries:
+        return "it is empty", f"rmdir {quoted}"
+    files = sum(len(names) for _dir, _subdirs, names in os.walk(absolute))
+    if files:
+        plural = files != 1
+        return f"it holds {files} file{'s' if plural else ''}; review {'them' if plural else 'it'} before removing", (
+            f"rm -r {quoted}"
+        )
+    return "it holds no files", f"rm -r {quoted}"
 
 
 def _present(target_dir: Path) -> list[tuple[str, str]]:
     present = [(rel, why) for rel, why in _retired_artifacts() if (target_dir / rel).exists()]
+    present.extend(_retired_skill_mirrors(target_dir))
     if _is_retired_cursor_cli_rule(target_dir):
         present.append((RETIRED_CURSOR_CLI_RULE, _CURSOR_CLI_RULE_WHY))
     return present
 
 
+def _advice_text(target_dir: Path, rel: str) -> str:
+    """``[<what it holds>; ]remove it manually: <command>`` for *rel*."""
+    holds, command = _removal_advice(target_dir, rel)
+    return f"{holds + '; ' if holds else ''}remove it manually: {command}"
+
+
 def retired_artifact_notices(target_dir: Path) -> list[str]:
     """One line per retired artifact present, naming what replaced it and its removal command."""
     return [
-        f"retired_artifact_present: {rel} is no longer used by TRW ({why}); "
-        f"remove it manually: {_removal_command(target_dir, rel)}"
+        f"retired_artifact_present: {rel} is no longer used by TRW ({why}); {_advice_text(target_dir, rel)}"
         for rel, why in _present(target_dir)
     ]
 
@@ -120,8 +184,5 @@ def retired_artifact_row(target_dir: Path) -> _Row:
         return "PASS", "no retired dead files present"
     return (
         "WARN",
-        "; ".join(
-            f"{rel} is retired and unused ({why}); remove it manually: {_removal_command(target_dir, rel)}"
-            for rel, why in present
-        ),
+        "; ".join(f"{rel} is retired and unused ({why}); {_advice_text(target_dir, rel)}" for rel, why in present),
     )

@@ -180,7 +180,7 @@ def test_the_loader_calls_the_warning_on_the_real_path(monkeypatch: pytest.Monke
 
     seen: list[set[str]] = []
 
-    def _spy(keys: object, defined: object) -> list[str]:
+    def _spy(keys: object, defined: object, **_kwargs: object) -> list[str]:
         seen.append(set(keys))  # type: ignore[arg-type]
         return []
 

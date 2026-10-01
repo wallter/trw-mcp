@@ -56,6 +56,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("pipeline_health", "_check_pipeline_health"),
     # PRD-FIX-155: appended last for the same reason.
     ("hook_python", "_check_hook_python"),
+    ("hook_family", "_check_hook_family"),
     # 2026-09-26 audit: appended last for the same reason as the rows above.
     ("distill", "_check_distill"),
     ("dispatch_credentials", "_check_dispatch_credentials"),  # PRD-CORE-304-FR04: appended last, as above
@@ -71,5 +72,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("shared_mcp", "_check_shared_mcp"),  # opt-in shared trw-mcp (trw_mcp.shared_server): appended last, as above
     ("distill_ingest", "_check_distill_ingest"),  # 2026-09-27 audit touchpoint #3: appended last, as above
     ("trw_trash", "_check_trw_trash"),  # SAFE-PUBLISH: appended last, as above
+    # learning L-5ist: placed before codex_observation, whose own test pins that row last.
+    ("user_tier_yaml", "_check_user_yaml"),
     ("codex_observation", "_check_codex_observation"),  # CODEX-P0-A S3: appended last, as above
 )

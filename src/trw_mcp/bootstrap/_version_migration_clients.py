@@ -335,9 +335,24 @@ def _remove_stale_client_surface(
         if surface.is_dir_artifact and (target_dir / ".claude" / "skills" / name).is_dir():
             result.setdefault("preserved", []).append(f"preserved:{entry} (mirror of a live .claude/skills source)")
             continue
+        # AG-EXPLORER-UNINSTALL-ORPHAN: a channel-rendered artifact (the AG-02 explorer) is not in the bundle but is
+        # still TRW's. Recorded with unchanged bytes, it is current: kept quietly, never removed and rewritten each
+        # update. Any other copy (a teammate's, an edited one) falls through to the not_installer_owned note.
+        if _is_current_channel_artifact(entry, manifest_hashes, target_dir):
+            continue
         if preserve_unowned(entry, manifest_hashes, target_dir, result):
             continue
         remove_proven(entry, manifest_hashes, target_dir, result)
+
+
+def _is_current_channel_artifact(entry: Path, manifest_hashes: dict[str, str] | None, target_dir: Path) -> bool:
+    from trw_mcp.channels.antigravity._explorer_subagent import EXPLORER_AGENT_RELPATH
+
+    from ._version_migration_predecessors import _trw_authored
+
+    if entry.relative_to(target_dir).as_posix() != EXPLORER_AGENT_RELPATH:
+        return False
+    return _trw_authored(entry, manifest_hashes or {}, target_dir)
 
 
 def codex_artifact_contents() -> dict[str, bytes]:

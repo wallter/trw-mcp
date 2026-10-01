@@ -356,7 +356,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             print(f"  Preserved: {printable(message)}")
         captures.update({k: apply_result.get(k, []) for k in ("trashed", "trashed_at")})
         for d in covered_dispositions:
-            if d.action == "remove" and d.key in removed_manifest_keys:
+            if d.action == "remove" and d.key in removed_manifest_keys and d.detail != "already gone":
                 removed += 1
                 print(f"  Removed: {display(d.path, target)}")
             elif d.action == "preserved-edited":
@@ -395,7 +395,6 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             removed += 1
             print(f"  Removed: {display(u.path, target)}")
 
-    _move_matched_captures_to_os_trash(captures, target, display)
     for p in managed_paths:
         try:
             status = _remove_managed_block_file(p, target, dry_run=False)
@@ -416,7 +415,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
 
     for p, root, shape in merged_config_paths:
         try:
-            status = global_configs.strip(p, root, shape)
+            status = global_configs.strip(p, root, shape, captures)
         except OSError as exc:
             errors += 1
             print(f"  Error updating {display(p, target)}: {exc}")
@@ -438,6 +437,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             refused.append(p)
             print(f"  Error updating {display(p, target)}: {refusal_text(p, root)}")
 
+    _move_matched_captures_to_os_trash(captures, target, display)  # the plain surfaces' and the emptied configs'
     # ``.trw`` holds the install manifest, the only thing that can later prove which files under a refused
     # (symlinked) parent are TRW's. It goes last, and stays whenever anything above was refused or failed, so
     # a re-run after the user fixes the link can still classify the residue.

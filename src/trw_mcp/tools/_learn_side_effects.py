@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -302,6 +302,19 @@ def _default_is_solution(summary: str) -> bool:
     return bool(_is_solution_summary(summary))
 
 
+def _writes_project_yaml(scope: str, store_result: Mapping[str, object]) -> bool:
+    """Whether a stored learning gets a YAML sidecar and index row in the PROJECT's ``.trw/learnings``.
+
+    Only a project-tier row does. A user-tier row (``user:*``, written under ``scope="user"`` or routed
+    there by ``scope="auto"``) is personal: the store holds its canonical row, and the project's
+    ``learnings/`` folder is tracked by the installed gitignore template, so a sidecar there would be
+    committed to whatever repo the session ran in (learning L-5ist). ``store_learning`` marks a row it
+    routed to the user tier with ``tier="user"``; a store that does not say fails closed for a row
+    that asked for ``scope="user"``.
+    """
+    return store_result.get("tier") != "user" and scope != "user"
+
+
 def _save_yaml_backup(
     params: LearningParams,
     *,
@@ -310,8 +323,16 @@ def _save_yaml_backup(
     entries_dir: Path,
     save_entry_fn: Callable[..., Path],
     update_analytics_fn: Callable[..., None],
-) -> Path:
-    """Save YAML backup via analytics (dual-write for rollback safety)."""
+    scope: str,
+    store_result: Mapping[str, object],
+) -> Path | str:
+    """Save YAML backup via analytics (dual-write for rollback safety).
+
+    A user-tier row gets no sidecar and no index row (see :func:`_writes_project_yaml`); what comes
+    back is the store's own ``sqlite://`` locator, a ``str`` because ``Path`` would collapse its ``//``.
+    """
+    if not _writes_project_yaml(scope, store_result):
+        return str(store_result.get("path") or f"sqlite://{params.learning_id}")
     try:
         import os as _os
 

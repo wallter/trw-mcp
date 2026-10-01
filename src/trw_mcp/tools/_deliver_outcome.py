@@ -5,7 +5,9 @@
 gate types into a private accumulator. :func:`record_outcome` then writes one ``outcome-<uuid4>.json``.
 
 Audit, never authority: nothing here is read back into a decision, and a write fault is logged
-(``deliver_outcome_record_failed``) and swallowed, so a block stays a block and a pass stays a pass.
+(``deliver_outcome_record_failed``) AND surfaced in the ``trw_deliver`` response as ``outcome_record``
+(``written`` | ``failed:<ErrorType>`` | ``skipped:no-run``), never raised, so a block stays a block and a pass
+stays a pass.
 Raise paths out of the cascade write no record.
 """
 
@@ -103,10 +105,13 @@ def _iso_date(value: str) -> bool:
 
 def record_outcome(
     accumulator: OutcomeAccumulator, blocked: bool, resolved_run: Path | None, trw_dir: Path | None
-) -> None:
-    """Write the outcome record; never raises and never changes ``blocked``."""
+) -> str:
+    """Write the outcome record; never raises and never changes ``blocked``.
+
+    Returns the status for the response: ``written``, ``failed:<ErrorType>`` or ``skipped:no-run``.
+    """
     if resolved_run is None:
-        return
+        return "skipped:no-run"
     try:
         from trw_mcp._delivery_boundary import journal_step
 
@@ -118,14 +123,15 @@ def record_outcome(
             # Descriptor-anchored under the run dir: a symlinked component is refused (UnsafeWriteError) and lands
             # in the logged branch below, so an unsafe write never changes the gate.
             write_checkout_file(resolved_run, path, outcome.model_dump_json(exclude_none=True) + "\n")
-    # trw-fail-silent-allow: audit is not authority; the fault is logged and the gate decision stands (operator rule)
+    # trw-fail-silent-allow: audit is not authority; the fault is logged and the gate decision stands (operator-confirmed 2026-09-30, PRD-CORE-345 B1)
     except Exception as exc:
         logger.warning("deliver_outcome_record_failed", error_type=type(exc).__name__, run=str(resolved_run))
-        return
+        return f"failed:{type(exc).__name__}"
     # PRD-CORE-345 FR03: the gate span points at the record just written (never raises).
     from trw_mcp.telemetry.otel_verify import project_outcome
 
     project_outcome(outcome, resolved_run)
+    return "written"
 
 
 def _build(accumulator: OutcomeAccumulator, blocked: bool, resolved_run: Path, trw_dir: Path | None) -> DeliverOutcome:

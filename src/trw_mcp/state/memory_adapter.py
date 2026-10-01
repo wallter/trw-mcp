@@ -238,6 +238,8 @@ def store_learning(
         "status": "recorded",
         "distribution_warning": "",
     }
+    if is_user_write:
+        recorded["tier"] = "user"  # the caller keeps a user row's sidecar out of the project (L-5ist)
     if inferred:
         recorded["auto_added_tags"] = list(inferred)  # INC-119 f: tags the caller did not ask for
     return recorded

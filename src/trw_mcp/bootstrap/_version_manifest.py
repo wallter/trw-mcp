@@ -607,7 +607,7 @@ def preserve_uncommitted_changes(
     from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH
 
     from ._canon_ownership import is_trw_deployed_canon, is_trw_owned_runtime_canon
-    from ._mcp_json import mcp_json_refresh_loses_nothing
+    from ._dirty_refresh import refresh_loses_nothing
     from ._update_transaction import _file_signature, _is_under_pruned_dir, _restore_transaction_file
 
     # A path remove_if_hash moved to .trw/trash this run was proven, from its captured bytes, to be TRW's
@@ -633,8 +633,8 @@ def preserve_uncommitted_changes(
             and before.read_bytes() == after.read_bytes()
         ):
             continue  # same bytes, different mode: a restored exec bit changes no content of the user's
-        if rel == ".mcp.json" and mcp_json_refresh_loses_nothing(before):
-            continue  # the merge rewrites only TRW's own `trw` entry (a customized one is kept), so nothing is lost
+        if refresh_loses_nothing(rel, before, after):
+            continue  # .mcp.json: only TRW's own `trw` entry changed; AGENTS.md: only TRW's block changed (_dirty_refresh)
         if before.is_file() and not before.is_symlink():
             recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
             if recorded == hashlib.sha256(before.read_bytes()).hexdigest():

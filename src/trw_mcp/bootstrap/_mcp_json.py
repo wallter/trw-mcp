@@ -29,6 +29,15 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _is_absolute_pin(command: object) -> bool:
+    """Whether *command* is an absolute path to a file that exists: a launcher the user pinned on purpose.
+
+    The one rule every client generator shares (``.mcp.json``, Codex): a dev checkout pins one venv's binary so the
+    right build runs whatever PATH holds and whatever directory the client starts the server in.
+    """
+    return isinstance(command, str) and command.startswith("/") and Path(command).is_file()
+
+
 def _is_user_customized_trw_entry(existing: object) -> bool:
     """Decide whether to preserve a pre-existing ``trw`` MCP server entry.
 
@@ -52,10 +61,10 @@ def _is_user_customized_trw_entry(existing: object) -> bool:
     if not isinstance(existing, dict):
         return False
     cmd = existing.get("command")
-    if isinstance(cmd, str) and cmd.startswith("/") and Path(cmd).is_file():
+    if _is_absolute_pin(cmd):
         return True
     # Lists (e.g. [python, -m, trw_mcp.server]) with absolute-path interpreter
-    if isinstance(cmd, list) and cmd and isinstance(cmd[0], str) and cmd[0].startswith("/") and Path(cmd[0]).is_file():
+    if isinstance(cmd, list) and cmd and _is_absolute_pin(cmd[0]):
         return True
     # Extra keys beyond the canonical {command, args} → user added something
     extra_keys = set(existing.keys()) - {"command", "args"}

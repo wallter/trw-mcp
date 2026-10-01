@@ -642,13 +642,12 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert "github" in data["mcpServers"]
         assert data["mcpServers"]["postgres"]["args"] == ["--dsn", "x"]
 
-    def test_root_mcp_json_preserved_when_only_trw_remains(self, tmp_path: Path) -> None:
-        """A TRW-only map is emptied, not deleted.
+    def test_root_mcp_json_holding_only_trw_is_removed(self, tmp_path: Path) -> None:
+        """INC-117: a map that held only TRW's server is TRW's own shell, not a file of the user's.
 
-        Deliberate, and consistent with the other two server maps: only the
-        ``hook-group-list`` shape deletes itself when nothing user-owned is
-        left. An MCP map is a file the user's client owns, so uninstall
-        withdraws TRW's entry from it rather than removing the file.
+        Every server map (``.mcp.json``, ``.cursor/mcp.json``, the copilot pair) withdraws TRW's entry and
+        then removes the file only when nothing else is in it; a user's server keeps it
+        (``test_root_mcp_json_strips_trw_keeps_user_servers``).
         """
         import json
 
@@ -658,8 +657,7 @@ class TestUninstallHookGroupAndMergedSurfaces:
 
         _run_uninstall(_ns(tmp_path))
 
-        assert mcp.exists()
-        assert "trw" not in json.loads(mcp.read_text()).get("mcpServers", {})
+        assert not mcp.exists()
 
 
 @pytest.mark.usefixtures("no_memory_daemon")
@@ -1349,14 +1347,14 @@ class TestUninstallClaudeSettings:
 
         return json.loads((_DATA_DIR / "settings.json").read_text(encoding="utf-8"))
 
-    def test_untouched_project_settings_end_empty(self, tmp_path: Path) -> None:
-        """Exactly TRW's template (hooks + env) uninstalls to ``{}``, file kept."""
+    def test_untouched_project_settings_are_removed(self, tmp_path: Path) -> None:
+        """Exactly TRW's template (hooks + env) leaves nothing the user owns, so the file goes (INC-117)."""
         path = self._write_settings(tmp_path, self._bundled())
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        assert path.read_text() == "{}\n"
+        assert not path.exists()
 
     def test_env_opt_out_is_kept(self, tmp_path: Path) -> None:
         import json
@@ -1383,14 +1381,14 @@ class TestUninstallClaudeSettings:
 
         assert json.loads(path.read_text()) == {"env": {"MY_VAR": "1"}, "permissions": {"allow": ["Bash(ls:*)"]}}
 
-    def test_env_only_settings_are_emptied(self, tmp_path: Path) -> None:
-        """No hooks at all, only TRW's env value: still withdrawn."""
+    def test_env_only_settings_are_removed(self, tmp_path: Path) -> None:
+        """No hooks at all, only TRW's env value: withdrawn, and nothing of the user's is left."""
         path = self._write_settings(tmp_path, {"env": {"ENABLE_TOOL_SEARCH": "true"}})
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        assert path.read_text() == "{}\n"
+        assert not path.exists()
 
     def test_user_hooks_survive_env_strip(self, tmp_path: Path) -> None:
         import json

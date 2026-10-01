@@ -19,7 +19,11 @@ from trw_mcp.exceptions import ConfigError
 from trw_mcp.models.config._credentials import resolve_platform_api_key
 from trw_mcp.models.config._local_only_guard import reject_local_only_env, reject_local_only_mapping
 from trw_mcp.models.config._main import TRWConfig
-from trw_mcp.models.config._retired_keys import warn_retired_env_vars, warn_unrecognised_config_keys
+from trw_mcp.models.config._retired_keys import (
+    config_key_sources,
+    warn_retired_env_vars,
+    warn_unrecognised_config_keys,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -367,7 +371,9 @@ def _build_config_unguarded(project_config_path: Path | None = None) -> TRWConfi
             # constructor swallows it. Checked against the whole merged set
             # rather than the env-filtered one, because a key being shadowed by a
             # TRW_* variable does not make it recognised.
-            warn_unrecognised_config_keys(merged, TRWConfig.model_fields)
+            warn_unrecognised_config_keys(
+                merged, TRWConfig.model_fields, key_sources=lambda: config_key_sources(project_config_path)
+            )
             # Exclude keys overridden by a TRW_ env var (env wins). The
             # platform_api_key is resolved above and intentionally kept even
             # when TRW_PLATFORM_API_KEY is set (its env precedence is already

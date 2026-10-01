@@ -22,6 +22,9 @@ from ._safe_remove import remove_tree_if_hash
 
 logger = structlog.get_logger(__name__)
 
+#: Every client skills directory that mirrors the canonical ``.claude/skills``; a retired skill is swept from each.
+CLIENT_SKILL_ROOTS: tuple[str, ...] = (".agents/skills", ".cursor/skills", ".github/skills", ".opencode/skills")
+
 
 def _migrate_predecessor_set(
     parent_dir: Path,
@@ -186,13 +189,7 @@ def _migrate_prefix_predecessors(
         for name, successor in skill_map.items()
         if successor is None and not (target_dir / ".claude" / "skills" / name).is_dir()
     }
-    client_skill_roots = (
-        target_dir / ".agents" / "skills",
-        target_dir / ".cursor" / "skills",
-        target_dir / ".github" / "skills",
-        target_dir / ".opencode" / "skills",
-    )
-    for skills_dir in client_skill_roots:
+    for skills_dir in (target_dir / rel for rel in CLIENT_SKILL_ROOTS):
         _migrate_predecessor_set(
             skills_dir,
             retired_skills,

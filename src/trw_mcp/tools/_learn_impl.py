@@ -449,6 +449,8 @@ def execute_learn(
         entries_dir=entries_dir,
         save_entry_fn=deps.save_entry,
         update_analytics_fn=deps.update_analytics,
+        scope=scope,
+        store_result=store_result_dict,
     )
 
     logger.info(

@@ -27,6 +27,7 @@ pytestmark = pytest.mark.usefixtures("stub_cli_version_probes")
 def user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("MEMORY_DAEMON_AUTOSTART", raising=False)  # these rows describe the default: auto-start on
     return tmp_path / "userhome"
 
 
@@ -55,6 +56,25 @@ def test_no_daemon_is_pass_not_warn(user_dir: Path) -> None:
     assert status == "PASS"
     assert "trw-memory-server serve http" in message
     assert str(user_dir / "memory") in message
+
+
+def test_no_daemon_with_autostart_off_is_not_a_pass_that_promises_a_start(
+    user_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INC-117(g): with auto-start off no call starts a daemon, so "the next memory call starts one" is false.
+
+    ``memory_backend`` already reports the same state as unreachable; the two rows must not disagree.
+    """
+    from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
+
+    monkeypatch.setenv("MEMORY_DAEMON_AUTOSTART", "false")
+
+    status, message = memory_daemon_row(user_dir)
+
+    assert status == "WARN"
+    assert "auto-start is off" in message
+    assert "the next memory call starts one" not in message
+    assert "trw-memory-server serve http" in message, "the manual start is the remedy"
 
 
 def test_the_no_daemon_row_says_the_next_memory_call_starts_one(user_dir: Path) -> None:

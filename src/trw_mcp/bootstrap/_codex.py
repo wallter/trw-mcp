@@ -63,6 +63,7 @@ from trw_mcp.models.typed_dicts import (
 from trw_mcp.models.typed_dicts._codex import CodexMcpToolConfigEntry
 
 from ._file_ops import _new_result, _record_write
+from ._mcp_json import _is_absolute_pin
 
 logger = structlog.get_logger(__name__)
 _CODEX_CONFIG_PATH = ".codex/config.toml"
@@ -324,6 +325,13 @@ def merge_codex_config(existing: CodexConfigDict, *, target_dir: Path | None = N
     mcp_servers = _normalize_mcp_servers(result.get("mcp_servers"))
     existing_trw_server: CodexMcpServerEntry = mcp_servers.get("trw", {})
     trw_server = _trw_mcp_server_entry(target_dir)
+    # A deliberate absolute launcher survives the refresh, as in ``.mcp.json``. Codex starts a server in the THREAD's
+    # cwd, not the project root, so the project-relative default is "tool unavailable" from a subdirectory or a
+    # worktree (observed), while an absolute pin runs from anywhere on this machine.
+    pinned = existing_trw_server.get("command")
+    if _is_absolute_pin(pinned):
+        trw_server["command"] = cast("str", pinned)
+        trw_server["args"] = list(existing_trw_server.get("args", []))
     # Carry through every key TRW does not own (``env`` above all). The entry used
     # to be REPLACED wholesale, which is why a hand-added [mcp_servers.trw.env]
     # table did not survive one update-project (PRD-CORE-277-FR07).

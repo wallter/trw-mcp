@@ -399,6 +399,8 @@ class DeliverResultDict(TypedDict, total=False):
     """Return shape of ``trw_deliver`` MCP tool."""
 
     timestamp: str
+    # PRD-CORE-345 B1: deliver-outcome audit record status: written | failed:<ErrorType> | skipped:no-run
+    outcome_record: str
     run_path: str | None
     # Gate warnings (merged from DeliveryGatesDict)
     review_block: str

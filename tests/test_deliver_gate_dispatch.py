@@ -268,7 +268,7 @@ def test_delivery_blocked_ledger_persistence_failure_blocks(monkeypatch: pytest.
 def test_build_gate_warning_without_override_remains_advisory() -> None:
     blocked, results, errors = _run({"build_gate_warning": "no successful build check found"})
     assert blocked is False
-    assert results == {"requirement_drift": _NO_RUN_DRIFT}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT, "outcome_record": "skipped:no-run"}
     assert errors == []
 
 
@@ -279,7 +279,7 @@ def test_build_gate_warning_ignores_free_text_override_arguments() -> None:
         reason="doc-only change validated by source inspection",
     )
     assert blocked is False
-    assert results == {"requirement_drift": _NO_RUN_DRIFT}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT, "outcome_record": "skipped:no-run"}
     assert errors == []
 
 
@@ -296,7 +296,7 @@ def test_build_gate_warning_does_not_ledger_unneeded_structured_override(
         reason='{"failed_command": "pytest", "residual_risk": "low", "owner": "me", "expiry_iso": "2099-01-01"}',
     )
     assert blocked is False
-    assert results == {"requirement_drift": _NO_RUN_DRIFT}
+    assert results == {"requirement_drift": _NO_RUN_DRIFT, "outcome_record": "skipped:no-run"}
     assert errors == []
 
 

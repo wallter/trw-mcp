@@ -59,6 +59,8 @@ routes its ownership decision through :func:`artifact_user_edited` /
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -428,6 +430,45 @@ def _cursor_rules_mdc_manifest_hash(target_dir: Path, prev_hashes: dict[str, str
         return {}
 
 
+def _is_regular(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:  # trw-fail-silent-allow: absent or unstatable is "not a regular file"; the caller omits the record
+        return False
+
+
+def _antigravity_explorer_manifest_hash(target_dir: Path, prev_hashes: dict[str, str] | None) -> dict[str, str]:
+    """Content hash for the AG-02 ``trw-distill-explorer.md``, or ``{}`` when absent or not provably TRW's.
+
+    Handled outside :data:`MANAGED_CLIENT_ARTIFACT_SOURCES` because the file is rendered from the distill
+    sidecar, so no static source can name its bytes. The channel state records the SHA-256 of what the writer
+    last wrote: a file still hashing to it (or to the previous manifest record) is TRW's unedited write and
+    uninstall may remove it; an edited one is omitted, like every other declined ownership.
+    """
+    from trw_mcp.channels._state import read_state, state_path_for
+    from trw_mcp.channels.antigravity._explorer_subagent import AG02_CHANNEL_ID, EXPLORER_AGENT_RELPATH
+
+    dest = target_dir / EXPLORER_AGENT_RELPATH
+    state_path = state_path_for(AG02_CHANNEL_ID, target_dir / ".trw" / "channels")
+    # Only regular files are read (lstat, no follow): a FIFO would stall the install, a symlink would hash another
+    # file (codex r1 KI). Anything else is "unproven", which omits the record -- the safe direction.
+    if not _is_regular(dest):
+        return {}
+    state = read_state(state_path) if _is_regular(state_path) else None
+    written = state.segment_interior_sha256 if state is not None else None
+    try:
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()  # ONE read: the bytes judged are the bytes recorded
+    except (
+        OSError
+    ):  # trw-fail-silent-allow: omission is the safe direction (no manifest entry means "unproven", never "TRW's")
+        logger.warning("managed_artifact_hash_failed", path=EXPLORER_AGENT_RELPATH)
+        return {}
+    if digest == written or digest == (prev_hashes or {}).get(EXPLORER_AGENT_RELPATH):
+        return {EXPLORER_AGENT_RELPATH: digest}
+    logger.info("managed_artifact_ownership_declined", path=EXPLORER_AGENT_RELPATH, client="antigravity-cli")
+    return {}
+
+
 def _cursor_commands() -> dict[str, bytes]:
     from ._cursor_ide import cursor_ide_command_contents
 
@@ -617,4 +658,5 @@ def managed_client_manifest_hashes(
             except OSError:
                 logger.warning("managed_artifact_hash_failed", path=key)
     hashes.update(_cursor_rules_mdc_manifest_hash(target_dir, prev_hashes))
+    hashes.update(_antigravity_explorer_manifest_hash(target_dir, prev_hashes))
     return hashes

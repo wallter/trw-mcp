@@ -67,3 +67,38 @@ def test_client_generators_emit_the_proxy_when_enabled(tmp_path: Path) -> None:
     assert codex_entry(project)["command"] == ".venv/bin/trw-mcp-proxy"
     grok = merge_grok_config({}, target_dir=project)
     assert grok["mcp_servers"]["trw"]["command"] == ".venv/bin/trw-mcp-proxy"  # type: ignore[index]
+
+
+def _existing_codex(command: str, args: list[str] | None = None) -> dict[str, dict[str, object]]:
+    return {"trw": {"command": command, "args": args or [], "enabled": True, "env": {"MINE": "1"}}}
+
+
+def test_codex_keeps_a_deliberate_absolute_launcher_across_a_refresh(tmp_path: Path) -> None:
+    """Codex starts a server in the THREAD's cwd, not the project root (observed: a project-relative command is
+    "tool unavailable" from a subdirectory or a worktree), so a dev checkout pins an absolute launcher, as it
+    does in ``.mcp.json``; ``update-project`` must not rewrite that back to the relative form."""
+    from trw_mcp.bootstrap._codex import merge_codex_config
+
+    project = _project(tmp_path, ON, "trw-mcp", "trw-mcp-proxy")
+    pin = str((project / ".venv" / "bin" / "trw-mcp-proxy").resolve())
+
+    merged = merge_codex_config({"mcp_servers": _existing_codex(pin)}, target_dir=project)  # type: ignore[typeddict-item]
+
+    trw = merged["mcp_servers"]["trw"]  # type: ignore[index]
+    assert (trw["command"], trw["args"]) == (pin, [])
+    assert trw["env"] == {"MINE": "1"}  # the user's own keys still ride through
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["trw-mcp", ".venv/bin/trw-mcp", "/no/such/dir/trw-mcp-proxy"],
+    ids=["bare", "relative", "absolute-but-absent"],
+)
+def test_codex_refreshes_any_launcher_that_is_not_an_existing_absolute_pin(tmp_path: Path, command: str) -> None:
+    from trw_mcp.bootstrap._codex import merge_codex_config
+
+    project = _project(tmp_path, ON, "trw-mcp", "trw-mcp-proxy")
+
+    merged = merge_codex_config({"mcp_servers": _existing_codex(command)}, target_dir=project)  # type: ignore[typeddict-item]
+
+    assert merged["mcp_servers"]["trw"]["command"] == ".venv/bin/trw-mcp-proxy"  # type: ignore[index]

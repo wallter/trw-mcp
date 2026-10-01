@@ -21,6 +21,7 @@ from fastmcp import Client, FastMCP
 
 from trw_mcp.code_index.update import update_code_index
 from trw_mcp.models.config import reload_config
+from trw_mcp.tools._code_modes import LIVE_MODES, RETIRED_MODES
 from trw_mcp.tools._learnings_collector import LearningSummary
 from trw_mcp.tools.code import MAX_HINT_FILES, register_code_tools
 
@@ -86,6 +87,22 @@ def test_search_mode_is_retired_even_without_a_query(project: Path) -> None:
 
     assert result["status"] == "failed"
     assert "retired" in result["error"]
+
+
+@pytest.mark.parametrize("mode", sorted(RETIRED_MODES))
+def test_every_retired_mode_is_refused_with_its_registry_error(project: Path, mode: str) -> None:
+    """The refusal and the instruction-surface lint read one list (``_code_modes.RETIRED_MODES``)."""
+    result = _call(mode=mode, repo_root=str(project))
+
+    assert result == {"status": "failed", "error": RETIRED_MODES[mode]}
+
+
+def test_unknown_mode_names_only_the_live_modes(project: Path) -> None:
+    result = _call(mode="semantic", repo_root=str(project))
+
+    assert result["status"] == "failed"
+    assert result["error"] == f"unknown mode; use one of {', '.join(LIVE_MODES)}"
+    assert not set(LIVE_MODES) & set(RETIRED_MODES)
 
 
 def test_symbol_mode_finds_the_exact_definition(project: Path) -> None:

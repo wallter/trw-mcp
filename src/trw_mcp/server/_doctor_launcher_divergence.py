@@ -29,8 +29,14 @@ if TYPE_CHECKING:
 
 #: Mirrors ``bootstrap._utils._PROJECT_VENV_LAUNCHERS`` (not imported directly:
 #: Class E -- this module reads config TEXT, it never imports the resolver's
-#: platform-detection code path).
-_PROJECT_VENV_LAUNCHERS: tuple[str, ...] = (".venv/bin/trw-mcp", ".venv/Scripts/trw-mcp.exe")
+#: platform-detection code path), plus the same venv's ``trw-mcp-proxy``, which
+#: the resolver names instead once ``shared_mcp`` is on: still the project venv's build.
+_PROJECT_VENV_LAUNCHERS: tuple[str, ...] = (
+    ".venv/bin/trw-mcp",
+    ".venv/Scripts/trw-mcp.exe",
+    ".venv/bin/trw-mcp-proxy",
+    ".venv/Scripts/trw-mcp-proxy.exe",
+)
 _WORKSPACE_PREFIX = "${workspaceFolder}/"
 _Row = tuple[Literal["PASS", "WARN", "FAIL"], str]
 

@@ -275,19 +275,23 @@ def prune_empty_dirs(surface_root: Path, up_to: Path | None = None) -> None:
         current = parent
 
 
-def prune_scaffold_dirs(target: Path) -> None:
-    """After a full uninstall, remove the directories TRW's scaffold or client surfaces made, if now empty.
+def prune_scaffold_dirs(target: Path, only_client: str | None = None) -> None:
+    """After an uninstall, remove the directories TRW's scaffold or client surfaces made, if now empty.
 
     INC-080: ``docs/`` (init's ``_TRW_DIRS``) and ``.codex/`` (a client surface root) outlived a full uninstall
     as empty directories. The candidates come from init's own scaffold list and the uninstall surface catalog --
     each surface's parent directories -- never a hand-typed list. Deepest first, ``rmdir`` only and never a
     symlink, so a directory holding anything at all stays. ``.trw`` is left to its own removal step.
+    A scoped ``--ide`` removal passes *only_client*: just that client's surface directories are candidates, so
+    the shared scaffold (``docs/``, other clients' roots) is never touched (INC-117).
     """
     from trw_mcp.bootstrap import _CLAUDE_SCAFFOLD_DIRS, _TRW_DIRS
-    from trw_mcp.client_profiles.catalog import uninstall_surfaces
+    from trw_mcp.client_profiles.catalog import client_surfaces, uninstall_surfaces
 
     candidates: set[PurePosixPath] = set()
-    for rel in (*_TRW_DIRS, *_CLAUDE_SCAFFOLD_DIRS, *(surface.relpath for surface in uninstall_surfaces())):
+    scaffold = () if only_client else (*_TRW_DIRS, *_CLAUDE_SCAFFOLD_DIRS)
+    surfaces = client_surfaces(only_client) if only_client else uninstall_surfaces()
+    for rel in (*scaffold, *(surface.relpath for surface in surfaces if not surface.home_scoped)):
         rel_path = PurePosixPath(rel)
         if rel_path.parts and rel_path.parts[0] != ".trw":
             candidates.update(p for p in (rel_path, *rel_path.parents) if p.parts)

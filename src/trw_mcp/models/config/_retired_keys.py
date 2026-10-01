@@ -24,11 +24,13 @@ key that has since been retired.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files as _pkg_files
+from pathlib import Path
 
 import structlog
 
@@ -129,13 +131,43 @@ def _reset_warned_keys() -> None:
     _WARNED.clear()
 
 
-def warn_unrecognised_config_keys(keys: Iterable[str], defined: Iterable[str]) -> list[str]:
+#: What a warning names when it cannot tell which file a key came from.
+_PROJECT_CONFIG_LABEL = ".trw/config.yaml"
+
+
+def config_key_sources(project_config_path: Path) -> dict[str, str]:
+    """``{key: the file it was read from}`` for the machine and project layers.
+
+    The project file wins a key both files set, as in the merge. The user-level file is named by its
+    full path, because ``.trw/config.yaml`` alone would send the reader to the wrong file. Best-effort:
+    a layer that cannot be re-read contributes nothing and its keys keep the default label.
+    """
+    from trw_mcp.state._namespace_pin_read import read_config_layer
+
+    machine_path = Path.home() / ".trw" / "config.yaml"
+    sources: dict[str, str] = {}
+    for path, label in ((machine_path, str(machine_path)), (project_config_path, _PROJECT_CONFIG_LABEL)):
+        # trw-fail-silent-allow: only wording depends on this; the layer was already read once
+        with contextlib.suppress(Exception):
+            sources.update(dict.fromkeys(read_config_layer(path), label))
+    return sources
+
+
+def warn_unrecognised_config_keys(
+    keys: Iterable[str],
+    defined: Iterable[str],
+    *,
+    key_sources: Callable[[], Mapping[str, str]] | None = None,
+) -> list[str]:
     """Warn once per key for every config key ``TRWConfig`` does not define.
 
     Args:
         keys: The merged ``.trw/config.yaml`` keys about to be handed to the
             constructor.
         defined: ``TRWConfig.model_fields``.
+        key_sources: Called only when a key is unrecognised; returns ``{key: file}`` so the warning
+            names the file the key is in (:func:`config_key_sources`). Without it every key is
+            reported against ``.trw/config.yaml``.
 
     Returns:
         The keys warned about on this call, sorted. Callers that have already
@@ -149,6 +181,7 @@ def warn_unrecognised_config_keys(keys: Iterable[str], defined: Iterable[str]) -
         return []
 
     retired = retired_config_keys()
+    sources = key_sources() if key_sources is not None else {}
     for key in unrecognised:
         _WARNED.add(key)
         if key in retired:
@@ -166,7 +199,7 @@ def warn_unrecognised_config_keys(keys: Iterable[str], defined: Iterable[str]) -
         # is the first time this project tells a user that a knob they set does
         # not exist. Key name only — never the value they set.
         print(
-            f"TRW: WARNING — .trw/config.yaml sets '{key}', which has no effect: {detail}.",
+            f"TRW: WARNING — {sources.get(key, _PROJECT_CONFIG_LABEL)} sets '{key}', which has no effect: {detail}.",
             file=sys.stderr,
         )
     return unrecognised

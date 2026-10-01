@@ -38,6 +38,7 @@ DEFAULT_FORMAT = "py"
 # embed proprietary wheels. The build process fails closed if any of these
 # wheel filenames appears in the embed step.
 _PROPRIETARY_WHEEL_PREFIXES: tuple[str, ...] = (
+    "trw_llm-",  # dep of trw-distill >= 0.10.0 (2026-10-01); served only via the proprietary entitlement
     "trw_distill-",
     "trw_metaharness-",  # PRD-INFRA-128: cross-monorepo dep of trw-distill (renamed from trw-harness 2026-06-10)
     "trw_harness-",  # legacy wheel name pre-2026-06-10 rename; kept so stale wheels stay fail-closed

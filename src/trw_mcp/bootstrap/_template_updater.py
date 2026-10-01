@@ -232,7 +232,11 @@ def _update_hooks(
     _withdraw_retired_hooks(target_dir, shipped, manifest_hashes, result)
     if shipped:
         (target_dir / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
-    for name in sorted(shipped):
+    # FB-INSTALL-01: a shared lib and the hooks that source it move together, never half-replaced.
+    from ._hook_family import settle_edited_libs
+
+    held = settle_edited_libs(target_dir, hooks_source, shipped, manifest_hashes, result)
+    for name in sorted(shipped - held):
         dest = target_dir / ".claude" / "hooks" / name
         _guarded_copy_update(
             hooks_source / name,

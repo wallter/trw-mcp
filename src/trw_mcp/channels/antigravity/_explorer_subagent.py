@@ -72,6 +72,9 @@ _ANTIGRAVITY_CLIENT_ID = "antigravity-cli"
 #: eleven bundled specialists (PRD-CORE-252-FR03: ``.agents/agents``).
 _AGENT_RELATIVE_PATH = agent_format_for(_ANTIGRAVITY_CLIENT_ID).destination_for(_AGENT_STEM)
 
+#: Public name for the destination, for the install manifest's ownership record (as the claude-code channel's).
+EXPLORER_AGENT_RELPATH = _AGENT_RELATIVE_PATH
+
 _DEFAULT_TIER: str = "T1"
 
 #: Capability tier for the frontmatter ``model:`` line, in the bundle's

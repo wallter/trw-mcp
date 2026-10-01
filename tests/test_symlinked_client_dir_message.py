@@ -22,6 +22,7 @@ from trw_mcp.server._subcommands import _run_uninstall, _run_update_project
 pytestmark = pytest.mark.integration
 
 _FIX = "replace each symlink with a real directory (copy its contents in), then re-run"
+_FIX_FILE = "replace each symlink with a real file (copy its contents in), then re-run"  # INC-122(b)
 
 
 def _tree(root: Path) -> dict[str, str]:
@@ -121,7 +122,8 @@ def test_update_refuses_symlinked_top_level_surface(tmp_path: Path) -> None:
     assert len(result["errors"]) == 1, result["errors"]
     message = result["errors"][0]
     assert f"AGENTS.md -> {outside}" in message
-    assert _FIX in message
+    assert _FIX_FILE in message
+    assert "real directory" not in message, "a symlinked FILE is not asked to become a directory"
     assert outside.read_bytes() == outside_bytes
     assert _tree(project) == project_before
     assert_user_bytes_preserved(user_bytes, tmp_path)

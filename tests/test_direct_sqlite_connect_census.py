@@ -102,6 +102,10 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
         "code index: opens the published index read-only (mode=ro); every read runs under _bounded's "
         "deadline and length limit and _require_schema's allowlist before the first data read (rc5 C12)."
     ),
+    ("server/_backup_remote_scope.py", "namespace_census", 1): (
+        "served store: a read-only COUNT(*) GROUP BY namespace on the store `backup create` just archived (daemon "
+        "stopped), through connect_registered; counts only, decides whether the remote upload is refused."
+    ),
     ("comms/_bootstrap.py", "_lead_pending", 1): (
         "comms.sqlite3: B71-73/FR10 -- a read-only pending-count query against the checkout-seedable "
         "mailbox, with no deadline on the surrounding schema check today."

@@ -230,3 +230,40 @@ def test_missing_configs_are_simply_skipped(tmp_path: Path) -> None:
 
     assert status == "PASS"
     assert "project venv" in message
+
+
+def test_a_project_venv_proxy_launcher_is_not_a_shadow(tmp_path: Path) -> None:
+    """CODEX-PROXY-LAUNCHER: with ``shared_mcp`` on, every client config names ``.venv/bin/trw-mcp-proxy``, the
+    project venv's own launcher. Reporting it as "outside the project venv" buried the one real offender (a bare
+    ``trw-mcp``) under five false ones.
+    """
+    _make_dev_checkout(tmp_path)
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"trw": {"command": ".venv/bin/trw-mcp-proxy", "args": []}}}), encoding="utf-8"
+    )
+    (tmp_path / ".vscode").mkdir()
+    (tmp_path / ".vscode" / "mcp.json").write_text(
+        json.dumps({"servers": {"trw": {"command": "${workspaceFolder}/.venv/bin/trw-mcp-proxy", "args": []}}}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "config.toml").write_text(
+        f'[mcp_servers.trw]\ncommand = "{tmp_path / ".venv" / "bin" / "trw-mcp-proxy"}"\nargs = []\n', encoding="utf-8"
+    )
+
+    status, message = launcher_divergence_row(tmp_path)
+
+    assert (status, "project venv" in message) == ("PASS", True)
+
+
+def test_a_bare_trw_mcp_proxy_still_warns_in_a_dev_checkout(tmp_path: Path) -> None:
+    """Recognising the project venv's proxy must not bless a PATH-resolved one (the shadow this row targets)."""
+    _make_dev_checkout(tmp_path)
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"trw": {"command": "trw-mcp-proxy", "args": []}}}), encoding="utf-8"
+    )
+
+    status, message = launcher_divergence_row(tmp_path)
+
+    assert status == "WARN"
+    assert ".mcp.json (resolves to 'trw-mcp-proxy'" in message

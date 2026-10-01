@@ -1,4 +1,4 @@
-"""The ``shared_mcp`` doctor row: env health plus whether ``.mcp.json`` launches the shared proxy.
+"""The ``shared_mcp`` doctor row: env health plus whether ``.mcp.json`` and ``.codex/config.toml`` launch the shared proxy.
 
 Belongs to the ``shared_server`` package; split out of ``_ops`` (which keeps the operator verbs swap, env
 create and status) so each module stays under the 350 effective-LOC ratchet.
@@ -10,6 +10,8 @@ import json
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal
+
+import tomllib
 
 from trw_mcp.models.config._fields_shared_mcp import SharedMcpConfig
 from trw_mcp.shared_server._ops import _memory_dir
@@ -49,7 +51,7 @@ def check_shared_mcp(target: Path, config: Any) -> Any:
     paths = SharedPaths.resolve(target / config.trw_dir, config.shared_mcp)
     status, message = doctor_row(paths, config.shared_mcp)
     if config.shared_mcp.enabled:
-        launch_problem = _mcpjson_launch_problem(target)
+        launch_problem = "; ".join(p for p in (_mcpjson_launch_problem(target), _codex_launch_problem(target)) if p)
         if launch_problem:
             status, message = "WARN", launch_problem if status != "WARN" else f"{message}; {launch_problem}"
     return CheckResult("shared_mcp", status, message)
@@ -95,3 +97,30 @@ def _mcpjson_launch_problem(target: Path) -> str:
             return ""
     keys = ", ".join(f"`{k}`" for k in ("trw",) if k in candidates) or ", ".join(f"`{k}`" for k in candidates)
     return f"`.mcp.json` launches stdio, not the proxy (server {keys}; {_FIX})"
+
+
+def _codex_launch_problem(target: Path) -> str:
+    """Why ``.codex/config.toml`` does not launch the shared proxy, or ``""`` (also when there is no Codex config or no trw server in it).
+
+    A Codex thread that launches the stdio server runs its own standalone process and never reaches the shared one.
+    """
+    path = target / ".codex" / "config.toml"
+    if not path.is_file():
+        return ""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return "`.codex/config.toml` is unparseable (fix the TOML, then run `trw-mcp update-project`)"
+    servers = data.get("mcp_servers")
+    entry = servers.get("trw") if isinstance(servers, dict) else None
+    if not isinstance(entry, dict):
+        return ""
+    command, args = entry.get("command"), entry.get("args", [])
+    if (
+        isinstance(command, str)
+        and isinstance(args, list)
+        and all(isinstance(a, str) for a in args)
+        and _launches_proxy(command, args)
+    ):
+        return ""
+    return f"`.codex/config.toml` launches stdio, not the proxy (server `trw`; {_FIX})"

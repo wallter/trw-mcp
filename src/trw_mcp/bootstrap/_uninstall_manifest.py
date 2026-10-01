@@ -70,7 +70,9 @@ class KeyDisposition:
 #: Printed for every plain surface rule 3 keeps (PRD-INFRA-192 FR09 C3): no
 #: content_hashes key exists under it, so TRW cannot prove which of its
 #: contents (if any) are its own unedited writes.
-_UNCOVERED_NOTE = "not recorded by TRW; left in place — run update-project first to record it"
+_UNCOVERED_NOTE = (
+    "not recorded by TRW as its own unedited file, so left in place; delete it yourself if you want it gone"
+)
 
 
 @dataclass(frozen=True, slots=True)

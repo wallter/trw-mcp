@@ -57,8 +57,12 @@ def print_symlink_guidance(refused: list[Path], target: Path) -> None:
     print("\n  Refused, because these paths are symlinks (TRW never deletes through a symlink):", file=sys.stderr)
     for rel, link_target in links.items():
         print(f"    {rel} -> {link_target}", file=sys.stderr)
+    kinds = {
+        "directory" if (target / rel).is_dir() else "file" for rel in links
+    }  # a link's own kind, by what it points at
+    kind = kinds.pop() if len(kinds) == 1 else "file or directory"
     print(
-        "  Fix: replace each symlink with a real directory (copy its contents in), then re-run uninstall.",
+        f"  Fix: replace each symlink with a real {kind} (copy its contents in), then re-run uninstall.",
         file=sys.stderr,
     )
 
@@ -68,8 +72,7 @@ def print_done(target: Path, removed: int, remove_ide: str | None, delete_memory
     from trw_mcp.bootstrap._uninstall_skill_dir import prune_scaffold_dirs
     from trw_mcp.server import _uninstall_memory
 
-    if not remove_ide:
-        prune_scaffold_dirs(target)
+    prune_scaffold_dirs(target, remove_ide)
     print(f"\n  Done. Removed {removed} item(s).")
     if remove_ide:
         print(f"  {remove_ide} surfaces removed. Other clients and framework-core files are untouched.")

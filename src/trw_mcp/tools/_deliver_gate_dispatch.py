@@ -262,13 +262,14 @@ def evaluate_delivery_gates(
 
     PRD-CORE-345 FR01: every completed evaluation also writes one durable outcome record (pass or
     block). The record is audit only and is written AFTER the decision, which it never changes; a
-    raise out of the cascade writes none.
+    raise out of the cascade writes none. The record's status (B1, operator-confirmed 2026-09-30) lands in
+    ``results["outcome_record"]`` on the block and pass paths alike.
     """
     with outcome_scope() as accumulator:
         blocked = _run_cascade(
             gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, call_ctx=call_ctx
         )
-        record_outcome(accumulator, blocked, resolved_run, trw_dir)
+        results["outcome_record"] = record_outcome(accumulator, blocked, resolved_run, trw_dir)
     return blocked
 
 

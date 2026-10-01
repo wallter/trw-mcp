@@ -277,7 +277,8 @@ def _apply_update(
             )
             if on_progress:
                 on_progress("Phase", "Verifying installation...")
-            _verify_installation(root, result)
+            targets = resolve_ide_targets(root, ide_override=ide)
+            _verify_installation(root, result, expects_mcp_json="claude-code" in targets or not targets)
             changes = _diff_transaction_paths(snapshot_root, root)
             if changes.keys() <= _RUN_RECORDS:
                 for rel in changes:
@@ -450,7 +451,10 @@ def update_project(
                 result["ran"] = external
 
     targets = resolve_ide_targets(target_dir, ide_override=ide)
-    if "claude-code" in targets or not targets:
+    changed = (
+        bool(result["updated"] or result["created"]) and not result["errors"]
+    )  # a run that wrote nothing has nothing to reload
+    if changed and ("claude-code" in targets or not targets):
         result["warnings"].append(
             "Running Claude Code sessions use cached hooks/settings. "
             "Restart active sessions (or run /mcp) to pick up updates."

@@ -304,7 +304,7 @@ The method is canonical; MCP is its preferred TRW realization. If MCP is unavail
 | `trw-mcp run adopt --run-path=... --session-id=...` (CLI) | Any | HANDOFF † | Take ownership of an existing run (pipeline/map-reduce handoffs, session recovery) |
 | `trw_checkpoint(heartbeat=True)` | Any | PARALLEL | Keep this session's run pin alive during long parallel work |
 | `trw_status(run_path?)` | Any | SHOULD | Inspect run state and ceremony health |
-| `trw_code(mode, query?, files?)` | Any | MAY | Search indexed code, find a symbol, or get before-edit hints for a file |
+| `trw_code(mode, query?, files?)` | Any | MAY | Find a symbol in the code index, or get before-edit hints for a file (text search: `rg`/`grep`) |
 | `trw-mcp prd create --input-text ...` (CLI) | PLAN | TASK-DEPENDENT | Create PRD when feature work needs one |
 | `trw_prd_validate(prd_path)` | PLAN | TASK-DEPENDENT | Validate PRD structure/readiness |
 | `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` | VALIDATE | MUST after validation | Record the observed project-native build/test/type/lint/security outcome; does not run checks — its scope and counts are what you report, a record, not independent proof |

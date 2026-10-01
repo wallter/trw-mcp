@@ -82,9 +82,24 @@ def retire_disabled_skills(
         if kept:
             result.setdefault("preserved", []).append(f"{rel_root}/{name}")
             # Warnings are what the CLI prints; the per-file reasons belong where the user sees them.
-            result.setdefault("warnings", []).extend(f"{why}: kept (disabled skill)" for why in kept)
+            result.setdefault("warnings", []).extend(_kept_warning(name, why) for why in kept)
         else:
             result.setdefault("removed", []).append(f"{rel_root}/{name}")
+
+
+def _kept_warning(name: str, why: str) -> str:
+    """The warning for one file of a disabled skill that was left in place: what is off, what that means, how out."""
+    flag = CONDITIONAL_SKILLS[name]
+    # Only SKILL.md keeps a skill live; any other kept file is the user's own and says nothing about the skill.
+    effect = (
+        f"While it stays the skill is still active and calls {name.replace('-', '_')}, which is not available."
+        if why.partition(" (")[0].endswith("/SKILL.md")
+        else "It does not keep the skill active."
+    )
+    return (
+        f"{why}: kept. The {name} skill is off ({flag} is not true), so TRW would have removed this file, "
+        f"but left it alone. {effect} Delete the file to remove it, or set {flag}: true to turn the feature on."
+    )
 
 
 def _shipped_digest(dest: Path, digests: dict[str, str]) -> Callable[[Path], set[str]]:

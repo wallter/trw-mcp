@@ -129,6 +129,15 @@ def _run_backup_create(args: argparse.Namespace) -> None:
             "The local archive above was written with its .sha256 sidecar."
         )
         return
+    from trw_mcp.server._backup_remote_scope import remote_upload_refusal
+
+    refusal = remote_upload_refusal(db_path)  # the archive is the WHOLE store: fail closed on anything but this project
+    if refusal is not None:
+        print(
+            f"Remote upload refused: {refusal}. The archive is a copy of the whole store, so it is not sent off this "
+            "machine; the local archive above was still written."
+        )
+        return
     uploader = _build_uploader(_load_config(), source_trw_dir=owner)
     result = asyncio.run(uploader.upload(archive.path))
     if result.status == "ok":

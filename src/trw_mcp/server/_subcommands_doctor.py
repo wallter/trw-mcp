@@ -44,6 +44,7 @@ from trw_mcp.server._doctor_hint_hub import (
 from trw_mcp.server._doctor_hook_channel import (
     check_hook_channel as _check_hook_channel,  # noqa: F401
 )
+from trw_mcp.server._doctor_hook_family import check_hook_family as _check_hook_family  # noqa: F401
 from trw_mcp.server._doctor_instruction_gate import (
     _GATE_SCAN_EXCLUSIONS as _GATE_SCAN_EXCLUSIONS,
 )
@@ -63,6 +64,7 @@ from trw_mcp.server._doctor_retired_artifacts import (
 # (`from trw_mcp.server._subcommands_doctor import _resolve_target_config`)
 # working unchanged.
 from trw_mcp.server._doctor_target_config import resolve_target_config as _resolve_target_config
+from trw_mcp.server._doctor_user_yaml import check_user_yaml as _check_user_yaml  # noqa: F401
 from trw_mcp.shared_server._doctor import check_shared_mcp as _check_shared_mcp  # noqa: F401
 
 # FR-07: re-exported so callers/tests can assert doctor consumes the canonical
@@ -596,10 +598,9 @@ def _check_mcp_security(target: Path, _config: TRWConfig) -> CheckResult:
         status = compute_security_status(events_dir=target / ".trw" / "context").model_dump()
     except Exception as exc:  # justified: doctor checks are fail-open isolated
         return CheckResult("mcp_security", "FAIL", f"check raised: {exc}")
-    n_anom, n_quar = len(status.get("recent_anomalies") or []), len(status.get("quarantined_servers") or [])
-    if n_anom or n_quar:
-        return CheckResult("mcp_security", "WARN", f"{n_anom} recent anomaly(ies), {n_quar} quarantined server(s)")
-    return CheckResult("mcp_security", "PASS", "no recent anomalies, no quarantined servers")
+    from trw_mcp.server._doctor_mcp_security import security_row
+
+    return CheckResult("mcp_security", *security_row(status, target))
 
 
 def _check_pipeline_health(target: Path, config: TRWConfig) -> CheckResult:

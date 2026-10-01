@@ -60,3 +60,32 @@ def test_cached_hooks_note_prints_only_when_claude_code_is_targeted(fake_git_rep
 
     claude_run = update_project(fake_git_repo, ide="claude-code")
     assert [w for w in claude_run.get("warnings", []) if _CACHED_HOOKS in w]
+
+
+def test_a_refused_update_does_not_tell_the_user_to_restart_to_pick_up_updates(
+    fake_git_repo: Path, tmp_path: Path
+) -> None:
+    """INC-122(b): a run that updated nothing (a managed directory is a symlink) has nothing to reload."""
+    init_project(fake_git_repo, ide="claude-code")
+    hooks = fake_git_repo / ".claude" / "hooks"
+    elsewhere = tmp_path / "elsewhere"
+    hooks.rename(elsewhere)
+    hooks.symlink_to(elsewhere)
+
+    result = update_project(fake_git_repo, ide="claude-code")
+
+    assert result["errors"], "precondition: the symlinked managed directory refused the update"
+    assert not [w for w in result.get("warnings", []) if _CACHED_HOOKS in w]
+
+
+@pytest.mark.parametrize("ide", ["codex", "cursor-ide", "copilot", "grok", "opencode", "antigravity-cli"])
+def test_a_missing_mcp_json_is_not_warned_for_a_profile_that_keeps_its_entry_elsewhere(
+    fake_git_repo: Path, ide: str
+) -> None:
+    """INC-117(d): ``.mcp.json`` is Claude Code's file; its absence is normal for every other profile."""
+    init_project(fake_git_repo, ide=ide)
+    assert not (fake_git_repo / ".mcp.json").exists(), "precondition: this profile writes no .mcp.json"
+
+    result = update_project(fake_git_repo, ide=ide)
+
+    assert not [w for w in result.get("warnings", []) if ".mcp.json not found" in w]

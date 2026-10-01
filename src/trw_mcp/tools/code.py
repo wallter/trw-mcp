@@ -16,7 +16,9 @@ Two modes over two engines:
 ``mode="search"`` was retired in 8.0 (full-text lexical search over the local
 index): agents get more current results from ``rg``/``grep`` for text search
 or the ``trw-distill`` CLI for codebase intelligence, and it saw negligible use
-next to those. The mode now returns an actionable error rather than results.
+next to those. The mode now returns an actionable error rather than results. Retired
+modes live in ``_code_modes.RETIRED_MODES``, which ``scripts/lint-instruction-surfaces.py``
+also reads so no shipped instruction can advertise one.
 
 The tool is registered in every install. Nothing here imports the proprietary
 package; the sidecar is read through its envelope contract.
@@ -38,6 +40,7 @@ import structlog
 from fastmcp import Context, FastMCP
 
 from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
+from trw_mcp.tools._code_modes import LIVE_MODES, RETIRED_MODES
 
 logger = structlog.get_logger(__name__)
 
@@ -45,17 +48,8 @@ logger = structlog.get_logger(__name__)
 #: sidecar lookup (two git subprocesses), so an unbounded list is a slow call.
 MAX_HINT_FILES: int = 25
 
-_MODES: tuple[str, ...] = ("symbol", "hint")
-
 #: Longest caller path a hint entry repeats back as its label.
 _MAX_SHOWN_PATH: int = 200
-
-#: mode="search" was retired in 8.0; this is the actionable error it now returns
-#: instead of a ranking, naming its replacement.
-_SEARCH_RETIRED_ERROR: str = (
-    "trw_code search was retired in 8.0; use `rg`/`grep` for text search, or `trw-distill` CLI verbs "
-    "for codebase intelligence."
-)
 
 
 def _refuse(error: str) -> dict[str, Any]:
@@ -234,8 +228,8 @@ def register_code_tools(server: FastMCP) -> None:
             repo_root: defaults to the project root.
             path: symbol mode: limit results to this path prefix.
         """
-        if mode == "search":
-            return _refuse(_SEARCH_RETIRED_ERROR)
+        if mode in RETIRED_MODES:
+            return _refuse(RETIRED_MODES[mode])
         repo_root, root_problem = _confined_repo_root(repo_root)
         if root_problem is not None:
             return _refuse(root_problem)
@@ -243,7 +237,7 @@ def register_code_tools(server: FastMCP) -> None:
             return _symbol(query, repo_root, top_k, path)
         if mode == "hint":
             return _hint(files, repo_root, ctx)
-        return _refuse(f"unknown mode; use one of {', '.join(_MODES)}")
+        return _refuse(f"unknown mode; use one of {', '.join(LIVE_MODES)}")
 
 
 __all__ = ["MAX_HINT_FILES", "register_code_tools"]
