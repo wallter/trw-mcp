@@ -127,6 +127,13 @@ def drive_main(
     else:
         monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
     monkeypatch.setattr(installer, "run_install_doctor", _record("doctor", None))
+    real_persist = installer.persist_embeddings_choice
+
+    def _persist(config_path: Path, enabled: bool) -> None:
+        run.order.append(f"persist_embeddings:{str(enabled).lower()}")
+        real_persist(config_path, enabled)
+
+    monkeypatch.setattr(installer, "persist_embeddings_choice", _persist)
     if semantic is not None:
         monkeypatch.setattr(installer, "phase_semantic_readiness", _record("semantic", semantic))
     monkeypatch.setattr(installer, "phase_configure", _record("configure", "offline"))

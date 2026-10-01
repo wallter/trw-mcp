@@ -16,14 +16,15 @@ from pathlib import Path
 from ._utils import _DATA_DIR
 
 
-def _opencode_skill_names(opencode_root: Path, skills_source: Path) -> list[str]:
-    """Inventory skills opencode ships that exist in the canonical corpus."""
+def _opencode_skill_names(opencode_root: Path, skills_source: Path) -> list[str] | None:
+    """Inventory skills opencode ships that exist in the canonical corpus; ``None`` when there is no inventory."""
     from ._opencode import load_opencode_skill_inventory
     from ._optional_skills import CONDITIONAL_SKILLS
 
-    if not (opencode_root / "skills_inventory.yaml").is_file():
-        return []
-    inventory = load_opencode_skill_inventory(opencode_root)
+    try:
+        inventory = load_opencode_skill_inventory(opencode_root)
+    except FileNotFoundError:  # trw-fail-silent-allow: None is "no inventory"; the sweep then skips opencode
+        return None
     return sorted(
         name
         for name, cfg in inventory.items()
@@ -57,7 +58,7 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
         if agents_source.is_dir()
         else [],
         # PRD-CORE-291-FR04: opencode's skills are canonical skills rendered for it.
-        "opencode_skills": _opencode_skill_names(opencode_root, skills_source),
+        "opencode_skills": _opencode_skill_names(opencode_root, skills_source) or [],
     }
 
 

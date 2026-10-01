@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ._hook_deregistration import deregister_hook_script
+from ._manifest_recorders import under_recorder_surface
 from ._safe_remove import path_refusal
 from ._version_manifest import _manifest_key_path
 
@@ -56,6 +57,10 @@ def detect_tombstones(target_dir: Path, prev_manifest: dict[str, object] | None)
     writer instead of staying tombstoned. A key absent from the prior
     manifest's ``content_hashes`` was never provisioned and is never
     tombstoned here — a newly bundled artifact is written normally.
+
+    A key outside every manifest recorder's surfaces is dropped: no TRW writer recreates it, so the only file
+    enforcement could remove there is one TRW never wrote (a crafted or stale manifest naming ``./CLAUDE.md``,
+    TOMBSTONE-TRW-KEYS-ONLY).
     """
     if not isinstance(prev_manifest, dict):
         return set()
@@ -68,7 +73,11 @@ def detect_tombstones(target_dir: Path, prev_manifest: dict[str, object] | None)
     if isinstance(prev_hashes, dict):
         newly_absent = {str(k) for k in prev_hashes if not _tombstone_key_exists(target_dir, str(k))}
     candidate = prev_tombstones | newly_absent
-    return {key for key in candidate if not _tombstone_key_exists(target_dir, key)}
+    return {
+        key
+        for key in candidate
+        if under_recorder_surface(_manifest_key_path(key)) and not _tombstone_key_exists(target_dir, key)
+    }
 
 
 def apply_reprovision(tombstones: set[str], reprovision: Sequence[str] | None) -> tuple[set[str], list[str]]:

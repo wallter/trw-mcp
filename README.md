@@ -65,7 +65,7 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 8.x
-<!-- whats-new: 8.1.6 -->
+<!-- whats-new: 8.1.7 -->
 
 - **Lighter instructions, every turn.** `AGENTS.md` links TRW's instructions in `.trw/INSTRUCTIONS.md` instead of embedding them, and lessons reach agents on demand instead of living in instruction files.
 - **Updates that keep your edits.** `update-project` leaves hand-edited files in place and adopts a client only when every file it would overwrite is provably TRW's own.
@@ -73,9 +73,9 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 - **Errors that keep your input private.** A refusal raised inside a tool no longer quotes back what you sent, and `trw_code` stays inside your project.
 - **A restore that checks first.** `backup restore` verifies the archive before it touches your store, and recall agrees with the restored store afterwards.
 - **Failures that name their fix.** A failed dispatch says why (capacity, quota, auth) and retries a transient failure once; `trw-mcp doctor` checks credential health and the memory daemon.
-- **Nothing phones home by default.** The in-process self-updater is gone. Telemetry, learning sharing, team sync and remote backup each stay off until you turn them on.
+- **You choose what reaches the network.** Telemetry, sharing, sync and backup stay off until enabled; a signed-in `install.sh` install checks team learnings every five minutes (`platform_contact_enabled: false` stops it).
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.1.6. 8.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.1.7. 8.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
 

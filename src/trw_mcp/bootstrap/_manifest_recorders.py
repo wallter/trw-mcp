@@ -60,7 +60,11 @@ class ManifestRecorder:
 
     Attributes:
         name: Stable identifier used in logs and by the FR05 totality test.
-        surfaces: Repo-relative surfaces the recorder owns (diagnostics only).
+        surfaces: Repo-relative directories (or single files) holding every key the recorder can write; a part
+            may be an ``fnmatch`` pattern (``.cursor/skills/trw-*``). They gate behaviour: a deletion tombstone is
+            honoured only under one of them (TOMBSTONE-TRW-KEYS-ONLY), so they name what TRW writes and no more --
+            a directory the user also writes to (``.cursor``, ``.opencode``) is listed by its ``trw-*`` entries and
+            exact files. ``tests/test_bootstrap_tombstones.py`` checks every key a recorder can write lies under one.
         record: The recorder itself. MUST omit any artifact for which
             ``_managed_client_artifacts.artifact_user_edited`` is true.
     """
@@ -116,16 +120,70 @@ def _record_managed_client_artifacts(
 MANIFEST_RECORDERS: tuple[ManifestRecorder, ...] = (
     ManifestRecorder(
         "core_artifacts",
-        (".claude/agents", ".claude/hooks", ".claude/skills", ".opencode", ".codex/INSTRUCTIONS.md"),
+        (
+            ".claude/agents",
+            ".claude/hooks",
+            ".claude/skills",
+            ".codex/INSTRUCTIONS.md",
+            ".opencode/INSTRUCTIONS.md",
+            ".opencode/commands/trw-*",
+            ".opencode/skills/trw-*",
+        ),
         _record_core_artifacts,
     ),
     ManifestRecorder("codex_artifacts", (".codex/agents", ".agents/skills"), _record_codex_artifacts),
     ManifestRecorder(
         "managed_client_artifacts",
-        (".github/agents", ".github/instructions", ".github/skills", ".antigravitycli/agents", ".cursor"),
+        (
+            ".agents/agents",
+            ".agents/rules",
+            ".antigravitycli/agents",
+            ".antigravitycli/hooks",
+            ".claude/agents",
+            ".claude/hooks",
+            ".claude/loop.md",
+            ".codex/agents",
+            ".codex/hooks",
+            ".cursor/agents/trw-*",
+            ".cursor/cli.json",
+            ".cursor/commands/trw-*",
+            ".cursor/hooks/_nudge_gate.py",
+            ".cursor/hooks/cli-adapter.sh",
+            ".cursor/hooks/lib-distill-hint.sh",
+            ".cursor/hooks/trw-*",
+            ".cursor/rules/trw-*",
+            ".cursor/skills/trw-*",
+            ".github/agents",
+            ".github/hooks",
+            ".github/instructions",
+            ".github/skills",
+            ".grok/agents",
+            ".opencode/agents/trw-*",
+            ".opencode/commands/trw-*",
+        ),
         _record_managed_client_artifacts,
     ),
 )
+
+
+def under_recorder_surface(rel: str, surfaces: tuple[str, ...] | None = None) -> bool:
+    """Whether repo-relative *rel* lies under one of *surfaces* (default: every recorder's).
+
+    Compared part by part (a surface part may be an ``fnmatch`` pattern), and a path with an empty, ``.`` or
+    ``..`` part is never under one: a key such as ``.claude/hooks/../../CLAUDE.md`` or ``./CLAUDE.md`` names a
+    file no recorder writes.
+    """
+    from fnmatch import fnmatchcase
+
+    parts = rel.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return False
+    declared = surfaces if surfaces is not None else tuple(s for r in MANIFEST_RECORDERS for s in r.surfaces)
+    for surface in declared:
+        patterns = surface.split("/")
+        if len(parts) >= len(patterns) and all(map(fnmatchcase, parts, patterns)):
+            return True
+    return False
 
 
 def collect_manifest_content_hashes(

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
-from trw_mcp.bootstrap import PREDECESSOR_MAP
 
 ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 CANONICAL_SKILLS = PACKAGE_ROOT / "src/trw_mcp/data/skills"
@@ -43,35 +43,37 @@ DEV_SKILL_ROOTS = (
 )
 
 
+def _canonical() -> set[str]:
+    return {path.name for path in CANONICAL_SKILLS.iterdir() if path.is_dir()}
+
+
 def test_retired_skills_have_no_packaged_projection() -> None:
     """A skill retired from the install must not survive in anything that ships.
 
-    Scoped to the packaged roots, matching this test's name. It previously also
-    swept the dev-repo roots, which conflated two different things: `trw-release-verify`
-    was deliberately retired from the *install* in v0.60.0 (`86d3543c37`) while
-    remaining a live internal skill the operator invokes in this monorepo. Asserting
-    over `.claude/skills` made "retired from the package" mean "must not exist
-    anywhere", so the only way to satisfy it was to delete a working tool.
+    REMOVE-S8a: "retired" is no longer a name list but the predicate the sweep uses: a ``trw-*`` projection
+    whose name is not a canonical skill. Scoped to the packaged roots, matching this test's name: the dev
+    roots legitimately hold internal skills (``trw-release-verify``) that were retired from the install only.
     """
-    retired = {name for name, successor in PREDECESSOR_MAP["skills"].items() if successor is None}
-    for root in PACKAGED_SKILL_ROOTS:
+    canonical = _canonical()
+    for root in PACKAGED_SKILL_ROOTS[1:]:
         if not root.is_dir():
             continue
-        for name in retired:
-            assert not (root / name).exists(), f"retired skill projection remains: {root / name}"
+        for entry in root.iterdir():
+            if entry.name.startswith("trw-"):
+                assert entry.name in canonical, f"projection of a non-canonical (retired) skill: {entry}"
 
 
 def test_no_shipped_surface_references_a_retired_skill() -> None:
     """A reference is broken when the referencing surface ships and the target does not.
 
     Checked per root rather than repo-wide, because the two cases differ. A
-    PACKAGED skill naming a retired command is broken for every user, since they
-    will not have it. A DEV-ONLY skill naming another dev-only skill resolves
+    PACKAGED skill naming a non-canonical command is broken for every user, since
+    they will not have it. A DEV-ONLY skill naming another dev-only skill resolves
     fine in this monorepo — `/trw-release` offering `/trw-release-verify` as an
     opt-in gate is correct, and both live in `.claude/skills`. So a dev-root
     reference is a failure only when the target exists nowhere in that root.
     """
-    retired = {name for name, successor in PREDECESSOR_MAP["skills"].items() if successor is None}
+    canonical = _canonical()
 
     for root in PACKAGED_SKILL_ROOTS:
         if not root.is_dir():
@@ -80,8 +82,8 @@ def test_no_shipped_surface_references_a_retired_skill() -> None:
             content = skill_path.read_text(encoding="utf-8")
             # A skill names its own command in its usage line — not a dangling reference.
             referenced = set(COMMAND_REFERENCE.findall(content)) - {skill_path.parent.name}
-            assert retired.isdisjoint(referenced), (
-                f"{skill_path} ships and references retired skills {retired & referenced}"
+            assert referenced <= canonical, (
+                f"{skill_path} ships and references non-canonical skills {referenced - canonical}"
             )
 
     for root in DEV_SKILL_ROOTS:
@@ -90,16 +92,22 @@ def test_no_shipped_surface_references_a_retired_skill() -> None:
         for skill_path in root.glob("*/SKILL.md"):
             content = skill_path.read_text(encoding="utf-8")
             referenced = set(COMMAND_REFERENCE.findall(content)) - {skill_path.parent.name}
-            unresolvable = {name for name in retired & referenced if not (root / name).is_dir()}
+            unresolvable = {name for name in referenced - canonical if not (root / name).is_dir()}
             assert not unresolvable, f"{skill_path}: references skills that exist nowhere: {unresolvable}"
 
+    # Source may also name a shipped opencode command (the distill channel's) or the server binary in a path.
+    from trw_mcp.channels.opencode._custom_commands import opencode_distill_command_contents
+
+    commands = {Path(key).stem for key in opencode_distill_command_contents()}
+    commands |= {path.stem for path in (PACKAGE_ROOT / "src/trw_mcp/data/opencode/commands").glob("*.md")}
+    resolvable = canonical | commands | {"trw-mcp"}
     source_roots = (PACKAGE_ROOT / "src/trw_mcp",)
     for source_root in source_roots:
         if not source_root.is_dir():
             continue
         for source_path in source_root.rglob("*.py"):
             referenced = set(COMMAND_REFERENCE.findall(source_path.read_text(encoding="utf-8")))
-            assert retired.isdisjoint(referenced), f"{source_path}: references retired skills {retired & referenced}"
+            assert referenced <= resolvable, f"{source_path}: references non-canonical skills {referenced - resolvable}"
 
 
 @pytest.mark.parametrize(

@@ -111,9 +111,6 @@ from ._update_project import (
     _TRW_START_MARKER as _TRW_START_MARKER,
 )
 from ._update_project import (
-    PREDECESSOR_MAP as PREDECESSOR_MAP,
-)
-from ._update_project import (
     _cleanup_context_transients as _cleanup_context_transients,
 )
 from ._update_project import (
@@ -127,9 +124,6 @@ from ._update_project import (
 )
 from ._update_project import (
     _get_custom_names as _get_custom_names,
-)
-from ._update_project import (
-    _migrate_prefix_predecessors as _migrate_prefix_predecessors,
 )
 from ._update_project import (
     _read_manifest as _read_manifest,

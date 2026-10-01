@@ -17,14 +17,21 @@ from ._trash import _CHUNK, _HASH_CAP, remove_if_hash
 from ._utils import printable
 
 
-def remove_tree_if_hash(artifact: Path, root: Path, allowed: Callable[[Path], set[str]]) -> list[str]:
+def remove_tree_if_hash(
+    artifact: Path,
+    root: Path,
+    allowed: Callable[[Path], set[str]],
+    *,
+    captured: dict[Path, Path] | None = None,
+) -> list[str]:
     """Tree variant of :func:`remove_if_hash` for a stale skill/agent/command file or directory.
 
     Every regular file under *artifact* whose bytes hash to one of ``allowed(file)`` goes through
     :func:`remove_if_hash` (captured into ``.trw/trash`` and re-verified there, never unlinked). A file that
     is unlisted, changed, not regular, or unreadable is kept and named. Directories are then only ``rmdir``ed,
     deepest first, so one kept file (or a file created after the listing) keeps its directory. Returns
-    why anything was kept; an empty list means *artifact* is gone.
+    why anything was kept; an empty list means *artifact* is gone. *captured*, when given, maps each file
+    moved into trash to its capture folder (``.trw/trash/<stamp>-<id>``), so the CLI can say where it went.
     """
     kept: list[str] = []
 
@@ -57,6 +64,8 @@ def remove_tree_if_hash(artifact: Path, root: Path, allowed: Callable[[Path], se
         outcome = remove_if_hash(entry, root, digest, key=rel)
         if outcome.status not in ("removed", "absent"):
             kept.append(f"{rel} ({outcome.reason})")
+        elif captured is not None and outcome.status == "removed" and outcome.retained_at is not None:
+            captured[entry] = outcome.retained_at.parent
     if is_tree:
         try:
             dirs = [d for d in artifact.rglob("*") if d.is_dir() and not d.is_symlink()]

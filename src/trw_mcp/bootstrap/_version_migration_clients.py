@@ -59,9 +59,9 @@ from pathlib import Path
 
 import structlog
 
+from ._ownership_proof import _trw_authored, preserve_unowned, remove_proven
 from ._safe_remove import remove_if_hash
 from ._utils import printable
-from ._version_migration_predecessors import preserve_unowned, remove_proven
 
 logger = structlog.get_logger(__name__)
 
@@ -93,6 +93,11 @@ class ClientArtifactSurface:
             ``tests/test_bootstrap_manifest_ownership.py::
             test_every_directory_surface_declares_a_file_key_source``
             fails when a directory surface leaves it ``None``.
+        exact_proof: Only the file's own repo-relative manifest key proves TRW wrote it. ``None`` means
+            "exact for a file surface, the documented suffix rule for a skill-dir mirror"
+            (CLIENT-SURFACE-SUFFIX-PROOF). ``.claude/agents`` passes ``False``: its keys are bare ``<agent>.md``.
+        follows_canonical: A skill dir whose ``.claude/skills/<name>`` source is live is the project's own and
+            stays (PRD-FIX-139-FR03). ``False`` only for ``.claude/skills`` itself.
     """
 
     client_dir: str
@@ -100,6 +105,8 @@ class ClientArtifactSurface:
     bundled_names: Callable[[], set[str]]
     log_event: str
     bundled_files: Callable[[], set[str]] | None = None
+    exact_proof: bool | None = None
+    follows_canonical: bool = True
 
 
 def _codex_skill_names() -> set[str]:
@@ -303,8 +310,14 @@ def _remove_stale_client_surface(
     result: dict[str, list[str]],
     *,
     manifest_hashes: dict[str, str] | None = None,
+    shipped_skills: set[str] | None = None,
 ) -> None:
-    """Remove stale trw-prefixed artifacts from a single client mirror surface."""
+    """Remove stale trw-prefixed artifacts from a single client mirror surface.
+
+    *shipped_skills* is every skill TRW ships (the full bundle); ``None`` reads it from the installed bundle.
+    """
+    from ._optional_skills import CONDITIONAL_SKILLS
+
     root = target_dir / surface.client_dir
     if not root.is_dir():
         return
@@ -333,31 +346,52 @@ def _remove_stale_client_surface(
             if surface.is_dir_artifact and bundled_keys:
                 _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result, target_dir)
             continue
-        # PRD-FIX-139-FR03: a mirror follows its source. A skill dir absent
-        # from the bundle but still present under the canonical
-        # ``.claude/skills`` is the project's own (retired-name collision, or a
-        # local skill) and its projections stay with it.
-        if surface.is_dir_artifact and (target_dir / ".claude" / "skills" / name).is_dir():
-            result.setdefault("preserved", []).append(f"preserved:{entry} (mirror of a live .claude/skills source)")
+        # A flag-gated skill is retire_disabled_skills' to remove, on every surface: a client's curated list
+        # (or the flag being off) never makes it this sweep's (S8a lead ruling).
+        if surface.is_dir_artifact and name in CONDITIONAL_SKILLS:
             continue
-        # AG-EXPLORER-UNINSTALL-ORPHAN: a channel-rendered artifact (the AG-02 explorer) is not in the bundle but is
-        # still TRW's. Recorded with unchanged bytes, it is current: kept quietly, never removed and rewritten each
-        # update. Any other copy (a teammate's, an edited one) falls through to the not_installer_owned note.
-        if _is_current_channel_artifact(entry, manifest_hashes, target_dir):
+        # PRD-FIX-139-FR03: a mirror follows its source. A skill dir TRW does not ship at all but still present
+        # under the canonical ``.claude/skills`` is the project's own (retired-name collision, or a local skill)
+        # and its projections stay with it. A skill TRW still ships that this client's list dropped always has a
+        # live canonical copy, so it is not exempt: it is stale for this client (codex S8a r3).
+        if (
+            surface.follows_canonical
+            and surface.is_dir_artifact
+            and (target_dir / ".claude" / "skills" / name).is_dir()
+        ):
+            if shipped_skills is None:
+                from ._artifact_names import _get_bundled_names
+
+                shipped_skills = set(_get_bundled_names()["skills"])
+            if name not in shipped_skills:
+                result.setdefault("preserved", []).append(f"preserved:{entry} (mirror of a live .claude/skills source)")
+                continue
+        if _is_channel_artifact(entry, manifest_hashes, target_dir):
             continue
-        if preserve_unowned(entry, manifest_hashes, target_dir, result):
+        # CLIENT-SURFACE-SUFFIX-PROOF: a file surface (agents, commands) is recorded under its exact key, so only
+        # that key proves it; a skill-dir mirror keeps the documented suffix rule (its bare .claude key holds the
+        # same bytes).
+        exact = (not surface.is_dir_artifact) if surface.exact_proof is None else surface.exact_proof
+        if preserve_unowned(entry, manifest_hashes, target_dir, result, exact=exact):
             continue
-        remove_proven(entry, manifest_hashes, target_dir, result)
+        remove_proven(entry, manifest_hashes, target_dir, result, exact=exact)
 
 
-def _is_current_channel_artifact(entry: Path, manifest_hashes: dict[str, str] | None, target_dir: Path) -> bool:
-    from trw_mcp.channels.antigravity._explorer_subagent import EXPLORER_AGENT_RELPATH
+def _is_channel_artifact(entry: Path, manifest_hashes: dict[str, str] | None, target_dir: Path) -> bool:
+    """A channel-rendered ``trw-*`` file: not in the bundle, still TRW's, and never this sweep's to retire.
 
-    from ._version_migration_predecessors import _trw_authored
+    The Claude Code and OpenCode distill explorers are installed and withdrawn by their own channels (distill
+    entitlement), so the retirement sweep never touches them. AG-EXPLORER-UNINSTALL-ORPHAN: the Antigravity explorer
+    is skipped only while recorded with unchanged bytes; any other copy falls through to the not_installer_owned note.
+    """
+    from trw_mcp.channels.antigravity._explorer_subagent import EXPLORER_AGENT_RELPATH as AG_EXPLORER
+    from trw_mcp.channels.claude_code._explorer_subagent import EXPLORER_AGENT_RELPATH as CC_EXPLORER
+    from trw_mcp.channels.opencode._explorer_agent import EXPLORER_AGENT_RELPATH as OC_EXPLORER
 
-    if entry.relative_to(target_dir).as_posix() != EXPLORER_AGENT_RELPATH:
-        return False
-    return _trw_authored(entry, manifest_hashes or {}, target_dir)
+    rel = entry.relative_to(target_dir).as_posix()
+    if rel in (CC_EXPLORER, OC_EXPLORER):
+        return True
+    return rel == AG_EXPLORER and _trw_authored(entry, manifest_hashes or {}, target_dir, exact=True)
 
 
 def codex_artifact_contents() -> dict[str, bytes]:

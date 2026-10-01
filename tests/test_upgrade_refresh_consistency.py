@@ -145,10 +145,12 @@ def test_a_retired_skill_the_project_itself_keeps_is_not_reported_as_dead(tmp_pa
 
 
 def test_trw_decision_is_a_retired_skill_in_every_client_dir() -> None:
-    from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
+    """REMOVE-S8a: retired = a ``trw-*`` name the bundle no longer ships (renamed to trw-assess, a clean break)."""
+    from trw_mcp.bootstrap._utils import _DATA_DIR
 
-    assert "trw-decision" in PREDECESSOR_MAP["skills"]
-    assert PREDECESSOR_MAP["skills"]["trw-decision"] is None, "renamed to trw-assess; a clean break, no successor"
+    bundled = {path.name for path in (_DATA_DIR / "skills").iterdir() if path.is_dir()}
+    assert "trw-decision" not in bundled
+    assert "trw-assess" in bundled
 
 
 def test_trw_decision_goes_from_the_canonical_dir_and_every_mirror_without_a_manifest_listing(tmp_path: Path) -> None:
@@ -229,14 +231,21 @@ def test_a_dirty_agents_md_the_refresh_would_cost_user_bytes_is_still_restored(t
 # ---- FB-INSTALL-11: retired agent memory ----------------------------------------------------------
 
 
-def test_every_retired_trw_agent_is_a_retired_memory_dir() -> None:
+def test_every_retired_trw_agent_is_a_retired_memory_dir(tmp_path: Path) -> None:
+    """REMOVE-S8a: every ``trw-*`` agent-memory dir on disk is listed, retired or current; nothing else is."""
     from trw_mcp.bootstrap._retired_artifacts import _retired_artifacts
 
-    listed = {rel for rel, _why in _retired_artifacts()}
-    for agent in ("trw-code-simplifier", "trw-tester", "trw-requirement-writer", "trw-traceability-checker"):
+    memory = tmp_path / ".claude" / "agent-memory"
+    for name in ("trw-code-simplifier", "trw-tester", "trw-implementer", "reviewer-style", "my-agent"):
+        (memory / name).mkdir(parents=True)
+
+    listed = {rel for rel, _why in _retired_artifacts(tmp_path)}
+    for agent in ("trw-code-simplifier", "trw-tester"):
         assert f".claude/agent-memory/{agent}" in listed, agent
     assert ".claude/agent-memory/trw-implementer" in listed, "a current agent is still listed"
-    assert not [rel for rel in listed if "reviewer-" in rel], "a name outside the trw- namespace is the project's"
+    assert not [rel for rel in listed if "reviewer-" in rel or "my-agent" in rel], (
+        "a name outside the trw- namespace is the project's"
+    )
 
 
 def test_the_removal_advice_fits_a_file_an_empty_directory_and_a_directory_of_notes(tmp_path: Path) -> None:
@@ -281,7 +290,7 @@ def _skill_dir(root: Path, rel: str, files: dict[str, bytes]) -> Path:
 
 def test_remove_proven_reports_only_the_files_it_actually_captured(tmp_path: Path) -> None:
     """``trashed`` is what keeps the uncommitted-changes guard from restoring a capture; a kept file is not in it."""
-    from trw_mcp.bootstrap._version_migration_predecessors import remove_proven
+    from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     skill = _skill_dir(tmp_path, ".agents/skills/trw-sprint-init", {"SKILL.md": b"shipped\n", "notes.md": b"mine\n"})
     hashes = {".agents/skills/trw-sprint-init/SKILL.md": hashlib.sha256(b"shipped\n").hexdigest()}
@@ -309,7 +318,7 @@ def test_remove_proven_reports_only_the_files_it_actually_captured(tmp_path: Pat
 def test_the_most_specific_ownership_record_decides_a_capture(
     tmp_path: Path, exact_key: bytes | None, on_disk: bytes, captured: bool
 ) -> None:
-    from trw_mcp.bootstrap._version_migration_predecessors import remove_proven
+    from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     rel = ".github/skills/trw-sprint-init/SKILL.md"
     skill = _skill_dir(tmp_path, ".github/skills/trw-sprint-init", {"SKILL.md": on_disk})
@@ -386,7 +395,7 @@ def test_advice_for_a_symlinked_and_an_unreadable_retired_directory(tmp_path: Pa
 
 
 def test_remove_proven_leaves_a_symlinked_retired_directory_alone_and_reports_nothing_trashed(tmp_path: Path) -> None:
-    from trw_mcp.bootstrap._version_migration_predecessors import remove_proven
+    from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     shared = _skill_dir(tmp_path / "shared", "trw-sprint-init", {"SKILL.md": b"shipped\n"})
     link = tmp_path / ".agents" / "skills" / "trw-sprint-init"
@@ -456,3 +465,66 @@ def test_a_dangling_canonical_skill_link_does_not_hide_a_retained_mirror(tmp_pat
     (notice,) = [n for n in retired_artifact_notices(tmp_path) if _RETIRED in n]
 
     assert f".github/skills/{_RETIRED}" in notice
+
+
+def test_a_hostile_trw_name_cannot_drive_the_terminal_through_doctor_or_the_notice(tmp_path: Path) -> None:
+    """codex S8a r1 KI2: names now come from disk, so a ``trw-*`` entry's control bytes must be escaped."""
+    from trw_mcp.bootstrap._retired_artifacts import retired_artifact_notices, retired_artifact_row
+
+    hostile = "trw-custom\x1b[2J\n[PASS] forged"
+    (tmp_path / ".claude" / "agent-memory" / hostile).mkdir(parents=True)
+    (tmp_path / ".cursor" / "skills" / hostile).mkdir(parents=True)
+
+    status, message = retired_artifact_row(tmp_path)
+    notices = retired_artifact_notices(tmp_path)
+
+    assert status == "WARN"
+    assert len(notices) == 2
+    for text in (message, *notices):
+        assert "\x1b" not in text and "\n" not in text
+        assert "trw-custom\\x1b[2J\\n[PASS] forged" in text
+
+
+def test_the_removal_command_for_a_hostile_name_still_names_that_exact_path(tmp_path: Path) -> None:
+    """codex S8a r2: escaping must not change the operand; the shell must decode it back to the real bytes."""
+    import shutil
+    import subprocess
+
+    from trw_mcp.bootstrap._retired_artifacts import _advice_text
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("needs bash to decode the printed operand")
+    rel = ".claude/agent-memory/trw-custom\x1b[2J\n'quoted' \\back"
+    (tmp_path / rel).mkdir(parents=True)
+
+    advice = _advice_text(tmp_path, rel)
+    operand = advice.split("remove it manually: ", 1)[1].split(" ", 1)[1]  # after "rmdir" / "rm -r"
+    operand = operand.removeprefix("-r ")
+
+    assert advice.isprintable()
+    probe = tmp_path / "probe.sh"  # a file, not -c: the suite's launch guard tokenizes -c strings with shlex
+    probe.write_text(f"printf %s {operand}\n", encoding="utf-8")
+    decoded = subprocess.run([bash, str(probe)], capture_output=True, check=True).stdout
+    assert decoded == str(tmp_path.resolve() / rel).encode()
+
+
+@pytest.mark.parametrize("raw", [b"/p/trw-\xff", b"/p/trw-\xc3(\x1b", "/p/trw-\u00e9\n".encode()])
+def test_the_removal_operand_decodes_to_the_exact_bytes_even_when_they_are_not_utf8(tmp_path: Path, raw: bytes) -> None:
+    """codex S8a r3: a POSIX name with invalid UTF-8 arrives surrogate-escaped, and quoting it raised UnicodeEncodeError."""
+    import os
+    import shutil
+    import subprocess
+
+    from trw_mcp.bootstrap._retired_artifacts import _shell_quote
+
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("needs bash to decode the printed operand")
+
+    word = _shell_quote(os.fsdecode(raw))
+
+    assert word.isprintable()
+    probe = tmp_path / "probe.sh"
+    probe.write_text(f"printf %s {word}\n", encoding="utf-8")
+    assert subprocess.run([bash, str(probe)], capture_output=True, check=True).stdout == raw

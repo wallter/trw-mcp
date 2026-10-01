@@ -119,7 +119,7 @@ class TestUpdatePrefixScopedCleanup:
 
 
 class TestPrefixMigration:
-    """Tests for _migrate_prefix_predecessors via update_project."""
+    """Retirement through update_project (REMOVE-S8a: disk-driven ``trw-*`` retirement, no name list)."""
 
     def test_a_pre_prefix_skill_name_is_no_longer_migrated(self, initialized_repo: Path) -> None:
         """REMOVE-S1: the PRD-FIX-032 rename entries are gone, so ``learn`` is the project's own skill."""
@@ -134,31 +134,31 @@ class TestPrefixMigration:
         assert not [e for e in result["cleaned"] if "/learn/" in e]
 
     def test_migrate_removes_a_retired_agent(self, initialized_repo: Path) -> None:
-        """A TRW-recorded agent with a retired name is removed."""
+        """A TRW-recorded ``trw-*`` agent the bundle no longer ships is removed."""
         agents_dir = initialized_repo / ".claude" / "agents"
-        (agents_dir / "tester.md").write_text("old", encoding="utf-8")
-        _record(initialized_repo, "tester.md", "old")
+        (agents_dir / "trw-tester.md").write_text("old", encoding="utf-8")
+        _record(initialized_repo, "trw-tester.md", "old")
 
         result = update_project(initialized_repo)
 
-        assert not (agents_dir / "tester.md").exists()
-        assert ".claude/agents/tester.md" in result["cleaned"]
+        assert not (agents_dir / "trw-tester.md").exists()
+        assert ".claude/agents/trw-tester.md" in result["cleaned"]
 
     def test_migrate_idempotent(self, initialized_repo: Path) -> None:
         """Second update_project run is a no-op on already-cleaned dirs."""
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "review-pr").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
-        _record(initialized_repo, "review-pr/SKILL.md", "old")
+        (skills_dir / "trw-review-pr").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "trw-review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
+        _record(initialized_repo, "trw-review-pr/SKILL.md", "old")
 
         update_project(initialized_repo)
-        assert not (skills_dir / "review-pr").exists()
+        assert not (skills_dir / "trw-review-pr").exists()
 
         result2 = update_project(initialized_repo)
-        assert not [e for e in result2["cleaned"] if "/review-pr/" in e]
+        assert not [e for e in result2["cleaned"] if "/trw-review-pr/" in e]
 
     def test_genuine_custom_skill_not_removed(self, initialized_repo: Path) -> None:
-        """A custom skill not in PREDECESSOR_MAP survives update_project."""
+        """A custom skill outside the ``trw-`` namespace survives update_project."""
         skills_dir = initialized_repo / ".claude" / "skills"
         custom_skill = skills_dir / "my-custom-tool"
         custom_skill.mkdir(parents=True, exist_ok=True)

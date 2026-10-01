@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
+import yaml
 
 from trw_mcp.bootstrap import (
-    PREDECESSOR_MAP,
     _get_bundled_names,
-    _migrate_prefix_predecessors,
-    _read_manifest,
     _remove_stale_artifacts,
-    _write_manifest,
     update_project,
 )
+from trw_mcp.bootstrap._version_migration import _cleanup_stale_artifacts
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
@@ -29,159 +25,239 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _run(tmp_path: Path, hashes: dict[str, str]) -> dict[str, list[str]]:
+    """The update's cleanup with *hashes* as the pre-run manifest's ``content_hashes``."""
+    (tmp_path / ".trw").mkdir(exist_ok=True)
+    (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+        yaml.safe_dump({"version": 2, "content_hashes": hashes}), encoding="utf-8"
+    )
+    result: dict[str, list[str]] = {"updated": [], "errors": []}
+    _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes=hashes)
+    return result
+
+
+def _skill(tmp_path: Path, name: str, body: str = "old") -> Path:
+    path = tmp_path / ".claude" / "skills" / name / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 @pytest.mark.unit
-class TestPrefixMigrationExtra:
-    """Edge-case tests for _migrate_prefix_predecessors and manifest cleanup."""
+class TestRetirementPredicate:
+    """REMOVE-S8a: a ``trw-*`` skill or agent TRW no longer ships on that surface is retired, with proof."""
 
-    def test_migrate_oserror_resilience(self, tmp_path: Path) -> None:
-        """OSError during shutil.rmtree skips the item and continues."""
-        target = tmp_path
-        skills_dir = target / ".claude" / "skills"
-        skills_dir.mkdir(parents=True)
-        for old in ("review-pr", "trw-review-pr"):
-            (skills_dir / old).mkdir()
-            (skills_dir / old / "SKILL.md").write_text("old", encoding="utf-8")
+    def test_a_recorded_trw_name_missing_from_the_bundle_is_retired(self, tmp_path: Path) -> None:
+        """No name list: any recorded, unchanged ``trw-*`` skill or agent outside the bundle goes."""
+        skill = _skill(tmp_path, "trw-gone")
+        agent = tmp_path / ".claude" / "agents" / "trw-gone.md"
+        agent.parent.mkdir(parents=True)
+        agent.write_text("old", encoding="utf-8")
 
+        result = _run(tmp_path, {"trw-gone/SKILL.md": _sha("old"), "trw-gone.md": _sha("old")})
+
+        assert not skill.parent.exists()
+        assert not agent.exists()
+        assert not result.get("preserved")
+
+    def test_a_users_own_unrecorded_trw_skill_is_kept_and_reported(self, tmp_path: Path) -> None:
+        skill = _skill(tmp_path, "trw-mine", "my own skill")
+
+        result = _run(tmp_path, {"trw-audit/SKILL.md": "0" * 64})
+
+        assert skill.read_text(encoding="utf-8") == "my own skill"
+        assert result["preserved"] == [".claude/skills/trw-mine (not_installer_owned)"]
+
+    def test_without_an_opencode_inventory_nothing_in_opencode_skills_is_swept(self, tmp_path: Path) -> None:
+        """codex S8a r1 KI1 + lead ruling (b): no inventory means opencode's list is unknown, not empty.
+
+        Before, an absent inventory read as an empty curated list, so every recorded, unchanged skill in
+        ``.opencode/skills`` (still-bundled ones too) was trashed. Now that surface is skipped; .claude still sweeps.
+        """
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        data = tmp_path / "data"
+        for name in ("skills", "agents", "hooks"):
+            (data / name).mkdir(parents=True)
+        for skill in (_DATA_DIR / "skills").iterdir():
+            if skill.is_dir():
+                (data / "skills" / skill.name).mkdir()
+        assert not (data / "opencode" / "skills_inventory.yaml").exists()
+        project = tmp_path / "project"
+        for root in (".opencode/skills", ".claude/skills"):
+            path = project / root / "trw-gone" / "SKILL.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("old", encoding="utf-8")
+        audit = project / ".opencode" / "skills" / "trw-audit" / "SKILL.md"
+        audit.parent.mkdir(parents=True)
+        audit.write_text("old", encoding="utf-8")
+        hashes = {
+            ".opencode/skills/trw-gone/SKILL.md": _sha("old"),
+            ".opencode/skills/trw-audit/SKILL.md": _sha("old"),
+            "trw-gone/SKILL.md": _sha("old"),
+        }
+        (project / ".trw").mkdir()
+        (project / ".trw" / "managed-artifacts.yaml").write_text(
+            yaml.safe_dump({"version": 2, "content_hashes": hashes}), encoding="utf-8"
+        )
         result: dict[str, list[str]] = {"updated": [], "errors": []}
-        call_count = 0
 
-        original_rmtree = shutil.rmtree
+        _cleanup_stale_artifacts(project, result, data, manifest_hashes=hashes)
 
-        def failing_rmtree(path: Path, *args: object, **kwargs: object) -> None:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise OSError("permission denied")
-            original_rmtree(path)
+        assert (project / ".opencode" / "skills" / "trw-gone" / "SKILL.md").read_text(encoding="utf-8") == "old"
+        assert audit.read_text(encoding="utf-8") == "old"
+        assert result.get("trashed") == [".claude/skills/trw-gone/SKILL.md"], "non-vacuous: .claude still sweeps"
 
-        with patch("trw_mcp.bootstrap.shutil.rmtree", side_effect=failing_rmtree):
-            _migrate_prefix_predecessors(
-                target,
-                result,
-                manifest_hashes={"review-pr/SKILL.md": _sha("old"), "trw-review-pr/SKILL.md": _sha("old")},
-            )
+    def test_an_inventory_that_appears_mid_update_never_reads_as_an_empty_list(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """codex S8a r3: membership and the skip decision came from two reads of the inventory.
 
-        assert not result.get("errors")
+        Absent when the bundle was listed (so an empty OpenCode list) and present at the separate existence check,
+        the sweep ran with that empty list and trashed skills OpenCode still ships. One read now decides both.
+        """
+        import shutil
 
-    def test_dry_run_reports_the_migration_without_deleting(self, initialized_repo: Path) -> None:
-        """A TRW-recorded retired skill is listed under ``cleaned`` by a dry run and left on disk."""
+        from trw_mcp.bootstrap import _template_updater
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        name = sorted(_get_bundled_names()["opencode_skills"])[0]
+        data = tmp_path / "data"
+        for sub in ("skills", "agents", "hooks", "opencode"):
+            (data / sub).mkdir(parents=True)
+        for skill in (_DATA_DIR / "skills").iterdir():
+            if skill.is_dir():
+                (data / "skills" / skill.name).mkdir()
+        listed = _template_updater._get_bundled_names
+
+        def list_then_inventory_appears(data_dir: Path | None = None) -> dict[str, list[str]]:
+            names = listed(data_dir)
+            shutil.copy(_DATA_DIR / "opencode" / "skills_inventory.yaml", data / "opencode" / "skills_inventory.yaml")
+            return names
+
+        monkeypatch.setattr(_template_updater, "_get_bundled_names", list_then_inventory_appears)
+        project = tmp_path / "project"
+        copy = project / ".opencode" / "skills" / name / "SKILL.md"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("old", encoding="utf-8")
+        hashes = {f".opencode/skills/{name}/SKILL.md": _sha("old")}
+        (project / ".trw").mkdir()
+        (project / ".trw" / "managed-artifacts.yaml").write_text(
+            yaml.safe_dump({"version": 2, "content_hashes": hashes}), encoding="utf-8"
+        )
+
+        _cleanup_stale_artifacts(project, {"updated": [], "errors": []}, data, manifest_hashes=hashes)
+
+        assert copy.read_text(encoding="utf-8") == "old"
+
+    def test_a_flag_gated_skill_in_a_client_mirror_survives_the_stale_sweep(self, tmp_path: Path) -> None:
+        """Lead ruling (b) condition 1: retire_disabled_skills owns flag-gated skills; Codex's list never retires one."""
+        from trw_mcp.bootstrap._client_skills import skill_names
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+        from trw_mcp.bootstrap._version_migration_clients import _remove_stale_client_artifacts
+
+        name = "trw-assess"
+        assert name in CONDITIONAL_SKILLS
+        assert name not in set(skill_names("codex")), "precondition: outside Codex's list, so only the guard keeps it"
+        copy = tmp_path / ".agents" / "skills" / name / "SKILL.md"
+        copy.parent.mkdir(parents=True)
+        copy.write_text("old", encoding="utf-8")
+        gone = tmp_path / ".agents" / "skills" / "trw-gone" / "SKILL.md"
+        gone.parent.mkdir(parents=True)
+        gone.write_text("old", encoding="utf-8")
+        hashes = {f".agents/skills/{name}/SKILL.md": _sha("old"), ".agents/skills/trw-gone/SKILL.md": _sha("old")}
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+
+        _remove_stale_client_artifacts(tmp_path, result, manifest_hashes=hashes)
+
+        assert copy.read_text(encoding="utf-8") == "old"
+        assert not gone.exists(), "non-vacuous: a recorded trw-gone in the same mirror is retired"
+
+    def test_a_skill_one_client_dropped_is_retired_there_though_its_canonical_copy_lives(self, tmp_path: Path) -> None:
+        """codex S8a r3: the mirror-follows-source guard (PRD-FIX-139-FR03) is for names TRW does not ship.
+
+        A skill still in the full bundle but outside Copilot's curated list always has a live ``.claude/skills``
+        copy, so that guard kept the Copilot copy forever and the per-client rule never fired. A local skill (not
+        shipped) with a live canonical copy still keeps its mirror.
+        """
+        from trw_mcp.bootstrap._client_skills import skill_names
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+        from trw_mcp.bootstrap._version_migration_clients import _remove_stale_client_artifacts
+
+        dropped = sorted(set(_get_bundled_names()["skills"]) - set(skill_names("copilot")) - set(CONDITIONAL_SKILLS))
+        assert dropped, "precondition: a bundled skill outside Copilot's list"
+        name = dropped[0]
+        hashes: dict[str, str] = {}
+        for skill in (name, "trw-mine"):
+            _skill(tmp_path, skill)
+            mirror = tmp_path / ".github" / "skills" / skill / "SKILL.md"
+            mirror.parent.mkdir(parents=True)
+            mirror.write_text("old", encoding="utf-8")
+            hashes[f".github/skills/{skill}/SKILL.md"] = _sha("old")
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+
+        _remove_stale_client_artifacts(tmp_path, result, manifest_hashes=hashes)
+
+        assert not (tmp_path / ".github" / "skills" / name).exists()
+        assert (tmp_path / ".claude" / "skills" / name / "SKILL.md").is_file()
+        assert (tmp_path / ".github" / "skills" / "trw-mine" / "SKILL.md").read_text(encoding="utf-8") == "old"
+
+    def test_a_flag_gated_bundled_skill_is_never_swept(self, tmp_path: Path) -> None:
+        """trw-assess is conditional (assess_enabled) but bundled: recorded and unchanged, it still stays."""
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+
+        assert CONDITIONAL_SKILLS, "precondition: there is a flag-gated skill to test"
+        for name in CONDITIONAL_SKILLS:
+            _skill(tmp_path, name)
+
+        _run(tmp_path, {f"{name}/SKILL.md": _sha("old") for name in CONDITIONAL_SKILLS})
+
+        assert all((tmp_path / ".claude" / "skills" / name).is_dir() for name in CONDITIONAL_SKILLS)
+
+    @pytest.mark.parametrize(
+        "relpath", [".claude/agents/trw-distill-explorer.md", ".opencode/agents/trw-distill-explorer.md"]
+    )
+    def test_a_channel_explorer_is_never_this_sweeps_to_retire(self, tmp_path: Path, relpath: str) -> None:
+        """Its channel installs and withdraws it (distill entitlement): recorded or not, kept and not reported."""
+        explorer = tmp_path / relpath
+        explorer.parent.mkdir(parents=True)
+        explorer.write_text("explorer", encoding="utf-8")
+
+        result = _run(tmp_path, {relpath: _sha("explorer"), Path(relpath).name: _sha("explorer")})
+
+        assert explorer.exists()
+        assert not result.get("preserved")
+
+    def test_a_bare_pre_prefix_name_is_the_projects_own(self, tmp_path: Path) -> None:
+        """Outside the ``trw-`` namespace nothing is retired: a recorded ``review-pr`` stays."""
+        skill = _skill(tmp_path, "review-pr")
+
+        _run(tmp_path, {"review-pr/SKILL.md": _sha("old")})
+
+        assert skill.exists()
+
+    def test_dry_run_reports_the_retirement_without_deleting(self, initialized_repo: Path) -> None:
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
-        skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "review-pr").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
+        skill = _skill(initialized_repo, "trw-review-pr")
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         manifest = FileStateReader().read_yaml(manifest_path)
-        manifest["content_hashes"]["review-pr/SKILL.md"] = _sha("old")
+        manifest["content_hashes"]["trw-review-pr/SKILL.md"] = _sha("old")
         FileStateWriter().write_yaml(manifest_path, manifest)
 
         result = update_project(initialized_repo, dry_run=True)
 
-        assert (skills_dir / "review-pr").exists()
-        assert ".claude/skills/review-pr/SKILL.md" in result["cleaned"]
+        assert skill.exists()
+        assert ".claude/skills/trw-review-pr/SKILL.md" in result["cleaned"]
 
-    def test_manifest_excludes_predecessor_names_from_custom(self, initialized_repo: Path) -> None:
-        """Retired names are excluded from custom_skills in manifest."""
-        skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "review-pr").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
+    @pytest.mark.parametrize("missing", ["skills", "agents"])
+    def test_a_missing_dir_is_not_an_error(self, tmp_path: Path, missing: str) -> None:
+        present = "agents" if missing == "skills" else "skills"
+        (tmp_path / ".claude" / present).mkdir(parents=True)
 
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _write_manifest(initialized_repo, result)
-
-        manifest = _read_manifest(initialized_repo)
-        assert manifest is not None
-        assert "review-pr" not in manifest.get("custom_skills", [])
-
-    def test_migrate_prefix_predecessors_direct_call(self, tmp_path: Path) -> None:
-        """Direct call removes both skill dirs and agent files."""
-        target = tmp_path
-        skills_dir = target / ".claude" / "skills"
-        agents_dir = target / ".claude" / "agents"
-        skills_dir.mkdir(parents=True)
-        agents_dir.mkdir(parents=True)
-
-        (skills_dir / "review-pr").mkdir()
-        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-audit").mkdir()
-        (skills_dir / "trw-audit" / "SKILL.md").write_text("new", encoding="utf-8")
-
-        (agents_dir / "tester.md").write_text("old", encoding="utf-8")
-        (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        hashes = {"review-pr/SKILL.md": _sha("old"), "tester.md": _sha("old")}
-        _migrate_prefix_predecessors(target, result, manifest_hashes=hashes)
-
-        assert not (skills_dir / "review-pr").exists()
-        assert not (agents_dir / "tester.md").exists()
-        assert (skills_dir / "trw-audit").exists()
-        assert (agents_dir / "trw-researcher.md").exists()
-        assert not result.get("preserved")
-
-    def test_unrecorded_predecessor_is_kept_as_not_installer_owned(self, tmp_path: Path) -> None:
-        """PRD-INFRA-190-FR06: no manifest proof, no deletion of a retired name."""
-        agents_dir = tmp_path / ".claude" / "agents"
-        agents_dir.mkdir(parents=True)
-        (agents_dir / "tester.md").write_text("mine", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={"tester.md": _sha("old")})
-
-        assert (agents_dir / "tester.md").read_text(encoding="utf-8") == "mine"
-        assert result["preserved"] == [".claude/agents/tester.md (not_installer_owned)"]
-
-    def test_migrate_no_skills_dir_no_error(self, tmp_path: Path) -> None:
-        """No error when .claude/skills/ directory does not exist."""
-        target = tmp_path
-        (target / ".claude" / "agents").mkdir(parents=True)
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(target, result)
+        result = _run(tmp_path, {})
 
         assert not result["errors"]
-        assert result["updated"] == []
-
-    def test_migrate_no_agents_dir_no_error(self, tmp_path: Path) -> None:
-        """No error when .claude/agents/ directory does not exist."""
-        target = tmp_path
-        (target / ".claude" / "skills").mkdir(parents=True)
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(target, result)
-
-        assert not result["errors"]
-        assert result["updated"] == []
-
-    def test_predecessor_map_keys_not_in_bundled(self) -> None:
-        """No PREDECESSOR_MAP key appears in _get_bundled_names() output."""
-        bundled = _get_bundled_names()
-        bundled_skills = set(bundled["skills"])
-        bundled_agents = set(bundled["agents"])
-
-        for old_skill in PREDECESSOR_MAP["skills"]:
-            assert old_skill not in bundled_skills, f"Predecessor skill '{old_skill}' found in bundled names"
-        for old_agent in PREDECESSOR_MAP["agents"]:
-            assert old_agent not in bundled_agents, f"Predecessor agent '{old_agent}' found in bundled names"
-
-    @pytest.mark.parametrize("retired_name", ["review-pr", "trw-review-pr"])
-    def test_retired_review_skill_removed_without_successor(self, tmp_path: Path, retired_name: str) -> None:
-        skills_dir = tmp_path / ".claude" / "skills"
-        retired = skills_dir / retired_name
-        retired.mkdir(parents=True)
-        (retired / "SKILL.md").write_text("retired", encoding="utf-8")
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-
-        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={f"{retired_name}/SKILL.md": _sha("retired")})
-
-        assert not retired.exists()
-        assert not result.get("preserved")
-
-    def test_every_predecessor_entry_is_a_retirement(self) -> None:
-        """REMOVE-S1: the rename path is gone, so a non-None successor would be deleted without one."""
-        for kind, names in PREDECESSOR_MAP.items():
-            renamed = {name: successor for name, successor in names.items() if successor is not None}
-            assert not renamed, f"{kind}: rename entries are no longer migrated: {renamed}"
 
 
 @pytest.mark.unit
@@ -347,3 +423,24 @@ class TestStaleCleanupOwnership:
 
         assert ghost.exists()
         assert result["preserved"] == [".claude/skills/trw-ghost (not_installer_owned)"]
+
+
+def test_a_dry_run_names_no_capture_folder(initialized_repo: Path) -> None:
+    """codex S8a r1 KI3: a dry run sweeps a scratch copy whose capture folders are gone afterwards.
+
+    The preview may say a file would move to trash; it must not name a ``.trw/trash/<stamp>-<id>`` folder
+    that never exists in the target.
+    """
+    skill = initialized_repo / ".claude" / "skills" / "trw-gone" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("old", encoding="utf-8")
+    manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest.setdefault("content_hashes", {})["trw-gone/SKILL.md"] = _sha("old")
+    manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+    result = update_project(initialized_repo, dry_run=True)
+
+    assert ".claude/skills/trw-gone/SKILL.md" in result.get("trashed", []), "precondition: the preview sweeps it"
+    assert not result.get("trash_captures")
+    assert skill.read_text(encoding="utf-8") == "old"

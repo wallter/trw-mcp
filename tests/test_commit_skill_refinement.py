@@ -52,8 +52,7 @@ def test_package_skill_is_bundled():
 
 
 def test_update_does_not_retire_restored_or_custom_commit_skill():
-    from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
-
-    renames = PREDECESSOR_MAP["skills"]
-    assert "trw-commit" not in renames
-    assert "commit" not in renames
+    """REMOVE-S8a: only a ``trw-*`` name missing from the bundle is retired, so neither of these ever is."""
+    bundled = {path.name for path in (PACKAGE_ROOT / "src/trw_mcp/data/skills").iterdir() if path.is_dir()}
+    assert "trw-commit" in bundled
+    assert not "commit".startswith("trw-")

@@ -306,6 +306,123 @@ class TestMalformedTombstonesFieldRefuses:
         assert "refusing to update" in result["errors"][0]
 
 
+def _add_tombstone(repo: Path, key: str) -> None:
+    """Write *key* into the manifest's ``tombstones`` as a crafted or stale manifest would."""
+    import yaml
+
+    path = repo / ".trw" / "managed-artifacts.yaml"
+    manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+    manifest["tombstones"] = [*manifest.get("tombstones", []), key]
+    path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+
+class TestOnlyKeysTrwRecordsAreTombstoned:
+    """TOMBSTONE-TRW-KEYS-ONLY (codex REMOVE-S2-SYNC-REPORT r1): a tombstone is honoured only under a declared
+    manifest-recorder surface, the same universe of keys a tombstone can legitimately come from."""
+
+    @pytest.mark.parametrize(
+        ("forged", "user_path"),
+        [
+            ("./CLAUDE.md", "CLAUDE.md"),
+            (".claude/hooks/../../CLAUDE.md", "CLAUDE.md"),
+            # TOMBSTONE-SURFACE-NARROW: a user file inside a directory TRW also writes to.
+            (".cursor/rules/my-rule.mdc", ".cursor/rules/my-rule.mdc"),
+            (".opencode/skills/my-skill/SKILL.md", ".opencode/skills/my-skill/SKILL.md"),
+        ],
+    )
+    def test_a_forged_tombstone_never_deletes_a_file_the_user_creates_during_the_update(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forged: str, user_path: str
+    ) -> None:
+        """The user creates the file after detection and before enforcement: it is theirs, not a writer's."""
+        from trw_mcp.bootstrap import _tombstones as tombstones_module
+
+        repo = _init(tmp_path)
+        _add_tombstone(repo, forged)
+        user_file = repo / user_path
+        assert not user_file.exists()
+        enforce = tombstones_module.enforce_tombstones
+
+        def user_writes_then_enforce(
+            target_dir: Path,
+            tombstones: set[str],
+            result: dict[str, list[str]],
+            skill_dir_snapshot: dict[str, frozenset[str]] | None = None,
+        ) -> None:
+            user_file.parent.mkdir(parents=True, exist_ok=True)
+            user_file.write_text("my notes\n", encoding="utf-8")
+            enforce(target_dir, tombstones, result, skill_dir_snapshot)
+
+        monkeypatch.setattr(tombstones_module, "enforce_tombstones", user_writes_then_enforce)
+
+        result = update_project(repo)
+
+        assert not result["errors"], result["errors"]
+        assert user_file.read_text(encoding="utf-8") == "my notes\n"
+        assert forged not in _tombstones(repo), "an unrecorded key is not carried forward either"
+
+    def test_a_deleted_trw_file_a_writer_recreates_is_still_removed(self, tmp_path: Path) -> None:
+        """Non-vacuity partner: the update's hook writer recreates the deleted script and enforcement removes it."""
+        repo = _init(tmp_path)
+        hook = repo / _HOOK
+        assert hook.is_file(), "non-vacuity: the hook must exist before deletion"
+        hook.unlink()
+        update_project(repo)
+
+        result = update_project(repo)
+
+        assert not result["errors"], result["errors"]
+        assert not hook.exists()
+        assert _HOOK_KEY in _tombstones(repo)
+        assert f"kept deleted: {_HOOK} (update-project --reprovision restores it)" in result.get("info", [])
+
+
+def test_every_key_a_full_install_records_lies_under_its_recorders_declared_surfaces(tmp_path: Path) -> None:
+    """The surfaces gate tombstones, so a recorder key outside them would be a TRW file whose deletion no update
+    honours. 24 of 200 keys of an ide=all install were outside before TOMBSTONE-TRW-KEYS-ONLY completed them."""
+    from trw_mcp.bootstrap._manifest_recorders import MANIFEST_RECORDERS, under_recorder_surface
+    from trw_mcp.bootstrap._version_manifest import _manifest_key_path
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    assert not init_project(repo, ide="all")["errors"]
+    prev = _manifest_content_hashes(_read_manifest(repo))
+
+    for recorder in MANIFEST_RECORDERS:
+        keys = recorder.record(repo, prev, None)
+        assert keys, f"non-vacuity: {recorder.name} records nothing on an ide=all install"
+        outside = sorted(k for k in keys if not under_recorder_surface(_manifest_key_path(k), recorder.surfaces))
+        assert not outside, f"{recorder.name} records keys outside its declared surfaces: {outside}"
+
+
+def _managed_source_keys() -> set[str]:
+    """Every key the managed-client recorder can write, from its sources rather than one install's config."""
+    from trw_mcp.bootstrap._managed_client_artifacts import MANAGED_CLIENT_ARTIFACT_SOURCES
+    from trw_mcp.channels.antigravity._explorer_subagent import EXPLORER_AGENT_RELPATH as AG_EXPLORER
+
+    # The two keys recorded outside the source registry (_cursor_rules_mdc_manifest_hash and
+    # _antigravity_explorer_manifest_hash).
+    keys = {".cursor/rules/trw-ceremony.mdc", AG_EXPLORER}
+    for source in MANAGED_CLIENT_ARTIFACT_SOURCES:
+        keys |= set(source.contents())
+        if source.licence_gated is not None:
+            keys |= source.licence_gated()
+    return keys
+
+
+def test_every_key_a_managed_client_source_can_write_lies_under_the_recorders_surfaces() -> None:
+    """codex TOMBSTONE-TRW-KEYS-ONLY r1: an install covers only what its configuration writes, so the licence-gated
+    explorers and the hand-recorded paths are checked from their sources, entitled or not."""
+    from trw_mcp.bootstrap._manifest_recorders import MANIFEST_RECORDERS, under_recorder_surface
+
+    [managed] = [r for r in MANIFEST_RECORDERS if r.name == "managed_client_artifacts"]
+    keys = _managed_source_keys()
+
+    assert ".claude/agents/trw-distill-explorer.md" in keys, "non-vacuity: a licence-gated key is listed"
+    outside = sorted(k for k in keys if not under_recorder_surface(k, managed.surfaces))
+    assert not outside, f"managed_client_artifacts can write keys outside its declared surfaces: {outside}"
+
+
 def _hook_commands(hooks_by_event: dict[str, object]) -> list[str]:
     """Flatten every hook ``command`` string out of a hooks.json-shaped mapping."""
     commands: list[str] = []

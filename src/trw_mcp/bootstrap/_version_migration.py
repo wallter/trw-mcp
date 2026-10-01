@@ -1,9 +1,10 @@
 # ruff: noqa: E402
-"""Version migration — predecessor cleanup and stale artifact removal.
+"""Version migration — retired-artifact removal after an update.
 
 Handles:
-- Retired skill/agent removal (PREDECESSOR_MAP)
-- Stale artifact removal based on manifest diffs
+- ``trw-*`` skills and agents TRW no longer ships there (full bundle for ``.claude``; a client mirror
+  follows that client's list; flag-gated skills never), each removal proof-gated
+- Stale hooks and opencode commands, from the previous manifest's lists
 - Context transient cleanup during update-project
 """
 
@@ -16,85 +17,6 @@ import structlog
 from ._utils import _result_action_key
 
 logger = structlog.get_logger(__name__)
-
-# Skill/agent names TRW retired outright. Every value is None (no successor):
-# update-project removes a TRW-written copy carrying any of these names.
-PREDECESSOR_MAP: dict[str, dict[str, None]] = {
-    "skills": {
-        "review-pr": None,
-        # Retired 2026-07-19 (operator: internal dev-only skill, must not ship in
-        # the install). Archived at docs/archive/retired/2026-07-19-trw-release-verify/.
-        "trw-release-verify": None,
-        # Retired 2026-07-19 (operator direction). The skill is archived at
-        # docs/archive/retired/2026-07-19-trw-simplify/. Both the trw- name and
-        # the legacy non-prefixed predecessor map DIRECTLY to None (retirement
-        # chains must collapse — see test_retirement_chains_collapse_to_direct_
-        # deletion) so update-project removes the materialized copy from any
-        # existing install regardless of which name it carries.
-        "simplify": None,
-        "trw-simplify": None,
-        # Retired 2026-09-28 (operator direction): sprint tooling deprecated.
-        # Both names map DIRECTLY to None so update-project removes the
-        # materialized copy from any existing install.
-        "sprint-finish": None,
-        "sprint-init": None,
-        "trw-sprint-finish": None,
-        "trw-sprint-init": None,
-        # Retired 2026-09-12 (operator direction). The agent-team planning
-        # COMMAND surface was experimental for six months and is superseded by
-        # native client workflow features; the underlying support (formation
-        # manifests, file ownership, trw_init formations, the trw-lead /
-        # trw-implementer agents) is retained. Every predecessor
-        # name maps DIRECTLY to None so update-project removes the materialized
-        # copy from any existing install regardless of which name it carries
-        # (see test_retirement_chains_collapse_to_direct_deletion).
-        "sprint-team": None,
-        "trw-sprint-team": None,
-        "team-playbook": None,
-        "trw-team-playbook": None,
-        # PRD-CORE-092: Dropped skill post-consolidation
-        "trw-review-pr": None,
-        # trw_decision became trw_assess (clean break, no alias), so the old skill directs a tool that is gone.
-        # None, not "trw-assess": that skill is conditional (assess_enabled) and the old one must go either way.
-        "trw-decision": None,
-    },
-    "agents": {
-        # Retired 2026-07-19 with the trw-simplify skill it ran (operator
-        # direction). Archived at docs/archive/retired/2026-07-19-trw-simplify/.
-        # Both names map directly to None (chain must collapse).
-        "code-simplifier.md": None,
-        "trw-code-simplifier.md": None,
-        # PRD-CORE-291-FR05: retired 2026-09-22, content merged into a
-        # neighboring agent (tester -> implementer, requirement-writer ->
-        # prd-groomer, traceability-checker -> auditor). Both the legacy
-        # non-prefixed name and the trw- prefixed name map DIRECTLY to None
-        # (retirement chains must collapse — see
-        # test_retirement_chains_collapse_to_direct_deletion) so
-        # update-project removes the materialized copy regardless of which
-        # name an existing install carries.
-        "tester.md": None,
-        "trw-tester.md": None,
-        "requirement-writer.md": None,
-        "trw-requirement-writer.md": None,
-        "traceability-checker.md": None,
-        "trw-traceability-checker.md": None,
-        # Non-prefixed reviewers: local-only, never bundled
-        "reviewer-correctness.md": None,
-        "reviewer-integration.md": None,
-        "reviewer-performance.md": None,
-        "reviewer-security.md": None,
-        "reviewer-spec-compliance.md": None,
-        "reviewer-style.md": None,
-        "reviewer-test-quality.md": None,
-        # PRD-CORE-252: retired outright. Both names existed ONLY as per-client
-        # stubs (a short original body sharing a filename with nothing in the
-        # bundle) and neither was ever a bundled specialist. The stub sets are
-        # gone, so the names go with them rather than being promoted into the
-        # bundle — bundled-or-discard.
-        "trw-explorer.md": None,
-        "trw-docs-researcher.md": None,
-    },
-}
 
 # Context-cleanup policy extracted to _version_migration_context (PRD-FIX-120,
 # 350-eLOC gate). Re-exported here so _update_project.py, bootstrap/__init__.py,
@@ -166,10 +88,6 @@ def _write_manifest(
 
     bundled = _get_bundled_names(data_dir)
     custom = _get_custom_names(target_dir, data_dir)
-    # PRD-FIX-032-FR05: Exclude retired names from custom lists so they
-    # are not permanently protected as false-custom entries.
-    predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
-    predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
     prev_manifest_raw = _read_manifest(target_dir)
     prev_hashes = _manifest_content_hashes(prev_manifest_raw)
     content_hashes = collect_manifest_content_hashes(target_dir, prev_hashes, data_dir)
@@ -208,8 +126,8 @@ def _write_manifest(
         # versions this install/update wrote. version-status compares
         # importlib versions against this map rather than a VERSION.yaml stamp.
         "packages": resolved_package_versions(),
-        "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
-        "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
+        "custom_skills": custom["skills"],
+        "custom_agents": custom["agents"],
         "custom_hooks": custom["hooks"],
         "custom_opencode_commands": custom.get("opencode_commands", []),
         "custom_opencode_agents": custom.get("opencode_agents", []),
@@ -235,30 +153,15 @@ def _write_manifest(
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# Predecessor migration
-# ---------------------------------------------------------------------------
-
-
 # Per-client stale cleanup + codex content hashes (FIX A/B) extracted to
 # _version_migration_clients (350-eLOC gate). Re-exported for back-compat.
+from trw_mcp.bootstrap._ownership_proof import preserve_unowned, remove_proven
 from trw_mcp.bootstrap._version_migration_clients import (
     _codex_manifest_hashes as _codex_manifest_hashes,
 )
 from trw_mcp.bootstrap._version_migration_clients import (
     _remove_stale_client_artifacts as _remove_stale_client_artifacts,
 )
-
-# Predecessor-migration helpers extracted to _version_migration_predecessors
-# (PRD-DIST-243 batch 17). Re-exported here for back-compat with callers
-# (bootstrap/__init__.py + test_bootstrap_branches_migration_cleanup.py).
-from trw_mcp.bootstrap._version_migration_predecessors import (
-    _migrate_predecessor_set as _migrate_predecessor_set,
-)
-from trw_mcp.bootstrap._version_migration_predecessors import (
-    _migrate_prefix_predecessors as _migrate_prefix_predecessors,
-)
-from trw_mcp.bootstrap._version_migration_predecessors import preserve_unowned, remove_proven
 
 # ---------------------------------------------------------------------------
 # Stale artifact removal
@@ -318,79 +221,74 @@ def _remove_stale_artifacts(
     result: dict[str, list[str]],
     data_dir: Path | None = None,
 ) -> None:
-    """Remove hooks/skills/agents that no longer exist in bundled data.
+    """Remove ``.claude`` and ``.opencode`` artifacts TRW no longer ships, each only with proof TRW wrote it.
 
-    Uses a manifest file (``.trw/managed-artifacts.yaml``) to track which
-    artifacts were previously installed by TRW.  Only artifacts listed in
-    the manifest are candidates for removal -- custom user-created
-    artifacts are never touched.
+    Skills and agents are swept from disk (REMOVE-S8a): a ``trw-*`` skill dir or agent file whose name TRW no
+    longer ships on that surface is retired, and goes only when the pre-run manifest's ``content_hashes``
+    prove TRW wrote it; anything else is kept and reported ``not_installer_owned``. ``.claude`` judges
+    against the full bundle; each client mirror against what that client ships. A flag-gated skill is never
+    this sweep's (``retire_disabled_skills`` owns it). A future retirement therefore needs no
+    edit beyond dropping the file from ``data/``. Hooks and opencode commands keep the previous-manifest
+    diff (they carry no ``trw-`` namespace).
 
     On the first update after manifest support is added, no stale cleanup
-    is performed (the manifest is written for future updates).
+    is performed (nothing is provably TRW's yet).
 
     The manifest itself is written once, by ``update_project``, after every
     writer has run.
     """
+    from ._artifact_names import _opencode_skill_names
+    from ._optional_skills import CONDITIONAL_SKILLS
     from ._template_updater import _get_bundled_names
+    from ._utils import _DATA_DIR
+    from ._version_migration_clients import ClientArtifactSurface, _remove_stale_client_surface
 
     prev_manifest = _read_manifest(target_dir)
-    bundled = _get_bundled_names(data_dir)
-    bundled_skills = set(bundled["skills"])
-    bundled_agents = set(bundled["agents"])
-    bundled_hooks = set(bundled["hooks"])
-    bundled_opencode_commands = set(bundled.get("opencode_commands", []))
-    bundled_opencode_agents = set(bundled.get("opencode_agents", []))
-    bundled_opencode_skills = set(bundled.get("opencode_skills", []))
-
     if prev_manifest is None:
-        # First run with manifest support: nothing is provably TRW's yet.
         return
+    bundled = _get_bundled_names(data_dir)
+    hashes = _manifest_content_hashes(prev_manifest)
 
     def _manifest_set(key: str) -> set[str]:
         val = prev_manifest.get(key)
         return set(_coerce_manifest_list(val)) if val else set()
 
-    prev_skills = _manifest_set("skills")
-    prev_agents = _manifest_set("agents")
-    prev_hooks = _manifest_set("hooks")
-    hashes = _manifest_content_hashes(prev_manifest)
-    prev_custom_skills = _manifest_set("custom_skills")
-    prev_custom_agents = _manifest_set("custom_agents")
-    prev_custom_hooks = _manifest_set("custom_hooks")
-    prev_opencode_commands = _manifest_set("opencode_commands")
-    prev_opencode_agents = _manifest_set("opencode_agents")
-    prev_opencode_skills = _manifest_set("opencode_skills")
-    prev_custom_opencode_commands = _manifest_set("custom_opencode_commands")
-    prev_custom_opencode_agents = _manifest_set("custom_opencode_agents")
-    prev_custom_opencode_skills = _manifest_set("custom_opencode_skills")
+    # .claude/skills is judged against the FULL bundle (flag-gated included), as doctor is. A client mirror is
+    # judged against what that client ships: a skill dropped from its curated list is stale FOR THAT CLIENT
+    # (release-verify 2026-07-17). Flag-gated skills are never this sweep's (_remove_stale_client_surface).
+    skills = set(bundled["skills"]) | set(CONDITIONAL_SKILLS)
+    agents = set(bundled["agents"])
+    opencode_agents = set(bundled.get("opencode_agents", []))
+    # No opencode inventory means its curated list is unknown, not empty: sweep nothing there (fail safe). One read
+    # decides both, so an inventory appearing mid-update never reads as an empty list (codex S8a r3).
+    opencode_listed = _opencode_skill_names((data_dir or _DATA_DIR) / "opencode", (data_dir or _DATA_DIR) / "skills")
+    opencode_skills = set(opencode_listed or ())
+    surfaces = (
+        # .claude/agents keys are bare ``<agent>.md``: the suffix rule is how its own record matches.
+        ClientArtifactSurface(
+            ".claude/skills", True, lambda: skills, "stale_skill_removal_failed", follows_canonical=False
+        ),
+        ClientArtifactSurface(".claude/agents", False, lambda: agents, "stale_agent_removal_failed", exact_proof=False),
+        *(
+            (
+                ClientArtifactSurface(
+                    ".opencode/skills", True, lambda: opencode_skills, "stale_opencode_skill_removal_failed"
+                ),
+            )
+            if opencode_listed is not None
+            else ()
+        ),
+        ClientArtifactSurface(
+            ".opencode/agents", False, lambda: opencode_agents, "stale_opencode_agent_removal_failed"
+        ),
+    )
+    for surface in surfaces:
+        _remove_stale_client_surface(surface, target_dir, result, manifest_hashes=hashes, shipped_skills=skills)
 
-    # Remove stale artifacts per category
-    # Defense-in-depth: only remove trw-prefixed items to protect custom artifacts
     _remove_stale_set(
-        stale_names=prev_skills - bundled_skills,
-        target_dir=target_dir / ".claude" / "skills",
-        prev_custom=prev_custom_skills,
-        result=result,
-        is_dir_artifact=True,
-        log_event="stale_skill_removal_failed",
-        manifest_hashes=hashes,
-        project_root=target_dir,
-    )
-    _remove_stale_set(
-        stale_names=prev_agents - bundled_agents,
-        target_dir=target_dir / ".claude" / "agents",
-        prev_custom=prev_custom_agents,
-        result=result,
-        is_dir_artifact=False,
-        log_event="stale_agent_removal_failed",
-        valid_prefixes=("trw-", "reviewer-"),
-        manifest_hashes=hashes,
-        project_root=target_dir,
-    )
-    _remove_stale_set(
-        stale_names=prev_hooks - bundled_hooks,
+        stale_names=_manifest_set("hooks") - set(bundled["hooks"]),
         target_dir=target_dir / ".claude" / "hooks",
-        prev_custom=prev_custom_hooks,
+        prev_custom=_manifest_set("custom_hooks"),
         result=result,
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
@@ -399,32 +297,12 @@ def _remove_stale_artifacts(
         project_root=target_dir,
     )
     _remove_stale_set(
-        stale_names=prev_opencode_commands - bundled_opencode_commands,
+        stale_names=_manifest_set("opencode_commands") - set(bundled.get("opencode_commands", [])),
         target_dir=target_dir / ".opencode" / "commands",
-        prev_custom=prev_custom_opencode_commands,
+        prev_custom=_manifest_set("custom_opencode_commands"),
         result=result,
         is_dir_artifact=False,
         log_event="stale_opencode_command_removal_failed",
-        manifest_hashes=hashes,
-        project_root=target_dir,
-    )
-    _remove_stale_set(
-        stale_names=prev_opencode_agents - bundled_opencode_agents,
-        target_dir=target_dir / ".opencode" / "agents",
-        prev_custom=prev_custom_opencode_agents,
-        result=result,
-        is_dir_artifact=False,
-        log_event="stale_opencode_agent_removal_failed",
-        manifest_hashes=hashes,
-        project_root=target_dir,
-    )
-    _remove_stale_set(
-        stale_names=prev_opencode_skills - bundled_opencode_skills,
-        target_dir=target_dir / ".opencode" / "skills",
-        prev_custom=prev_custom_opencode_skills,
-        result=result,
-        is_dir_artifact=True,
-        log_event="stale_opencode_skill_removal_failed",
         manifest_hashes=hashes,
         project_root=target_dir,
     )
@@ -446,9 +324,9 @@ def _cleanup_stale_artifacts(
 
     Runs two cleanup passes in order:
 
-    1. Remove retired skills/agents (``PREDECESSOR_MAP``) TRW can prove it wrote.
-    2. Remove stale bundled artifacts (hooks/skills/agents that were previously
-       managed by TRW but are no longer in the current bundle).
+    1. ``.claude`` and ``.opencode``: ``trw-*`` skills and agents no longer in the bundle, plus stale hooks
+       and opencode commands from the previous manifest's lists.
+    2. Every client mirror surface, with the same ``trw-*`` predicate.
 
     Every deletion needs manifest proof of TRW authorship (PRD-INFRA-190-FR06).
     Context transients are not swept here: they are live session state outside
@@ -462,9 +340,6 @@ def _cleanup_stale_artifacts(
         manifest_hashes: The PRE-run manifest content hashes, threaded from
             ``update_project``: the proof of TRW authorship every sweep requires.
     """
-    # Remove retired names before stale cleanup
-    _migrate_prefix_predecessors(target_dir, result, manifest_hashes=manifest_hashes)
-
     # Remove stale hooks/skills/agents no longer in bundled data.
     _remove_stale_artifacts(target_dir, result, data_dir)
 

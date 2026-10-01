@@ -22,6 +22,8 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
+from ._utils import printable
+
 #: A doctor-row (status, message) pair -- matches ``_doctor_environment.Row``
 #: without importing the server layer from bootstrap (Class E: bootstrap must
 #: not depend on server).
@@ -40,31 +42,24 @@ RETIRED_AGENT_MEMORY_DIR = ".claude/agent-memory"
 _AGENT_MEMORY_WHY = (
     "TRW agents no longer write Claude Code agent memory; record anything worth keeping with trw_learn first"
 )
-#: The generated distill explorer agent (``channels/claude_code/_explorer_subagent.py``) is not in ``data/agents``.
-_GENERATED_AGENT_NAMES = ("trw-distill-explorer",)
+#: Every client skill directory that mirrors ``.claude/skills`` (the dir surfaces the retirement sweep covers).
+CLIENT_SKILL_ROOTS: tuple[str, ...] = (".agents/skills", ".cursor/skills", ".github/skills", ".opencode/skills")
 
 
-def _retired_trw_names(kind: str) -> list[str]:
-    """The ``trw-`` skills or agents TRW dropped outright: ``PREDECESSOR_MAP[kind]`` rows with no successor.
+def _trw_agent_memory_dirs(target_dir: Path) -> tuple[str, ...]:
+    """``.claude/agent-memory/trw-*``: TRW's namespace, and no TRW agent writes Claude Code memory since 8.0.
 
-    Only TRW's own namespace: a bare name (``simplify``, ``reviewer-style``) may be the project's own artifact.
+    Read from disk rather than a name list (REMOVE-S8a), so a retired agent's memory needs no registry entry.
+    Only ``trw-`` subdirectories: the parent is shared with any agent the project defines.
     """
-    from ._version_migration import PREDECESSOR_MAP
-
-    return sorted(
-        name.removesuffix(".md")
-        for name, successor in PREDECESSOR_MAP[kind].items()
-        if successor is None and name.startswith("trw-")
-    )
-
-
-def _trw_agent_memory_dirs() -> tuple[str, ...]:
-    """``.claude/agent-memory/<name>`` for every agent TRW installs or ever installed, bundled, generated or retired."""
-    from ._utils import _DATA_DIR
-
-    names = {path.stem for path in (_DATA_DIR / "agents").glob("*.md")} | set(_GENERATED_AGENT_NAMES)
-    names |= set(_retired_trw_names("agents"))
-    return tuple(f"{RETIRED_AGENT_MEMORY_DIR}/{name}" for name in sorted(names))
+    root = target_dir / RETIRED_AGENT_MEMORY_DIR
+    try:
+        names = sorted(entry.name for entry in root.iterdir() if entry.name.startswith("trw-"))
+    except (
+        OSError
+    ):  # trw-fail-silent-allow: no (or an unreadable) agent-memory dir means nothing to report; advice only
+        return ()
+    return tuple(f"{RETIRED_AGENT_MEMORY_DIR}/{name}" for name in names)
 
 
 _RETIRED_SKILL_WHY = (
@@ -75,19 +70,27 @@ _RETIRED_SKILL_WHY = (
 def _retired_skill_mirrors(target_dir: Path) -> list[tuple[str, str]]:
     """Retired ``trw-`` skills still present in a client skills directory.
 
-    A live ``.claude/skills/<name>`` directory is the project's own skill (a retired name it kept), and its
-    mirrors follow it (PRD-FIX-139-FR03, the same ``is_dir`` test the sweep uses, so a dangling link does not
-    count); only a mirror whose source is gone is a leftover.
+    A ``trw-*`` entry whose name is not in the full bundled skill set (REMOVE-S8a). The sweep judges a client
+    mirror by what that client ships, so a curated-out copy it kept as unproven is not reported here yet
+    (DOCTOR-PER-CLIENT-SKILL-PREDICATE). A live ``.claude/skills/<name>`` directory is the project's own skill (a retired name it kept),
+    and its mirrors follow it (PRD-FIX-139-FR03, the same ``is_dir`` test the sweep uses, so a dangling link
+    does not count); only a mirror whose source is gone is a leftover.
     """
-    from ._version_migration_predecessors import CLIENT_SKILL_ROOTS
+    from ._utils import _DATA_DIR
 
-    return [
-        (rel, _RETIRED_SKILL_WHY)
-        for name in _retired_trw_names("skills")
-        if not (target_dir / ".claude" / "skills" / name).is_dir()
-        for rel in (f"{root}/{name}" for root in CLIENT_SKILL_ROOTS)
-        if os.path.lexists(target_dir / rel)
-    ]
+    bundled = {entry.name for entry in (_DATA_DIR / "skills").iterdir() if entry.is_dir()}
+    found: list[tuple[str, str]] = []
+    for root in CLIENT_SKILL_ROOTS:
+        try:
+            entries = sorted((target_dir / root).iterdir())
+        except OSError:  # trw-fail-silent-allow: an absent or unreadable mirror holds nothing to report; advice only
+            continue
+        for entry in entries:
+            name = entry.name
+            if not name.startswith("trw-") or name in bundled or (target_dir / ".claude" / "skills" / name).is_dir():
+                continue
+            found.append((f"{root}/{name}", _RETIRED_SKILL_WHY))
+    return found
 
 
 #: cursor-cli's copy of the cursor rule file. Before PRD-CORE-301-FR14 a cursor-cli install wrote the protocol here AND
@@ -110,12 +113,29 @@ def _is_retired_cursor_cli_rule(target_dir: Path) -> bool:
     return "cursor-ide" not in _recorded_targets(target_dir) and _CURSOR_IDE_APPENDIX.strip().encode() not in content
 
 
-def _retired_artifacts() -> tuple[tuple[str, str], ...]:
+def _retired_artifacts(target_dir: Path) -> tuple[tuple[str, str], ...]:
     """Every retired artifact TRW reports, with what replaced it. A path is reported while it exists."""
     return (
         (RETIRED_OPENCODE_CONTRACT, "consolidated into trw-prd-ready/SKILL.md"),
-        *((relpath, _AGENT_MEMORY_WHY) for relpath in _trw_agent_memory_dirs()),
+        *((relpath, _AGENT_MEMORY_WHY) for relpath in _trw_agent_memory_dirs(target_dir)),
     )
+
+
+def _shell_quote(path: str) -> str:
+    """*path* as one shell word that is safe to print and decodes back to the same bytes.
+
+    ``shlex.quote`` keeps control bytes raw (they would drive the terminal), and escaping its output changes
+    the operand (codex S8a r2). A path with a non-printable character becomes ANSI-C ``$'...'`` (bash, zsh),
+    where every such byte is a ``\\xHH`` escape the shell turns back into that byte. Bytes come from
+    ``os.fsencode``, so a name that is not valid UTF-8 (surrogate-escaped on POSIX) decodes to its real bytes.
+    """
+    if path.isprintable():
+        return shlex.quote(path)
+    body = "".join(
+        "\\" + ch if ch in "\\'" else ch if ch.isprintable() else "".join(f"\\x{b:02x}" for b in os.fsencode(ch))
+        for ch in path
+    )
+    return f"$'{body}'"
 
 
 def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
@@ -135,7 +155,7 @@ def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
     with files ``rm -r`` and the count, so six agent-written notes are not advised away like an empty folder.
     """
     absolute = target_dir.resolve() / relpath
-    quoted = shlex.quote(str(absolute))
+    quoted = _shell_quote(str(absolute))
     if absolute.is_symlink():
         return "it is a symlink; removing it leaves what it points at alone", f"rm {quoted}"
     if not absolute.is_dir():
@@ -156,7 +176,7 @@ def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
 
 
 def _present(target_dir: Path) -> list[tuple[str, str]]:
-    present = [(rel, why) for rel, why in _retired_artifacts() if (target_dir / rel).exists()]
+    present = [(rel, why) for rel, why in _retired_artifacts(target_dir) if (target_dir / rel).exists()]
     present.extend(_retired_skill_mirrors(target_dir))
     if _is_retired_cursor_cli_rule(target_dir):
         present.append((RETIRED_CURSOR_CLI_RULE, _CURSOR_CLI_RULE_WHY))
@@ -171,8 +191,9 @@ def _advice_text(target_dir: Path, rel: str) -> str:
 
 def retired_artifact_notices(target_dir: Path) -> list[str]:
     """One line per retired artifact present, naming what replaced it and its removal command."""
+    # Names come from disk (REMOVE-S8a), so a name's control bytes are escaped before they reach a terminal.
     return [
-        f"retired_artifact_present: {rel} is no longer used by TRW ({why}); {_advice_text(target_dir, rel)}"
+        f"retired_artifact_present: {printable(rel)} is no longer used by TRW ({why}); {_advice_text(target_dir, rel)}"
         for rel, why in _present(target_dir)
     ]
 
@@ -184,5 +205,7 @@ def retired_artifact_row(target_dir: Path) -> _Row:
         return "PASS", "no retired dead files present"
     return (
         "WARN",
-        "; ".join(f"{rel} is retired and unused ({why}); {_advice_text(target_dir, rel)}" for rel, why in present),
+        "; ".join(
+            f"{printable(rel)} is retired and unused ({why}); {_advice_text(target_dir, rel)}" for rel, why in present
+        ),
     )

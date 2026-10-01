@@ -7,6 +7,10 @@ checkout deleted it from three client mirrors — reproduced 2026-09-16. The
 deletion-only predecessor sweep had no authorship check at all, unlike the
 file-granular sweep in ``_version_migration_clients`` which already refuses to
 delete anything whose bytes do not hash to the manifest record.
+
+REMOVE-S8a: the name-list sweep is gone; these cases now run through the one
+retirement predicate (a ``trw-*`` artifact not in the bundle), via the real
+``_cleanup_stale_artifacts`` orchestrator and an on-disk manifest.
 """
 
 from __future__ import annotations
@@ -15,8 +19,9 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
-from trw_mcp.bootstrap._version_migration_predecessors import _migrate_prefix_predecessors
+from trw_mcp.bootstrap._version_migration import _cleanup_stale_artifacts
 
 pytestmark = pytest.mark.unit
 
@@ -35,8 +40,14 @@ def _sha(path: Path) -> str:
 
 
 def _run(tmp_path: Path, manifest_hashes: dict[str, str] | None) -> dict[str, list[str]]:
+    """The update's cleanup with *manifest_hashes* as the pre-run manifest (``None``: no manifest at all)."""
+    if manifest_hashes is not None:
+        (tmp_path / ".trw").mkdir(exist_ok=True)
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+            yaml.safe_dump({"version": 2, "content_hashes": manifest_hashes}), encoding="utf-8"
+        )
     result: dict[str, list[str]] = {"updated": [], "errors": []}
-    _migrate_prefix_predecessors(tmp_path, result, manifest_hashes=manifest_hashes)
+    _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes=manifest_hashes)
     return result
 
 
@@ -71,14 +82,19 @@ class TestRetiredNameNeedsAuthorshipProof:
         assert skill.exists()
         assert result["preserved"]
 
-    @pytest.mark.parametrize("legacy", [None, {}])
-    def test_no_hash_record_means_no_proof_so_the_artifact_is_kept(self, tmp_path: Path, legacy) -> None:
-        """PRD-INFRA-190-FR06 supersedes FIX-139-FR02: a first run or a v1 manifest proves
-        nothing, and a sweep deletes only what TRW can prove it wrote."""
+    def test_a_manifest_without_hashes_proves_nothing_so_the_artifact_is_kept(self, tmp_path: Path) -> None:
+        """PRD-INFRA-190-FR06 supersedes FIX-139-FR02: a v1 manifest proves nothing, and a sweep deletes only
+        what TRW can prove it wrote."""
         skill = _project_with_retired_skill(tmp_path)
-        result = _run(tmp_path, legacy)
+        result = _run(tmp_path, {})
         assert skill.exists()
         assert result["preserved"] == [f".claude/skills/{RETIRED} (not_installer_owned)"]
+
+    def test_no_manifest_at_all_sweeps_nothing(self, tmp_path: Path) -> None:
+        """A first run has nothing provably TRW's: the .claude sweep does not run, and nothing is removed."""
+        skill = _project_with_retired_skill(tmp_path)
+        _run(tmp_path, None)
+        assert skill.exists()
 
     def test_client_mirror_keys_match_by_path_suffix(self, tmp_path: Path) -> None:
         """FR01: opencode records ``.opencode/skills/<name>/SKILL.md``; the proof must find it."""

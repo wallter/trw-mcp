@@ -277,7 +277,7 @@ def test_trw_authored_exact_key_decides_suffix_only_as_fallback(
     tmp_path: Path, records: dict[str, bytes], content: bytes, authored: bool
 ) -> None:
     """The exact manifest key alone decides; suffix records apply only when it is absent."""
-    from trw_mcp.bootstrap._version_migration_predecessors import _trw_authored
+    from trw_mcp.bootstrap._ownership_proof import _trw_authored
 
     mirror = tmp_path / ".agents" / "skills" / "x" / "SKILL.md"
     mirror.parent.mkdir(parents=True)

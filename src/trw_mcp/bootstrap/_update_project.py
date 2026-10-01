@@ -98,9 +98,6 @@ from ._version_migration import (
     _coerce_manifest_list as _coerce_manifest_list,
     _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST,
     _MANIFEST_FILE as _MANIFEST_FILE,
-    _migrate_predecessor_set as _migrate_predecessor_set,
-    _migrate_prefix_predecessors as _migrate_prefix_predecessors,
-    PREDECESSOR_MAP as PREDECESSOR_MAP,
     _read_manifest as _read_manifest,
     _remove_stale_artifacts as _remove_stale_artifacts,
     _remove_stale_set as _remove_stale_set,
@@ -432,6 +429,8 @@ def update_project(
                 ),
             )
             result["would_run"] = external
+            # The scratch copy's trash captures went with it: the preview names no capture folder (S8a r1 KI3).
+            result.pop("trash_captures", None)
             # The scratch copy holds only the managed surface, so create-only files outside it (the learnings
             # index) were never seen there; the real run reports them preserved, so the preview must too.
             for rel_path in sorted(_NEVER_OVERWRITE):

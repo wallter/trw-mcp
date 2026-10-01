@@ -178,11 +178,10 @@ def test_stub_template_sets_are_gone_and_names_survive(tmp_path: Path) -> None:
 
     The name-preservation half is computed against the set this repository's own
     committed client agent trees carry — the output of the PRE-change installer,
-    not a list written for this test. A name that disappears must be recorded as
-    retired in ``PREDECESSOR_MAP``; nothing else is an acceptable outcome.
+    not a list written for this test. REMOVE-S8a: a vanished name needs no registry entry, because the
+    retirement sweep retires every ``trw-*`` name the bundle no longer ships; it must therefore be in the
+    ``trw-`` namespace, or the sweep would strand its installed copies.
     """
-    from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
-
     bootstrap_source = "\n".join(path.read_text(encoding="utf-8") for path in sorted(BOOTSTRAP_DIR.glob("*.py")))
     for retired in ("_CODEX_AGENT_TEMPLATES", "_COPILOT_AGENT_TEMPLATES", "_ANTIGRAVITY_AGENT_TEMPLATES"):
         assert f"{retired}: dict" not in bootstrap_source, f"{retired} is still defined"
@@ -197,14 +196,10 @@ def test_stub_template_sets_are_gone_and_names_survive(tmp_path: Path) -> None:
     result = _empty_result()
     _install_agents(tmp_path, force=False, result=result, clients=AGENT_CAPABLE_CLIENTS)
     now_shipped = set(_bundled_stems())
-    retired_names = {
-        name.removesuffix(".md") for name, successor in PREDECESSOR_MAP["agents"].items() if successor is None
-    }
 
     vanished = previously_shipped - now_shipped
-    assert vanished <= retired_names, (
-        f"agent names dropped without being recorded as retired: {sorted(vanished - retired_names)}"
-    )
+    stranded = sorted(name for name in vanished if not name.startswith("trw-"))
+    assert not stranded, f"agent names dropped outside the trw- namespace, so never retired: {stranded}"
 
 
 @pytest.mark.unit

@@ -203,6 +203,7 @@ case "$args" in
   *'print(f"'*)                        echo "3.12" ;;
   *'print(sys.version_info.major)'*)   echo "3" ;;
   *'print(sys.version_info.minor)'*)   echo "12" ;;
+  *'print(sys.prefix)'*)               echo "/stub/prefix" ;;   # one environment for python3 + python
   *'-m pip install'*)                  exit 0 ;;   # pip install succeeds
   *'holds_rows'*)                      # the migration's learnings check
     echo "$*" > "$TRW_TEST_MARKERS/holds_probe"
@@ -256,6 +257,11 @@ def _run_repo_authed(
         d.mkdir(parents=True)
 
     _write_stub(stub_bin / "python3", _PYTHON3_PIP_OK_STUB)
+    # install.sh runs project commands through the console script BESIDE the install interpreter
+    # (TRW_CMD), and only when that script provably runs on it: the script's launcher python (the
+    # python beside it) must share the interpreter's sys.prefix. So the stub sits beside python3 and
+    # a same-prefix `python` sits beside the stub.
+    _write_stub(stub_bin / "python", _PYTHON3_PIP_OK_STUB)
     _write_stub(stub_bin / "trw-mcp", _TRW_MCP_INIT_STUB)
     (project / ".git").mkdir()
     if config_seed is not None:

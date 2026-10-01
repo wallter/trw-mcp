@@ -62,14 +62,20 @@ def print_kept(result: dict[str, list[str]], target: Path) -> None:
         print(f"WARNING: kept {printable(path)}: {why}")
 
 
-def print_trashed(paths: list[str], described: list[str] | None = None) -> None:
+def print_trashed(paths: list[str], described: list[str] | None = None, *, captures: list[str] | None = None) -> None:
     """One line per unchanged file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them).
 
     A path a warning already describes (``"<path>: ..."``, e.g. an edited hook-family file) is skipped: it is
-    not unchanged, and saying so contradicted the warning (E2E-INC-133).
+    not unchanged, and saying so contradicted the warning (E2E-INC-133). *captures* holds
+    ``<rel>	<capture folder>`` rows; a file with one names the folder its bytes are in (S8a).
     """
+    folders = dict(row.rpartition("	")[::2] for row in captures or [])
     for path in [p for p in paths if not any(str(w).startswith(f"{p}: ") for w in described or [])]:
-        print(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
+        folder = folders.get(path)
+        if folder:
+            print(f"Moved to {printable(folder)}: {printable(path)}")
+        else:
+            print(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
 
 
 def report_kept(result: dict[str, list[str]], target: Path, *, detailed: bool, quiet: bool) -> None:

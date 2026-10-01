@@ -38,7 +38,7 @@ def _trash(root: Path) -> list[bytes]:
 
 
 def _allowed(manifest: dict[str, str], root: Path):  # type: ignore[no-untyped-def]
-    from trw_mcp.bootstrap._version_migration_predecessors import recorded_digests
+    from trw_mcp.bootstrap._ownership_proof import recorded_digests
 
     return lambda f: recorded_digests(f, manifest, root)
 
@@ -96,7 +96,7 @@ def test_a_symlink_inside_the_tree_is_kept_and_not_followed(tmp_path: Path) -> N
 
 def test_a_late_write_through_a_held_fd_lands_in_trash(tmp_path: Path) -> None:
     """Red on the old sweep: rmtree unlinked the inode the writer held."""
-    from trw_mcp.bootstrap._version_migration_predecessors import remove_proven
+    from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     root, skill, manifest = _skill(tmp_path)
     with open_fd_writer(skill / "SKILL.md") as writer:
@@ -105,34 +105,34 @@ def test_a_late_write_through_a_held_fd_lands_in_trash(tmp_path: Path) -> None:
     assert b"late write\n" in _trash(root)
 
 
-def test_predecessor_sweep_keeps_an_edit_saved_after_the_ownership_check(
+def test_retirement_sweep_keeps_an_edit_saved_after_the_ownership_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Red on the old sweep: preserve_unowned proved ownership, then rmtree deleted the later edit."""
-    from trw_mcp.bootstrap import _version_migration_predecessors as preds
+    """Red on the old sweep: preserve_unowned proved ownership, then rmtree deleted the later edit.
+
+    REMOVE-S8a: the retirement sweep is disk-driven and proof-gated; the race is re-proved at the act there.
+    """
+    from trw_mcp.bootstrap import _version_migration_clients as sweep
 
     root, skill, manifest = _skill(tmp_path)
-    (root / ".claude" / "skills" / "trw-new").mkdir()
-    real = preds.preserve_unowned
+    real = sweep.preserve_unowned
 
     def check_then_edit(
-        artifact: Path, hashes: dict[str, str] | None, target: Path, result: dict[str, list[str]]
+        artifact: Path,
+        hashes: dict[str, str] | None,
+        target: Path,
+        result: dict[str, list[str]],
+        *,
+        exact: bool = False,
     ) -> bool:
-        verdict = real(artifact, hashes, target, result)
+        verdict = real(artifact, hashes, target, result, exact=exact)
         (skill / "SKILL.md").write_bytes(b"edited after the check\n")
         return verdict
 
-    monkeypatch.setattr(preds, "preserve_unowned", check_then_edit)
+    monkeypatch.setattr(sweep, "preserve_unowned", check_then_edit)
+    surface = sweep.ClientArtifactSurface(".claude/skills", True, set, "x", follows_canonical=False)
     result: dict[str, list[str]] = {}
-    preds._migrate_predecessor_set(
-        root / ".claude" / "skills",
-        {"trw-old": "trw-new"},
-        result,
-        is_dir_artifact=True,
-        log_event="x",
-        manifest_hashes=manifest,
-        target_dir=root,
-    )
+    sweep._remove_stale_client_surface(surface, root, result, manifest_hashes=manifest)
     assert (skill / "SKILL.md").read_bytes() == b"edited after the check\n"
     assert any("SKILL.md" in w for w in result["warnings"])
 

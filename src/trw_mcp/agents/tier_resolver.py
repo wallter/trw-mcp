@@ -120,8 +120,8 @@ KNOWN_TIERS: frozenset[str] = frozenset({"frontier", "balanced", "local-large", 
 #: fell outside it and three separate consumers degraded silently:
 #: ``render_agent_tool_names`` dropped it to ``profile=None`` (bare tool names
 #: instead of its namespace), ``bootstrap/_utils`` skipped it when scanning
-#: installed agent artifacts, and ``_version_migration_predecessors`` skipped
-#: it when cleaning up predecessor agent files -- leaving stale agents behind.
+#: installed agent artifacts, and the retirement sweep skipped it when cleaning
+#: up retired agent files -- leaving stale agents behind.
 KNOWN_CLIENTS: frozenset[str] = frozenset(builtin_client_ids())
 
 

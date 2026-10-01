@@ -284,12 +284,14 @@ class UI:
             self.info(label)
 
     def step_ok(self, msg: str) -> None:
+        self.halt_spinner()
         if self.interactive:
             print(f"            {GREEN}\u2713{NC} {msg}")
         elif not self.quiet:
             self.info(msg)
 
     def step_warn(self, msg: str) -> None:
+        self.halt_spinner()
         if self.interactive:
             print(f"            {YELLOW}!{NC} {msg}")
         else:
@@ -320,6 +322,7 @@ class UI:
             self.step_warn(msg)
 
     def step_fail(self, msg: str) -> None:
+        self.halt_spinner()
         if self.interactive:
             print(f"            {RED}\u2717{NC} {msg}")
         else:
@@ -347,6 +350,7 @@ class UI:
     def start_spinner(self, msg: str) -> None:
         if not self.interactive:
             return
+        self.halt_spinner()  # one spinner at a time: a replaced one would keep repainting forever
         self._spinner = _Spinner(msg)
         self._spinner.start()
 
@@ -354,12 +358,21 @@ class UI:
         if self._spinner is not None:
             self._spinner.message = msg
 
-    def stop_spinner(self, success: bool, ok_msg: str, fail_msg: str = "Failed") -> None:
+    def halt_spinner(self) -> None:
+        """Stop the running spinner, if any, and clear its line; prints no verdict.
+
+        A verdict line, a new spinner and a prompt all call this first: a spinner left running (an
+        exception path that never reached ``stop_spinner``) repaints the last line every 0.1s and erased
+        the next prompt, so the install looked hung (operator feedback 2026-10-01).
+        """
         if self._spinner is not None:
             self._spinner.stop()
             self._spinner = None
             sys.stdout.write("\r\033[K")
             sys.stdout.flush()
+
+    def stop_spinner(self, success: bool, ok_msg: str, fail_msg: str = "Failed") -> None:
+        self.halt_spinner()
         if success:
             self.step_ok(ok_msg)
         else:
@@ -381,10 +394,12 @@ class _Spinner:
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
+        _LIVE_SPINNERS.add(self)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        _LIVE_SPINNERS.discard(self)
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
@@ -398,14 +413,30 @@ class _Spinner:
             self._stop.wait(0.1)
 
 
+#: Every spinner whose thread may still be repainting; a prompt stops them all before it draws.
+_LIVE_SPINNERS: set[_Spinner] = set()
+
+
+def _halt_live_spinners() -> None:
+    """Stop every live spinner and clear its line, so no thread repaints over a prompt."""
+    if not _LIVE_SPINNERS:
+        return
+    for spinner in list(_LIVE_SPINNERS):
+        spinner.stop()
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+
+
 # ── Input helpers ────────────────────────────────────────────────────
 
 
 def _open_tty() -> TextIO | None:
     """Open a TTY for reading, or None if unavailable.
 
-    Uses /dev/tty on Unix and CON on Windows.
+    Uses /dev/tty on Unix and CON on Windows. Every prompt reads through here, so a live spinner is
+    stopped first: its thread would otherwise repaint over the question.
     """
+    _halt_live_spinners()
     for tty_path in ("/dev/tty", "CON"):
         try:
             return open(tty_path, encoding="utf-8")
@@ -2147,9 +2178,9 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
             f"{effective_version or 'install'} on your PATH — the intended install will NOT run until this is fixed."
         )
         if shadow:
-            ui.step_warn(f"  Shadowing binary: {shadow}")
+            ui.step_warn(f"  Shadowing binary: {_display_path(shadow)}")
         if other_binary:
-            ui.step_warn(f"  Intended binary: {_MCP_TARGET_BINARY}")
+            ui.step_warn(f"  Intended binary: {_display_path(_MCP_TARGET_BINARY or '')}")
         ui.step_warn(
             "  Fix: remove the stale install (e.g. 'pip uninstall trw-mcp' in the "
             "environment that owns it) or reorder PATH so the new install wins, then reconnect the MCP client."
@@ -2267,6 +2298,11 @@ def stop_outdated_memory_daemon(
     )
     for rel in named:
         ui.step_warn(f"  reconnect the client configured by {rel}")
+
+
+def _display_path(path: str) -> str:
+    """*path* with ``..`` segments collapsed, for messages (a RECORD-derived path reads ``site-packages/../../../bin``)."""
+    return os.path.normpath(os.path.abspath(path))
 
 
 def _same_file(a: str, b: str) -> bool | None:
@@ -2772,17 +2808,20 @@ def show_success_banner(
     printed on every install path (interactive, script, quiet).
     """
     state_line = _telemetry_state_line(telemetry_enabled, learning_sharing_enabled)
+    # E2E-INC-139 c: report the trw-mcp that is resident, not the bundle's version, when the downgrade guard kept a
+    # newer one.
+    version = _MCP_EFFECTIVE_VERSION or TRW_VERSION
     # E2E-INC-131 c: never say "ready" over a doctor FAIL. The failure and its remedy were printed just above.
     headline = (
-        f"TRW Framework v{TRW_VERSION} installed, but its health check FAILED (see above; run 'trw-mcp doctor')"
+        f"TRW Framework v{version} installed, but its health check FAILED (see above; run 'trw-mcp doctor')"
         if not health_ok
-        else f"TRW Framework v{TRW_VERSION} \u2014 ready"
+        else f"TRW Framework v{version} \u2014 ready"
     )
     if ui.quiet:
         # FR04: the consent state MUST print on every path — use print() directly
         # because UI.info() is suppressed under --quiet.
         verdict = "installed." if health_ok else "installed, but its health check FAILED (run 'trw-mcp doctor')."
-        print(f"{GREEN if health_ok else YELLOW}[TRW]{NC} TRW Framework v{TRW_VERSION} {verdict} {state_line}.")
+        print(f"{GREEN if health_ok else YELLOW}[TRW]{NC} TRW Framework v{version} {verdict} {state_line}.")
         return
 
     if ui.interactive:
@@ -3008,15 +3047,51 @@ def _prompt_ide_selection(
 
 
 def find_trw_cmd(python: str, pip_target: str = "") -> list[str]:
-    """Return the command list for invoking trw-mcp CLI."""
+    """Return the command list for invoking the trw-mcp CLI of the environment this run installed into.
+
+    Never the first ``trw-mcp`` on PATH: with two installs on a machine that is whichever copy PATH lists first, so
+    ``update-project`` ran from a stale 8.1.2 over a fresh 8.1.5 install (2026-10-01). The target interpreter's own
+    console script (the one its distribution RECORD names) comes first; the interpreter itself is the fallback.
+    """
     validated_target = validate_pip_target(pip_target)
     if validated_target:
         wrapper = Path(validated_target) / "bin" / "trw-mcp"
         if wrapper.is_file():
             return [str(wrapper)]
-    if shutil.which("trw-mcp"):
-        return ["trw-mcp"]
+    own = _MCP_TARGET_BINARY or _probe_mcp_binary(python)
+    if own and Path(own).is_file():
+        return [own]
     return [python, "-B", "-m", "trw_mcp.server"]
+
+
+def _is_launcher_shim_to(path: str, target: str) -> bool:
+    """True when *path* is the one-line shim this installer's managed-venv rung writes, exec'ing *target*."""
+    try:
+        head = Path(path).read_text(encoding="utf-8", errors="ignore")[:2048]
+    except OSError:  # trw-fail-silent-allow: an unreadable PATH entry is simply not our shim
+        return False
+    return f'exec "{target}"' in head
+
+
+def _warn_if_another_trw_mcp_is_first_on_path(ui: UI) -> None:
+    """Name both binaries BEFORE any trw-mcp command runs, when PATH lists a different one than this run installed.
+
+    Project commands (init-project, update-project, doctor) go through the installed binary (``find_trw_cmd``), so
+    this run is correct either way; the warning is for what happens after it: a client configured with the bare
+    ``trw-mcp`` command runs the PATH copy. The end-of-run shadow check in ``_restart_mcp_servers`` repeats it with
+    the versions.
+    """
+    target = _MCP_TARGET_BINARY
+    on_path = shutil.which("trw-mcp")
+    if not target or not on_path or _same_file(on_path, target) is not False or _is_launcher_shim_to(on_path, target):
+        return
+    ui.step_warn(f"A different trw-mcp is first on your PATH: {_display_path(on_path)}")
+    ui.step_warn(
+        f"  This run installed {_display_path(target)} and runs every project command through it, not through the PATH copy."
+    )
+    ui.step_warn(
+        "  A client that launches the bare 'trw-mcp' command still runs the PATH copy until it is removed or PATH is reordered."
+    )
 
 
 # ── Installation phases ──────────────────────────────────────────────
@@ -3172,6 +3247,7 @@ def phase_install_packages(
         _MCP_TARGET_BINARY = (
             str(Path(validated_target) / "bin" / "trw-mcp") if validated_target else _probe_mcp_binary(python)
         )
+        _warn_if_another_trw_mcp_is_first_on_path(ui)
         _read_back_resident_versions(ui, python, validated_target)
         return python
 
@@ -3355,6 +3431,7 @@ def phase_install_packages(
     _MCP_TARGET_BINARY = (
         str(Path(validated_target) / "bin" / "trw-mcp") if validated_target else _probe_mcp_binary(effective_python)
     )
+    _warn_if_another_trw_mcp_is_first_on_path(ui)
     _read_back_resident_versions(ui, effective_python, validated_target)
     return effective_python
 
@@ -5002,8 +5079,8 @@ def resolve_embeddings_choice(flag: bool | None, prior_config: dict[str, object]
 
 def persist_embeddings_choice(config_path: Path, enabled: bool) -> None:
     """Record the choice as ``embeddings_enabled`` so doctor reports an opt-out as a choice, not a fault."""
-    if not config_path.is_file():
-        return
+    if not config_path.is_file() or config_path.is_symlink() or config_path.parent.is_symlink():
+        return  # a symlinked managed path is update-project's to refuse; never write through one
     line = f"embeddings_enabled: {'true' if enabled else 'false'}\n"
     lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
     kept = [existing for existing in lines if not existing.startswith("embeddings_enabled:")]
@@ -5861,6 +5938,12 @@ def main() -> None:
             stop_outdated_memory_daemon(
                 python, target_dir, ui, pip_target=args.pip_target or "", older_only=not args.upgrade
             )
+
+        # E2E-INC-140: an explicit opt-out is on record BEFORE update-project, which would otherwise load the embedder,
+        # fail and warn embedder_error about a capability the operator turned off. A wanted choice stays unrecorded
+        # until the readiness check below, because the prompt can still decline it.
+        if not embeddings:
+            persist_embeddings_choice(target_dir / ".trw" / "config.yaml", False)
 
         # Step N: Project setup
         step += 1

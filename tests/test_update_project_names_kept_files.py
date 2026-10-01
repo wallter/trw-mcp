@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._install_trw_pip_target_contract_support import _load_installer_module
-from trw_mcp.bootstrap._version_migration_predecessors import _migrate_prefix_predecessors
+from trw_mcp.bootstrap._version_migration import _cleanup_stale_artifacts
 
 _TEMPLATE = Path(__file__).resolve().parents[1] / "scripts" / "install-trw.template.py"
 
@@ -182,12 +182,56 @@ def test_a_retired_skill_moved_to_trash_is_reported_as_trashed(tmp_path: Path) -
     skill.parent.mkdir(parents=True)
     skill.write_text("# release gate\n", encoding="utf-8")
     digest = hashlib.sha256(skill.read_bytes()).hexdigest()
+    hashes = {f"{_RETIRED}/SKILL.md": digest}
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+        f"version: 2\ncontent_hashes:\n  {_RETIRED}/SKILL.md: {digest}\n", encoding="utf-8"
+    )
     result: dict[str, list[str]] = {"updated": [], "errors": []}
 
-    _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={f"{_RETIRED}/SKILL.md": digest})
+    _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes=hashes)
 
     assert not skill.parent.exists()
     assert result["trashed"] == [f".claude/skills/{_RETIRED}/SKILL.md"]
+
+
+def test_the_cli_line_names_the_capture_folder_that_holds_the_bytes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """S8a (lead): "Moved to .trw/trash/<stamp>-<id>: <rel>", so the operator can find the bytes without doctor."""
+    from trw_mcp.server._update_report import print_trashed
+
+    rel = f".claude/skills/{_RETIRED}/SKILL.md"
+    skill = tmp_path / rel
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# release gate\n", encoding="utf-8")
+    digest = hashlib.sha256(skill.read_bytes()).hexdigest()
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+        f"version: 2\ncontent_hashes:\n  {_RETIRED}/SKILL.md: {digest}\n", encoding="utf-8"
+    )
+    result: dict[str, list[str]] = {"updated": [], "errors": []}
+
+    _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes={f"{_RETIRED}/SKILL.md": digest})
+
+    [row] = result["trash_captures"]
+    path, _, folder = row.rpartition("\t")
+    assert path == rel
+    assert folder.startswith(".trw/trash/")
+    assert (tmp_path / folder / "data").read_text(encoding="utf-8") == "# release gate\n"
+    print_trashed(result["trashed"], captures=result["trash_captures"])
+    assert capsys.readouterr().out == f"Moved to {folder}: {rel}\n"
+
+
+def test_a_trashed_file_without_a_known_folder_keeps_the_generic_line(capsys: pytest.CaptureFixture[str]) -> None:
+    """Producers that do not record a capture folder (hooks, distill channels) print the line they always did."""
+    from trw_mcp.server._update_report import print_trashed
+
+    print_trashed([".claude/hooks/old.sh", "a.md"], captures=["a.md\t.trw/trash/20261001T000000Z-ab"])
+    assert capsys.readouterr().out.splitlines() == [
+        "Moved to .trw/trash: .claude/hooks/old.sh (unchanged TRW file; see doctor)",
+        "Moved to .trw/trash/20261001T000000Z-ab: a.md",
+    ]
 
 
 # ── Consumer: the installer's progress reader ────────────────────────────
