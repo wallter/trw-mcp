@@ -585,7 +585,7 @@ def test_step_pipeline_health_advisory_names_the_cli_command(
 
 
 def test_pipeline_health_probe_no_write(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
-    """The probes only measure: the one store call they make is ``health``."""
+    """The probes only measure: the store calls they make are the two read-only ones, ``health`` and ``coverage``."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -594,7 +594,7 @@ def test_pipeline_health_probe_no_write(fake_memory_store: FakeMemoryStore, tmp_
 
     step_pipeline_health(trw_dir)
 
-    assert {name for name, _ in fake_memory_store.calls} == {"health"}
+    assert {name for name, _ in fake_memory_store.calls} == {"health", "coverage"}
 
 
 # ---------------------------------------------------------------------------

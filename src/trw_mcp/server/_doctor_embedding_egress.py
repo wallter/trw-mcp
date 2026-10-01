@@ -11,18 +11,50 @@ local Hugging Face cache — and the fix when it is not.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 __all__ = ["embedding_egress_report"]
 
 _FETCH_COMMAND = "trw-mcp models fetch"
 
 
-def embedding_egress_report(model: str, *, embeddings_enabled: bool) -> tuple[str, str]:
+def _daemon_embedder(trw_dir: Path | None) -> dict[str, object] | None:
+    """The memory daemon's ``embedder`` block (reading it never loads the model); ``None`` when it could not be asked."""
+    if trw_dir is None:
+        return None
+    from trw_mcp.state._store_selection import StoreUnavailableError, measuring_only, selected_store
+
+    try:
+        with measuring_only():
+            store, namespace = selected_store(trw_dir)
+        return dict(store.embedder_status(namespace))
+    except (StoreUnavailableError, ValueError):  # trw-fail-silent-allow: None is "not asked", and the row says so
+        return None
+
+
+def embedding_egress_report(model: str, *, embeddings_enabled: bool, trw_dir: Path | None = None) -> tuple[str, str]:
     """Return ``(status, message)`` for the ``embedding_egress`` doctor row.
 
     Fail-open: a probe failure is reported as an unknown cache state rather than
     raising, so a cache layout this build does not recognise degrades visibly.
+
+    ``embeddings_enabled=false`` is THIS project's flag; the memory daemon is one process per user serving every
+    project and reads its own ``MEMORY_EMBEDDINGS_ENABLED`` (UF-MEM-04), so with the flag off the row asks the daemon
+    (*trw_dir* names the checkout to ask through) rather than claiming no model is loaded.
     """
     if not embeddings_enabled:
+        embedder = _daemon_embedder(trw_dir)
+        if embedder is None and trw_dir is not None:
+            return "PASS", (
+                "embeddings_enabled=false in this project; the memory daemon could not be asked whether it has "
+                "loaded an embedding model."
+            )
+        if embedder and (embedder.get("loaded") or embedder.get("available")):
+            return "WARN", (
+                "embeddings_enabled=false in this project's config, but the memory daemon (one process serving every "
+                f"project of this user) still has its embedding model ({'loaded' if embedder.get('loaded') else 'available'}). "
+                "The daemon-wide switch is MEMORY_EMBEDDINGS_ENABLED=false in the daemon's environment, then restart it."
+            )
         return "PASS", "embeddings_enabled=false — no embedding model is loaded."
     try:
         from trw_memory._model_pin import pinned_revision

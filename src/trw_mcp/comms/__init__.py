@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import structlog
 
 from trw_mcp.comms import _pause_state
+from trw_mcp.comms._ahr_events import sweep_expired as _sweep_expired_ahr
 from trw_mcp.comms._bootstrap import BOOTSTRAP_ACTIONS, bootstrap, caller_state
 from trw_mcp.comms._endpoints import (
     EndpointError,
@@ -28,7 +29,7 @@ from trw_mcp.comms._endpoints import (
     receiver_incarnation,
     touch,
 )
-from trw_mcp.comms._envelope import RECEIVER_ACTIONS, AdmissionError
+from trw_mcp.comms._envelope import RECEIVER_ACTIONS, SENDER_ACTIONS, AdmissionError
 from trw_mcp.comms._envelope import DeliveryClass as DeliveryClass
 from trw_mcp.comms._envelope import InboxAction as InboxAction
 from trw_mcp.comms._envelope import MessageKind as MessageKind
@@ -49,7 +50,7 @@ from trw_mcp.comms._refusals import IDENTITY_REASONS, persisted_bucket
 from trw_mcp.comms._refusals import detail as refusal_detail
 from trw_mcp.comms._send_op import send_once
 from trw_mcp.comms._store import StoreError, connect, effective_time, immediate, touch_group_time, validate_operation
-from trw_mcp.comms._wait import check_cancelled_cooperatively, run_bounded_wait
+from trw_mcp.comms._wait import check_cancelled_cooperatively, run_bounded_wait, validate_wait
 from trw_mcp.formation import FormationError
 
 if TYPE_CHECKING:
@@ -118,6 +119,7 @@ def _peers(
     cursor: str | None = None,
     pause_id: str | None = None,
     next_read: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
     from trw_mcp.models.config import get_config
@@ -132,7 +134,7 @@ def _peers(
     # here, before pickup can persist candidate state, join membership or write
     # run stamps (core322-s2 r2). Like the bootstrap/ack_pause exits, this
     # argument refusal is not counted: nothing was admitted or touched.
-    if next_read is not None:
+    if next_read is not None or handoff is not None:
         return _refused("invalid_inbox_arguments")
     if action in BOOTSTRAP_ACTIONS:
         # FR18: non-authoritative, so no membership is required and nothing is enrolled.
@@ -209,6 +211,7 @@ def _operation(snapshot: CallerSnapshot, config: TRWConfig) -> Iterator[tuple[sq
         touch_group_time(conn, binding.group_id, now)
         # FR13: lazy, idempotent expiry of past-deadline and terminal-member rows.
         expire_due(conn, binding.group_id, now, frozenset(r.member_id for r in snapshot.recipients if r.terminal))
+        _sweep_expired_ahr(conn, binding.group_id, now)  # PRD-CORE-349 FR06: expired precedes any other AHR event
         tombstone_due(conn, binding.group_id, now, config.comms_retry_grace_seconds)
         if snapshot.all_terminal:
             conn.execute("UPDATE groups SET closed=1 WHERE group_id=?", (binding.group_id,))
@@ -236,20 +239,6 @@ def _recorded_action(conn: sqlite3.Connection, group_id: str) -> Iterator[dict[s
         conn.execute("RELEASE comms_action")
 
 
-def _validate_wait(
-    wait_seconds: object, action: InboxAction, message_ids: list[str] | None, cursor: str | None, config: TRWConfig
-) -> None:
-    """FR11 argument rules, applied AFTER closure and endpoint verification, in this order."""
-    # trw:intentional bool is an int subclass; a direct caller passing True must not become a 1 s wait.
-    positive = type(wait_seconds) is int and wait_seconds > 0
-    if positive and config.comms_wait_max_seconds == 0:
-        raise AdmissionError("wait_disabled")
-    if type(wait_seconds) is not int or not 0 <= wait_seconds <= config.comms_wait_max_seconds:
-        raise AdmissionError("invalid_wait_seconds")
-    if positive and (action != "fetch" or message_ids is not None or cursor is not None):
-        raise AdmissionError("wait_requires_fresh_fetch")
-
-
 def _inbox_attempt(
     action: InboxAction,
     message_ids: list[str] | None,
@@ -258,6 +247,7 @@ def _inbox_attempt(
     wait_seconds: int,
     owner: dict[str, _WaitOwner],
     next_read: str | None = None,
+    handoff: object = None,
 ) -> tuple[dict[str, Any], bool]:
     """One complete ordinary inbox operation; the bool asks the caller to wait again.
 
@@ -293,10 +283,10 @@ def _inbox_attempt(
                 incarnation: str | None = receiver_incarnation(
                     conn, binding, now, lease_ttl_seconds=ttl, renew=ordinary
                 )
-            else:  # FR04: complete is fenced like trw_send, so a displaced sender cannot close
+            else:  # FR04: complete (and the AHR sender steps) are fenced like trw_send
                 incarnation = None
-                touch(conn, binding, now, lease_ttl_seconds=ttl, refuse_displaced=action == "complete")
-            _validate_wait(wait_seconds, action, message_ids, cursor, config)
+                touch(conn, binding, now, lease_ttl_seconds=ttl, refuse_displaced=action in SENDER_ACTIONS)
+            validate_wait(wait_seconds, action, message_ids, cursor, config.comms_wait_max_seconds)
             if wait_seconds > 0:
                 # trw:intentional Owner is frozen by the FIRST attempt and compared BEFORE any message
                 # page is selected or prepared; a changed pin/run/incarnation cannot retarget a wait.
@@ -320,6 +310,7 @@ def _inbox_attempt(
                 limit=config.comms_fetch_max_items,
                 max_bytes=config.comms_response_max_bytes,
                 next_read=next_read,
+                handoff=handoff,
             )
             if action == "status":
                 result["capacity"] = remaining_capacity(conn, binding.group_id)
@@ -337,6 +328,7 @@ def _inbox(
     ctx: Context | None = None,
     wait_seconds: int = 0,
     next_read: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
     """Read pending traffic, acknowledge receipt, record a handoff step, or inspect body-free facts.
 
@@ -353,7 +345,7 @@ def _inbox(
     # path (after closure) as invalid_wait_seconds, never overflow the clock here.
     entry = time.monotonic()
     owner: dict[str, _WaitOwner] = {}
-    payload, retry = _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner, next_read)
+    payload, retry = _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner, next_read, handoff)
     if type(wait_seconds) is int and wait_seconds > 0:
         # Cooperative checkpoint after the first attempt of a positive wait, whatever
         # it returned; zero-wait calls keep the pre-amendment path untouched.
@@ -416,9 +408,12 @@ def peers(
     cursor: str | None = None,
     pause_id: str | None = None,
     next_read: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
-    return _scoped(lambda: _peers(action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read), ctx, action)
+    return _scoped(
+        lambda: _peers(action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read, handoff=handoff), ctx, action
+    )
 
 
 def send(
@@ -430,10 +425,15 @@ def send(
     ctx: Context | None = None,
     *,
     scope: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
-    """Admit one addressed message, or one bounded scoped notify, or refuse."""
+    """Admit one addressed message, or one bounded scoped notify, or refuse; ``handoff`` offers a sealed AHR."""
     return _scoped(
-        lambda: send_once(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope), ctx, "send"
+        lambda: send_once(
+            recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope, handoff=handoff
+        ),
+        ctx,
+        "send",
     )
 
 
@@ -444,9 +444,10 @@ def inbox(
     ctx: Context | None = None,
     wait_seconds: int = 0,
     next_read: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
     """Read pending traffic, acknowledge receipt, record a handoff step, or inspect body-free facts."""
-    return _scoped(lambda: _inbox(action, message_ids, cursor, ctx, wait_seconds, next_read), ctx, action)
+    return _scoped(lambda: _inbox(action, message_ids, cursor, ctx, wait_seconds, next_read, handoff), ctx, action)
 
 
 __all__ = [

@@ -321,3 +321,28 @@ def _deploy_templates(trw_dir: Path) -> None:
     template_data = _get_bundled_file("claude_md.md", subdir="templates")
     if template_data:
         write_checkout_file(trw_dir, template_path, template_data)
+
+
+def _checkout_head(project_root: Path) -> str | None:
+    """HEAD of *project_root*'s checkout, or None outside git (PRD-CORE-213 FR08 base_commit).
+
+    The PRD transition gate diffs against this, so a ``status: implemented`` edit committed
+    before ``trw_deliver`` is still seen. Fail-open: no base means the gate's uncommitted-only diff.
+    """
+    import os
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed argv, read-only
+            ["git", "-C", str(project_root), "rev-parse", "--verify", "-q", "HEAD"],  # noqa: S607
+            capture_output=True, text=True, timeout=10, check=False, env={**env, "GIT_TERMINAL_PROMPT": "0"},
+        )  # fmt: skip
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):  # trw-fail-silent-allow: no git means no base; the gate falls back to the uncommitted diff and logs it
+        logger.info("base_commit_unavailable", exc_info=True)
+        return None
+    head = done.stdout.strip()
+    return head if done.returncode == 0 and head else None

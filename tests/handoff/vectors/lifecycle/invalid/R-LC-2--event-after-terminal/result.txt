@@ -1,0 +1,1 @@
+Suite: 812 passed (scope full). Rehearsal: refusal observed; git status unchanged.

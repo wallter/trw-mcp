@@ -253,6 +253,7 @@ class RunState(BaseModel):
     # PRD-CORE-338-FR03: the declared UTC target, also logged once as a ``time_target`` event;
     # kept here so trw_checkpoint decides tracking from run.yaml alone (NFR03).
     target_utc: str | None = None
+    base_commit: str | None = None  # checkout HEAD at trw_init (PRD-CORE-213 FR08)
     # PRD-CORE-106: Artifact paths scanned for knowledge requirements
     artifacts: list[str] = Field(default_factory=list)
     # PRD-CORE-141-FR10: Protected runs survive the stale-run sweep regardless of age

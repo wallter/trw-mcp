@@ -1,0 +1,94 @@
+{
+  "ahr": "1.0-rc.1",
+  "type": "readback",
+  "readback_id": "01J9ZK5W1RB0000000000030",
+  "handoff": {
+    "handoff_id": "01J9ZK5W1CRT000000000003",
+    "digest": "sha256:19648eb8caf39f3a180996d58d4eeab3d11cb3455afeeeffb9b884464f9874c5"
+  },
+  "by": {
+    "id": "oncall-7",
+    "kind": "human"
+  },
+  "at": "2026-09-28T21:19:30Z",
+  "goal_restated": "A dirty target must yield a refusal and leave the operator's files untouched.",
+  "done_when_restated": "Refusal seen on a dirty scratch tree, and a recorded full-suite pass.",
+  "first_action": {
+    "action_id": "a1",
+    "restated": "Run the whole suite for the package and record it."
+  },
+  "top_risk": {
+    "risk_id": "r1",
+    "restated": "The refusal might fire only after partial staging."
+  },
+  "pointer_checks": [
+    {
+      "index": 0,
+      "status": "match",
+      "observed_digest": "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+    },
+    {
+      "index": 1,
+      "status": "drift",
+      "observed_digest": "sha256:7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e"
+    }
+  ],
+  "reverified": [
+    {
+      "claim_id": "c1",
+      "result": "confirmed",
+      "evidence": {
+        "procedure": "git diff swap.py; read refusal branch",
+        "scope": "swap.py only",
+        "result": "supports",
+        "at": "2026-09-28T21:16:00Z",
+        "producer": "oncall-7",
+        "raw": {
+          "uri": "file:diff-oncall.txt",
+          "digest": "sha256:d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+        }
+      }
+    },
+    {
+      "claim_id": "c2",
+      "result": "contradicted",
+      "evidence": {
+        "procedure": "pytest tests/test_swap.py -q",
+        "scope": "same file as sender",
+        "result": "contradicts",
+        "at": "2026-09-28T21:19:00Z",
+        "producer": "oncall-7",
+        "raw": {
+          "uri": "file:pytest-oncall.txt",
+          "digest": "sha256:d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
+        }
+      }
+    }
+  ],
+  "discrepancies": [
+    {
+      "pointer_index": 1,
+      "text": "swap.py bytes differ from the sender's digest; re-read before acting."
+    },
+    {
+      "claim_id": "c2",
+      "text": "test fails on this branch"
+    }
+  ],
+  "questions": [],
+  "disposition": "ready",
+  "constraints_restated": [
+    {
+      "index": 0,
+      "text": "Launcher config is off limits."
+    },
+    {
+      "index": 1,
+      "text": "Only W1's three files may change."
+    }
+  ],
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "digest": "sha256:bed27f242f3497a8ffcd2adbd925e1e3f2dd54bd2ea06ea5a8bfdb9bc7c093b0"
+  }
+}

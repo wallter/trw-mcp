@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from trw_mcp.comms import _ahr_events
 from trw_mcp.comms._admission import admit, observe_recipient
 from trw_mcp.comms._endpoints import touch
 from trw_mcp.comms._envelope import AdmissionError, DeliveryClass, Envelope, MessageKind
@@ -34,6 +35,7 @@ def send_once(
     ctx: Context | None = None,
     *,
     scope: str | None = None,
+    handoff: object = None,
 ) -> dict[str, Any]:
     """Admit one addressed message, or one bounded scoped notify, or refuse.
 
@@ -41,6 +43,9 @@ def send_once(
     never to both and never to neither. Supplying both is ambiguous rather than
     additive, and resolving the ambiguity by preferring one would make the other
     silently ignored.
+
+    ``handoff={"path": ...}`` (PRD-CORE-349 FR02) offers a sealed AHR: the record is the content, so
+    the body must be empty and the stored body becomes the §14 pointer ``ahr:1 <id> sha256:<hex>``.
     """
     from trw_mcp import comms as facade
     from trw_mcp.models.config import get_config
@@ -73,11 +78,16 @@ def send_once(
                 raise AdmissionError("ambiguous_addressing")
             # FR12: a displaced sender is refused; a current one renews by sending.
             touch(conn, snapshot.binding, now, lease_ttl_seconds=config.comms_lease_ttl_seconds)
+            record = _offer_record(handoff, snapshot.binding.member_id, recipient_member_id, scope, kind, body)
+            if record is not None:
+                body = _ahr_events.pointer(record)
             if scope is None:
                 assert recipient_member_id is not None  # noqa: S101  # trw:intentional narrowed by the XOR admission check above (scope is None) == (recipient_member_id is None)
                 envelope = Envelope(recipient_member_id, request_key, body, kind, delivery_class)
                 ttl = config.comms_message_ttl_seconds
                 admitted = admit(conn, snapshot, envelope, now, ttl_seconds=ttl)
+                if record is not None:
+                    _ahr_events.offer(conn, snapshot.binding.group_id, admitted["message_id"], record, now)
                 result = {
                     "receipt": admitted,
                     # FR15: an exact retry of an expired/acked/tombstoned message reports its state.
@@ -106,6 +116,23 @@ def send_once(
         return {"status": "ok", "delivery": "pull_only", **result}
     except (IdentityError, StoreError) as exc:
         return facade._exception_refused(exc)
+
+
+def _offer_record(
+    handoff: object, sender: str, recipient: str | None, scope: str | None, kind: str, body: str
+) -> dict[str, Any] | None:
+    """The checked AHR a ``trw_send(handoff=...)`` offers, or None for a plain message (PRD-CORE-349 FR02)."""
+    if handoff is None:
+        return None
+    if not isinstance(handoff, dict) or set(handoff) != {"path"}:
+        raise AdmissionError("invalid_inbox_arguments")
+    if scope is not None or recipient is None:
+        raise AdmissionError("ahr_unaddressed_not_supported")
+    if kind != "request":
+        raise AdmissionError("not_a_handoff")
+    if body:
+        raise AdmissionError("ahr_body_conflict")  # exactly one source of content
+    return _ahr_events.read_offer(handoff["path"], sender=sender, recipient=recipient)
 
 
 __all__ = ["send_once"]

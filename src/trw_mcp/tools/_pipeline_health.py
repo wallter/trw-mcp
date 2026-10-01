@@ -227,6 +227,11 @@ def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> Signal
     if embedded is None:
         # A store that keeps no vectors never computed a ratio: not measured, never zero.
         return _unmeasured("embedding_coverage", "store_keeps_no_vectors", **unmeasured)
+    # FB-INSTALL-05: a vector in ANOTHER embedding space is not coverage (dense recall skips it).
+    from trw_mcp.state._store_counts import store_vectors_outside_active_space
+
+    outside = store_vectors_outside_active_space(trw_dir) or 0
+    embedded = max(embedded - outside, 0)
     coverage_ratio = embedded / total if total else None
     # A young store has had no chance to embed: weights arrive after the first entries (E2E-INC-010).
     min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 50))
@@ -234,8 +239,8 @@ def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> Signal
     advisory = ""
     if degraded:
         advisory = (
-            f"embedding_coverage degraded: {embedded}/{total} entries embedded "
-            f"({coverage_ratio:.1%}, threshold {threshold:.1%})"
+            f"embedding_coverage degraded: {embedded}/{total} entries embedded in the active space "
+            f"({coverage_ratio:.1%}, threshold {threshold:.1%}); run: trw-mcp memory reembed"
         )
     return {
         "degraded": degraded,

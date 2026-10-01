@@ -367,7 +367,7 @@ def _check_memory_daemon(target: Path, _config: TRWConfig) -> CheckResult:
 # ── PRD-SEC-014-FR04: embedding cache state + egress posture ─────────────────
 
 
-def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
+def _check_embedding_egress(target: Path, config: TRWConfig) -> CheckResult:
     """Report the daemon's embedding model cache state and the effective egress posture.
 
     Delegates to the ``_doctor_embedding_egress`` sibling (kept out of this file
@@ -377,9 +377,9 @@ def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
     from trw_mcp.server._doctor_embedding_egress import embedding_egress_report
     from trw_mcp.state._retrieval_capability import daemon_embedding_model
 
+    enabled = bool(getattr(config, "embeddings_enabled", False))
     status, message = embedding_egress_report(
-        daemon_embedding_model(),
-        embeddings_enabled=bool(getattr(config, "embeddings_enabled", False)),
+        daemon_embedding_model(), embeddings_enabled=enabled, trw_dir=target / ".trw"
     )
     return CheckResult("embedding_egress", cast("DoctorStatus", status), message)
 
@@ -389,17 +389,12 @@ def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
 
 def _check_retrieval(target: Path, config: TRWConfig) -> CheckResult:
     """Report vectors / embeddings / weights as active, degraded or off, with the fix."""
-    from trw_mcp.state._retrieval_capability import (
-        daemon_embedding_model,
-        outside_active_space_note,
-        probe_retrieval,
-        retrieval_row,
-    )
+    from trw_mcp.state._retrieval_capability import daemon_embedding_model, probe_retrieval, retrieval_doctor_row
 
-    status, message = retrieval_row(
-        probe_retrieval(daemon_embedding_model(), embeddings_enabled=config.embeddings_enabled)
+    status, message = retrieval_doctor_row(
+        probe_retrieval(daemon_embedding_model(), embeddings_enabled=config.embeddings_enabled), target / ".trw"
     )
-    return CheckResult("retrieval", cast("DoctorStatus", status), message + outside_active_space_note(target / ".trw"))
+    return CheckResult("retrieval", cast("DoctorStatus", status), message)
 
 
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────

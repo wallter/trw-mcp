@@ -74,12 +74,17 @@ def checkout_memory(target: Path) -> CheckoutMemory:
     return CheckoutMemory(pinned, token)
 
 
-def delete_checkout_memory(memory: CheckoutMemory) -> int:
-    """Forget every non-canary row of *memory*'s namespace through its grant; returns the rows deleted."""
-    from trw_memory.daemon import DaemonPaths
-    from trw_memory.daemon.client import DaemonClient
+def delete_checkout_memory(memory: CheckoutMemory, trw_dir: Path) -> int:
+    """Forget every non-canary row of *memory*'s namespace through its grant; returns the rows deleted.
 
-    client = DaemonClient(memory.token, paths=DaemonPaths.resolve(create=False))
+    The client starts a missing daemon through the shared env's recorded interpreter, like every other trw-mcp client
+    (DAEMON-AUTOSTART-RESIDUAL-CLI), never from this process's own.
+    """
+    from trw_memory.daemon import DaemonPaths
+
+    from trw_mcp.shared_server._daemon_launch import daemon_client
+
+    client = daemon_client(memory.token, trw_dir, paths=DaemonPaths.resolve(create=False))
     return asyncio.run(_forget_all(client, memory.namespace))
 
 

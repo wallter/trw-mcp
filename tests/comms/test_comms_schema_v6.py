@@ -19,10 +19,11 @@ _TP = "00-" + "ab" * 16 + "-" + "cd" * 8 + "-01"
 
 
 def _v5_mailbox(env: FormationFixture) -> Any:
-    """A real v5 file: the v6 build's store with the v6 step undone and stamped 5."""
+    """A real v5 file: the current build's store with the v6 and v7 steps undone and stamped 5."""
     manifest = _v5_handoff(env)
     _execute(
         manifest,
+        ("DROP TABLE ahr_events", ()),  # PRD-CORE-349 v7 (its indexes go with it)
         ("ALTER TABLE admissions DROP COLUMN traceparent", ()),
         ("UPDATE schema_meta SET value='5'", ()),
     )
@@ -35,8 +36,16 @@ def test_v5_upgrades_to_v6_through_the_gated_chain(formation_env: FormationFixtu
     assert _open_refusal(manifest) is _store.StoreRefusal.UPGRADE_REQUIRED  # refused until upgraded
     before = _dump(manifest)
     result = _upgrade.upgrade(manifest, ttl_seconds=86400)  # would fail re-running V5_STEPS if ungated
-    assert (result["status"], result["schema_version"], result["from_version"]) == ("upgraded", 6, 5)
-    assert _version(manifest) == "6" and _verdict(manifest) is None and _open_refusal(manifest) is None
+    assert (result["status"], result["schema_version"], result["from_version"]) == (
+        "upgraded",
+        _schema.SCHEMA_VERSION,
+        5,
+    )
+    assert (
+        _version(manifest) == str(_schema.SCHEMA_VERSION)
+        and _verdict(manifest) is None
+        and _open_refusal(manifest) is None
+    )
     after = _dump(manifest)
     assert after["admissions"] == [(*row, None) for row in before["admissions"]]  # old rows: NULL carrier
     assert _upgrade.upgrade(manifest, ttl_seconds=86400)["status"] == "already_current"

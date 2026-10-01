@@ -21,6 +21,10 @@ InboxOrPeerAction = Literal[
     "accept",
     "report",
     "complete",
+    "read_back",
+    "answer",
+    "decline",
+    "offer_withdraw",
     "enroll",
     "list",
     "heartbeat",
@@ -55,18 +59,21 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         scope: str | None = None,
         kind: MessageKind = "request",
         delivery_class: DeliveryClass = "on_demand",
+        handoff: dict[str, str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Use when sending a request, reply or status to a formation peer.
 
         Address exactly one of recipient_member_id or scope (repo-relative
         path to declared peers). Reuse request_key only for exact retries.
+        handoff={"path": sealed AHR file} offers that record (body="").
         Output: durable receipt/refusal; pull-only — never a wake, grant, or
         completion ack.
         """
         # A request for unsupported push must explicitly report the downgrade.
+        # PRD-CORE-349 FR02: the AHR record path is read under the project root, validated and stored.
         return _tool_response(
-            send(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope),
+            send(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope, handoff=handoff),
             report_pull_only=delivery_class != "on_demand",
         )
 
@@ -78,6 +85,7 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         wait_seconds: Annotated[int, Field(strict=True)] = 0,
         pause_id: str | None = None,
         next_read: str | None = None,
+        handoff: dict[str, str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Use when fetching messages, ACKing IDs, reading body-free status,
@@ -90,14 +98,18 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         wait_seconds>0 retries an empty fetch in-process until the deadline.
         Handoffs (request messages): the recipient accepts, then reports one
         id with next_read (where to look) BEFORE its own trw_deliver; only
-        the sender completes, after checking that pointer.
+        the sender completes, after checking that pointer. AHR requests:
+        read_back (handoff={"path"}) before accept; decline/offer_withdraw
+        take handoff={"reason"}, answer {"path"}, report {"outcome"}.
         """
         if action in _PEER_ACTIONS:
             peer_action: PeerAction = action  # type: ignore[assignment]
-            return _tool_response(peers(peer_action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read))
+            return _tool_response(
+                peers(peer_action, ctx, cursor=cursor, pause_id=pause_id, next_read=next_read, handoff=handoff)
+            )
         # strict=True: the transport rejects bool/float/str before the handler (FR11).
         inbox_action: InboxAction = action  # type: ignore[assignment]
-        return _tool_response(inbox(inbox_action, message_ids, cursor, ctx, wait_seconds, next_read))
+        return _tool_response(inbox(inbox_action, message_ids, cursor, ctx, wait_seconds, next_read, handoff))
 
 
 __all__ = ["register_swarm_comms_tools"]

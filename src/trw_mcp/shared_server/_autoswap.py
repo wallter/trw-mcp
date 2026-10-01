@@ -15,7 +15,8 @@ twice at once (the env's spawn lock is held from the last re-check until the suc
 The memory daemon follows the same way: once this server is current, a daemon that is strictly OLDER than this
 process's trw-memory is drained by the graceful handshake (``_upgrade.drain_daemon``: in-flight calls finish, other
 sessions mid-call answer ``busy`` and the daemon resumes; never a signal), retried with backoff. The next memory
-call starts the new daemon through the client's own auto-start.
+call starts the new daemon through the client's own auto-start, which (``_daemon_launch``) runs the env's recorded
+interpreter, so a stale client that calls first cannot publish an older daemon in its place.
 
 ``swap --src`` envs are the operator's dev flow and are left alone. Every decision is one structured log line
 (``shared_mcp_autoswap``); the last swap is kept in ``<env>.last-auto-swap`` for the successor to show in
@@ -40,6 +41,7 @@ from trw_memory.daemon._discovery import DRAIN_CAPABILITY
 from trw_memory.daemon._versions import is_older
 
 from trw_mcp.models.config._fields_shared_mcp import SharedMcpConfig
+from trw_mcp.shared_server import _embeddings
 from trw_mcp.shared_server._autoswap_ports import (
     Ports,
     Record,
@@ -352,4 +354,6 @@ def surface_block() -> dict[str, Any] | None:
     last = read_last_auto_swap(active.paths, active.env, live_pid=None if record is None else record.pid)
     if last is not None:
         block["last_auto_swap"] = {k: last.get(k) for k in ("from", "to", "at", "outcome")}
+    if (gap := _embeddings.surface_note(active.env)) is not None:  # SWAP-VENV-EXTRAS: keyword-only recall, loudly
+        block["embeddings"] = gap
     return block

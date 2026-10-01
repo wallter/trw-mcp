@@ -47,6 +47,7 @@ class MainRun:
             "semantic": [],
             "warnings": [],
         }
+        self.order: list[str] = []  # the stubbed phases, in the order main() ran them
 
 
 def make_project(tmp_path: Path, *, targets: tuple[str, ...] = ("claude-code",)) -> Path:
@@ -104,6 +105,7 @@ def drive_main(
     def _record(key: str, result: Any) -> Any:
         def _stub(*args: Any, **kwargs: Any) -> Any:
             run.calls[key].append((args, kwargs))
+            run.order.append(key)
             return result
 
         return _stub
@@ -130,7 +132,7 @@ def drive_main(
     monkeypatch.setattr(installer, "phase_configure", _record("configure", "offline"))
     monkeypatch.setattr(installer, "_restart_mcp_servers", lambda *_a, **_k: None)
     if not stop_daemon:
-        monkeypatch.setattr(installer, "stop_outdated_memory_daemon", lambda *_a, **_k: None)
+        monkeypatch.setattr(installer, "stop_outdated_memory_daemon", lambda *_a, **_k: run.order.append("stop_daemon"))
     monkeypatch.setattr(installer, "_check_all_backends", lambda *_a, **_k: [])
     monkeypatch.setattr(installer, "show_success_banner", lambda *_a, **_k: None)
     monkeypatch.setattr(installer, "_emit_install_complete_event", lambda *_a, **_k: None)

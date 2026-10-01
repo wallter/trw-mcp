@@ -1788,6 +1788,10 @@ def build_install_cmd(
 #: pattern may require leading whitespace: the pre-2026-09-07 `r"  *(…)"` did,
 #: which is why every matched line was in fact discarded.
 _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
+#: A config warning (``models/config/_retired_keys.py``): ``TRW: WARNING \u2014 <file> sets '<key>', which has no effect``.
+#: Its dedup is per process, and ``update-project`` runs once per client as a fresh process, so the installer repeats
+#: it once per client unless it drops the repeats the way it does for ``WARNING:`` notices (E2E row 10).
+_CONFIG_WARNING_LINE_RE = re.compile(r"^TRW: WARNING \u2014\s*")
 #: A child line naming a file `update-project` moved into ``.trw/trash`` (``server/_subcommands.py::_print_trashed``).
 #: The operator's own file may be among them, so the spinner must not swallow it (FB-INSTALL-03).
 _TRASH_LINE_RE = re.compile(r"^Moved to \.trw/trash:\s*")
@@ -1847,6 +1851,8 @@ def run_with_progress(
                     # see after the spinner has scrolled away (e.g. an
                     # update-project refusal that left their AGENTS.md stale).
                     ui.defer_warn(_WARNING_LINE_RE.sub("", line, count=1).strip())
+                elif _CONFIG_WARNING_LINE_RE.match(line):
+                    ui.defer_warn(_CONFIG_WARNING_LINE_RE.sub("", line, count=1).strip())  # defer_warn dedups
                 elif _TRASH_LINE_RE.match(line):
                     ui.defer_warn(line)
                 elif _PROGRESS_LINE_RE.match(line):
@@ -1861,6 +1867,10 @@ def run_with_progress(
                     _WARNING_LINE_RE.sub("", line.strip(), count=1)
                 ):
                     continue  # the same notice every earlier per-client run already showed
+                if _CONFIG_WARNING_LINE_RE.match(line.strip()) and not ui.first_sighting(
+                    _CONFIG_WARNING_LINE_RE.sub("", line.strip(), count=1).strip()
+                ):
+                    continue  # the same config warning every earlier per-client run already showed
                 if not ui.quiet:
                     print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
 
@@ -2296,25 +2306,36 @@ _DAEMON_STOP_LINE_PREFIX = "TRW_DAEMON_STOP="
 
 # Run in the TARGET interpreter, so the version compared is the trw-memory this
 # run installed (not TRW_VERSION, which is trw-mcp's) and the stop goes through
-# trw-memory's own identity check (pid plus OS start). argv[1] is the project.
+# trw-memory's own identity check (pid plus OS start, or for a 4.0 record the daemon's own
+# socket, pid and ps entry: E2E-INC-134). argv[1] is the project; argv[2] is "1" to stop
+# only a strictly OLDER daemon (the plain, non --upgrade path), and the project's grant is
+# what the 4.0 socket proof presents.
 _DAEMON_STOP_SOURCE = (
     "import json, sys\n"
     "from pathlib import Path\n"
     "from trw_memory import __version__\n"
-    "from trw_memory.daemon import DaemonPaths, stop_outdated_daemon\n"
+    "from trw_memory.daemon import DaemonPaths, read_checkout_grant, stop_outdated_daemon\n"
+    "from trw_memory.exceptions import DaemonAuthError\n"
     "from trw_mcp.server._doctor_launcher_divergence import present_managed_configs\n"
-    "result = stop_outdated_daemon(DaemonPaths.resolve(create=False), __version__)\n"
+    "try:\n"
+    "    token = read_checkout_grant(Path(sys.argv[1]))\n"
+    "except DaemonAuthError:\n"
+    "    token = None\n"
+    "result = stop_outdated_daemon(\n"
+    "    DaemonPaths.resolve(create=False), __version__, older_only=sys.argv[2] == '1', token=token)\n"
     "configs = present_managed_configs(Path(sys.argv[1]))\n"
     f"print({_DAEMON_STOP_LINE_PREFIX!r} + json.dumps("
     "{'outcome': result.outcome, 'detail': result.detail, 'configs': configs}))\n"
 )
 
 
-def _daemon_stop_verdict(python: str, target_dir: Path, env: dict[str, str]) -> tuple[dict[str, object] | None, str]:
+def _daemon_stop_verdict(
+    python: str, target_dir: Path, env: dict[str, str], older_only: bool = False
+) -> tuple[dict[str, object] | None, str]:
     """Run :data:`_DAEMON_STOP_SOURCE`; ``(verdict, "")``, or ``(None, why no verdict came back)``."""
     try:
         proc = subprocess.run(  # noqa: S603 -- installer executes its own fixed probe
-            [python, "-B", "-c", _DAEMON_STOP_SOURCE, str(target_dir)],
+            [python, "-B", "-c", _DAEMON_STOP_SOURCE, str(target_dir), "1" if older_only else "0"],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2334,8 +2355,14 @@ def _daemon_stop_verdict(python: str, target_dir: Path, env: dict[str, str]) -> 
     return None, stderr_tail[-1] if stderr_tail else f"exit code {proc.returncode}"
 
 
-def stop_outdated_memory_daemon(python: str, target_dir: Path, ui: UI, pip_target: str = "") -> None:
+def stop_outdated_memory_daemon(
+    python: str, target_dir: Path, ui: UI, pip_target: str = "", *, older_only: bool = False
+) -> None:
     """``--upgrade``: stop a memory daemon serving another version, then name the clients to reconnect.
+
+    *older_only* is the plain run over an EXISTING install (E2E-INC-134): it stops only a daemon strictly
+    older than the installed trw-memory and says nothing when there is none, so a fresh install, or a
+    same-version or newer daemon, is never touched.
 
     A client refuses only a major mismatch, so after a minor or patch upgrade the
     old daemon kept serving old code until someone killed it (PRD-INFRA-200 FR02).
@@ -2346,7 +2373,9 @@ def stop_outdated_memory_daemon(python: str, target_dir: Path, ui: UI, pip_targe
     env = dict(os.environ)
     if pip_target:
         env["PYTHONPATH"] = pip_target + os.pathsep + env.get("PYTHONPATH", "")
-    verdict, failure = _daemon_stop_verdict(python, target_dir, env)
+    verdict, failure = _daemon_stop_verdict(python, target_dir, env, older_only)
+    if older_only and (verdict is None or verdict.get("outcome") not in ("stopped", "unproven", "invalid")):
+        return  # a plain run reports only a daemon it stopped or found older and could not stop
     configs: object = None
     if verdict is None:
         ui.step_warn(f"Could not check the trw-memory daemon ({failure}).")
@@ -2869,6 +2898,7 @@ def show_success_banner(
     *,
     telemetry_enabled: bool = False,
     learning_sharing_enabled: bool = False,
+    health_ok: bool = True,
 ) -> None:
     """Display the post-install success banner with summary.
 
@@ -2879,18 +2909,23 @@ def show_success_banner(
     printed on every install path (interactive, script, quiet).
     """
     state_line = _telemetry_state_line(telemetry_enabled, learning_sharing_enabled)
+    # E2E-INC-131 c: never say "ready" over a doctor FAIL. The failure and its remedy were printed just above.
+    headline = (
+        f"TRW Framework v{TRW_VERSION} installed, but its health check FAILED (see above; run 'trw-mcp doctor')"
+        if not health_ok
+        else f"TRW Framework v{TRW_VERSION} \u2014 ready"
+    )
     if ui.quiet:
         # FR04: the consent state MUST print on every path — use print() directly
         # because UI.info() is suppressed under --quiet.
-        print(f"{GREEN}[TRW]{NC} TRW Framework v{TRW_VERSION} installed. {state_line}.")
+        verdict = "installed." if health_ok else "installed, but its health check FAILED (run 'trw-mcp doctor')."
+        print(f"{GREEN if health_ok else YELLOW}[TRW]{NC} TRW Framework v{TRW_VERSION} {verdict} {state_line}.")
         return
 
     if ui.interactive:
         print()
-        draw_box(
-            [f"{GREEN}{BOLD}\u2713 TRW Framework v{TRW_VERSION} \u2014 ready{NC}"],
-            color=GREEN,
-        )
+        mark, color = ("\u2713", GREEN) if health_ok else ("!", YELLOW)
+        draw_box([f"{color}{BOLD}{mark} {headline}{NC}"], color=color)
         print()
 
         # Backend connectivity (real health check results)
@@ -2949,7 +2984,7 @@ def show_success_banner(
         print(f"  {DIM}Full docs: {DOCS_BASE}/quickstart{NC}")
     else:
         print()
-        print(f"{GREEN}{BOLD}TRW Framework v{TRW_VERSION} \u2014 ready{NC}")
+        print(f"{(GREEN if health_ok else YELLOW)}{BOLD}{headline}{NC}")
         print()
         if backend_results:
             for br in backend_results:
@@ -4793,7 +4828,7 @@ def run_install_doctor(
         ui.step_warn("Could not parse 'trw-mcp doctor' output; verify the install manually.")
         return False
     failed = [
-        (str(check.get("name", "?")), str(check.get("message", "")))
+        (str(check.get("name", "?")), str(check.get("message", "")).strip())
         for check in checks
         if isinstance(check, dict) and check.get("status") == "FAIL"
     ]
@@ -4803,7 +4838,18 @@ def run_install_doctor(
             # FB-INSTALL-01: the row's own message says what broke and how to fix it (the generic fix
             # below does not repair e.g. a hook family whose lib is out of date).
             ui.step_warn(f"  FAIL: {name}: {message}" if message else f"  FAIL: {name}")
-        ui.step_warn("Fix: run 'git init && trw-mcp init-project .' in this directory.")
+        messages = [message for _name, message in failed]
+        # The remedy follows what failed (E2E-INC-131): `git init && init-project` is only right for a project that
+        # was never initialised, and it was printed over a daemon_version_mismatch in an initialised repository.
+        if any("daemon_version_mismatch" in m for m in messages):
+            ui.step_warn(
+                "Fix: a memory daemon of an older version is still serving. The user stops it (its pid is named "
+                "above); the next TRW call starts the new one. Then run 'trw-mcp doctor' again."
+            )
+        elif any("init-project" in m for m in messages):
+            ui.step_warn("Fix: run 'trw-mcp init-project .' in this directory (add 'git init &&' if it is not a repo).")
+        else:
+            ui.step_warn("Fix: see the message above, then run 'trw-mcp doctor' again to confirm.")
         return False
     warned = [
         str(check.get("name", "?")) for check in checks if isinstance(check, dict) and check.get("status") == "WARN"
@@ -5693,6 +5739,10 @@ def main() -> None:
     if has_config:
         total += 1
 
+    # An existing install: a project config from an earlier run, or a trw-memory already in the target
+    # interpreter (read before the packages are replaced).
+    existing_install = is_reinstall or _probe_installed_version(python, "trw-memory", args.pip_target or None) is not None
+
     # Create temp dir for wheel extraction
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-install-"))
     try:
@@ -5756,6 +5806,16 @@ def main() -> None:
             write_proprietary_marker(target_dir, proprietary_installed)
             features.extend(proprietary_installed)
 
+        # E2E-INC-131 a: drain an older memory daemon BEFORE anything talks to one. The stop used to run after
+        # project setup and the doctor, so update-project met the old daemon four times (daemon_version_mismatch)
+        # and the doctor FAILed memory_backend. One stop path, the one --upgrade always had, moved earlier.
+        # E2E-INC-134: the plain path (`curl install.sh | bash`) never passes --upgrade, so over an EXISTING
+        # install it drains too, but only a strictly older daemon. A fresh install is never touched.
+        if args.upgrade or existing_install:
+            stop_outdated_memory_daemon(
+                python, target_dir, ui, pip_target=args.pip_target or "", older_only=not args.upgrade
+            )
+
         # Step N: Project setup
         step += 1
         selected_targets = phase_project_setup(
@@ -5781,7 +5841,7 @@ def main() -> None:
         # the --upgrade path too: an upgrade now refreshes deployed assets
         # (_deployed_framework_is_stale), and an upgrade that left the framework
         # broken is exactly the case a green "Upgrade complete" would hide.
-        run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
+        health_ok = run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
 
         # Semantic-retrieval readiness. Marker-free and gated only on the
         # operator's own opt-out: it runs on EVERY run that wants embeddings,
@@ -5829,8 +5889,6 @@ def main() -> None:
 
         # Post-install: restart MCP servers and health-check backends
         _restart_mcp_servers(target_dir, ui)
-        if args.upgrade:
-            stop_outdated_memory_daemon(python, target_dir, ui, pip_target=args.pip_target or "")
 
         backend_results: list[dict[str, object]] = []
         if (
@@ -5869,6 +5927,7 @@ def main() -> None:
             selected_targets=selected_targets,
             telemetry_enabled=telemetry_state,
             learning_sharing_enabled=sharing_state,
+            health_ok=health_ok,
         )
 
         # PRD-INFRA-142 FR01: emit a single install_complete funnel event.

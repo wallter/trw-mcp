@@ -5,6 +5,8 @@ identity. The facade supplies one ``attempt`` callable that performs a COMPLETE
 ordinary inbox operation — its own transaction, opened and closed inside the
 call — and reports whether the result was an empty fetch page. This module only
 decides when to call it again and when to stop; between calls nothing is held.
+It also holds the FR11 argument rules (:func:`validate_wait`), which the facade
+applies with the configured bound it reads.
 
 Guarantees, and their limits:
 
@@ -27,9 +29,25 @@ from typing import Any
 # exception. An AnyIO without it must fail loudly at import, never widen the catch.
 from anyio import NoEventLoopError
 
+from trw_mcp.comms._envelope import AdmissionError
+
 #: One complete inbox operation. Returns ``(payload, retry)``; ``retry`` is
 #: True only for an empty fetch page that the caller asked to wait on.
 Attempt = Callable[[], tuple[dict[str, Any], bool]]
+
+
+def validate_wait(
+    wait_seconds: object, action: str, message_ids: list[str] | None, cursor: str | None, max_seconds: int
+) -> None:
+    """FR11 argument rules, applied by the facade AFTER closure and endpoint verification, in this order."""
+    # trw:intentional bool is an int subclass; a direct caller passing True must not become a 1 s wait.
+    positive = type(wait_seconds) is int and wait_seconds > 0
+    if positive and max_seconds == 0:
+        raise AdmissionError("wait_disabled")
+    if type(wait_seconds) is not int or not 0 <= wait_seconds <= max_seconds:
+        raise AdmissionError("invalid_wait_seconds")
+    if positive and (action != "fetch" or message_ids is not None or cursor is not None):
+        raise AdmissionError("wait_requires_fresh_fetch")
 
 
 def check_cancelled_cooperatively() -> None:
@@ -82,4 +100,4 @@ def run_bounded_wait(
             return payload
 
 
-__all__ = ["Attempt", "check_cancelled_cooperatively", "run_bounded_wait"]
+__all__ = ["Attempt", "check_cancelled_cooperatively", "run_bounded_wait", "validate_wait"]

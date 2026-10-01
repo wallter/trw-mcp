@@ -51,6 +51,10 @@ class StoreUnavailableError(RuntimeError):
     """The checkout's store cannot be reached; memory tools fail closed."""
 
 
+class DaemonBudgetExhaustedError(StoreUnavailableError):
+    """The install's shared daemon-wait budget ran out: the daemon is up but slow (typically loading its model)."""
+
+
 class StoreRequest(TypedDict, total=False):
     """The ``memory_store`` arguments beyond content and namespace -- the daemon tool's shape too."""
 

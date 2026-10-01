@@ -14,28 +14,45 @@ from typing import Any, Literal
 import tomllib
 
 from trw_mcp.models.config._fields_shared_mcp import SharedMcpConfig
+from trw_mcp.shared_server import _embeddings
 from trw_mcp.shared_server._ops import _memory_dir
 from trw_mcp.shared_server._records import (
     STABLE,
     SharedPaths,
     SharedServerError,
     env_python,
+    env_pythonpath,
     read_live_record,
 )
 
 
-def doctor_row(paths: SharedPaths, config: SharedMcpConfig) -> tuple[Literal["SKIP", "PASS", "WARN"], str]:
-    """(``SKIP``|``PASS``|``WARN``, message): the ``shared_mcp`` row of ``trw-mcp doctor``."""
+def _env_problems(paths: SharedPaths, env: str, *, embeddings: bool) -> list[str]:
+    """What is wrong with *env*: no interpreter or memory dir, an interpreter that is gone, or no embeddings."""
+    try:
+        python = env_python(paths, env)
+    except SharedServerError as exc:
+        return [str(exc)]
+    problems = []
+    if env != STABLE and not _memory_dir(paths, env).is_dir():
+        problems.append(f"{env}: no memory dir (run `trw-mcp env create {env}`)")
+    if not Path(python).is_file():  # an unrunnable interpreter is named, never reported as lacking embeddings
+        problems.append(f"{env}: interpreter {python} does not exist (point it at one: `trw-mcp swap --env {env} ...`)")
+    elif embeddings and (gap := _embeddings.doctor_problem(env, python, env_pythonpath(paths, env))):
+        problems.append(gap)
+    return problems
+
+
+def doctor_row(
+    paths: SharedPaths, config: SharedMcpConfig, *, embeddings: bool = True
+) -> tuple[Literal["SKIP", "PASS", "WARN"], str]:
+    """(``SKIP``|``PASS``|``WARN``, message): the ``shared_mcp`` row of ``trw-mcp doctor``.
+
+    *embeddings* is the project's ``embeddings_enabled``: with it on, an env whose interpreter lacks
+    sentence-transformers is a WARN carrying the fix command (its recall would be keyword-only).
+    """
     if not config.enabled:
         return "SKIP", "shared trw-mcp off (opt-in: shared_mcp.enabled: true in .trw/config.yaml)"
-    problems = []
-    for env in paths.envs():
-        try:
-            env_python(paths, env)
-            if env != STABLE and not _memory_dir(paths, env).is_dir():
-                problems.append(f"{env}: no memory dir (run `trw-mcp env create {env}`)")
-        except SharedServerError as exc:
-            problems.append(str(exc))
+    problems = [problem for env in paths.envs() for problem in _env_problems(paths, env, embeddings=embeddings)]
     if paths.token.exists() and paths.token.stat().st_mode & 0o077:
         problems.append(f"{paths.token} is readable by other users; chmod 600 it")
     if problems:
@@ -49,7 +66,7 @@ def check_shared_mcp(target: Path, config: Any) -> Any:
     from trw_mcp.server._subcommands_doctor import CheckResult
 
     paths = SharedPaths.resolve(target / config.trw_dir, config.shared_mcp)
-    status, message = doctor_row(paths, config.shared_mcp)
+    status, message = doctor_row(paths, config.shared_mcp, embeddings=bool(config.embeddings_enabled))
     if config.shared_mcp.enabled:
         launch_problem = "; ".join(p for p in (_mcpjson_launch_problem(target), _codex_launch_problem(target)) if p)
         if launch_problem:

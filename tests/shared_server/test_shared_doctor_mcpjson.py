@@ -18,7 +18,11 @@ _OK = "shared trw-mcp on"
 
 
 def _run(tmp_path: Path, *, enabled: bool = True) -> tuple[str, str]:
-    cfg = SimpleNamespace(trw_dir=".trw", shared_mcp=SharedMcpConfig(enabled=enabled, envs_dir=str(tmp_path / "envs")))
+    cfg = SimpleNamespace(
+        trw_dir=".trw",
+        embeddings_enabled=True,
+        shared_mcp=SharedMcpConfig(enabled=enabled, envs_dir=str(tmp_path / "envs")),
+    )
     result = check_shared_mcp(tmp_path, cfg)
     return result.status, result.message
 
@@ -125,7 +129,7 @@ def test_unparseable_mcpjson_warns_when_enabled(tmp_path: Path) -> None:
 
 def test_both_warn_messages_are_concatenated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(tmp_path, _trw("trw-mcp", []))
-    monkeypatch.setattr(_doctor, "doctor_row", lambda *_: ("WARN", "env broke"))
+    monkeypatch.setattr(_doctor, "doctor_row", lambda *_, **__: ("WARN", "env broke"))
     status, message = _run(tmp_path)
     assert status == "WARN"
     assert message.startswith("env broke; ")

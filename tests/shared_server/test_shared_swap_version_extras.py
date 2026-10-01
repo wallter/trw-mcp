@@ -55,6 +55,8 @@ def _install_argv(
         calls.envs.append(env)
         if argv[:3] == ["uv", "pip", "install"] and isinstance(fail_install, Exception):
             raise fail_install
+        if argv[1:2] == ["-c"] and "find_spec('sentence_transformers')" in argv[2]:
+            return ""  # the embeddings probe: present here, so these tests see no extras install (own test file)
         if argv[1:2] == ["-c"] and "importlib.metadata" in argv[2]:
             if dist_version is None:
                 raise SharedServerError("no dist")
@@ -372,7 +374,7 @@ def test_cli_passes_with_option_through(paths: SharedPaths, monkeypatch: pytest.
     monkeypatch.setattr(_ops, "build_version_venv", lambda *a, **k: seen.update(k) or Path("/py"))
     monkeypatch.setattr(_ops, "swap", lambda *a, **k: "ok")
     _cli.run_swap(args)
-    assert seen == {"with_distill": "trw-distill==0.8.0"}
+    assert seen == {"with_distill": "trw-distill==0.8.0", "embeddings": True}
 
 
 def test_with_needs_version(paths: SharedPaths, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -609,6 +611,8 @@ def test_second_swap_to_the_same_changed_distill_reuses_the_fresh_venv(
 
     def run(argv: list[str], *, env: dict[str, str] | None = None) -> str:
         calls.append(argv)
+        if argv[1:2] == ["-c"] and "find_spec('sentence_transformers')" in argv[2]:
+            return ""  # the embeddings probe: present here, so these tests see no extras install (own test file)
         if argv[1:2] == ["-c"] and "importlib.metadata" in argv[2]:
             return next(v for k, v in dist.items() if argv[0].endswith(k))
         return ""

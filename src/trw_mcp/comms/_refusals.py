@@ -93,6 +93,33 @@ REFUSALS: dict[str, _R] = {
     "handoff_not_reported": _R("wait for the owner's report: trw_inbox(action='status') shows it"),
     "handoff_already_reported": _R("the report is recorded; send a new request for rework"),
     "invalid_next_read": _R("next_read is 1-512 UTF-8 bytes of printable text: a branch@SHA, PRD, run path or file"),
+    # PRD-CORE-349: AHR handoffs (a request offered with trw_send(handoff={"path": ...})).
+    "ahr_invalid": _R(
+        "the record fails AHR validation: run `trw-mcp handoff validate <file>`, fix it, seal it, resend"
+    ),
+    "ahr_body_conflict": _R('send an AHR with body="": the record is the content'),
+    "ahr_tier_not_supported": _R("critical-tier AHRs are not accepted by this store yet; use standard or ask the lead"),
+    "ahr_unaddressed_not_supported": _R("address the AHR to one member (to.id) and send it with recipient_member_id"),
+    "ahr_party_mismatch": _R("the record's from.id must be you and to.id the recipient_member_id"),
+    "ahr_readback_required": _R(
+        "read back first: trw_inbox(action='read_back', handoff={'path': <your read-back>}) with disposition"
+        " 'ready' and no contradicted claim, then accept"
+    ),
+    "ahr_lifecycle_refused": _R(
+        "that step is not allowed in this handoff's AHR state; trw_inbox(action='status') shows it"
+    ),
+    "ahr_not_offered": _R("this request carries no AHR record; only a trw_send(handoff=...) request takes AHR steps"),
+    "ahr_event_conflict": _R(
+        "that handoff_id was already offered with other bytes; give the new record a new handoff_id"
+    ),
+    "ahr_ref_not_local": _R(
+        "name an existing file under the project root (repo-relative path); remote refs are refused"
+    ),
+    "ahr_ref_unverified": _R("report next_read as <repo-relative path>#sha256:<hex of the file's current bytes>"),
+    "ahr_expiry_exceeds_ttl": _R("set expires_at within the message TTL", bound="comms_message_ttl_seconds"),
+    "ahr_report_needs_outcome": _R(
+        "an AHR report needs handoff={'outcome': 'met'|'returned'|'escalated'}", persisted_as="invalid_inbox_arguments"
+    ),
     "wait_disabled": _R("fetch without wait_seconds", persisted_as="invalid_inbox_arguments"),
     "wait_already_active": _R("one wait per process; fetch without wait_seconds"),
     "wait_owner_changed": _R("retry the wait under the current identity", persisted_as="invalid_inbox_arguments"),

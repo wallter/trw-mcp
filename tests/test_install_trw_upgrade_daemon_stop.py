@@ -75,6 +75,13 @@ def _project(tmp_path: Path) -> Path:
     return target
 
 
+def _fresh_project(tmp_path: Path) -> Path:
+    """A project with no earlier TRW install (no prior config)."""
+    target = tmp_path / "fresh"
+    (target / ".git").mkdir(parents=True)
+    return target
+
+
 def _upgrade(installer: ModuleType, monkeypatch: pytest.MonkeyPatch, target: Path, *argv: str) -> None:
     drive_main(installer, monkeypatch, target, extra_argv=argv, stop_daemon=True)
 
@@ -114,14 +121,63 @@ def test_upgrade_leaves_a_daemon_already_serving_the_installed_version_running(
     assert sleeper.poll() is None
 
 
-def test_an_ordinary_install_does_not_touch_the_daemon(
+def test_a_fresh_install_does_not_touch_the_daemon(
     installer: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     user_dir: Path,
     sleeper: subprocess.Popen[bytes],
 ) -> None:
+    """E2E-INC-134: "ordinary" is a fresh install, or a same-version daemon; neither is ever stopped."""
     _plant(user_dir, sleeper.pid, version="0.0.1", start=process_start(sleeper.pid))
+    monkeypatch.setattr(installer, "_probe_installed_version", lambda *_a, **_k: None)
+
+    _upgrade(installer, monkeypatch, _fresh_project(tmp_path))
+
+    assert sleeper.poll() is None
+
+
+def test_a_plain_install_over_an_existing_one_stops_a_strictly_older_daemon(
+    installer: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    user_dir: Path,
+    sleeper: subprocess.Popen[bytes],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """E2E-INC-134 (b): `curl install.sh | bash` never passes --upgrade, and left every 7.0.x user's daemon running."""
+    _plant(user_dir, sleeper.pid, version="0.0.1", start=process_start(sleeper.pid))
+
+    _upgrade(installer, monkeypatch, _project(tmp_path))
+
+    sleeper.wait(timeout=10)  # raises TimeoutExpired: the plain run left the older daemon running
+    assert f"stopped pid {sleeper.pid}" in capsys.readouterr().out
+
+
+def test_a_plain_install_over_an_existing_one_leaves_a_same_version_daemon(
+    installer: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    user_dir: Path,
+    sleeper: subprocess.Popen[bytes],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _plant(user_dir, sleeper.pid, version=memory_version, start=process_start(sleeper.pid))
+
+    _upgrade(installer, monkeypatch, _project(tmp_path))
+
+    assert sleeper.poll() is None
+    assert "Reconnect every MCP client" not in capsys.readouterr().out, "a plain run with nothing to stop is silent"
+
+
+def test_a_plain_install_never_stops_a_newer_daemon(
+    installer: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    user_dir: Path,
+    sleeper: subprocess.Popen[bytes],
+) -> None:
+    _plant(user_dir, sleeper.pid, version="999.0.0", start=process_start(sleeper.pid))
 
     _upgrade(installer, monkeypatch, _project(tmp_path))
 
@@ -179,7 +235,7 @@ def test_the_check_keeps_the_callers_user_dir_under_a_pip_target(
     """The pip runtime env rewrites XDG_DATA_HOME, which would move the memory dir away from the daemon's record."""
     seen: dict[str, str] = {}
 
-    def _capture(_python: str, _target: Path, env: dict[str, str]) -> tuple[None, str]:
+    def _capture(_python: str, _target: Path, env: dict[str, str], _older_only: bool) -> tuple[None, str]:
         seen.update(env)
         return None, "captured"
 
@@ -190,3 +246,42 @@ def test_the_check_keeps_the_callers_user_dir_under_a_pip_target(
 
     assert seen["XDG_DATA_HOME"] == str(tmp_path / "xdg")
     assert seen["PYTHONPATH"].startswith(str(tmp_path / "pt") + os.pathsep)
+
+
+def test_the_upgrade_stops_the_older_daemon_before_the_project_is_set_up(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2E-INC-131 a: the stop ran AFTER update-project and the doctor, so each of them met the old daemon
+    (daemon_version_mismatch x4, doctor FAIL memory_backend). It runs right after the packages are installed."""
+    from tests._install_trw_main_support import drive_main, make_project
+
+    run = drive_main(installer, monkeypatch, make_project(tmp_path), extra_argv=("--upgrade",))
+
+    assert "stop_daemon" in run.order
+    assert run.order.index("stop_daemon") < run.order.index("project_setup")
+    assert run.order.index("stop_daemon") < run.order.index("doctor")
+    assert run.order.count("stop_daemon") == 1  # one drain path, not a second one
+
+
+def test_a_plain_install_over_an_existing_one_drains_before_project_setup(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The strictly-older restriction is pinned by the real-stop tests above; this pins where the drain runs."""
+    from tests._install_trw_main_support import drive_main, make_project
+
+    run = drive_main(installer, monkeypatch, make_project(tmp_path))
+
+    assert run.order.count("stop_daemon") == 1
+    assert run.order.index("stop_daemon") < run.order.index("project_setup")
+
+
+def test_a_fresh_plain_install_does_not_drain(
+    installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests._install_trw_main_support import drive_main
+
+    monkeypatch.setattr(installer, "_probe_installed_version", lambda *_a, **_k: None)
+
+    run = drive_main(installer, monkeypatch, _fresh_project(tmp_path))
+
+    assert "stop_daemon" not in run.order

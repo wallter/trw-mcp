@@ -58,7 +58,7 @@ class StoreRefusal(str, Enum):
     #: verify() hit its deadline: unproven, not disproven -- never CORRUPT (PRD-QUAL-147 FR10 P2).
     TIMEOUT = "storage_verify_timeout"
     PUBLISH_UNCERTAIN = "storage_publication_uncertain"
-    #: FR16: an older supported mailbox (v3, v4 or v5) under a v6 build. Refused, file unchanged; the upgrade is explicit.
+    #: FR16: an older supported mailbox (v3-v6) under a v7 build. Refused, file unchanged; the upgrade is explicit.
     UPGRADE_REQUIRED = "mailbox_upgrade_required"
     UPGRADE_NOT_QUIESCENT = "upgrade_not_quiescent"
     ROLLBACK_WOULD_DROP_TRAFFIC = "rollback_would_drop_traffic"

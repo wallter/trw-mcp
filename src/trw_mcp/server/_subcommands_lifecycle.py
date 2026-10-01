@@ -337,7 +337,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     refused: list[Path] = []
     if memory:
         try:
-            deleted = _uninstall_memory.delete_checkout_memory(memory)
+            deleted = _uninstall_memory.delete_checkout_memory(memory, target / ".trw")
         except (_uninstall_memory.MemoryDeleteRefusedError, OSError) as exc:
             # Before any file goes: the grant that --delete-memory needs lives in .trw.
             print(f"  --delete-memory: {exc}; no files were removed", file=sys.stderr)

@@ -1,0 +1,1 @@
+{"ahr": "1.0-rc.1", "type": "event", "event_id": "EV-0001-001", "handoff_id": "01J9ZK5W1STD000000000001", "seq": 1, "event": "offered", "actor": {"id": "worker-w1", "kind": "agent", "capability_tier": "balanced", "session": "s-7f3a"}, "at": "2026-09-28T21:10:00Z", "record_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"}

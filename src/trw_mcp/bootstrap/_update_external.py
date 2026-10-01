@@ -33,6 +33,7 @@ def _run_auto_maintenance(
     other threads share, are never touched (B71-118).
     """
     from trw_mcp.state._project_root_binding import installing_into
+    from trw_mcp.state._store_selection import DaemonBudgetExhaustedError
 
     try:
         from trw_mcp.models.config import get_config
@@ -51,6 +52,13 @@ def _run_auto_maintenance(
                     fix = f" \u2014 run: {embedder['fix']}" if embedder.get("fix") else ""
                     result["warnings"].append(f"Memory daemon cannot encode: {embedder.get('reason')}{fix}")
 
+    except DaemonBudgetExhaustedError as exc:  # FB-INSTALL-07: a just-restarted daemon is loading its model
+        _logger.warning("auto_maintenance_daemon_warming", error=str(exc), target_dir=str(target_dir))
+        result["warnings"].append(
+            "The memory daemon did not answer within the install's budget: it may still be loading its embedding model "
+            "(typically about 30 s after a restart), so this update continued without recalled learnings and without the "
+            "embedding check, and the first recall will be slow. Run `trw-mcp doctor` in a minute to confirm."
+        )
     except Exception as exc:  # justified: boundary — auto-maintenance failure must not block update
         _logger.warning("auto_maintenance_failed", error=str(exc), target_dir=str(target_dir), exc_info=True)
         result["warnings"].append(f"Auto-maintenance skipped: {exc}")

@@ -71,14 +71,14 @@ def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> st
 
     Default (no args) diffs the working tree against ``HEAD`` — the original
     contract. PRD-CORE-213-FR04 extends this with:
-      - ``base``: diff ``<base>..HEAD`` (the run's recorded base ref) instead of
-        the uncommitted ``HEAD`` diff, so committed transitions are visible.
+      - ``base``: diff the working tree against ``<base>`` (the run's recorded base
+        commit), so transitions committed since the base AND uncommitted ones are visible.
       - ``paths``: a path-limited diff (``git diff ... -- <paths>``) so the
         transition detector's cost is bounded by the PRD directory (NFR03).
     All arguments are trusted internal literals / repo-relative paths — never
     caller-tainted shell input.
     """
-    cmd = ["git", "diff", f"{base}..HEAD" if base else "HEAD"]
+    cmd = ["git", "diff", base or "HEAD"]
     if paths:
         cmd.append("--")
         cmd.extend(paths)

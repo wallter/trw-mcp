@@ -57,6 +57,23 @@ def store_health(trw_dir: Path) -> NamespaceHealth:
     return store.health(namespace)
 
 
+def store_vectors_outside_active_space(trw_dir: Path) -> int | None:
+    """Stored vectors in this checkout's namespace that dense recall skips; ``None`` when not measured.
+
+    ``None`` covers an unreachable store and a daemon that has not loaded its model (the count is unknown until it
+    has), never zero (FB-INSTALL-05).
+    """
+    from trw_mcp.state import _store_selection
+
+    try:
+        with _store_selection.measuring_only():
+            store, namespace = _store_selection.selected_store(trw_dir)
+        coverage = store.coverage(namespace)
+    except (StoreUnavailableError, ValueError):
+        return None  # trw-fail-silent-allow: None is "not measured", which the caller treats as no information
+    return coverage["outside_active_space"] if coverage else None
+
+
 def read_store_counts(trw_dir: Path) -> StoreCounts | None:
     """Return the checkout's entry counts, or ``None`` when the store was not read.
 

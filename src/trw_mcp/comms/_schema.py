@@ -1,7 +1,7 @@
-"""Schema v6 (v3 plus fixed v4, v5 and v6 steps) and read-only correspondence validation.
+"""Schema v7 (v3 plus fixed v4, v5, v6 and v7 steps) and read-only correspondence validation.
 
-One DDL path: a fresh v6 mailbox is the v3 DDL followed by ``V4_STEPS``, ``V5_STEPS`` and
-``V6_STEPS``, which is exactly what the explicit upgrade applies from v3, v4 or v5, so
+One DDL path: a fresh v7 mailbox is the v3 DDL followed by ``V4_STEPS``, ``V5_STEPS``,
+``V6_STEPS`` and ``V7_STEPS``, which is exactly what the explicit upgrade applies from v3-v6, so
 migrated and fresh files carry identical ``sqlite_master`` text (PRD-CORE-274 FR16,
 PRD-CORE-322 FR05). The expected text for each version is derived by running that
 path in memory, never hand-maintained.
@@ -38,12 +38,12 @@ from trw_mcp.comms._policy import MAX_COUNTER, REFUSALS
 #: first read, the code_index pattern (commit 9cbb148a8, PRD-QUAL-147 FR10).
 VERIFY_DEADLINE_S: float = 5.0
 
-#: One-way: a mailbox created or upgraded by this build is v6 and a v5 reader refuses it
+#: One-way: a mailbox created or upgraded by this build is v7 and an older reader refuses it
 #: (``unsupported schema version; no implicit migration``). The explicit ``rollback`` restores the
-#: pre-upgrade v5 file; nothing downgrades a v6 mailbox in place.
-SCHEMA_VERSION = 6
+#: pre-upgrade file; nothing downgrades a v7 mailbox in place.
+SCHEMA_VERSION = 7
 #: Stored versions this build refuses ``mailbox_upgrade_required`` and upgrades from.
-UPGRADABLE_FROM = ("3", "4", "5")
+UPGRADABLE_FROM = ("3", "4", "5", "6")
 V3_SCHEMA = """
 CREATE TABLE schema_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE groups (
@@ -88,9 +88,19 @@ V5_STEPS: tuple[str, ...] = (
     "CREATE TABLE handoff_reports (message_id TEXT PRIMARY KEY,next_read TEXT NOT NULL,reported_at REAL NOT NULL)",
 )
 #: The PRD-CORE-342 FR07 step: the sender's W3C traceparent, an opaque id outside retry identity. Additive
-#: and nullable; old rows read NULL. (PRD-CORE-349's ahr_events table is a later v7, not this step.)
+#: and nullable; old rows read NULL.
 V6_STEPS: tuple[str, ...] = ("ALTER TABLE admissions ADD COLUMN traceparent TEXT",)
-#: The endpoint protocol a v4, v5 or v6 build records at enroll. v5 changes no endpoint
+#: The PRD-CORE-349 FR01 step: the append-only AHR event log (one table; the handoff and read-back bytes
+#: ride on their own event rows) and its subject and carrier-message indexes. Additive only.
+V7_STEPS: tuple[str, ...] = (
+    "CREATE TABLE ahr_events (handoff_id TEXT NOT NULL,seq INTEGER NOT NULL,message_id TEXT NOT NULL,"
+    "event_id TEXT NOT NULL,event TEXT NOT NULL,actor TEXT NOT NULL,at TEXT NOT NULL,subject TEXT NOT NULL,"
+    "event_digest TEXT NOT NULL,event_doc BLOB NOT NULL,record BLOB,"
+    "PRIMARY KEY(handoff_id,seq),UNIQUE(handoff_id,event_id))",
+    "CREATE INDEX ahr_events_subject ON ahr_events(subject)",
+    "CREATE INDEX ahr_events_message ON ahr_events(message_id)",
+)
+#: The endpoint protocol a v4-v7 build records at enroll. v5-v7 change no endpoint
 #: column or meaning, so the enrolment protocol stays 4 and upgraded rows stay valid.
 ENDPOINT_PROTOCOL = 4
 
@@ -104,6 +114,8 @@ def ddl_statements(version: int) -> list[str]:
         statements += V5_STEPS
     if version >= 6:
         statements += V6_STEPS
+    if version >= 7:
+        statements += V7_STEPS
     return statements
 
 

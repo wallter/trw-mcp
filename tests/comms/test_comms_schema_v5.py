@@ -338,8 +338,18 @@ def test_a_v4_file_carrying_a_handoff_fact_is_corrupt_and_is_never_upgraded(form
     [
         pytest.param("4", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v5-file-stamped-4"),
         pytest.param("3", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v5-file-stamped-3"),
-        pytest.param("5", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="v6-file-stamped-5"),
-        pytest.param("7", _store.StoreRefusal.SCHEMA_MISMATCH, _store.StoreRefusal.SCHEMA_MISMATCH, id="future-7"),
+        pytest.param(
+            "5", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="current-file-stamped-5"
+        ),
+        pytest.param(
+            "6", _store.StoreRefusal.UPGRADE_REQUIRED, _store.StoreRefusal.CORRUPT, id="current-file-stamped-6"
+        ),
+        pytest.param(
+            str(_schema.SCHEMA_VERSION + 1),
+            _store.StoreRefusal.SCHEMA_MISMATCH,
+            _store.StoreRefusal.SCHEMA_MISMATCH,
+            id="future",
+        ),
         pytest.param("2", _store.StoreRefusal.SCHEMA_MISMATCH, _store.StoreRefusal.SCHEMA_MISMATCH, id="ancient-2"),
     ],
 )

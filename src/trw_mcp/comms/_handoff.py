@@ -42,6 +42,7 @@ _OPEN = (
 
 
 _BRANCH_AT_SHA = re.compile(r".+@[0-9a-fA-F]{7,40}")
+_DIGEST_FRAGMENT = re.compile(r"#sha256:[0-9a-f]{64}$")
 
 
 def pointer_resolves(pointer: object) -> bool:
@@ -52,6 +53,8 @@ def pointer_resolves(pointer: object) -> bool:
     names nothing is not read back as ``verified``).
     """
     text = str(pointer).strip() if pointer is not None else ""
+    # PRD-CORE-349: an AHR report pointer is ``<path>#sha256:<hex>``; the fragment binds content, not location.
+    text = _DIGEST_FRAGMENT.sub("", text)
     # branch@SHA names a commit, not a file: the part after the last '@' is a hex abbreviation. A file name that merely
     # contains '@' (docs/a@b.md) is still a path and is checked.
     if not text or _BRANCH_AT_SHA.fullmatch(text) or ("/" not in text and "." not in text):
@@ -90,7 +93,11 @@ def display_next_read(value: object) -> tuple[str | None, bool]:
 
 
 def derive_handoff(
-    row: sqlite3.Row | Mapping[str, Any], facts: Mapping[str, float], pointer: object
+    row: sqlite3.Row | Mapping[str, Any],
+    facts: Mapping[str, float],
+    pointer: object,
+    *,
+    ahr: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """FR01: the handoff view of one admission row, read only from its recorded facts.
 
@@ -102,6 +109,9 @@ def derive_handoff(
     not the string ``none``, which is a valid member id). A non-request row has no
     handoff view. Runtime callers: ``_inbox_page._project`` (``trw_inbox`` status)
     and :func:`open_handoffs` (``trw_status`` via ``formation._stall.stall_scan``).
+
+    PRD-CORE-349 FR07: an AHR request also carries its body-free ``ahr`` block (handoff id, tier,
+    replayed state, owner by state, read-back disposition, fork), built by ``_ahr_events.view``.
     """
     if row["kind"] != "request":
         return None
@@ -124,6 +134,8 @@ def derive_handoff(
     }
     if escaped:
         view["next_read_escaped"] = True
+    if ahr is not None:
+        view["ahr"] = dict(ahr)
     return view
 
 
@@ -158,6 +170,17 @@ def handoff_inputs(
         )
     )
     return facts, pointers
+
+
+def _ahr_view(conn: sqlite3.Connection, message_id: str, group_id: str) -> dict[str, Any] | None:
+    """The AHR block for the board; a log that does not replay is the board's not_measured boundary."""
+    from trw_mcp.comms._ahr_events import view  # lazy: keeps the board's import of this module light
+    from trw_mcp.comms._store import StoreError
+
+    try:
+        return view(conn, message_id, group_id)
+    except StoreError as exc:
+        raise ValueError("a stored AHR log does not replay") from exc
 
 
 def open_handoffs(
@@ -200,12 +223,15 @@ def open_handoffs(
             raise ValueError("a request has a non-text message id")
         # Always read both tables, so an empty page still proves the pointer table exists.
         facts, pointers = handoff_inputs(conn, [row[0] for row in rows])
+        ahr = {row[0]: _ahr_view(conn, row[0], group_id) for row in rows}
     finally:
         conn.execute("ROLLBACK")
     listed: list[dict[str, Any]] = []
     for message_id, sender, recipient, kind, admitted_at in rows:
         parties = {"sender_member_id": sender, "recipient_member_id": recipient}
-        view = derive_handoff({"kind": kind, **parties}, facts[message_id], pointers.get(message_id))
+        view = derive_handoff(
+            {"kind": kind, **parties}, facts[message_id], pointers.get(message_id), ahr=ahr[message_id]
+        )
         age = int(max(0.0, now - _finite(admitted_at)))
         listed.append({"message_id": message_id, **parties, "age_seconds": age, **(view or {})})
     return listed, total - len(listed)

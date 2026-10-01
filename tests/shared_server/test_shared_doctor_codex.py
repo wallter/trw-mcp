@@ -20,7 +20,13 @@ _OK = "shared trw-mcp on"
 
 
 def _run(tmp_path: Path, *, enabled: bool = True) -> tuple[str, str]:
-    cfg = SimpleNamespace(trw_dir=".trw", shared_mcp=SharedMcpConfig(enabled=enabled, envs_dir=str(tmp_path / "envs")))
+    # embeddings_enabled off: these rows are about the Codex launcher; the env-extras half of the row
+    # (SWAP-EXTRAS-AUTOSTART) has its own tests.
+    cfg = SimpleNamespace(
+        trw_dir=".trw",
+        embeddings_enabled=False,
+        shared_mcp=SharedMcpConfig(enabled=enabled, envs_dir=str(tmp_path / "envs")),
+    )
     result = check_shared_mcp(tmp_path, cfg)
     return result.status, result.message
 

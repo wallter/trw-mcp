@@ -37,6 +37,7 @@ import structlog
 from trw_memory._tree_removal import remove_tree
 
 from trw_mcp.models.config._fields_shared_mcp import SharedMcpConfig
+from trw_mcp.shared_server import _embeddings
 from trw_mcp.shared_server._distill_spec import _distill_spec
 from trw_mcp.shared_server._records import (
     STABLE,
@@ -60,7 +61,7 @@ logger = structlog.get_logger(__name__)
 def _run(argv: list[str], *, env: dict[str, str] | None = None) -> str:
     done = subprocess.run(argv, capture_output=True, text=True, timeout=600, check=False, env=env)  # noqa: S603 -- fixed argv
     if done.returncode != 0:
-        raise SharedServerError(f"`{' '.join(argv)}` failed ({done.returncode}): {done.stderr.strip()[-500:]}")
+        raise SharedServerError(f"`{' '.join(argv)}` failed ({done.returncode}): {done.stderr.strip()[-1200:]}")
     return done.stdout.strip()
 
 
@@ -164,7 +165,13 @@ def _unusable(venv: Path) -> SharedServerError:
 
 
 def build_version_venv(
-    paths: SharedPaths, env: str, version: str, config: SharedMcpConfig, *, with_distill: str | None = None
+    paths: SharedPaths,
+    env: str,
+    version: str,
+    config: SharedMcpConfig,
+    *,
+    with_distill: str | None = None,
+    embeddings: bool = True,
 ) -> Path:
     """``<envs_dir>/<env>/venv-<version>`` with trw-mcp==*version* and trw-distill (T2 hints) from the wheelhouse.
 
@@ -179,6 +186,11 @@ def build_version_venv(
     ``trw-mcp env gc`` removes the ones no env uses (dry run unless ``--apply``). A venv absent at the path gets trw-mcp and trw-distill (*with_distill*, else the
     highest compatible wheelhouse wheel) installed offline, and only that new dir is removed if anything fails.
     With no distill wheel and no *with_distill*, trw-mcp alone is installed and stderr says distill was skipped.
+
+    With *embeddings* (the project's ``embeddings_enabled``) every returned venv also has ``trw-memory[all]`` at its
+    own trw-memory version: a venv without sentence-transformers would serve keyword-only recall silently. A failed
+    extras install refuses the swap, naming what is missing and how to fetch it (``_embeddings.install``); a new
+    venv is then removed like any failed build, an existing one is kept.
     """
     wheelhouse = wheelhouse_for(config)
     distill = _distill_spec(wheelhouse, with_distill)  # validates --with before any probe
@@ -195,6 +207,8 @@ def build_version_venv(
             fork = forked_venv(venv, distill, pinned=pinned)
             if fork is None:
                 reuse_venv(venv, wheelhouse, distill, pinned=pinned)
+                if embeddings:
+                    _embeddings.install(python, wheelhouse)
                 return python
             print(f"trw-distill differs from {venv}; using {fork}; old venv kept at {venv}", file=sys.stderr)
             target = fork
@@ -202,6 +216,8 @@ def build_version_venv(
                 if not (distill and fork_current(fork / "bin" / "python", distill.partition("==")[2])):
                     raise _unusable(fork)
                 reuse_venv(fork, wheelhouse, distill, pinned=pinned)
+                if embeddings:
+                    _embeddings.install(fork / "bin" / "python", wheelhouse)
                 return fork / "bin" / "python"
         if distill is None:
             print(
@@ -211,6 +227,8 @@ def build_version_venv(
         try:  # target was absent under the lock: this call created it, so only it is removed on failure
             _run(["uv", "venv", "--quiet", str(target)])
             _pip_install(python, wheelhouse, [f"trw-mcp=={version}", *([distill] if distill else [])])
+            if embeddings:
+                _embeddings.install(python, wheelhouse)
         except BaseException:
             remove_tree(target, purpose="failed version venv build")
             raise

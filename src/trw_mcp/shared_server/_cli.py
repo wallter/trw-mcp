@@ -186,7 +186,12 @@ def run_swap(args: argparse.Namespace) -> None:
             python = resolve_python(args.python)
         else:
             python = build_version_venv(
-                paths, env, args.swap_version, config.shared_mcp, with_distill=args.with_distill
+                paths,
+                env,
+                args.swap_version,
+                config.shared_mcp,
+                with_distill=args.with_distill,
+                embeddings=bool(getattr(config, "embeddings_enabled", True)),
             )
         expect = args.expect_version or args.swap_version
         print(swap(paths, env, python, project_root=project_root, expect=expect, pythonpath=pythonpath))

@@ -149,3 +149,42 @@ def outside_active_space_note(trw_dir: Path) -> str:
     if outside is None:
         return "; vectors outside the active space: unmeasured until the daemon loads its model"
     return f"; {outside} stored vector(s) outside the active space (dense recall skips them)"
+
+
+#: Below this share of stored vectors in the active space, retrieval is degraded and the fix is a re-embed.
+COVERAGE_WARN_BELOW = 0.95
+REEMBED_COMMAND = "trw-mcp memory reembed"
+
+
+def coverage_verdict(trw_dir: Path) -> tuple[str, str]:
+    """``(status, text)`` for the doctor row's vector-space half: WARN below 95% in the active space, with the fix.
+
+    The text is :func:`outside_active_space_note` plus, when the share of vectors in the active space is below
+    :data:`COVERAGE_WARN_BELOW`, the exact command (FB-INSTALL-05). An unmeasured count never warns.
+    """
+    from trw_mcp.state._store_selection import StoreUnavailableError, selected_store
+
+    note = outside_active_space_note(trw_dir)
+    try:
+        store, namespace = selected_store(trw_dir)
+        coverage = store.coverage(namespace)
+    except (StoreUnavailableError, ValueError):
+        return (
+            "PASS",
+            note,
+        )  # trw-fail-silent-allow: the note already says the count is unmeasured; unmeasured never warns
+    outside = coverage["outside_active_space"] if coverage else None
+    active = coverage["active_space"] if coverage else None
+    if not outside or active is None:
+        return "PASS", note
+    share = active / (active + outside)
+    if share >= COVERAGE_WARN_BELOW:
+        return "PASS", note
+    return "WARN", f"{note}; only {share:.0%} of stored vectors are in the active space; fix: {REEMBED_COMMAND}"
+
+
+def retrieval_doctor_row(components: tuple[RetrievalComponent, ...], trw_dir: Path) -> tuple[str, str]:
+    """:func:`retrieval_row` plus the vector-space half: WARN also when under 95% of vectors are in the active space."""
+    status, message = retrieval_row(components)
+    space_status, space_text = coverage_verdict(trw_dir)
+    return ("WARN" if space_status == "WARN" else status), message + space_text

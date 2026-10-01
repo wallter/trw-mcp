@@ -144,7 +144,7 @@ def acknowledge(conn: sqlite3.Connection, rows: list[sqlite3.Row], now: float) -
         conn.execute("UPDATE admissions SET state=? WHERE message_id=?", (MessageState.ACKED.value, row["message_id"]))
 
 
-def _handoff_rows(
+def handoff_rows(
     conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], *, as_sender: bool
 ) -> list[tuple[sqlite3.Row, dict[str, float]]]:
     """Whole-batch authorization for a handoff write, with each row's recorded facts.
@@ -153,7 +153,7 @@ def _handoff_rows(
     and not also its recipient (complete): an owner never verifies its own report. A
     row outside the caller's reach refuses ``handoff_not_authorized`` before its kind is
     looked at, so a non-party learns nothing about it. Runtime callers: :func:`accept`,
-    :func:`report`, :func:`complete`.
+    :func:`report`, :func:`complete`, and ``_inbox_page`` for the PRD-CORE-349 AHR actions.
     """
     checked: list[tuple[sqlite3.Row, dict[str, float]]] = []
     for message_id in ids:
@@ -179,7 +179,7 @@ def accept(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], now
     refuses ``handoff_not_authorized``, as ACK refuses it. Runtime caller:
     ``_inbox_page.inbox_action`` for ``trw_inbox(action="accept")``.
     """
-    checked = _handoff_rows(conn, binding, ids, as_sender=False)
+    checked = handoff_rows(conn, binding, ids, as_sender=False)
     if any(row["state"] == MessageState.EXPIRED for row, _facts in checked):
         raise AdmissionError("handoff_not_authorized")
     acknowledge(conn, [row for row, _facts in checked], now)
@@ -197,7 +197,7 @@ def report(conn: sqlite3.Connection, binding: CallerBinding, message_id: str, ne
     """
     if not valid_next_read(next_read):
         raise AdmissionError("invalid_next_read")
-    ((row, facts),) = _handoff_rows(conn, binding, [message_id], as_sender=False)
+    ((row, facts),) = handoff_rows(conn, binding, [message_id], as_sender=False)
     if "accepted" not in facts:
         raise AdmissionError("handoff_not_accepted")
     if "reported" in facts:
@@ -220,7 +220,7 @@ def complete(conn: sqlite3.Connection, binding: CallerBinding, ids: list[str], n
     does not resolve under the project root (E2E-INC-092), for the sender to check.
     Runtime caller: ``_inbox_page.inbox_action`` for ``trw_inbox(action="complete")``.
     """
-    checked = _handoff_rows(conn, binding, ids, as_sender=True)
+    checked = handoff_rows(conn, binding, ids, as_sender=True)
     if any("reported" not in facts for _row, facts in checked):
         raise AdmissionError("handoff_not_reported")
     for row, facts in checked:

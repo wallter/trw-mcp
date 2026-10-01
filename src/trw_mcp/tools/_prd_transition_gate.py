@@ -439,22 +439,20 @@ def _read_run_yaml(run_path: Path, reader: FileStateReader) -> dict[str, object]
     return data if isinstance(data, dict) else {}
 
 
-def _run_base_ref(run_data: dict[str, object]) -> str | None:
-    """Best-effort recorded base ref for a scoped diff; None => ``git diff HEAD``.
+_OBJECT_ID = re.compile(r"[0-9a-f]{7,64}")
 
-    TODO(PRD-CORE-213 OQ-002 / follow-up FR08): the run-creation writer
-    (``tools/orchestration.py`` — dirty/other-workstream-owned at audit time, so
-    NOT edited here) records no ``base_commit`` today. Under this repo's
-    commit-frequently policy a session usually COMMITS the ``status: implemented``
-    edit before ``trw_deliver``, so the uncommitted ``git diff HEAD`` fallback
-    MISSES the majority case. Closing this needs the writer to persist
-    ``git rev-parse HEAD`` at ``trw_init`` (fail-open). RISK-005 re-rated to
-    High-probability/Medium-impact pending that follow-up. This reads an optional
-    ``base_ref``/``base_commit`` key so the fix is drop-in once the writer lands.
+
+def _run_base_ref(run_data: dict[str, object]) -> str | None:
+    """The run's recorded base commit for the transition diff; None => ``git diff HEAD``.
+
+    ``trw_init`` records the checkout HEAD as ``base_commit`` (PRD-CORE-213 FR08), so a
+    ``status: implemented`` edit committed before ``trw_deliver`` is still diffed. Only a
+    hex object id is accepted: the value is passed to git as an argument, and a hand-edited
+    run.yaml must not be able to inject an option.
     """
     for key in ("base_ref", "base_commit"):
         value = run_data.get(key)
-        if isinstance(value, str) and value.strip():
+        if isinstance(value, str) and _OBJECT_ID.fullmatch(value.strip()):
             return value.strip()
     return None
 

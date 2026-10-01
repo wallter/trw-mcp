@@ -51,6 +51,19 @@ REFUSALS = frozenset(
         "handoff_not_reported",
         "handoff_already_reported",
         "invalid_next_read",
+        # PRD-CORE-349 AHR store refusals; a v7 mailbox only, so no older reader sees them.
+        "ahr_invalid",
+        "ahr_body_conflict",
+        "ahr_tier_not_supported",
+        "ahr_unaddressed_not_supported",
+        "ahr_party_mismatch",
+        "ahr_readback_required",
+        "ahr_lifecycle_refused",
+        "ahr_not_offered",
+        "ahr_event_conflict",
+        "ahr_ref_not_local",
+        "ahr_ref_unverified",
+        "ahr_expiry_exceeds_ttl",
     }
 )
 

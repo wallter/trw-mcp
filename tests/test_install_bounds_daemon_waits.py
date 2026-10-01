@@ -184,3 +184,24 @@ def test_auto_maintenance_draws_on_the_updates_budget_not_a_fresh_one(
     assert any("Auto-maintenance skipped" in w or "budget" in w for w in result.get("warnings", [])), result.get(
         "warnings"
     )
+
+
+def test_a_budget_exhausted_by_a_cold_daemon_is_reported_as_warming_not_as_a_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck_daemon: Any
+) -> None:
+    """FB-INSTALL-07: right after the installer restarts the daemon it loads its model for tens of seconds; the update
+    must say that (and what it skipped), not 'Auto-maintenance skipped: ...' with the exception text."""
+    from trw_mcp.bootstrap._update_external import _run_auto_maintenance
+    from trw_mcp.models.config import get_config
+
+    monkeypatch.setattr(get_config(), "embeddings_enabled", True)
+    target = tmp_path / "project"
+    (target / ".trw").mkdir(parents=True)
+    result: dict[str, list[str]] = {"warnings": []}
+
+    _run_guarded(lambda: _run_auto_maintenance(target, result))
+
+    [warning] = result["warnings"]
+    assert "Auto-maintenance skipped" not in warning
+    assert "may still be loading its embedding model" in warning and "trw-mcp doctor" in warning
+    assert "budget" in warning

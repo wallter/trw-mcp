@@ -11,11 +11,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-InboxAction = Literal["fetch", "ack", "status", "accept", "report", "complete"]
+InboxAction = Literal[
+    "fetch", "ack", "status", "accept", "report", "complete", "read_back", "answer", "decline", "offer_withdraw"
+]
+#: PRD-CORE-349 FR03/FR04: the AHR-only handoff writes (a request offered with trw_send(handoff=...)).
+AHR_ACTIONS = frozenset({"read_back", "answer", "decline", "offer_withdraw"})
 #: PRD-CORE-322 FR02-FR04: the handoff writes. The recipient accepts and reports, the sender completes.
-HANDOFF_ACTIONS = frozenset({"accept", "report", "complete"})
+HANDOFF_ACTIONS = frozenset({"accept", "report", "complete"}) | AHR_ACTIONS
 #: Actions that run the receiver incarnation fence (FR12), so a displaced recipient is refused.
-RECEIVER_ACTIONS = frozenset({"fetch", "ack", "accept", "report"})
+RECEIVER_ACTIONS = frozenset({"fetch", "ack", "accept", "report", "read_back", "decline"})
+#: Sender handoff writes: fenced like trw_send, so a displaced sender cannot close or change an offer.
+SENDER_ACTIONS = frozenset({"complete", "answer", "offer_withdraw"})
 MessageKind = Literal["request", "reply", "status"]
 DeliveryClass = Literal["on_demand", "interrupt", "on_idle"]
 

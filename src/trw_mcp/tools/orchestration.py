@@ -32,6 +32,7 @@ from trw_mcp.tools import _orchestration_init_profile as _init_profile
 from trw_mcp.tools._ceremony_heartbeat import compute_heartbeat_result
 from trw_mcp.tools._orchestration_checkpoint import execute_checkpoint
 from trw_mcp.tools._orchestration_helpers import (
+    _checkout_head,
     _deploy_frameworks,
     _deploy_templates,
     _get_bundled_file,
@@ -246,6 +247,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
             artifacts=resolved_artifacts,
             protected=protected,
             target_utc=adv.target_utc,
+            base_commit=_checkout_head(project_root),
         )
         from trw_mcp.state._run_yaml_update import complete_run_yaml
 
