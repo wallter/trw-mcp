@@ -16,11 +16,12 @@ from trw_mcp.state._factory_receipt_gate import (
     STATUS_HINT,
     factory_payload_refusal,
     lifecycle_refusal,
+    subject_sha_refusal,
     unresolved_receipts,
 )
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._no_active_run import is_no_active_run, no_active_run_remedy
-from trw_mcp.state._paths import TRWCallContext, resolve_run_path, resolve_trw_dir
+from trw_mcp.state._paths import TRWCallContext, resolve_project_root, resolve_run_path, resolve_trw_dir
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.tools._orchestration_time import checkpoint_time_fields, utc_now
 
@@ -143,7 +144,9 @@ def execute_checkpoint(
             return refused
         # FACTORY-START-VALIDATE: a malformed payload (no attempt, unknown kind or key, the reader's own schema
         # violations) never enters the append-only journal. Zero I/O, so it sits with the other refusals.
-        if (problem := factory_payload_refusal(message)) is not None:
+        if (
+            problem := factory_payload_refusal(message) or subject_sha_refusal(message, resolve_project_root())
+        ) is not None:
             invalid = _not_recorded(
                 context,
                 reason="factory_payload_invalid",

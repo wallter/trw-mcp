@@ -82,6 +82,53 @@ class TestCompactionGate:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    @pytest.mark.parametrize("tool_name", ["trw_recall", "trw_deliver"])
+    async def test_a_compaction_gate_block_is_an_mcp_error_not_a_success(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path, tool_name: str
+    ) -> None:
+        """CODEX-P0-B, same class as the surface and security denials: the tool did not run, so the protocol's
+        error flag must say so. ``isError=false`` let a client that trusts it read a blocked ``trw_deliver`` as a
+        delivery."""
+        _seed_compaction_marker(tmp_path)
+        ran = False
+
+        async def call_next(_ctx: Any) -> Any:
+            nonlocal ran
+            ran = True
+            return FakeToolResult(content=[TextContent(type="text", text="ran")])
+
+        ctx = FakeMiddlewareContext(message=FakeMessage(name=tool_name), fastmcp_context=session_ctx)
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert not ran
+        assert out.structured_content is not None
+        assert out.structured_content["error"] == "post_compaction_recovery_required"
+        assert out.is_error is True, "a blocked call reported isError=false: a client reads it as a success"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_a_terminal_tool_reblocked_past_the_bound_is_still_an_mcp_error(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """A terminal act rides no escape (PRD-CORE-258-FR09): past the bound ``trw_deliver`` is blocked AGAIN by the
+        second return site, and that block is an error too."""
+        _seed_compaction_marker(tmp_path)
+
+        async def call_next(_ctx: Any) -> Any:
+            raise AssertionError("a blocked trw_deliver must never run")
+
+        ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_deliver"), fastmcp_context=session_ctx)
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            outs = [
+                await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+                for _ in range(ceremony_module._COMPACTION_GATE_MAX_BLOCKS + 2)
+            ]
+
+        assert [o.is_error for o in outs] == [True] * len(outs)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_compaction_gate_reads_real_marker_file(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:

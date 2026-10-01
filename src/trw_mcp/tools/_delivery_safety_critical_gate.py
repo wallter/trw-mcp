@@ -28,6 +28,8 @@ PRD-CORE-255-FR03/FR04):
 
 from __future__ import annotations
 
+import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -36,7 +38,7 @@ import structlog
 
 from trw_mcp.models._evidence_plans import RequiredReviewPlan, ReviewVerdict
 from trw_mcp.models._evidence_records import ReviewReceipt
-from trw_mcp.state._evidence_bound_read import EvidenceUnreadable, read_evidence_mapping
+from trw_mcp.state._evidence_bound_read import EvidenceUnreadable, read_evidence_mapping, read_evidence_text
 from trw_mcp.state.review_signoffs import trw_dir_for_run
 from trw_mcp.tools._review_adversarial_source import adversarial_source_is_verified
 from trw_mcp.tools._review_receipt_writer import ADVERSARIAL_AUDIT_RUBRIC
@@ -144,10 +146,23 @@ def _scope_from_receipts(run_path: Path) -> tuple[list[str], tuple[str, ...]]:
     CLOSED on it) while every other receipt still contributes its ids. An
     unlistable directory is reported the same way, under the stem
     ``<review receipts directory>``.
+
+    SAFETY-SCOPE-HARDEN: the directory is classified with ``lstat`` exactly as ``run.yaml`` is -- only
+    ``FileNotFoundError`` means absent (``Path.is_dir`` swallows EACCES on Python 3.13+, so an unsearchable
+    ``meta/receipts`` read as 'no receipts'), and a symlink or a non-directory in its place is UNKNOWN, never
+    followed. Each receipt is read through the bound no-follow read, not ``is_symlink`` then ``read_bytes``.
     """
     directory = run_path / "meta" / "receipts" / "review"
-    if not directory.is_dir():
+    try:
+        directory_mode = os.lstat(directory).st_mode
+    except FileNotFoundError:  # trw-fail-silent-allow: truly absent; no receipt was ever written here
         return [], ()
+    except OSError:  # justified: fail-CLOSED, a receipts directory that cannot be examined may hide receipts
+        logger.warning("safety_critical_receipt_dir_unreadable", run=str(run_path), exc_info=True)
+        return [], (_RECEIPT_DIR_LABEL,)
+    if not stat.S_ISDIR(directory_mode):  # a symlink (never followed) or a file where the directory belongs
+        logger.warning("safety_critical_receipt_dir_not_a_directory", run=str(run_path))
+        return [], (_RECEIPT_DIR_LABEL,)
     entries: list[str] = []
     unreadable: list[str] = []
     try:
@@ -159,12 +174,13 @@ def _scope_from_receipts(run_path: Path) -> tuple[list[str], tuple[str, ...]]:
         logger.warning("safety_critical_receipt_dir_unreadable", run=str(run_path), exc_info=True)
         return [], (_RECEIPT_DIR_LABEL,)
     for path in paths:
-        if path.is_symlink():  # never read a receipt through a link (it may point outside the run): fail CLOSED
-            logger.warning("safety_critical_receipt_symlink", receipt=str(path))
-            unreadable.append(path.stem)
-            continue
         try:
-            entries.extend(ReviewReceipt.model_validate_json(path.read_bytes()).prd_ids)
+            # lstat-classified, no-follow, inode-bound: a symlink (it may point outside the run), a non-file or a file
+            # swapped after classification is unreadable, never read through.
+            text = read_evidence_text(run_path, f"meta/receipts/review/{path.name}")
+            if text is None:
+                raise EvidenceUnreadable(f"{path.name} vanished after it was listed")
+            entries.extend(ReviewReceipt.model_validate_json(text).prd_ids)
         except Exception:  # justified: fail-CLOSED, the caller reports this receipt by stem; the rest still count
             logger.warning("safety_critical_receipt_scope_unreadable", receipt=str(path), exc_info=True)
             unreadable.append(path.stem)

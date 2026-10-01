@@ -503,3 +503,24 @@ def test_a_corrupt_claim_is_listed_and_released() -> None:
     os.utime(corrupt, (old, old))
     _flush([])
     assert (outbox / "20260101T000000000000Z-bad.json").exists() and not corrupt.exists()
+
+
+def test_list_shows_the_server_id_of_a_pending_record_the_server_already_accepted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """OUTBOX-RESIDUALS (3): a record with a submission_id is not an unsent report; say it was accepted and by what id."""
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+
+    _send(_FAIL)
+    [record_path] = _files("outbox")
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["submission_id"] = "sub_accepted_7"
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+    args = _build_arg_parser().parse_args(["feedback", "list"])
+    with pytest.raises(SystemExit) as done:
+        SUBCOMMAND_HANDLERS["feedback"](args)
+    assert done.value.code == 0
+    out = capsys.readouterr().out
+    assert "sub_accepted_7" in out and "accepted by the server" in out

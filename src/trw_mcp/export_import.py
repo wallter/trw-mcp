@@ -269,9 +269,12 @@ def _store_entry(
     )
 
 
-#: Statuses a new learning does not start with (E2E-INC-118: an obsolete or resolved learning came back active and
-#: resurfaced in default recall).
-_RESTORED_STATUSES = frozenset({"resolved", "obsolete"})
+#: Statuses a new learning does not start with: an obsolete, resolved or poisoned learning must not come back ``active``
+#: into default recall (E2E-INC-118).
+_RESTORED_STATUSES = frozenset({"resolved", "obsolete", "obsolete_poisoned"})
+#: A status a caller cannot give a learning (``archived`` belongs to tier lifecycle) or this version does not know is
+#: imported as ``obsolete``, which also keeps it out of default recall, and the result says so.
+_FALLBACK_STATUS = "obsolete"
 
 
 def _restore_status(trw_dir: Path, entry: dict[str, object], learning_id: str) -> list[str]:
@@ -279,10 +282,14 @@ def _restore_status(trw_dir: Path, entry: dict[str, object], learning_id: str) -
     from trw_mcp.state._memory_update import update_learning
 
     status = entry.get("status")
-    if not isinstance(status, str) or status not in _RESTORED_STATUSES:
+    if not isinstance(status, str) or status in ("", "active"):
         return []
-    done = update_learning(trw_dir, learning_id, status=status)
-    return [f"{learning_id}: status {status} not restored: {done['error']}"] if "error" in done else []
+    restored = status if status in _RESTORED_STATUSES else _FALLBACK_STATUS
+    done = update_learning(trw_dir, learning_id, status=restored)
+    if "error" in done:
+        return [f"{learning_id}: status {status} not restored: {done['error']}"]
+    # The status is a file's own text and the note is printed: show it escaped and bounded, never raw.
+    return [] if restored == status else [f"{learning_id}: status {status[:40]!r} imported as {restored}"]
 
 
 def _restore_supersession(

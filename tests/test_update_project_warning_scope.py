@@ -31,8 +31,9 @@ def test_pointer_claude_md_is_not_reported_as_missing_markers(fake_git_repo: Pat
     result = update_project(fake_git_repo, ide="claude-code")
 
     assert not [w for w in result.get("warnings", []) if "missing TRW auto-generated markers" in w]
-    # TRW 8.0: a pointer-only CLAUDE.md holds no user content and is retired.
-    assert not (fake_git_repo / "CLAUDE.md").exists()
+    # FB-INSTALL-02: a pointer-only CLAUDE.md imports AGENTS.md and is the user's adapter; it is kept and reported.
+    assert (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert "CLAUDE.md (kept: adapter imports AGENTS.md)" in result["preserved"]
 
 
 def test_an_agents_md_without_markers_that_is_not_a_pointer_still_warns(fake_git_repo: Path) -> None:

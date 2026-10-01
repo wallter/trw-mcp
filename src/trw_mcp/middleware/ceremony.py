@@ -578,6 +578,8 @@ class CeremonyMiddleware(Middleware):
                 return ToolResult(
                     content=[TextContent(type="text", text=recovery_message)],
                     structured_content=block.payload,
+                    # The tool did not run: a client trusting the protocol's error flag must not read this as a success.
+                    is_error=True,
                 )
 
             # Audit C-5: repeated blocks with no intervening session_start are

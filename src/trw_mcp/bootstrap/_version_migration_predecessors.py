@@ -13,6 +13,7 @@ and error isolation.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import structlog
@@ -131,7 +132,14 @@ def remove_proven(
     captured into ``.trw/trash``, so an edit saved in between (or a file added) keeps its bytes.
     """
     hashes = manifest_hashes or {}
+    before = {f for f in artifact.rglob("*") if f.is_file() and not f.is_symlink()} if artifact.is_dir() else {artifact}
     kept = remove_tree_if_hash(artifact, root, lambda f: recorded_digests(f, hashes, root))
+    # Every captured file is reported as trashed: the uncommitted-changes guard restores a dirty path it did not
+    # see captured (so a retired skill came back in the client mirrors the user had touched), and the CLI names
+    # only what is listed here (the nine silent skill files in feedback sub_i7UMmxUbTbsdW0eD, FB-INSTALL-03).
+    result.setdefault("trashed", []).extend(
+        f.relative_to(root).as_posix() for f in sorted(before) if not os.path.lexists(f)
+    )
     # Warnings are what the CLI prints (preserved is summarised as a count); a kept file must say why.
     result.setdefault("warnings", []).extend(f"{why}: kept" for why in kept)
 

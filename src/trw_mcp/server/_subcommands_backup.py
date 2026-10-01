@@ -123,7 +123,11 @@ def _run_backup_create(args: argparse.Namespace) -> None:
     owner = payload_trw_dir(db_path)
     policy = send_policy_all((_invoking_trw_dir(), owner))
     if owner is None or not (policy.contact and policy.backup_remote):
-        print("Local-only: the store's project and the invoking project must both allow a remote backup.")
+        print(
+            "Local-only: no remote upload was attempted because the store's project and the invoking project must both "
+            "allow contact and remote backup (platform_contact_enabled and backup_remote_enabled in their .trw/config.yaml). "
+            "The local archive above was written with its .sha256 sidecar."
+        )
         return
     uploader = _build_uploader(_load_config(), source_trw_dir=owner)
     result = asyncio.run(uploader.upload(archive.path))

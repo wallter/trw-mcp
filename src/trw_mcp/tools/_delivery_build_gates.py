@@ -372,9 +372,9 @@ def build_receipt_gate_findings(run_path: Path | None) -> tuple[str | None, str 
                 None,
             )
         return (
-            "No valid content-bound BuildReceipt exists for this run "
-            f"(reason: {outcome.reason_code}). Run project-native validation and record the server-required "
-            "tests and static_checks command_results with trw_build_check().",
+            f"No usable build check was found for this run (reason: {outcome.reason_code}). Run the project's tests and "
+            "static checks, then record the result with "
+            "trw_build_check(tests_passed=..., static_checks_clean=..., test_count=..., scope=...).",
             None,
         )
     except Exception:  # justified: resolution failure is non-positive typed evidence

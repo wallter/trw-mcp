@@ -89,3 +89,41 @@ def test_trw_status_advertises_the_detail_parameter() -> None:
     mcp = served_app()
     tools = {tool.name: tool for tool in asyncio.run(mcp._list_tools())}
     assert "detail" in tools["trw_status"].parameters["properties"]
+
+
+def test_an_unknown_detail_is_refused_not_silently_ignored(project: Path) -> None:
+    """INC-120 (b): ``detail`` used to fall through to the plain run status for any string, so a typo looked fine."""
+    from fastmcp.exceptions import ToolError
+
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    status = extract_tool_fn(make_test_server("orchestration"), "trw_status")
+    with pytest.raises(ToolError, match=r"unknown detail 'bogus'.*'surface'"):
+        status(detail="bogus")
+    with pytest.raises(ToolError, match="<withheld>") as withheld:
+        status(detail="Jane Q. Public <jane@example.com>")  # never echoed: a refusal repeats no caller value
+    assert "jane@example.com" not in str(withheld.value)
+
+
+def test_a_shared_servers_surface_carries_the_version_drift_block_and_a_stdio_server_does_not(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOTSWAP-AUTO: the operator sees what a shared server runs, that it swaps itself, and the last swap."""
+    from trw_mcp.models.config._fields_shared_mcp import SharedMcpConfig
+    from trw_mcp.shared_server import _autoswap
+    from trw_mcp.shared_server._records import SharedPaths
+
+    monkeypatch.setattr(_autoswap, "_ACTIVE", None)
+    assert "version_drift" not in _status_surface()
+
+    paths = SharedPaths.resolve(project / ".trw", SharedMcpConfig(envs_dir=str(project / "envs")))
+    _autoswap.write_last_auto_swap(
+        paths, "stable", {"from": "8.0.0", "to": "8.1.1", "at": "t", "outcome": "swapped", "from_pid": 1, "to_pid": 2}
+    )
+    active = _autoswap._Active(
+        env="stable", paths=paths, booted={"trw-mcp": "8.1.1"}, status=lambda: {"state": "watching"}
+    )
+    monkeypatch.setattr(_autoswap, "_ACTIVE", active)
+    block = _status_surface()["version_drift"]
+    assert block["booted_version"] == "8.1.1" and block["auto_swap"] == {"state": "watching"}
+    assert block["last_auto_swap"] == {"from": "8.0.0", "to": "8.1.1", "at": "t", "outcome": "swapped"}

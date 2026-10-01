@@ -92,7 +92,7 @@ class TestCheckDeliveryGates:
 
         result = check_delivery_gates(run_dir, reader)
         assert "build_gate_warning" in result
-        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
+        assert "No usable build check was found" in str(result["build_gate_warning"])
 
     def test_untyped_nested_build_event_does_not_satisfy_gate(
         self,
@@ -112,7 +112,7 @@ class TestCheckDeliveryGates:
         )
 
         result = check_delivery_gates(run_dir, reader)
-        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
+        assert "No usable build check was found" in str(result["build_gate_warning"])
 
     def test_untyped_flat_build_event_does_not_satisfy_gate(
         self,
@@ -134,7 +134,7 @@ class TestCheckDeliveryGates:
         )
 
         result = check_delivery_gates(run_dir, reader)
-        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
+        assert "No usable build check was found" in str(result["build_gate_warning"])
 
     def test_build_gate_warning_when_static_checks_failed(
         self,
@@ -246,7 +246,7 @@ class TestCheckDeliveryGates:
         assert "No substantive trw_review" in str(result["review_warning"])
         assert "complexity_unreadable" in str(result["review_warning"])
         assert "review_advisory" not in result
-        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
+        assert "No usable build check was found" in str(result["build_gate_warning"])
 
     def test_corrupt_review_yaml_is_treated_as_missing_evidence(
         self,

@@ -41,12 +41,17 @@ def _hook_entry_identity(entry: object) -> str:
 #: Claude Code's own default hook timeout, in seconds. A TRW hook's timeout above it can only be the legacy value that
 #: was written in milliseconds (5000 = 83 min); E2E-HOOK-TIMEOUT-UNITS.
 _LEGACY_TIMEOUT_FLOOR = 600
+#: The millisecond-style values TRW itself used to ship. One is below the floor (``user-prompt-submit.sh`` at 500 =
+#: 8.3 min on every prompt), so it read as a user's choice and survived the migration (FB-INSTALL-04). Matched by
+#: TRW's own command, so a user's hook at the same number is never touched.
+_LEGACY_SHIPPED_TIMEOUTS = frozenset({500, 3000, 5000, 10000})
 
 
 def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[object]) -> None:
     """Give a TRW hook (matched by command) the bundled timeout when its own is a legacy millisecond value.
 
-    The only in-place rewrite the merge does: a value at or below 600 s is the user's choice and is kept.
+    The only in-place rewrite the merge does: a value at or below 600 s is the user's choice and is kept, except
+    the exact values TRW itself shipped (:data:`_LEGACY_SHIPPED_TIMEOUTS`).
     """
     bundled_timeouts = {
         str(hook.get("command")): hook["timeout"]
@@ -62,7 +67,11 @@ def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[obj
             if not isinstance(hook, dict):
                 continue
             timeout, command = hook.get("timeout"), str(hook.get("command"))
-            if isinstance(timeout, int) and timeout > _LEGACY_TIMEOUT_FLOOR and command in bundled_timeouts:
+            if (
+                isinstance(timeout, int)
+                and (timeout > _LEGACY_TIMEOUT_FLOOR or timeout in _LEGACY_SHIPPED_TIMEOUTS)
+                and command in bundled_timeouts
+            ):
                 hook["timeout"] = bundled_timeouts[command]
 
 

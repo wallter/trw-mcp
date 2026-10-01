@@ -9,6 +9,7 @@ manual-mode receipts; the malformed one sorts BEFORE them (``0-corrupt.json``).
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -404,4 +405,89 @@ class TestReceiptNameShapes:
         declared = declared_scope(run)
         assert "PRD-ELSEWHERE" not in declared.union
         assert declared.unreadable_receipts == ("linked",)
+        assert _resolve_scope(run).value == UNKNOWN_SCOPE
+
+
+class TestReceiptDirectoryIsClassifiedNoFollow:
+    """SAFETY-SCOPE-HARDEN, receipts half: the run.yaml read was bound to ``lstat`` (only ENOENT is absent) and a
+    no-follow descriptor; the receipts that widen the scope were not. On Python 3.13+ ``Path.is_dir()`` swallows
+    EACCES, so an unsearchable ``meta/receipts`` read as 'no receipts', a smaller scope rather than an UNKNOWN one."""
+
+    def test_an_unsearchable_receipts_parent_is_unknown_not_absent(self, tmp_path: Path) -> None:
+        _write_prd(tmp_path, "PRD-SEC-999", safety_critical=True)
+        run = _seed_run(tmp_path, scope="[]")
+        _valid_receipt(run, "PRD-SEC-999")
+        parent = run / "meta" / "receipts"
+        parent.chmod(0o000)  # meta/ stays readable, so run.yaml and events.jsonl cannot fail closed for us
+        try:
+            if _readable(parent):
+                pytest.skip("running with privileges that ignore directory modes")  # skip-category: host-tool
+            assert declared_scope(run).unreadable_receipts == ("<review receipts directory>",)
+            assert _resolve_scope(run).value == UNKNOWN_SCOPE
+        finally:
+            parent.chmod(0o755)
+
+    def test_an_lstat_error_other_than_enoent_on_the_receipts_directory_is_unknown(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same rule without relying on file modes (a root-run suite cannot chmod itself out of a directory)."""
+        run = _seed_run(tmp_path, scope="[]")
+        _receipt_dir(run).mkdir(parents=True, exist_ok=True)
+        real_lstat = os.lstat
+
+        def lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+            if str(path).endswith(os.path.join("receipts", "review")):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "lstat", lstat)
+        assert declared_scope(run).unreadable_receipts == ("<review receipts directory>",)
+
+    def test_a_symlinked_receipts_directory_is_never_followed(self, tmp_path: Path) -> None:
+        _write_prd(tmp_path, "PRD-SEC-999", safety_critical=True)
+        run = _seed_run(tmp_path, scope="[]")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "a.json").write_text('{"prd_ids": ["PRD-ELSEWHERE"]}', encoding="utf-8")
+        (run / "meta" / "receipts").mkdir()
+        _receipt_dir(run).symlink_to(elsewhere, target_is_directory=True)
+
+        declared = declared_scope(run)
+        assert "PRD-ELSEWHERE" not in declared.union
+        assert declared.unreadable_receipts == ("<review receipts directory>",)
+        assert _resolve_scope(run).value == UNKNOWN_SCOPE
+
+    def test_a_file_where_the_receipts_directory_belongs_is_unknown(self, tmp_path: Path) -> None:
+        run = _seed_run(tmp_path, scope="[]")
+        (run / "meta" / "receipts").mkdir()
+        _receipt_dir(run).write_text("not a directory", encoding="utf-8")
+
+        assert _resolve_scope(run).value == UNKNOWN_SCOPE
+
+    def test_a_receipt_swapped_between_classification_and_read_is_unreadable_not_trusted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bytes parsed must be the file lstat judged: a symlink swapped in after the old ``is_symlink`` check
+        was followed by ``read_bytes``."""
+        from trw_mcp._checkout_access import open_under as real_open_under
+
+        _write_prd(tmp_path, "PRD-SEC-999", safety_critical=True)
+        run = _seed_run(tmp_path, scope="[]")
+        _valid_receipt(run, "PRD-SEC-999")
+        (receipt,) = _receipt_dir(run).glob("*.json")
+        forged = json.loads(receipt.read_text(encoding="utf-8"))
+        forged["prd_ids"] = ["PRD-ELSEWHERE"]  # a receipt that parses, so only the inode check can refuse it
+
+        def swap_then_open(anchor: Path, relative_path: str) -> int:
+            if relative_path.endswith(receipt.name):
+                replacement = receipt.with_name("swap.tmp")
+                replacement.write_text(json.dumps(forged), encoding="utf-8")
+                os.replace(replacement, receipt)  # a new inode at the judged name, after lstat
+            return real_open_under(anchor, relative_path)
+
+        monkeypatch.setattr("trw_mcp.state._evidence_bound_read.open_under", swap_then_open)
+        declared = declared_scope(run)
+
+        assert "PRD-ELSEWHERE" not in declared.union
+        assert declared.unreadable_receipts == (receipt.stem,)
         assert _resolve_scope(run).value == UNKNOWN_SCOPE

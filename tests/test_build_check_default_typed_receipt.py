@@ -91,7 +91,7 @@ def test_omitted_static_blocks_deliver_and_names_the_cause(
     assert warning is not None
     assert NOT_RECORDED_MESSAGE in warning
     assert "build_legacy_contradiction" not in warning
-    assert "No valid content-bound BuildReceipt" not in warning
+    assert "No usable build check was found" not in warning
 
 
 @pytest.mark.parametrize(

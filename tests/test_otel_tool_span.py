@@ -161,7 +161,10 @@ def test_raised_exception_text_is_scrubbed_before_any_file(
     assert span.attributes[OPERATION_NAME] == "execute_tool" and TOOL_CALL_ID in span.attributes
     assert CANARY in (span.status.description or "") or any(e.name == "exception" for e in span.events)
     path = tmp_path / "traces-trw-mcp-1-20260929.jsonl"
-    ScrubbingSpanExporter(OtlpJsonFileExporter(path)).export(list(otel_spans.get_finished_spans()))
+    st = tmp_path.stat()
+    ScrubbingSpanExporter(OtlpJsonFileExporter(path, (st.st_dev, st.st_ino))).export(
+        list(otel_spans.get_finished_spans())
+    )
     text = path.read_text()
     assert CANARY not in text
     assert '"error.type"' in text

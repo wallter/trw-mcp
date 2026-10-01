@@ -66,7 +66,7 @@ def write_claude_code_agents_md(target_dir: Path, result: dict[str, list[str]]) 
 
 
 def retire_claude_md(target_dir: Path, result: dict[str, list[str]]) -> None:
-    """Remove a TRW-only root ``CLAUDE.md``; report (never touch) one with user content.
+    """Remove a TRW-only root ``CLAUDE.md``; report (never touch) one with user content or a lone ``@AGENTS.md``.
 
     Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md`` exists, so a
     kept file masks the TRW block in ``AGENTS.md``. The warning says how to fix
@@ -88,6 +88,10 @@ def retire_claude_md(target_dir: Path, result: dict[str, list[str]]) -> None:
             # The bytes were captured into .trw/trash: the uncommitted-changes guard must not restore the file,
             # and update-project reports the move.
             result.setdefault("trashed", []).append("CLAUDE.md")
+    elif outcome == "adapter":
+        # The file's only content is the @AGENTS.md import: AGENTS.md still loads through it, and it is the
+        # line the warning below recommends, so it is the user's and stays. Reported, not a warning.
+        result.setdefault("preserved", []).append("CLAUDE.md (kept: adapter imports AGENTS.md)")
     elif outcome == "kept":
         result.setdefault("warnings", []).append(
             f"{path} has user content and was left untouched. TRW 8.0 writes its protocol to AGENTS.md; "

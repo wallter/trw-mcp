@@ -104,7 +104,10 @@ _CC03_ENTRY: dict[str, object] = {
         {
             "type": "command",
             "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-distill-hint.sh"',
-            "timeout": 3000,
+            # SECONDS (Claude Code's unit). 3000 was meant as 3000 ms but reads as 50 min stalling every Write/Edit.
+            # The hook bounds itself at 2.5 s (SIGALRM + _trw_bounded_python), so this is only the outer backstop:
+            # 5 s is the floor the other hooks use, and a hint that times out fails open.
+            "timeout": 5,
         }
     ],
 }

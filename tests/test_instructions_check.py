@@ -130,3 +130,31 @@ def test_check_on_a_real_project_reports_drift_and_writes_nothing(tmp_path: Path
     assert done.returncode == 1, done.stdout + done.stderr[-2000:]
     assert '"would_change": true' in done.stdout
     assert not [line for line in done.stderr.splitlines() if line.lstrip().startswith("{")], done.stderr
+
+
+@pytest.mark.parametrize(
+    ("preview", "changed"),
+    [
+        ({"status": "dry_run", "diffs": [{"file": "AGENTS.md", "diff": ""}]}, False),
+        ({"status": "dry_run", "diffs": [{"file": "AGENTS.md", "diff": "@@ -1 +1 @@\n-a\n+b\n"}]}, True),
+    ],
+)
+def test_a_real_sync_reports_whether_it_changed_anything(
+    preview: dict[str, Any], changed: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """INC-126-SYNC-CHANGED-FIELD: a no-op sync reported *_synced: True and nothing else; `changed` says it."""
+    from trw_mcp.tools import _instructions_cli
+
+    calls: list[bool] = []
+
+    def fake_render(_args: argparse.Namespace, *, dry_run: bool, force: bool) -> dict[str, Any]:
+        calls.append(dry_run)
+        return dict(preview) if dry_run else {"status": "success", "agents_md_synced": True}
+
+    monkeypatch.setattr(_instructions_cli, "_render", fake_render)
+    with pytest.raises(SystemExit) as exited:
+        _instructions_cli.run_instructions(_args(instructions_command="sync", dry_run=False, force=False))
+    assert exited.value.code == 0 and calls == [True, False]  # preview first, then the write
+    out = capsys.readouterr().out
+    assert f'"changed": {"true" if changed else "false"}' in out
+    assert '"changed_scope": ["AGENTS.md"]' in out  # codex r1/r2 KIs: the scope is the preview's own file list

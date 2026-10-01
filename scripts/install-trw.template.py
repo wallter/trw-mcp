@@ -1771,6 +1771,9 @@ def build_install_cmd(
 #: pattern may require leading whitespace: the pre-2026-09-07 `r"  *(…)"` did,
 #: which is why every matched line was in fact discarded.
 _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
+#: A child line naming a file `update-project` moved into ``.trw/trash`` (``server/_subcommands.py::_print_trashed``).
+#: The operator's own file may be among them, so the spinner must not swallow it (FB-INSTALL-03).
+_TRASH_LINE_RE = re.compile(r"^Moved to \.trw/trash:\s*")
 #: A per-file progress line, used only to advance the spinner's counter.
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
@@ -1827,6 +1830,8 @@ def run_with_progress(
                     # see after the spinner has scrolled away (e.g. an
                     # update-project refusal that left their AGENTS.md stale).
                     ui.defer_warn(_WARNING_LINE_RE.sub("", line, count=1).strip())
+                elif _TRASH_LINE_RE.match(line):
+                    ui.defer_warn(line)
                 elif _PROGRESS_LINE_RE.match(line):
                     file_count += 1
                     short = _PROGRESS_LINE_RE.sub("", line, count=1)[:60]

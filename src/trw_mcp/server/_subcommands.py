@@ -72,6 +72,8 @@ from trw_mcp.server._subcommands_release import (
 from trw_mcp.server._subcommands_release import (
     _run_version_status as _run_version_status,
 )
+from trw_mcp.server._update_report import print_trashed as _print_trashed
+from trw_mcp.server._update_report import report_kept
 
 logger = structlog.get_logger(__name__)
 
@@ -108,12 +110,6 @@ def _print_warning_block(warnings: Sequence[str]) -> None:
     _print_cli_line("Warnings:")
     for warning in warnings:
         _print_cli_line(f"WARNING: {printable(warning)}")
-
-
-def _print_trashed(paths: list[str]) -> None:
-    """One line per file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them)."""
-    for path in paths:
-        _print_cli_line(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
 
 
 def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_run: bool, ide: str | None) -> None:
@@ -231,6 +227,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         # exactly the runs that swallowed it.
         _print_warning_block(result.get("warnings", []))
         _print_trashed(result.get("trashed", []))
+    report_kept(result, target, detailed=detailed, quiet=quiet)
     for e in result["errors"]:
         if detailed:
             logger.error("update_project_error", op="update_project", error=str(e))

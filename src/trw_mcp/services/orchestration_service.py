@@ -159,12 +159,24 @@ def write_checkpoint(
         Dict with ``timestamp``, ``status``, and ``message``.
 
     Raises:
+        ValueError: If *message* is a factory transition the MCP tool would refuse (E2E-INC-125).
         FileNotFoundError: If ``run_path`` is given but does not exist, or --
         as :class:`~trw_mcp.services._local_run_identity.LocalRunIdentityError`
         -- if it is omitted and no pin resolves. Nothing is written in that case.
     """
     resolved = resolve_owned_run_path(run_path)
     meta_path = resolved / "meta"
+
+    # A factory transition is judged exactly as the MCP tool judges it (E2E-INC-125): an oversized or malformed payload,
+    # a READY with no commit, or a transition out of order never enters the append-only journal, whichever door it used.
+    from trw_mcp.state._factory_experiment import is_factory_message
+    from trw_mcp.state._factory_receipt_gate import factory_payload_refusal, lifecycle_refusal
+
+    if is_factory_message(message) and (
+        (problem := factory_payload_refusal(message)) is not None
+        or (problem := lifecycle_refusal(resolved, message)) is not None
+    ):
+        raise ValueError(f"factory checkpoint refused: {problem}; nothing was written")
 
     if not meta_path.exists():
         meta_path.mkdir(parents=True, exist_ok=True)

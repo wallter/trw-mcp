@@ -192,7 +192,8 @@ def strip_orphaned_agents_md_block(project_root: Path, client_ids: Sequence[str]
 #: before 8.0, and the placeholder scaffold
 #: ``init-project`` wrote before 8.0. A file holding nothing else carries no
 #: user content; any other line, including a user's own ``@.trw/...`` import,
-#: keeps the file.
+#: keeps the file. (A file holding ONLY the pointer is the user's adapter and is kept
+#: by :func:`retire_legacy_claude_md` before this test runs; uninstall still cuts it.)
 _TRW_ONLY_CLAUDE_MD_LINES = frozenset(
     {
         "# CLAUDE.md",
@@ -231,6 +232,18 @@ def strip_legacy_claude_md(content: str) -> tuple[bool, str, bool]:
     return had_block, remaining, False
 
 
+#: A root ``CLAUDE.md`` whose ONLY non-blank content is one of these lines imports AGENTS.md, so it does not
+#: mask the carrier, and it is exactly the line the kept-warning tells users to add. It is the user's file,
+#: tracked or not (FB-INSTALL-02, feedback sub_i7UMmxUbTbsdW0eD).
+_ADAPTER_ONLY_CLAUDE_MD_LINES = frozenset({"@AGENTS.md", "@./AGENTS.md"})
+
+
+def _is_adapter_only(content: str) -> bool:
+    """True when the file's only non-blank line imports AGENTS.md (a lone shim, no TRW block or scaffold)."""
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    return len(lines) == 1 and lines[0] in _ADAPTER_ONLY_CLAUDE_MD_LINES
+
+
 def retire_legacy_claude_md(project_root: Path) -> str | None:
     """Delete a root ``CLAUDE.md`` that holds only TRW content (8.0 breaking change).
 
@@ -238,9 +251,10 @@ def retire_legacy_claude_md(project_root: Path) -> str | None:
     ``CLAUDE.md`` exists in the working directory or above it, so TRW's own
     ``CLAUDE.md`` both duplicates and masks the shared carrier.
 
-    Returns ``"removed"`` when the file was TRW-only (the ``@AGENTS.md``
-    pointer, the TRW marker block, the old scaffold, TRW's sidecar imports, or a symlink to
-    ``AGENTS.md``), ``"kept"`` when it has user content -- never deleted or
+    Returns ``"removed"`` when the file was TRW-only (the TRW marker block, the old scaffold, TRW's
+    sidecar imports, those mixed with the ``@AGENTS.md`` pointer, or a symlink to ``AGENTS.md``), ``"adapter"``
+    when its only content is the ``@AGENTS.md`` import -- the file does not block AGENTS.md and is the shim TRW
+    itself recommends, so it is left untouched --, ``"kept"`` when it has user content -- never deleted or
     edited; the caller reports it -- and ``None`` when there is no file.
     """
     path = project_root / "CLAUDE.md"
@@ -257,6 +271,9 @@ def retire_legacy_claude_md(project_root: Path) -> str | None:
         content = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return "kept"
+    if _is_adapter_only(content):
+        logger.info("legacy_claude_md_kept_adapter", path=str(path))
+        return "adapter"
     # The verdict ignores line endings (the marker match is on "\n", so a CR-only file hid TRW's block);
     # the bytes remove_if_hash verifies are still the raw ones.
     _, remaining = _strip_trw_section(content.replace("\r\n", "\n").replace("\r", "\n"))

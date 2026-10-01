@@ -39,6 +39,8 @@ STATUS_HINT = "This run's attempts: `trw-mcp factory status --run <run_path>`."
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 #: Keys every factory payload carries; the per-kind extras are what real workers and the verifier write.
+#: Longest factory checkpoint message accepted, in characters.
+MAX_PAYLOAD_CHARS = 8192
 _BASE_KEYS = frozenset({"factory", "kind", "attempt"})
 _KIND_KEYS: dict[str, frozenset[str]] = {
     "START": frozenset({"subject_sha", "branch", "base", "note", *CELL_KEYS}),
@@ -57,6 +59,10 @@ def _shown(text: object) -> str:
 
 def factory_payload_refusal(message: str) -> str | None:
     """Why a ``factory:1`` message must not be recorded, naming the key at fault; ``None`` when it may be."""
+    if len(message) > MAX_PAYLOAD_CHARS:
+        # A transition carries ids and receipt references, never content; it is written three times (the checkpoint
+        # log and two event logs), so an unbounded one also burns its attempt id for good (E2E-INC-125 c).
+        return f"payload is {len(message)} characters, over the {MAX_PAYLOAD_CHARS} limit; send ids and receipt references, not content"
     payload = json.loads(message)
     kind = payload.get("kind")
     if kind is None:
@@ -72,11 +78,37 @@ def factory_payload_refusal(message: str) -> str | None:
     sha = payload.get("subject_sha")
     if "subject_sha" in payload and not (isinstance(sha, str) and _SHA.fullmatch(sha)):
         return "subject_sha must be 40 lowercase hex (the full git sha)"
+    if kind == "READY" and "subject_sha" not in payload:
+        # Without it the reader can only call the receipts 'unbound': nothing ties the READY to a commit (E2E-INC-125 d).
+        return "READY needs subject_sha (the full 40-hex git sha the work is at); without it the receipts bind to no commit"
     unknown = sorted(set(payload) - _BASE_KEYS - _KIND_KEYS[kind])
     if unknown:
         allowed = ", ".join(sorted(_BASE_KEYS | _KIND_KEYS[kind]))
         return f"unknown key(s) for {kind}: {', '.join(_shown(k) for k in unknown)} (allowed: {allowed})"
     return None
+
+
+def subject_sha_refusal(message: str, project_root: Path) -> str | None:
+    """Why a factory message's ``subject_sha`` must not be recorded: it names no commit here (CHECKPOINT-SUBJECT-SHA-VERIFY).
+
+    A hand-extended short sha is 40 hex and passes the format check, but a READY for a commit that does not exist can
+    never be verified. Checked only in a git checkout; elsewhere there is nothing to resolve it against.
+    """
+    import os
+    import subprocess
+
+    sha = json.loads(message).get("subject_sha")
+    if not isinstance(sha, str) or not (project_root / ".git").exists():
+        return None
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}  # no GIT_DIR redirect (codex r1 KI)
+    try:
+        done = subprocess.run(  # noqa: S603 -- fixed git argv; sha is 40 lowercase hex (checked above)
+            ["git", "-C", str(project_root), "cat-file", "-e", f"{sha}^{{commit}}"],  # noqa: S607
+            capture_output=True, check=False, timeout=20, env=env,
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError):  # codex r1 KI: a structured refusal, never an escape
+        return f"subject_sha {sha} could not be verified (git did not run); nothing was recorded"
+    return None if done.returncode == 0 else f"subject_sha {sha} is not a commit in this repository"
 
 
 #: The kind each transition follows; the reader counts one without it incomplete, excluded or ignored (E2E-INC-096).

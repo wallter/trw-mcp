@@ -196,3 +196,101 @@ def test_the_full_lifecycle_is_still_accepted(run: Path, build_check_invoke: Any
     assert _write(run, ready)["recorded"] is True
     void = {"kind": "VOID", "attempt": "a1", "reason": "verifier FAIL", "by": "swarm-verifier"}
     assert _write(run, void)["recorded"] is True  # the VOID shapes the verifier writes, now after a READY
+
+
+def _git_commit(root: Path) -> str:
+    import subprocess
+
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+           "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}  # fmt: skip
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+        subprocess.run(["git", *args], cwd=root, env=env, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def test_a_subject_sha_that_names_no_commit_is_refused(run: Path, tmp_project: Path) -> None:
+    """CHECKPOINT-SUBJECT-SHA-VERIFY: a hand-extended short sha is 40 hex but names nothing; refused at write time."""
+    _git_commit(tmp_project)
+    _refused(run, {"kind": "START", "attempt": "a1", "subject_sha": "1" * 40}, "subject_sha", "not a commit")
+
+
+def test_a_subject_sha_that_names_a_commit_is_recorded(run: Path, tmp_project: Path) -> None:
+    head = _git_commit(tmp_project)
+    assert _write(run, {"kind": "START", "attempt": "a1", "subject_sha": head})["recorded"] is True
+
+
+def test_a_git_that_cannot_run_is_a_structured_refusal(
+    run: Path, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codex r1 KI: a git execution failure is refused by name, never raised out of the checkpoint."""
+    import subprocess
+
+    head = _git_commit(tmp_project)
+
+    def no_git(*_a: object, **_k: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="git", timeout=20)
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    _refused(run, {"kind": "START", "attempt": "a1", "subject_sha": head}, "could not be verified")
+
+
+def test_a_git_dir_override_cannot_redirect_the_check(
+    run: Path, tmp_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """codex r1 KI: an inherited GIT_DIR pointing at another repository must not decide which commits exist."""
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "f").write_text("another repository\n", encoding="utf-8")
+    _git_commit(other)
+    import subprocess
+
+    subprocess.run(["git", "add", "f"], cwd=other, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "foreign"], cwd=other, check=True
+    )
+    foreign = subprocess.run(["git", "rev-parse", "HEAD"], cwd=other, capture_output=True, text=True).stdout.strip()
+    _git_commit(tmp_project)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    _refused(run, {"kind": "START", "attempt": "a1", "subject_sha": foreign}, "not a commit")
+
+
+def test_a_ready_without_subject_sha_is_refused_and_a_bound_one_is_not(run: Path) -> None:
+    unbound = {"kind": "READY", "attempt": "a1", "receipts": {"build": ["build-x"]}}
+    _refused(run, unbound, "READY needs subject_sha")
+
+    result = _write(run, {**unbound, "subject_sha": "a" * 40})
+
+    assert "READY needs subject_sha" not in str(result.get("remedy", ""))
+
+
+def test_an_oversized_payload_is_refused_before_it_is_written_and_burns_no_attempt_id(run: Path) -> None:
+    from trw_mcp.state._factory_receipt_gate import MAX_PAYLOAD_CHARS
+
+    huge = {"kind": "START", "attempt": "a1", "note": "x" * (MAX_PAYLOAD_CHARS + 1)}
+    _refused(run, huge, "over the", str(MAX_PAYLOAD_CHARS))
+
+    # The attempt id is still free: the same attempt records normally afterwards.
+    ok = _write(run, {"kind": "START", "attempt": "a1"})
+    assert ok["recorded"] is True, ok
+
+
+def test_the_offline_cli_checkpoint_refuses_what_the_mcp_tool_refuses(run: Path) -> None:
+    """E2E-INC-125: `trw-mcp local checkpoint` wrote any factory line, skipping the size cap and the READY commit rule."""
+    import json as _json
+
+    from trw_mcp.services.orchestration_service import write_checkpoint
+
+    before = _journal(run)
+    for payload in (
+        {"factory": 1, "kind": "START", "attempt": "a1", "note": "x" * 9000},
+        {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"build": ["build-x"]}},
+        {"factory": 1, "kind": "READY", "attempt": "a2", "subject_sha": "a" * 40, "receipts": {"build": ["build-x"]}},
+    ):
+        with pytest.raises(ValueError, match="nothing was written"):
+            write_checkpoint(_json.dumps(payload), run_path=run)
+
+    assert _journal(run) == before, "a refused factory line must not touch the journal"
+    write_checkpoint("plain checkpoint prose", run_path=run)  # an ordinary checkpoint is untouched
+    write_checkpoint(_json.dumps({"factory": 1, "kind": "START", "attempt": "a1"}), run_path=run)

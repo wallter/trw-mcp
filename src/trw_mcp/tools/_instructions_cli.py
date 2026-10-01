@@ -15,7 +15,7 @@ Output is one JSON document with ``--json``, otherwise ``key: value`` lines.
 ``sync`` exits 1 when ``status`` is ``"refused"`` and 0 otherwise; ``sync --dry-run`` reports ``would_change`` and
 exits like ``check`` (1 when anything would change). ``*_synced: true`` in a real sync's result means the target is
 IN SYNC afterwards (the result schema ``trw_deliver``'s own sync step shares), not that a file was written: a no-op
-sync reports it too (INC-126; a CLI-only ``changed`` field is BACKLOG INC-126-SYNC-CHANGED-FIELD).
+sync reports it too (INC-126); ``changed`` says whether this sync changed a previewed file; ``changed_scope`` lists the files the preview covered.
 """
 
 from __future__ import annotations
@@ -92,7 +92,14 @@ def _with_drift(result: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 def _sync(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     if args.dry_run:  # INC-126 (b): a preview answers like check -- would_change, exit 1 when anything would change
         return _with_drift(_render(args, dry_run=True, force=bool(args.force)))
+    # INC-126-SYNC-CHANGED-FIELD: *_synced means "in sync afterwards", so a no-op sync reads True too; the preview
+    # render first says whether this write changes anything (a second render, acceptable for a rare CLI verb).
+    preview, would_change = _with_drift(_render(args, dry_run=True, force=bool(args.force)))
     result = _render(args, dry_run=False, force=bool(args.force))
+    result["changed"] = would_change and result.get("status") != "refused"
+    # codex r1/r2 KIs: `changed` covers exactly the files the preview rendered (per-client carriers and REVIEW.md are
+    # not previewed), so the scope is read from that same preview rather than asserted.
+    result["changed_scope"] = sorted({str(d.get("file", "")) for d in preview.get("diffs") or [] if d.get("file")})
     return result, result.get("status") == "refused"
 
 

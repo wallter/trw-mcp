@@ -95,12 +95,23 @@ def _default_lookup() -> tuple[str, str] | None:
     return booted, installed
 
 
+#: Set by a backend whose auto-swap watcher replaces it on its own (HOTSWAP-AUTO): restarting is then the wrong
+#: advice. ``None`` keeps the stdio wording above.
+_ACTION_OVERRIDE: str | None = None
+
+
+def set_action_override(text: str | None) -> None:
+    """Replace (or with ``None`` restore) the advisory's remediation text for this process."""
+    global _ACTION_OVERRIDE
+    _ACTION_OVERRIDE = text
+
+
 def build_advisory(booted: str, installed: str) -> dict[str, str]:
     """Build the structured drift advisory payload."""
     return {
         "booted_version": booted,
         "installed_version": installed,
-        "action": _ACTION_TEXT,
+        "action": _ACTION_OVERRIDE or _ACTION_TEXT,
     }
 
 

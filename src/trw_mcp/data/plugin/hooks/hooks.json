@@ -36,7 +36,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-intent-guard.sh",
-            "timeout": 3000
+            "timeout": 60
           }
         ]
       }
@@ -57,7 +57,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-intent-check.sh",
-            "timeout": 10000
+            "timeout": 30
           }
         ]
       },
@@ -128,7 +128,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-compact.sh",
-            "timeout": 5000
+            "timeout": 30
           }
         ]
       }
@@ -140,7 +140,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/instructions-loaded.sh",
-            "timeout": 3000
+            "timeout": 10
           }
         ]
       }

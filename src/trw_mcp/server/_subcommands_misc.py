@@ -112,7 +112,7 @@ def _run_local(args: argparse.Namespace) -> None:
         try:
             cp_result = write_checkpoint(message, run_path=run_path)
             print(f"Checkpoint created at {cp_result['timestamp']}")
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             print(f"Error: {exc}")
             sys.exit(1)
     elif local_cmd == "status":

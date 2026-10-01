@@ -226,3 +226,40 @@ def test_an_explicit_count_is_rendered_and_zero_stays_zero(tmp_path: Path, monke
     run_path, trw_dir = _make_run(tmp_path)
     assert "and 0 learning(s)." in build_session_changelog(run_path, trw_dir, learnings_recorded=0).markdown
     assert build_session_changelog(run_path, trw_dir, learnings_recorded=3).learnings_recorded == 3
+
+
+def test_the_learning_count_is_this_sessions_not_the_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """DELIVER-LEARN-COUNT-PER-SESSION: two sessions in one project share one ceremony state file, not one count."""
+    from trw_mcp.state._ceremony_progress_state import increment_learnings, read_ceremony_state
+    from trw_mcp.state._session_id import _reset_process_session_id
+    from trw_mcp.tools import ceremony as _ceremony
+    from trw_mcp.tools._ceremony_deliver_steps import step_session_changelog
+    from trw_mcp.tools._ceremony_deliver_tool import _mark_deliver_and_reflect_learning
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    run_path, trw_dir = _make_run(tmp_path)
+    monkeypatch.setattr(_ceremony, "resolve_trw_dir", lambda: trw_dir)
+    for key in ("session-a", "session-a", "session-b"):  # the project has 3 learnings; session-b made one of them
+        increment_learnings(trw_dir, session_key=key)
+    assert read_ceremony_state(trw_dir).learnings_this_session == 3  # the project-wide total is unchanged
+
+    def deliver_as(session: str) -> tuple[str, str]:
+        _reset_process_session_id(session)
+        step_session_changelog(run_path, {})  # type: ignore[arg-type]
+        body = (run_path / "reports" / "session-changelog.md").read_text(encoding="utf-8")
+        results: dict[str, object] = {}
+        _mark_deliver_and_reflect_learning(trw_dir, results)  # type: ignore[arg-type]
+        return body, str(results["learning_reflection"])
+
+    try:
+        body, reflection = deliver_as("session-b")
+        assert "and 1 learning(s)." in body
+        assert reflection.startswith("1 discovery/discoveries persisted")
+        body, reflection = deliver_as("session-a")
+        assert "and 2 learning(s)." in body
+        assert reflection.startswith("2 discovery/discoveries persisted")
+        body, reflection = deliver_as("session-without-learnings")  # a third session reads 0, not the project's 3
+        assert "and 0 learning(s)." in body
+        assert reflection.startswith("Note: No discoveries were recorded this session")
+    finally:
+        _reset_process_session_id(None)

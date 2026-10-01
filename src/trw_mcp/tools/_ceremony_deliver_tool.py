@@ -372,11 +372,11 @@ def _mark_deliver_and_reflect_learning(trw_dir: Path, results: DeliverResultDict
     except Exception as exc:  # justified: fail-open — state mutation must not block deliver
         record_into(cast("MutableMapping[str, object]", results), "mark_deliver", exc)
     try:
-        from trw_mcp.state.ceremony_progress import read_ceremony_state
+        from trw_mcp.state.ceremony_progress import read_ceremony_state, session_learning_count
         from trw_mcp.tools import ceremony as _ceremony
 
         results["learning_reflection"] = _ceremony._learning_reflection_message(
-            read_ceremony_state(trw_dir).learnings_this_session
+            session_learning_count(read_ceremony_state(trw_dir))
         )
     except Exception as exc:  # justified: fail-open — reflection must not block deliver
         record_into(cast("MutableMapping[str, object]", results), "learning_reflection", exc)

@@ -892,7 +892,10 @@ def test_a_receipt_id_with_no_receipt_file_is_refused_and_never_written(
         _journal(lead, {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"build": ["build-x"]}})
     before = _events(lead)
 
-    result = _refused(lead, {"factory": 1, "kind": kind, "attempt": "a1", "receipts": receipts})
+    # A READY is bound to a commit (E2E-INC-125 d), so it carries one; the refusal under test is the receipt's.
+    # A real commit: CHECKPOINT-SUBJECT-SHA-VERIFY refuses a sha that names none before receipts are resolved.
+    bound = {"subject_sha": _git(project, "rev-parse", "HEAD")} if kind == "READY" else {}
+    result = _refused(lead, {"factory": 1, "kind": kind, "attempt": "a1", "receipts": receipts, **bound})
 
     assert result["recorded"] is False
     assert result["reason"] == "factory_receipt_unresolved" and result["error_type"] == "factory_receipt_unresolved"
@@ -920,7 +923,14 @@ def test_one_unresolved_id_among_resolved_ones_refuses_the_whole_checkpoint_nami
     before = _events(lead)
 
     result = _refused(
-        lead, {"factory": 1, "kind": "READY", "attempt": "a1", "receipts": {"build": [real, "build-PENDING"]}}
+        lead,
+        {
+            "factory": 1,
+            "kind": "READY",
+            "attempt": "a1",
+            "subject_sha": _git(project, "rev-parse", "HEAD"),  # a real commit (CHECKPOINT-SUBJECT-SHA-VERIFY)
+            "receipts": {"build": [real, "build-PENDING"]},
+        },
     )
 
     assert result["recorded"] is False
@@ -935,9 +945,13 @@ def test_a_present_receipt_bound_to_another_sha_is_accepted_and_left_to_the_read
     lead = _run_dir(project, "run-lead")
     real = build_check_invoke(tests_passed=True, scope="feature", run_path=str(lead))["build_receipt_id"]
     _checkpoint(lead, {"factory": 1, "kind": "START", "attempt": "a1"})
+    # A real commit other than the one the receipt was bound to (CHECKPOINT-SUBJECT-SHA-VERIFY refuses a sha that
+    # names no commit at all; a sha/receipt mismatch is still the reader's judgment).
+    _git(project, "commit", "-q", "--allow-empty", "-m", "a later commit")
+    other = _git(project, "rev-parse", "HEAD")
 
     result = _refused(
-        lead, {"factory": 1, "kind": "READY", "attempt": "a1", "subject_sha": "0" * 40, "receipts": {"build": [real]}}
+        lead, {"factory": 1, "kind": "READY", "attempt": "a1", "subject_sha": other, "receipts": {"build": [real]}}
     )
 
     assert result["recorded"] is True, result

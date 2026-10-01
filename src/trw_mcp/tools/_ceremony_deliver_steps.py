@@ -177,14 +177,14 @@ def step_session_changelog(resolved_run: Path, results: DeliverResultDict) -> No
         trw_dir = cast("Path", resolve_trw_dir_fn())
         advisory_enabled = bool(getattr(config, "changelog_advisory_enabled", False))
         changelog_filename = str(getattr(config, "compliance_changelog_filename", "CHANGELOG.md"))
-        from trw_mcp.state.ceremony_progress import read_ceremony_state
+        from trw_mcp.state.ceremony_progress import read_ceremony_state, session_learning_count
 
         report_path, changelog = write_session_changelog(
             resolved_run,
             trw_dir,
             changelog_filename=changelog_filename,
             changelog_advisory_enabled=advisory_enabled,
-            learnings_recorded=read_ceremony_state(trw_dir).learnings_this_session,
+            learnings_recorded=session_learning_count(read_ceremony_state(trw_dir)),
         )
         results["session_changelog_path"] = str(report_path)
         if advisory_enabled:

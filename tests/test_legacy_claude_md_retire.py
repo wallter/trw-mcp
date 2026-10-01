@@ -17,7 +17,6 @@ _BLOCK = (
 @pytest.mark.parametrize(
     "content",
     [
-        "@AGENTS.md\n",
         "# CLAUDE.md\n\n@AGENTS.md\n",
         _BLOCK,
         "# Project Instructions\n\n## What This Is\n\n{Describe your project here}\n\n" + _BLOCK,
@@ -56,7 +55,7 @@ def test_update_keeps_pointer_when_agents_md_write_fails(tmp_path: Path, monkeyp
     from trw_mcp.bootstrap import _template_claude_md
 
     _claude_code_project(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8")
 
     def failing_write(_target: Path, result: dict[str, list[str]]) -> None:
         result.setdefault("errors", []).append("AGENTS.md: disk full")
@@ -66,7 +65,7 @@ def test_update_keeps_pointer_when_agents_md_write_fails(tmp_path: Path, monkeyp
 
     _update_mcp_config(tmp_path, result)
 
-    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "# CLAUDE.md\n\n@AGENTS.md\n"
     assert "removed" not in result
 
 
@@ -81,7 +80,7 @@ def _claude_code_project(tmp_path: Path) -> None:
 
 def test_update_writes_agents_md_then_retires_pointer(tmp_path: Path) -> None:
     _claude_code_project(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8")
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": [], "warnings": []}
 
     _update_mcp_config(tmp_path, result)
@@ -117,3 +116,32 @@ def test_user_content_with_cr_line_endings_is_kept_byte_identical(tmp_path: Path
     (tmp_path / "CLAUDE.md").write_bytes(raw)
     assert retire_legacy_claude_md(tmp_path) == "kept"
     assert (tmp_path / "CLAUDE.md").read_bytes() == raw
+
+
+# --- FB-INSTALL-02 (feedback sub_i7UMmxUbTbsdW0eD): a CLAUDE.md that only imports AGENTS.md is the user's file ----------
+
+
+@pytest.mark.parametrize(
+    "content", ["@AGENTS.md\n", "@./AGENTS.md\n", "\n@AGENTS.md\n\n", "@AGENTS.md", "@AGENTS.md\r\n"]
+)
+def test_adapter_only_claude_md_is_kept_untouched(tmp_path: Path, content: str) -> None:
+    """Its only content imports AGENTS.md, so it does not mask the carrier and is exactly the line TRW's own
+    kept-warning recommends; moving a tracked user file to trash contradicted that advice."""
+    (tmp_path / "CLAUDE.md").write_bytes(content.encode("utf-8"))
+    assert retire_legacy_claude_md(tmp_path) == "adapter"
+    assert (tmp_path / "CLAUDE.md").read_bytes() == content.encode("utf-8")
+    assert not (tmp_path / ".trw" / "trash").exists()
+
+
+def test_update_reports_the_adapter_claude_md_as_kept_and_does_not_warn(tmp_path: Path) -> None:
+    _claude_code_project(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": [], "warnings": []}
+
+    _update_mcp_config(tmp_path, result)
+
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+    assert "CLAUDE.md (kept: adapter imports AGENTS.md)" in result["preserved"]
+    assert "removed" not in result and "trashed" not in result
+    assert not any("CLAUDE.md" in w for w in result["warnings"])
+    assert "<!-- trw:start -->" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")

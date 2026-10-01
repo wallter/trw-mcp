@@ -27,7 +27,7 @@ def _trw_only_claude_md(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "proj"
     root.mkdir()
     path = root / "CLAUDE.md"
-    path.write_text("@AGENTS.md\n", encoding="utf-8")
+    path.write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8")
     return root, path
 
 
@@ -37,7 +37,7 @@ def test_trw_only_claude_md_moves_to_trash(tmp_path: Path) -> None:
     root, path = _trw_only_claude_md(tmp_path)
     assert retire_legacy_claude_md(root) == "removed"
     assert not path.exists()
-    assert _trash(root) == [b"@AGENTS.md\n"]
+    assert _trash(root) == [b"# CLAUDE.md\n\n@AGENTS.md\n"]
 
 
 def test_a_line_added_after_the_check_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,7 +161,7 @@ def test_retired_claude_md_stays_retired_in_a_real_git_repo(tmp_path: Path) -> N
     claude = root / "CLAUDE.md"
     counts = []
     for _ in range(3):
-        claude.write_text("@AGENTS.md\n", encoding="utf-8") if not counts else None
+        claude.write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8") if not counts else None
         result = update_project(root, ide="claude-code")
         counts.append(len(_trash(root)))
         assert not claude.exists()

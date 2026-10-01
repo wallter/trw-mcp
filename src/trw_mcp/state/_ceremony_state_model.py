@@ -41,7 +41,11 @@ class CeremonyState:
     build_check_result: str | None = None
     last_build_check_ts: str | None = None
     deliver_called: bool = False
+    #: Project-wide total (every session that shares this state file). Status and nudges read it.
     learnings_this_session: int = 0
+    #: Learnings captured per session key (DELIVER-LEARN-COUNT-PER-SESSION): what a deliver reports as its own.
+    #: Capped at the most recent sessions; see ``_ceremony_progress_state._touch_session_learnings``.
+    learnings_by_session: dict[str, int] = field(default_factory=dict)
     nudge_counts: dict[str, int] = field(default_factory=dict)
     phase: str = "early"
     previous_phase: str = ""
@@ -201,6 +205,7 @@ def ceremony_state_from_dict(data: dict[str, object]) -> CeremonyState:
         last_build_check_ts=_opt_str("last_build_check_ts"),
         deliver_called=_bool("deliver_called"),
         learnings_this_session=_int("learnings_this_session"),
+        learnings_by_session=_dict_str_int("learnings_by_session"),
         nudge_counts=nudge_counts,
         phase=_str("phase", "early"),
         previous_phase=_str("previous_phase"),

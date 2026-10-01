@@ -261,11 +261,42 @@ def set_ceremony_phase(trw_dir: Path, new_phase: str) -> None:
             write_ceremony_state(trw_dir, state)
 
 
-def increment_learnings(trw_dir: Path) -> None:
+#: Sessions whose own learning count is kept; past it the least recently active one is forgotten.
+_LEARNING_SESSIONS_KEPT = 256
+
+
+def _touch_session_learnings(state: CeremonyState, session_key: str) -> None:
+    """Count one more learning for *session_key*, moving it to the recent end and bounding the map."""
+    count = state.learnings_by_session.pop(session_key, 0) + 1
+    state.learnings_by_session[session_key] = count
+    while len(state.learnings_by_session) > _LEARNING_SESSIONS_KEPT:
+        state.learnings_by_session.pop(next(iter(state.learnings_by_session)))
+
+
+def _own_session_key(session_key: str | None) -> str:
+    """*session_key*, else this MCP process's own session id (stable while a run is pinned mid-session)."""
+    from trw_mcp.state._session_id import _get_process_session_id
+
+    return session_key or _get_process_session_id()
+
+
+def increment_learnings(trw_dir: Path, session_key: str | None = None) -> None:
+    """Count a captured learning for the project and for the calling session (default: this process)."""
+    key = _own_session_key(session_key)
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
         state.learnings_this_session += 1
+        _touch_session_learnings(state, key)
         write_ceremony_state(trw_dir, state)
+
+
+def session_learning_count(state: CeremonyState, session_key: str | None = None) -> int:
+    """Learnings the calling session (default: this process) captured, not the project's total.
+
+    Two sessions in one project share one ceremony state file, so ``learnings_this_session`` is the sum of both;
+    a deliver reports its own session's count.
+    """
+    return state.learnings_by_session.get(_own_session_key(session_key), 0)
 
 
 def increment_nudge_count(trw_dir: Path, step: str) -> None:

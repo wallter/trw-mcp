@@ -43,6 +43,9 @@ logger = structlog.get_logger(__name__)
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 _DRAIN_SECONDS = 300.0
 _SESSION_WINDOW_SECONDS = 3600.0
+_SELF_SWAP_ACTION = (
+    "no action needed: this shared trw-mcp hot-swaps to the installed version on its own (shared_mcp.auto_swap)"
+)
 #: Client identity the server must never carry itself: every client would inherit it.
 _IDENTITY_ENV = ("TRW_SESSION_ID", "TRW_CLIENT_PROFILE", "TRW_AGENT_ID", "TRW_RUN_ID", "TRW_CHAIN_ID")
 
@@ -67,6 +70,7 @@ class Door:
         self._quiet = asyncio.Event()  # set when a drain finds nothing in flight
         self.started = self.last_activity = time.monotonic()
         self.on_drained: Callable[[], None] = lambda: None
+        self.extra_status: Callable[[], dict[str, Any]] = dict  # merged into /admin/status (the auto-swap watcher)
 
     async def __call__(self, scope: MutableMapping[str, Any], receive: Any, send: Send) -> None:
         if scope["type"] != "http":
@@ -115,6 +119,7 @@ class Door:
             "sessions_last_hour": len(self.sessions),
             "in_flight": self.in_flight,
             "draining": self.draining,
+            **self.extra_status(),
         }
 
     def begin_drain(self) -> None:
@@ -202,6 +207,7 @@ async def _run(door: Door, sock: Any, paths: SharedPaths, url: str, prior: Any, 
     release()
     logger.info("shared_mcp_serving", env=door.env, url=url, pid=os.getpid(), predecessor=getattr(prior, "pid", None))
     watchdog = asyncio.create_task(_watch_idle(door, server, paths, limits.idle_shutdown_seconds))
+    swapper = _start_hot_swap(door, paths, limits)
     try:
         if prior is not None:  # the flip is done: new calls reach us; the old one finishes its own and exits
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -209,7 +215,25 @@ async def _run(door: Door, sock: Any, paths: SharedPaths, url: str, prior: Any, 
         await serving
     finally:
         watchdog.cancel()
+        if swapper is not None:
+            swapper.cancel()
         withdraw_record(paths, door.env)
+
+
+def _start_hot_swap(door: Door, paths: SharedPaths, limits: Any) -> asyncio.Task[None] | None:
+    """HOTSWAP-AUTO: start this server's installation watcher (``shared_mcp.auto_swap``); its task, or ``None``."""
+    from trw_mcp.middleware import version_drift
+    from trw_mcp.shared_server import _autoswap
+    from trw_mcp.state._paths import resolve_project_root
+
+    hot_swap = _autoswap.build_hot_swap(door.env, door, paths, limits, project_root=resolve_project_root())
+    if hot_swap is None:
+        _autoswap.activate(door.env, paths, _autoswap.booted_versions(), lambda: {"enabled": False})
+        return None
+    _autoswap.activate(door.env, paths, _autoswap.booted_versions(), hot_swap.status)
+    door.extra_status = lambda: {"auto_swap": hot_swap.status()}
+    version_drift.set_action_override(_SELF_SWAP_ACTION)
+    return asyncio.create_task(hot_swap.run(limits.auto_swap_poll_seconds))
 
 
 async def drain_predecessor(client: Any, prior: Any, token: str) -> bool:

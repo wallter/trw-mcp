@@ -52,8 +52,14 @@ def run_feedback(args: argparse.Namespace) -> None:
         for section in ("pending", "sent"):
             print(f"{section}: {len(document[section])}")
             for entry in document[section]:
+                accepted = (
+                    f"  accepted by the server as {entry['submission_id']}, not yet settled locally"
+                    if section == "pending" and entry.get("submission_id")
+                    else ""
+                )
                 print(
-                    f"  {entry.get('id', '')}  [{entry['category']}] {entry['subject']}  {entry.get('last_error', '')}"
+                    f"  {entry.get('id', '')}  [{entry['category']}] {entry['subject']}  "
+                    f"{entry.get('last_error', '')}{accepted}"
                 )
         for name in document["unreadable"]:
             print(f"unreadable: {name}")

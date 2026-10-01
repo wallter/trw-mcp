@@ -133,4 +133,6 @@ def parse_init_advanced(raw: dict[str, object] | str | None) -> InitAdvanced:
         problems = "; ".join(
             f"{'.'.join(str(p) for p in err['loc']) or 'advanced'}: {err['msg']}" for err in exc.errors()
         )
-        raise StateError(f"Invalid advanced argument — {problems}. Accepted keys: {', '.join(ADVANCED_KEYS)}") from exc
+        # from None: the pydantic cause carries the rejected input value and would print as a server-log traceback;
+        # the message above is the whole refusal (INC-120 c).
+        raise StateError(f"Invalid advanced argument — {problems}. Accepted keys: {', '.join(ADVANCED_KEYS)}") from None

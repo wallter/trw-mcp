@@ -248,7 +248,7 @@ def test_backup_create_of_a_db_outside_any_project_stays_local(
     _subcommands_backup.run_backup(argparse.Namespace(backup_command="create", namespace="default", db=str(db)))
 
     assert requests_sent == []
-    assert "must both allow a remote backup" in capsys.readouterr().out
+    assert "must both allow contact and remote backup" in capsys.readouterr().out
 
 
 def test_backup_restore_latest_into_a_db_outside_any_project_fetches_nothing(

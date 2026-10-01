@@ -16,5 +16,6 @@ from trw_mcp.state._ceremony_progress_state import mark_review as mark_review
 from trw_mcp.state._ceremony_progress_state import mark_session_started as mark_session_started
 from trw_mcp.state._ceremony_progress_state import read_ceremony_state as read_ceremony_state
 from trw_mcp.state._ceremony_progress_state import reset_ceremony_state as reset_ceremony_state
+from trw_mcp.state._ceremony_progress_state import session_learning_count as session_learning_count
 from trw_mcp.state._ceremony_progress_state import set_ceremony_phase as set_ceremony_phase
 from trw_mcp.state._ceremony_progress_state import write_ceremony_state as write_ceremony_state

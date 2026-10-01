@@ -361,3 +361,41 @@ class TestFR01CeremonyStateExtension:
         )
         result = _highest_priority_pending_step(state)
         assert result == "build_check"
+
+
+def test_learnings_are_counted_per_session_and_survive_a_round_trip(tmp_path: Path) -> None:
+    """DELIVER-LEARN-COUNT-PER-SESSION: the project total stays, and each session key keeps its own count."""
+    from trw_mcp.state.ceremony_progress import session_learning_count
+
+    trw = _trw_dir(tmp_path)
+    for key in ("a", "a", "b"):
+        increment_learnings(trw, session_key=key)
+    state = read_ceremony_state(trw)
+    assert state.learnings_this_session == 3
+    assert state.learnings_by_session == {"a": 2, "b": 1}
+    assert (session_learning_count(state, "a"), session_learning_count(state, "b")) == (2, 1)
+    assert session_learning_count(state, "never-seen") == 0
+
+
+def test_a_state_file_from_before_per_session_counts_reads_as_no_session_learnings(tmp_path: Path) -> None:
+    trw = _trw_dir(tmp_path)
+    write_ceremony_state(trw, CeremonyState(learnings_this_session=4))
+    raw = json.loads(_state_file(trw).read_text(encoding="utf-8"))
+    del raw["learnings_by_session"]  # what a pre-upgrade writer produced
+    _state_file(trw).write_text(json.dumps(raw), encoding="utf-8")
+    state = read_ceremony_state(trw)
+    assert state.learnings_this_session == 4
+    assert state.learnings_by_session == {}
+
+
+def test_per_session_learning_counts_keep_only_the_most_recent_sessions() -> None:
+    from trw_mcp.state._ceremony_progress_state import _LEARNING_SESSIONS_KEPT, _touch_session_learnings
+
+    state = CeremonyState()
+    for n in range(_LEARNING_SESSIONS_KEPT + 5):
+        _touch_session_learnings(state, f"s{n}")
+    _touch_session_learnings(state, "s5")  # active again: moves to the recent end and counts 2
+    assert len(state.learnings_by_session) == _LEARNING_SESSIONS_KEPT
+    assert "s0" not in state.learnings_by_session
+    assert state.learnings_by_session["s5"] == 2
+    assert list(state.learnings_by_session)[-1] == "s5"

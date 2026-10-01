@@ -25,6 +25,11 @@ class SharedMcpConfig(BaseModel):
     wheelhouse: str = "~/.trw/wheelhouse"
     #: One directory per non-stable env: its ``TRW_USER_DIR`` (memory daemon + store) and built venvs.
     envs_dir: str = "~/.trw/envs"
+    #: A serving env replaces itself (and drains an older memory daemon) when its installed trw-mcp / trw-memory
+    #: changes, with no client restart. False leaves swaps to ``trw-mcp swap``.
+    auto_swap: bool = True
+    #: Seconds between the auto-swap watcher's polls (each poll is an in-process metadata read).
+    auto_swap_poll_seconds: int = Field(default=15, ge=1, le=3600)
 
 
 class _SharedMcpFields:

@@ -352,6 +352,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Use when resuming or after a trw_deliver timeout. run_path is
         auto-detected. Output: phase, status, confidence, staleness.
         """
+        if detail and detail != "surface":
+            # INC-120 (b): an unknown detail used to fall through to the plain run status, so a typo looked fine.
+            from fastmcp.exceptions import ToolError
+
+            from trw_mcp._refusal_echo import key_name
+
+            raise ToolError(f"unknown detail {key_name(detail)!r}; the only accepted value is 'surface'")
         if feedback:
             from trw_mcp.tools._learn_arg_bags import _coerce_json
 

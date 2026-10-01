@@ -48,6 +48,17 @@ def add_profile_subcommands(
     explain.add_argument("--json", dest="as_json", action="store_true", help="Emit one JSON document")
 
 
+def _add_shared_server_drift(payload: dict[str, object]) -> None:
+    """A shared server only: add what it runs, whether it swaps itself, and its last swap. Never fails the surface."""
+    try:
+        from trw_mcp.shared_server._autoswap import surface_block
+
+        if (drift := surface_block()) is not None:
+            payload["version_drift"] = drift
+    except Exception:  # justified: fail-open, an extra block must never cost the caller the whole surface
+        logger.debug("status_surface_version_drift_failed", exc_info=True)
+
+
 def surface_detail(
     *,
     context: TRWCallContext | None = None,
@@ -66,7 +77,9 @@ def surface_detail(
         from trw_mcp.state._paths import find_active_run, resolve_trw_dir
 
         run_dir = find_active_run(context=context, session_id=session_id)
-        return explain_surface(get_config(), run_dir=run_dir, trw_dir=resolve_trw_dir(), **(overrides or {}))
+        payload = explain_surface(get_config(), run_dir=run_dir, trw_dir=resolve_trw_dir(), **(overrides or {}))
+        _add_shared_server_drift(payload)
+        return payload
     except Exception as exc:  # justified: fail-open, status must never crash
         logger.warning("status_surface_detail_failed", error=str(exc))
         return {"error": str(exc), "fields": [], "layers_applied": []}

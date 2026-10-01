@@ -107,4 +107,4 @@ def test_enforce_delivery_warning_rejects_missing_typed_receipt(
     config = TRWConfig().model_copy(update={"evidence_receipt_mode": "enforce"})
     monkeypatch.setattr("trw_mcp.tools._delivery_helpers.get_config", lambda: config)
     warning = build_receipt_content_stale_warning(run)
-    assert warning is not None and "No valid content-bound BuildReceipt" in warning
+    assert warning is not None and "No usable build check was found" in warning

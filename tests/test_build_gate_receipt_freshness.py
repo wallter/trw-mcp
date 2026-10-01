@@ -74,7 +74,7 @@ class TestBuildReceiptContentStaleWarning:
         empty_run = tmp_path / "empty"
         (empty_run / "meta").mkdir(parents=True)
         warning = build_receipt_content_stale_warning(empty_run)
-        assert warning is not None and "No valid content-bound BuildReceipt" in warning
+        assert warning is not None and "No usable build check was found" in warning
 
 
 # --- E2E-INC-018: whole-working-tree binding (edits the run journal never saw) -------------------
