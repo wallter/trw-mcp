@@ -226,7 +226,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         # had NO errors — so the runs most likely to carry a warning were
         # exactly the runs that swallowed it.
         _print_warning_block(result.get("warnings", []))
-        _print_trashed(result.get("trashed", []))
+        _print_trashed(result.get("trashed", []), result.get("warnings", []))
     report_kept(result, target, detailed=detailed, quiet=quiet)
     for e in result["errors"]:
         if detailed:

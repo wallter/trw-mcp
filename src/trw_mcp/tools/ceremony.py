@@ -114,13 +114,6 @@ def _aggregate_advisory_warnings(results: DeliverResultDict) -> None:
     results["warnings_present"] = bool(present)
 
 
-def __getattr__(name: str) -> object:
-    """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
-
-
 def _find_active_run_compat(call_ctx: TRWCallContext) -> Path | None:
     """Resolve the active run while retaining the established patch seam."""
     return find_active_run(context=call_ctx)

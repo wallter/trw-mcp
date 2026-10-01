@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import pytest
-
 import json
 import os
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._resources_export_sender_support import _setup_project, _writer
+import pytest
 
+from tests._resources_export_sender_support import _setup_project, _writer
 
 pytestmark = pytest.mark.usefixtures("fake_memory_store")
 

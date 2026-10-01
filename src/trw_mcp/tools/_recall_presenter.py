@@ -2,7 +2,7 @@
 
 PRD-CORE-294 FR01/FR02. Ranking is finished before this module runs; it only
 decides how much of the ranked list the caller pays for. A stub is
-``{id, claim, anchor?}`` (plus PRD-CORE-326 provenance keys when the caller
+``{id, claim, anchor?, flag?}`` (plus PRD-CORE-326 provenance keys when the caller
 opts in) and stubs are added in rank order until the next one
 would take the WHOLE rendered response over the budget. The first stub is
 kept by cutting long strings (query echo, advisories, its own claim) instead,
@@ -90,6 +90,11 @@ def _provenance(row: Mapping[str, object], home_namespace: str) -> dict[str, obj
     return keys
 
 
+#: ``verification_status`` values meaning the row's last stored check FAILED: the maintain-verify sweep's own
+#: ``stale``, and recall's qualified ``last_known_failure`` (which replaces it on a row it has qualified).
+_STALE_STATUSES = frozenset({"stale", "last_known_failure"})
+
+
 def stub(
     row: Mapping[str, object],
     query_tokens: Sequence[str] = (),
@@ -97,7 +102,10 @@ def stub(
     provenance: bool = False,
     home_namespace: str = "default",
 ) -> dict[str, object]:
-    """Render one ranked row as ``{id, claim, anchor?}``, every field bounded.
+    """Render one ranked row as ``{id, claim, anchor?, flag?}``, every field bounded.
+
+    ``flag`` is ``"stale"`` only when the row's last stored check failed (PRD-CORE-312 FR03); an unflagged row has
+    no ``flag`` key, so the common case pays nothing.
 
     ``provenance=True`` adds the PRD-CORE-326 keys, each omitted when it carries
     no signal; *home_namespace* is the caller's own project namespace.
@@ -106,6 +114,8 @@ def stub(
     anchor = _anchor(row, query_tokens)
     if anchor:
         rendered["anchor"] = _cut(anchor, CLAIM_MAX_CHARS)
+    if str(row.get("verification_status")) in _STALE_STATUSES:
+        rendered["flag"] = "stale"
     if provenance:
         rendered.update(_provenance(row, home_namespace))
     return rendered

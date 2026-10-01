@@ -281,8 +281,9 @@ def test_the_stores_canary_decoys_stay_behind(checkout: Path, daemon: MemoryDaem
     manifest = json.loads(apply_migration(checkout / ".trw").read_text(encoding="utf-8"))
 
     assert sorted(row["id"] for row in manifest["rows"]) == sorted([*_IDS, "F-1"])
-    # The apply verified F-1 landed (every manifest id must); health, like recall, does not count a flagged row.
-    assert _served(checkout, namespace) == (3, 3, 1)
+    # The apply verified F-1 landed (every manifest id must), and health counts it (4 rows, 3 vectors: F-1 has none): a row that merely carries the
+    # flag is knowledge, not the store's canary (UF-MEM-15; recall's own flag filter is a separate surface).
+    assert _served(checkout, namespace) == (4, 3, 1)
 
 
 def _through_intake(tmp_path: Path, canary_id: str) -> MemoryEntry:

@@ -168,6 +168,10 @@ def _antigravity_agent_names() -> set[str]:
     return _bundled_agent_filenames("antigravity-cli")
 
 
+def _grok_agent_names() -> set[str]:
+    return _bundled_agent_filenames("grok")
+
+
 # File-key sources for the in-directory sweep. Each one delegates to the SAME
 # ``contents()`` callable the surface's manifest recorder enumerates, so the
 # sweep's idea of "still bundled" can never drift from the recorder's idea of
@@ -224,10 +228,11 @@ _CLIENT_ARTIFACT_SURFACES: tuple[ClientArtifactSurface, ...] = (
     ),
     ClientArtifactSurface(".github/agents", False, _copilot_agent_names, "stale_copilot_agent_removal_failed"),
     # Antigravity: `.agents/agents` is the directory its own subagent reference
-    # documents. TRW's pre-PRD-CORE-252 destination, `.antigravitycli/agents`,
-    # is swept by the relocation migration rather than here, because the distill
-    # channel still owns a `trw-`-prefixed file in that directory.
+    # documents (PRD-CORE-252 moved it off `.antigravitycli/agents`).
     ClientArtifactSurface(".agents/agents", False, _antigravity_agent_names, "stale_antigravity_agent_removal_failed"),
+    # Grok: `.grok/agents` is recorded by the managed-artifact recorders, so a retired agent's copy is provable
+    # and must be swept like every other client's (GROK-AGENTS-STALE-SWEEP).
+    ClientArtifactSurface(".grok/agents", False, _grok_agent_names, "stale_grok_agent_removal_failed"),
 )
 
 

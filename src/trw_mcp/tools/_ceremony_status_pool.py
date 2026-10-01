@@ -124,7 +124,7 @@ def resolve_pool_content(
             pass
         # PRD-CORE-149 FR03: pass active profile so client-identity
         # placeholders ({client_display_name}/{client_config_dir})
-        # substitute correctly for opencode/cursor/aider users.
+        # substitute correctly for opencode/cursor users.
         return _select_nudge_message(pending, state, available_learnings=0, profile=cfg.client_profile)
     if pool == "context" and context:
         # Ledger UF-023: urgency is "how many times have we already nudged THIS

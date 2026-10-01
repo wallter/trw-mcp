@@ -24,7 +24,6 @@ import pytest
 from trw_memory.exceptions import UnsafeWriteError
 
 from tests._planted_symlink import assert_untouched, plant_symlink
-from trw_mcp.state._wal_triggers import checkpoint_marker_path, record_checkpoint_attempt
 from trw_mcp.state.requirements_registry import (
     ANCHOR_FILENAME,
     LEDGER_FILENAME,
@@ -102,28 +101,6 @@ def test_scheduling_ledger_anchor_keeps_the_pre_migration_bytes(tmp_path: Path) 
     anchor = ledger.parent / ANCHOR_FILENAME
     expected = json.dumps({"sequence": 1, "head_digest": action_digest(action)}, sort_keys=True) + "\n"
     assert anchor.read_bytes() == expected.encode("utf-8")
-
-
-# --- _wal_triggers._write_marker, via record_checkpoint_attempt (R12 row 4) ---------------------------
-
-
-def test_wal_checkpoint_marker_refuses_a_symlinked_target(tmp_path: Path) -> None:
-    db_path = tmp_path / "project" / ".trw" / "memory" / "memory.db"
-    link = checkpoint_marker_path(db_path)
-    victim = plant_symlink(link, tmp_path / "outside")
-
-    with pytest.raises(UnsafeWriteError):
-        record_checkpoint_attempt(db_path, now=1_790_000_000.25)
-
-    assert_untouched(link, victim)
-
-
-def test_wal_checkpoint_marker_keeps_the_pre_migration_bytes(tmp_path: Path) -> None:
-    db_path = tmp_path / "project" / ".trw" / "memory" / "memory.db"
-
-    assert record_checkpoint_attempt(db_path, now=1_790_000_000.25) is True
-
-    assert checkpoint_marker_path(db_path).read_bytes() == b"1790000000.250\n"
 
 
 # --- claude_md._sync_hash._write_stored_hash, via execute_claude_md_sync (R12 row 17) -----------------

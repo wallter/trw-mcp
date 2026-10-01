@@ -123,3 +123,26 @@ class TestAllModulesUseFunctionLevelConfig:
 
         for mod in [entries_mod, dedup_mod, counters_mod, core_mod]:
             assert "_config" not in mod.__dict__, f"{mod.__name__} has module-level _config"
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "trw_mcp.state.analytics.report",
+        "trw_mcp.scoring",
+        "trw_mcp.state.receipts",
+        "trw_mcp.tools.learning",
+        "trw_mcp.state._paths",
+        "trw_mcp.tools.ceremony",
+        "trw_mcp.tools.orchestration",
+    ],
+)
+@pytest.mark.parametrize("attr", ["_config", "_reader", "_writer"])
+def test_the_deprecated_module_singletons_are_gone(module_name: str, attr: str) -> None:
+    """REMOVE-S1: the v0.13-deprecated _compat_getattr shim and its module __getattr__ delegators are removed."""
+    import importlib
+
+    module = importlib.import_module(module_name)
+    module.__dict__.pop(attr, None)
+
+    assert not hasattr(module, attr)

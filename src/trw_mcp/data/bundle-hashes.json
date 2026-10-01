@@ -30,7 +30,7 @@
     "hooks/cursor/trw-stop.sh": "sha256:6e4fb92bcbf4b2c49d9c393a1c82984c908d61254f58e3f25bebf87c9c85c8b2",
     "hooks/instructions-loaded.sh": "sha256:6c0927c5dc44aaeab92fb51b8817f73d56bb37716b2c6ac3f4d7ed658b9e99d1",
     "hooks/lib-intent-guard.sh": "sha256:203ebf4859410a0aedeaa9ab8a2a7a9cce50bc5f86b5d1ba91308fbe2594a755",
-    "hooks/lib-trw.sh": "sha256:f8c9f0bff37a9cbbb67e5e01af95653770ff0db341cc2c40902709ba689075f1",
+    "hooks/lib-trw.sh": "sha256:086986264f45bd8154a5333afc9f29238a54055b3a47b6a300562c75dc61161d",
     "hooks/post-compact.sh": "sha256:10d5ea5357688b87e3305c8ee4308bd87ed60b7eb4e43db021a670cf2d38ace9",
     "hooks/post-tool-degenerate-result.sh": "sha256:556aaebe9a36214350461cf3276c9e700d1ab419d1da270d7937f7eb3bb279e4",
     "hooks/post-tool-event.sh": "sha256:ff05803621278d680aaea41c2c8d41de07b59952043634f0a313802845ac8e0a",

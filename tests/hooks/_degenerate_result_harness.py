@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -36,32 +36,32 @@ pytest_skip_no_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="jq un
 # test. Confirmed 2026-09-04: `test_a_non_numeric_config_value_falls_back_to_
 # the_default` and `test_dash_executes_the_adapter_end_to_end` both failed under
 # a `make test-release` run with concurrent box load, passing 3/3 serially.
-# Bounded retries with a FRESH project per attempt absorb transient scheduling
-# stalls without touching the 50 ms budget itself -- a genuine regression (the
-# accessor stops falling back, or the hook silently disables) fails identically
-# on every attempt. Same shape as the p95 retry established in 1577304208.
-_DEFAULT_DEADLINE_RETRY_ATTEMPTS = 3
+#: The real ``date``, resolved once from the runner's PATH, for everything but the deadline probe.
+_REAL_DATE = shutil.which("date") or "/bin/date"
+#: What the frozen clock answers to the hook's ``date +%s%N`` deadline probe.
+_FROZEN_NS = "1700000000000000000"
 
 
-def _retry(attempts: int, fn: Callable[[int], None]) -> None:
-    """Run ``fn(attempt_index)`` until it raises no ``AssertionError``.
+def frozen_clock_path(root: Path) -> str:
+    """A directory whose ``date`` answers the hook's deadline probe with one constant instant.
 
-    ``fn`` receives the attempt index so callers can give each retry an
-    isolated fixture path (state left over from a failed, deadline-missed
-    attempt must never leak into the next one). Re-raises the last failure
-    once ``attempts`` is exhausted -- a genuine regression fails every
-    attempt the same way box contention would not.
+    The adapter bounds itself with ``date +%s%N`` (NFR01, clamped to at most 500 ms). Under a loaded
+    release gate (``pytest -n 8`` beside other suites) a cold ``sh``+``jq`` run overshoots that and the
+    hook goes silent -- the right product behaviour, and the release-gate flake
+    (DEGENERATE-HOOK-TEST-FLAKES). Behaviour tests therefore run on a frozen clock: elapsed time is always
+    0, so the outcome no longer depends on machine load. Every other ``date`` call passes through. The
+    deadline itself is tested on the real clock (``real_clock=True``), and its latency budget only under
+    ``requires_local_timing``.
     """
-    last: AssertionError | None = None
-    for index in range(attempts):
-        try:
-            fn(index)
-        except AssertionError as exc:
-            last = exc
-            continue
-        return
-    assert last is not None
-    raise last
+    shim = root / ".test-clock"
+    shim.mkdir(exist_ok=True)
+    date = shim / "date"
+    date.write_text(
+        f'#!/bin/sh\nif [ "$1" = "+%s%N" ]; then echo {_FROZEN_NS}; exit 0; fi\nexec {shlex.quote(_REAL_DATE)} "$@"\n',
+        encoding="utf-8",
+    )
+    date.chmod(0o755)
+    return str(shim)
 
 
 def _project(tmp_path: Path, name: str = "proj") -> Path:
@@ -90,6 +90,7 @@ def _run(
     payload: str,
     *,
     env: dict[str, str] | None = None,
+    real_clock: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     child = dict(os.environ)
     child["CLAUDE_PROJECT_DIR"] = str(root)
@@ -103,6 +104,8 @@ def _run(
     # deadline pass their own value; everything else gets headroom.
     child.setdefault("TRW_DEGENERATE_RESULT_DEADLINE_MS", "5000")
     child.update(env or {})
+    if not real_clock:
+        child["PATH"] = frozen_clock_path(root) + os.pathsep + child.get("PATH", "")
     return subprocess.run(
         ["sh", str(root / ".claude" / "hooks" / _ADAPTER.name)],
         input=payload,

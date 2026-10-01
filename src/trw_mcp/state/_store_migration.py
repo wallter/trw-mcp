@@ -240,21 +240,20 @@ def _source_rows(db: Path) -> tuple[dict[str, int], list[Any], int, int]:
 def _client(trw_dir: Path, namespace: str, paths: Any, *, mint: bool) -> Any:
     from trw_memory.daemon import mint_grant, read_checkout_grant, write_checkout_grant
     from trw_memory.daemon._grants import granted_namespaces
+    from trw_memory.daemon.client import DaemonClient
     from trw_memory.exceptions import DaemonAuthError
-
-    from trw_mcp.shared_server._daemon_launch import daemon_client
 
     if mint:
         token = mint_grant(paths, [namespace, USER_NAMESPACE], root=trw_dir.parent)
         write_checkout_grant(trw_dir, token)
-        return daemon_client(token, trw_dir, paths=paths)
+        return DaemonClient(token, paths=paths)
     try:
         token = read_checkout_grant(trw_dir.parent)
     except DaemonAuthError as exc:
         raise MigrationRefusedError(str(exc)) from exc
     if namespace not in (granted_namespaces(paths, token) or ()):
         raise MigrationRefusedError(f"this checkout's grant does not cover {namespace}; run `trw-mcp memory token`")
-    return daemon_client(token, trw_dir, paths=paths)
+    return DaemonClient(token, paths=paths)
 
 
 def _call(coroutine: Any) -> dict[str, Any]:

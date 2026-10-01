@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from collections.abc import Callable
 
 from ruamel.yaml import YAML
@@ -35,10 +36,12 @@ __all__ = [
     "HOOK_SUPPORT_FILES",
     "INTENT_HOOK_FILES",
     "PRE_COMMIT_CONFIG_PATH",
+    "SETTINGS_PATHS",
     "SETTINGS_SOURCE_PATH",
     "TRW_CONFIG_PATH",
     "BlobReader",
     "configured_contract_path",
+    "configured_glob_sidecar_path",
     "control_plane_findings",
 ]
 
@@ -46,6 +49,13 @@ BlobReader = Callable[[str], bytes | None]
 
 DEFAULT_CONTRACT_PATH = ".trw/contracts/must-not-happen.yaml"
 SETTINGS_SOURCE_PATH = "trw-mcp/src/trw_mcp/data/settings.json"
+#: Where hook registrations live. The bundle source exists only in the TRW monorepo; a user project registers
+#: its hooks in `.claude/settings.json`, which this list used to omit, so C9 compared two absent blobs and a
+#: deleted intent-hook registration was no finding there (UF-PRD-51 / ledger UF-079).
+SETTINGS_PATHS = (SETTINGS_SOURCE_PATH, ".claude/settings.json")
+DEFAULT_GLOB_SIDECAR_PATH = ".trw/contracts/enrollment.globs"
+#: Claude Code's timeout for a command hook that sets none (seconds).
+_CLIENT_DEFAULT_TIMEOUT = 600  # codex r3 KI2: the documented command-hook default
 INTENT_HOOK_FILES = ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh")
 
 #: Shared shell libraries the intent hooks SOURCE. They register no hook of their
@@ -80,6 +90,10 @@ EVIDENCE_VISIBILITY_RULES = tuple(f"!{path[len(_TRW_PREFIX) :]}" for path in EVI
 _INTENT_PRE_COMMIT_ID_PREFIX = "intent-"
 
 _UNPARSABLE = "<unparsable>"
+#: The only freshness-record shapes the sidecar renderer writes (a path is one token: renderable ASCII, no space).
+_G0_RE = re.compile(r"g0 ([!-~]+)")
+_G1_RE = re.compile(r"g1 [0-9a-f]{64} ([!-~]+)")
+_SHA_LINE_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _safe_yaml(raw: bytes | None) -> object | None:
@@ -122,26 +136,96 @@ def _intent_config_block(read: BlobReader) -> object:
 
 
 def _settings_hook_signatures(read: BlobReader) -> dict[str, str]:
-    raw = read(SETTINGS_SOURCE_PATH)
-    if raw is None:
-        return {}
-    try:
-        document = json.loads(raw.decode("utf-8", errors="strict"))
-    except (UnicodeDecodeError, ValueError):
-        return {_UNPARSABLE: _UNPARSABLE}
     signatures: dict[str, str] = {}
-    hooks = document.get("hooks") if isinstance(document, dict) else None
-    if not isinstance(hooks, dict):
-        return signatures
-    for event, entries in hooks.items():
-        if not isinstance(entries, list):
+    for settings_path in SETTINGS_PATHS:
+        raw = read(settings_path)
+        if raw is None:
             continue
-        for entry in entries:
-            blob = json.dumps(entry, sort_keys=True)
-            for hook_file in INTENT_HOOK_FILES:
-                if hook_file in blob:
-                    signatures[f"{event}:{hook_file}"] = blob
+        try:
+            document = json.loads(raw.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            signatures[f"{settings_path}:{_UNPARSABLE}"] = _UNPARSABLE
+            continue
+        hooks = document.get("hooks") if isinstance(document, dict) else None
+        if not isinstance(hooks, dict):
+            continue
+        for event, entries in hooks.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                blob = json.dumps(_without_timeouts(entry), sort_keys=True)
+                for hook_file in INTENT_HOOK_FILES:
+                    if hook_file in blob:
+                        signatures[f"{settings_path}:{event}:{hook_file}"] = blob
     return signatures
+
+
+def _without_timeouts(entry: object) -> object:
+    """*entry* with each hook's ``timeout`` dropped: a timeout is judged by :func:`_timeout_findings` instead."""
+    if not isinstance(entry, dict):
+        return entry
+    hooks = entry.get("hooks")
+    if not isinstance(hooks, list):
+        return entry
+    return {
+        **entry,
+        "hooks": [{k: v for k, v in h.items() if k != "timeout"} if isinstance(h, dict) else h for h in hooks],
+    }
+
+
+def _intent_timeouts(read: BlobReader) -> dict[str, int]:
+    timeouts: dict[str, int] = {}
+    for settings_path in SETTINGS_PATHS:
+        raw = read(settings_path)
+        try:
+            document = json.loads(raw.decode("utf-8", errors="strict")) if raw is not None else None
+        except (UnicodeDecodeError, ValueError):
+            continue  # trw-fail-silent-allow: an unparsable file is already its own registration finding
+        hooks = document.get("hooks") if isinstance(document, dict) else None
+        for event, entries in hooks.items() if isinstance(hooks, dict) else ():
+            for entry in entries if isinstance(entries, list) else ():
+                for hook in entry.get("hooks", []) if isinstance(entry, dict) else ():
+                    command = str(hook.get("command", "")) if isinstance(hook, dict) else ""
+                    for hook_file in INTENT_HOOK_FILES:
+                        if hook_file in command and isinstance(hook.get("timeout"), int):
+                            timeouts[f"{settings_path}:{event}:{hook_file}"] = hook["timeout"]
+    return timeouts
+
+
+def _bundled_timeout_floor() -> dict[str, int]:
+    """The packaged timeout per intent hook: below it, the client may kill the guard mid-decision."""
+    from pathlib import Path
+
+    try:
+        document = json.loads((Path(__file__).resolve().parents[2] / "data" / "settings.json").read_text("utf-8"))
+    except (OSError, ValueError):  # trw-fail-silent-allow: no floor means any lowered timeout is a finding
+        return {}
+    return {
+        key.rsplit(":", 1)[-1]: value
+        for key, value in _intent_timeouts(lambda _p: json.dumps(document).encode()).items()
+    }
+
+
+def _timeout_findings(read_base: BlobReader, read_candidate: BlobReader) -> list[str]:
+    """Codex UF-PRD-51-r1 KI2: update-project's legacy 5000 -> bundled migration is no weakening; a cut below the
+    bundled value is (a shorter timeout lets the client kill the guard before it decides)."""
+    floor = _bundled_timeout_floor()
+    base = _intent_timeouts(read_base)
+    findings = []
+    for key, value in sorted(_intent_timeouts(read_candidate).items()):
+        before = base.get(key)
+        # An omitted timeout is the client default; adding a short one is a cut too (codex r2 P0-2).
+        limit = floor.get(key.rsplit(":", 1)[-1], before if before is not None else _CLIENT_DEFAULT_TIMEOUT)
+        if value != before and value < limit:
+            findings.append(f"hook timeout lowered below {limit}s: {key} ({before or 'default'} -> {value})")
+    return findings
+
+
+def configured_glob_sidecar_path(read: BlobReader) -> str:
+    """Resolve ``security.intent.glob_sidecar_path`` from a ``.trw/config.yaml`` blob."""
+    intent = _intent_config_block(read)
+    value = intent.get("glob_sidecar_path") if isinstance(intent, dict) else None
+    return str(value) if isinstance(value, str) and value else DEFAULT_GLOB_SIDECAR_PATH
 
 
 def _pre_commit_intent_hooks(read: BlobReader) -> dict[str, str]:
@@ -176,6 +260,54 @@ def _evidence_visibility(read: BlobReader) -> frozenset[str]:
         return frozenset()
     lines = {line.strip() for line in raw.decode("utf-8", errors="replace").splitlines()}
     return frozenset(rule for rule in EVIDENCE_VISIBILITY_RULES if rule in lines)
+
+
+def _sidecar_matches_contract(read: BlobReader, sidecar: str) -> bool:
+    """True when *sidecar*'s ``p`` lines are exactly the patterns its contract renders (or it is absent)."""
+    from trw_mcp.security.intent_contract._anchors import eligible_claims
+    from trw_mcp.security.intent_contract._sidecar import _patterns_for
+    from trw_mcp.security.intent_contract.loader import ContractLoadError, load_contract_bytes
+
+    raw = read(sidecar)
+    if raw is None:
+        return True  # absent: only the latency shortcut is gone
+    contract_raw = read(configured_contract_path(read))
+    try:
+        contract = load_contract_bytes(contract_raw) if contract_raw is not None else None
+    except ContractLoadError:
+        return False  # trw-fail-silent-allow: not silent, False makes a committed sidecar a finding; the renderer writes none for an unloadable contract
+    expected: list[str] = []
+    for claim in eligible_claims(contract) if contract is not None else ():
+        for anchor in claim.anchors:
+            patterns = _patterns_for(anchor)
+            if patterns is None:
+                return False  # the renderer writes no sidecar then either
+            expected += patterns
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    actual = [line[2:] for line in lines if line.startswith("p ")]
+    if sorted(actual) != sorted(expected):  # order-insensitive: an equivalent render is no forgery (codex r2 KI1)
+        return False
+    # Codex r2 P0-1: the g records are the freshness protection (the shell defers when an artifact's bytes moved);
+    # every guarded artifact needs one. Their digest VALUES are not checked: a wrong one only makes the shell defer.
+    from trw_mcp.security.intent_contract._sidecar import guarded_artifacts
+
+    # Lead ruling on codex r3 KI1: only the exact shapes the renderer writes. `g0 __missing__ <path>` satisfied a
+    # "has a record" test while the shell parsed a composite filename; anything malformed or extra fails closed.
+    recorded: list[str] = []
+    digests = 0
+    for line in lines:
+        if not line or line.startswith(("#", "p ")):
+            continue
+        g0, g1, sha = _G0_RE.fullmatch(line), _G1_RE.fullmatch(line), _SHA_LINE_RE.fullmatch(line)
+        if g0:
+            recorded.append(g0.group(1))
+        elif g1:
+            recorded.append(g1.group(1))
+        elif sha:
+            digests += 1
+        else:
+            return False
+    return sorted(recorded) == sorted(guarded_artifacts(configured_contract_path(read))) and digests == 1
 
 
 def _missing_or_altered(base: dict[str, str], candidate: dict[str, str], label: str) -> list[str]:
@@ -225,6 +357,14 @@ def control_plane_findings(
     candidate_intent = _intent_config_block(read_candidate)
     if base_intent != candidate_intent:
         findings.append("security.intent.* control-plane config modified")
+
+    # PRD-CORE-254 section 13 item 4: no shell-readable cache can resist a sidecar stripped under a correct digest,
+    # so a COMMITTED sidecar whose pattern lines are not the ones its contract renders is a finding (UF-PRD-51).
+    # Judged by content: a marker edit is no proof of re-enrollment (codex r1 KI1).
+    sidecar = configured_glob_sidecar_path(read_candidate)
+    if read_base(sidecar) != read_candidate(sidecar) and not _sidecar_matches_contract(read_candidate, sidecar):
+        findings.append(f"fast-path sidecar does not match its contract: {sidecar}")
+    findings.extend(_timeout_findings(read_base, read_candidate))
 
     findings.extend(
         _missing_or_altered(_settings_hook_signatures(read_base), _settings_hook_signatures(read_candidate), "hook")

@@ -123,6 +123,25 @@ def test_update_project_rolls_back_new_managed_directories_after_late_failure(in
     assert not opencode_dir.exists()
 
 
+def test_a_rollback_never_restores_a_root_claude_md_over_a_concurrent_edit(initialized_repo: Path) -> None:
+    """REMOVE-S2 (codex r1 KI): update never writes a root CLAUDE.md, so it is not in the transaction snapshot.
+
+    The edit saved while the update ran must survive the late failure's rollback.
+    """
+    claude_md = initialized_repo / "CLAUDE.md"
+    claude_md.write_text("before the update\n", encoding="utf-8")
+
+    def _edit_then_fail(*_args: object, **_kwargs: object) -> None:
+        claude_md.write_text("edited while the update ran\n", encoding="utf-8")
+        raise RuntimeError("verify failed")
+
+    with patch("trw_mcp.bootstrap._update_project._verify_installation", side_effect=_edit_then_fail):
+        result = update_project(initialized_repo)
+
+    assert any("rolled back" in warning for warning in result["warnings"])
+    assert claude_md.read_text(encoding="utf-8") == "edited while the update ran\n"
+
+
 @pytest.mark.parametrize(
     ("ide", "relative_path"),
     [

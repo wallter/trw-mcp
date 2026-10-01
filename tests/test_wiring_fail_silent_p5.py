@@ -26,13 +26,11 @@ production seams directly.
 from __future__ import annotations
 
 import sqlite3
-import stat
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests._layout import requires_non_root
 from tests._memory_store_fake import FakeMemoryStore
 
 # ---------------------------------------------------------------------------
@@ -88,30 +86,6 @@ def test_w06_the_fail_closed_gate_will_not_escalate_an_unmeasured_probe() -> Non
 # ---------------------------------------------------------------------------
 # W07 — the WAL checkpoint marker
 # ---------------------------------------------------------------------------
-
-
-@requires_non_root
-def test_w07_a_marker_write_that_fails_is_reported(tmp_path: Path) -> None:
-    """The marker write returns its outcome instead of swallowing OSError.
-
-    Fails before: ``record_checkpoint_attempt`` returned ``None`` on every path,
-    so the caller could not tell a persisted clock from a lost one.
-    """
-    from trw_mcp.state._wal_triggers import checkpoint_marker_path, record_checkpoint_attempt
-
-    memory_dir = tmp_path / "memory"
-    memory_dir.mkdir()
-    db_path = memory_dir / "memory.db"
-    assert record_checkpoint_attempt(db_path) is True
-    assert checkpoint_marker_path(db_path).is_file()
-
-    blocked = tmp_path / "blocked"
-    blocked.mkdir()
-    blocked.chmod(stat.S_IRUSR | stat.S_IXUSR)
-    try:
-        assert record_checkpoint_attempt(blocked / "memory.db") is False
-    finally:
-        blocked.chmod(stat.S_IRWXU)
 
 
 # ---------------------------------------------------------------------------

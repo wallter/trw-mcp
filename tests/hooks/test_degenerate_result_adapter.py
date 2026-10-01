@@ -27,14 +27,12 @@ import pytest
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
     _ADVISORY_KEY,
-    _DEFAULT_DEADLINE_RETRY_ATTEMPTS,
     _HOOKS,
     _MARKER,
     _SRC,
     _advisories,
     _payload,
     _project,
-    _retry,
     _run,
     pytest_skip_no_jq,
     pytest_skip_no_sh,
@@ -315,9 +313,27 @@ def test_tunables_are_typed_and_configurable(tmp_path: Path) -> None:
     root = _project(tmp_path, "tunable-deadline")
     (root / ".trw" / "config.yaml").write_text("degenerate_result_deadline_ms: 5\n", encoding="utf-8")
     # An empty env value is "unset" to the accessor, so config.yaml decides here.
-    result = _run(root, _payload(response=""), env={"TRW_DEGENERATE_RESULT_DEADLINE_MS": ""})
+    result = _run(root, _payload(response=""), env={"TRW_DEGENERATE_RESULT_DEADLINE_MS": ""}, real_clock=True)
     assert result.returncode == 0
     assert _advisories(result) == [], "a 5ms deadline was not enforced"
+
+
+@pytest_skip_no_sh
+@pytest_skip_no_jq
+def test_the_frozen_clock_keeps_behaviour_tests_load_independent(tmp_path: Path) -> None:
+    """DEGENERATE-HOOK-TEST-FLAKES: behaviour tests cannot be silenced by a slow machine.
+
+    A 5 ms deadline is unmeetable on any host, so on the real clock the hook is silent (pinned by
+    ``test_tunables_are_typed_and_configurable``). On the harness's frozen clock the same input still
+    fires: the outcome no longer depends on how loaded the release gate is.
+    """
+    root = _project(tmp_path, "frozen-clock")
+    (root / ".trw" / "config.yaml").write_text("degenerate_result_deadline_ms: 5\n", encoding="utf-8")
+
+    result = _run(root, _payload(response=""), env={"TRW_DEGENERATE_RESULT_DEADLINE_MS": ""})
+
+    assert result.returncode == 0
+    assert len(_advisories(result)) == 1
 
 
 @pytest_skip_no_sh
@@ -326,27 +342,18 @@ def test_tunables_are_typed_and_configurable(tmp_path: Path) -> None:
 def test_a_non_numeric_config_value_falls_back_to_the_default(tmp_path: Path) -> None:
     """A mistyped tunable must not silently disable the rule it bounds.
 
-    A garbage deadline falls back to the 50 ms PRODUCTION default -- the exact
-    budget `test_degenerate_result_nfrs.py::test_p95_latency_under_budget`
-    measures -- so this assertion is wall-clock-bound the same way that one is.
-    See `_DEFAULT_DEADLINE_RETRY_ATTEMPTS` for why the retry exists and what it
-    does and does not tolerate.
+    A garbage deadline falls back to the PRODUCTION default; the frozen clock (see
+    ``frozen_clock_path``) keeps that from making the outcome depend on machine load.
     """
-
-    def _attempt(index: int) -> None:
-        root = _project(tmp_path, f"garbage-config-{index}")
-        (root / ".trw" / "config.yaml").write_text(
-            "degenerate_result_deadline_ms: soon\ndegenerate_result_cooldown_calls: lots\n", encoding="utf-8"
-        )
-        unset = {"TRW_DEGENERATE_RESULT_DEADLINE_MS": ""}
-        first = _run(root, _payload(response=""), env=unset)
-        assert first.returncode == 0
-        assert len(_advisories(first)) == 1, "a garbage deadline made the adapter silent"
-        assert _advisories(_run(root, _payload(response=""), env=unset)) == [], (
-            "a garbage cooldown disabled suppression"
-        )
-
-    _retry(_DEFAULT_DEADLINE_RETRY_ATTEMPTS, _attempt)
+    root = _project(tmp_path, "garbage-config")
+    (root / ".trw" / "config.yaml").write_text(
+        "degenerate_result_deadline_ms: soon\ndegenerate_result_cooldown_calls: lots\n", encoding="utf-8"
+    )
+    unset = {"TRW_DEGENERATE_RESULT_DEADLINE_MS": ""}
+    first = _run(root, _payload(response=""), env=unset)
+    assert first.returncode == 0
+    assert len(_advisories(first)) == 1, "a garbage deadline made the adapter silent"
+    assert _advisories(_run(root, _payload(response=""), env=unset)) == [], "a garbage cooldown disabled suppression"
 
 
 def test_shell_bounds_match_the_typed_fields() -> None:

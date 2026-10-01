@@ -142,9 +142,6 @@ CLIENT_INTEGRATIONS: tuple[ClientIntegration, ...] = (
 # A drift test asserts every ``SUPPORTED_IDES``
 # entry is either covered by a ``platform_ids`` binding or in this set, so a
 # newly-added client can never silently no-op.
-#
-# ``aider`` was retired 2026-07-11 (it never had an adapter). It is no longer in
-# ``SUPPORTED_IDES``, so it is neither dispatched nor excluded here.
 # ---------------------------------------------------------------------------
 _INTEGRATION_EXCLUDED_IDES: frozenset[str] = frozenset({"claude-code"})
 

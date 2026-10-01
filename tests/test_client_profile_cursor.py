@@ -2,31 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
 from trw_mcp.models.config._client_profile import WriteTargets
 from trw_mcp.state.analytics.report import compute_ceremony_score
-
-
-@pytest.mark.unit
-def test_bare_cursor_id_falls_back_with_actionable_message() -> None:
-    """resolve_client_profile('cursor') logs both replacement identifiers."""
-    from trw_mcp.models.config._profiles import resolve_client_profile as _resolve
-
-    mock_logger = MagicMock()
-    with patch("trw_mcp.models.config._profiles.logger", mock_logger):
-        profile = _resolve("cursor")
-
-    assert profile.client_id == "claude-code"
-    mock_logger.warning.assert_called_once()
-    call_kwargs = mock_logger.warning.call_args
-    assert call_kwargs.args[0] == "unknown_client_id_fallback"
-    message = call_kwargs.kwargs.get("message", "")
-    assert "cursor-ide" in message
-    assert "cursor-cli" in message
 
 
 @pytest.mark.unit
@@ -137,20 +117,6 @@ def test_cursor_cli_profile_resolves() -> None:
     assert profile.write_targets.instruction_path == "AGENTS.md"
     assert profile.include_framework_ref is False
     assert not hasattr(profile, "include_agent" + "_teams")
-
-
-@pytest.mark.unit
-def test_cursor_id_falls_through_to_unknown_with_rename_hint() -> None:
-    """resolve_client_profile('cursor') falls back to claude-code with rename hint logged."""
-    with patch("trw_mcp.models.config._profiles.logger") as mock_logger:
-        profile = resolve_client_profile("cursor")
-
-    assert profile.client_id == "claude-code"
-    mock_logger.warning.assert_called_once()
-    call_kwargs = mock_logger.warning.call_args
-    message = call_kwargs.kwargs.get("message", "") or str(call_kwargs)
-    assert "cursor-ide" in message
-    assert "cursor-cli" in message
 
 
 @pytest.mark.unit

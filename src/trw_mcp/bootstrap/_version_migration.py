@@ -2,7 +2,7 @@
 """Version migration — predecessor cleanup and stale artifact removal.
 
 Handles:
-- PRD-FIX-032 predecessor skill/agent migration (non-prefixed -> trw- prefixed)
+- Retired skill/agent removal (PREDECESSOR_MAP)
 - Stale artifact removal based on manifest diffs
 - Context transient cleanup during update-project
 """
@@ -17,28 +17,14 @@ from ._utils import _result_action_key
 
 logger = structlog.get_logger(__name__)
 
-# PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
-# Used by _migrate_prefix_predecessors() to remove stale predecessors during
-# update-project when the trw- prefixed successor is already installed.
-PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
+# Skill/agent names TRW retired outright. Every value is None (no successor):
+# update-project removes a TRW-written copy carrying any of these names.
+PREDECESSOR_MAP: dict[str, dict[str, None]] = {
     "skills": {
-        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
-        "audit": "trw-audit",
-        "deliver": "trw-deliver",
-        "exec-plan": "trw-exec-plan",
-        "framework-check": "trw-framework-check",
-        "learn": "trw-learn",
-        "memory-audit": "trw-memory-audit",
-        "memory-optimize": "trw-memory-optimize",
-        "prd-groom": "trw-prd-groom",
-        "prd-new": "trw-prd-new",
-        "prd-review": "trw-prd-review",
-        "project-health": "trw-project-health",
         "review-pr": None,
         # Retired 2026-07-19 (operator: internal dev-only skill, must not ship in
         # the install). Archived at docs/archive/retired/2026-07-19-trw-release-verify/.
         "trw-release-verify": None,
-        "security-check": "trw-security-check",
         # Retired 2026-07-19 (operator direction). The skill is archived at
         # docs/archive/retired/2026-07-19-trw-simplify/. Both the trw- name and
         # the legacy non-prefixed predecessor map DIRECTLY to None (retirement
@@ -66,7 +52,6 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "trw-sprint-team": None,
         "team-playbook": None,
         "trw-team-playbook": None,
-        "test-strategy": "trw-test-strategy",
         # PRD-CORE-092: Dropped skill post-consolidation
         "trw-review-pr": None,
         # trw_decision became trw_assess (clean break, no alias), so the old skill directs a tool that is gone.
@@ -74,19 +59,11 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "trw-decision": None,
     },
     "agents": {
-        # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         # Retired 2026-07-19 with the trw-simplify skill it ran (operator
         # direction). Archived at docs/archive/retired/2026-07-19-trw-simplify/.
         # Both names map directly to None (chain must collapse).
         "code-simplifier.md": None,
         "trw-code-simplifier.md": None,
-        "implementer.md": "trw-implementer.md",
-        "lead.md": "trw-lead.md",
-        "researcher.md": "trw-researcher.md",
-        "reviewer.md": "trw-reviewer.md",
-        "adversarial-auditor.md": "trw-adversarial-auditor.md",
-        "prd-groomer.md": "trw-prd-groomer.md",
-        "requirement-reviewer.md": "trw-requirement-reviewer.md",
         # PRD-CORE-291-FR05: retired 2026-09-22, content merged into a
         # neighboring agent (tester -> implementer, requirement-writer ->
         # prd-groomer, traceability-checker -> auditor). Both the legacy
@@ -118,29 +95,6 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "trw-docs-researcher.md": None,
     },
 }
-
-#: Per-client agent directories TRW no longer writes to, mapped to the exact
-#: filenames it used to write there (PRD-CORE-252-FR04).
-#:
-#: Enumerated rather than swept, because these directories are not exclusively
-#: TRW's — a blanket "remove every trw-* file here" could delete a live
-#: artifact of another subsystem. ``trw-distill-explorer.md`` (the AG-02
-#: dynamically-rendered explorer subagent) joined this list once its own
-#: writer moved to the same ``.agents/agents`` destination the bundled
-#: specialists use (PRD-CORE-252 follow-up); before that it was excluded here
-#: for the reason this comment used to state. Antigravity's own subagent
-#: reference documents ``.agents/agents``, which is where every antigravity
-#: agent — bundled or dynamically rendered — now lands.
-RELOCATED_CLIENT_AGENTS: dict[str, tuple[str, ...]] = {
-    ".antigravitycli/agents": (
-        "trw-explorer.md",
-        "trw-implementer.md",
-        "trw-lead.md",
-        "trw-reviewer.md",
-        "trw-distill-explorer.md",
-    ),
-}
-
 
 # Context-cleanup policy extracted to _version_migration_context (PRD-FIX-120,
 # 350-eLOC gate). Re-exported here so _update_project.py, bootstrap/__init__.py,
@@ -212,7 +166,7 @@ def _write_manifest(
 
     bundled = _get_bundled_names(data_dir)
     custom = _get_custom_names(target_dir, data_dir)
-    # PRD-FIX-032-FR05: Exclude predecessor names from custom lists so they
+    # PRD-FIX-032-FR05: Exclude retired names from custom lists so they
     # are not permanently protected as false-custom entries.
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
@@ -492,8 +446,7 @@ def _cleanup_stale_artifacts(
 
     Runs two cleanup passes in order:
 
-    1. PRD-FIX-032: Migrate non-prefixed predecessor skills/agents to their
-       ``trw-`` successors (safe: only removes old name when new name exists).
+    1. Remove retired skills/agents (``PREDECESSOR_MAP``) TRW can prove it wrote.
     2. Remove stale bundled artifacts (hooks/skills/agents that were previously
        managed by TRW but are no longer in the current bundle).
 
@@ -509,7 +462,7 @@ def _cleanup_stale_artifacts(
         manifest_hashes: The PRE-run manifest content hashes, threaded from
             ``update_project``: the proof of TRW authorship every sweep requires.
     """
-    # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
+    # Remove retired names before stale cleanup
     _migrate_prefix_predecessors(target_dir, result, manifest_hashes=manifest_hashes)
 
     # Remove stale hooks/skills/agents no longer in bundled data.

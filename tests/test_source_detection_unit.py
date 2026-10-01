@@ -52,14 +52,10 @@ class TestDetectClientProfileEnv:
         with patch.dict("os.environ", {"CURSOR_SESSION_ID": "sess-1"}, clear=True):
             assert detect_client_profile() == "cursor-ide"
 
-    def test_aider_model(self) -> None:
-        with patch.dict("os.environ", {"AIDER_MODEL": "claude-sonnet-4-6"}, clear=True):
-            assert detect_client_profile() == "aider"
-
-    def test_aider_chat_history(self) -> None:
-        """Secondary aider signal also triggers detection."""
-        with patch.dict("os.environ", {"AIDER_CHAT_HISTORY_FILE": "/tmp/h.md"}, clear=True):
-            assert detect_client_profile() == "aider"
+    def test_aider_env_vars_are_not_a_client_signal(self) -> None:
+        """REMOVE-S3: aider is withdrawn; its env vars select nothing."""
+        with patch.dict("os.environ", {"AIDER_MODEL": "m", "AIDER_CHAT_HISTORY_FILE": "/tmp/h.md"}, clear=True):
+            assert detect_client_profile(cwd=Path("/nonexistent")) == ""
 
     def test_opencode_model(self) -> None:
         with patch.dict("os.environ", {"OPENCODE_MODEL": "anthropic/claude-sonnet-4-6"}, clear=True):
@@ -110,13 +106,14 @@ class TestDetectModelIdEnv:
         with patch.dict("os.environ", {"OPENCODE_MODEL": "anthropic/claude-sonnet-4-6"}, clear=True):
             assert detect_model_id() == "claude-sonnet-4-6"
 
-    def test_aider_model(self) -> None:
-        with patch.dict("os.environ", {"AIDER_MODEL": "claude-sonnet-4-6"}, clear=True):
-            assert detect_model_id() == "claude-sonnet-4-6"
-
     def test_openai_model(self) -> None:
         with patch.dict("os.environ", {"OPENAI_MODEL": "gpt-4o"}, clear=True):
             assert detect_model_id() == "gpt-4o"
+
+    def test_aider_model_is_not_a_model_signal(self) -> None:
+        """REMOVE-S3: aider is withdrawn; AIDER_MODEL names no model."""
+        with patch.dict("os.environ", {"AIDER_MODEL": "claude-sonnet-4-6"}, clear=True):
+            assert detect_model_id(cwd=Path("/nonexistent")) == ""
 
     def test_provider_prefix_stripped(self) -> None:
         with patch.dict("os.environ", {"CLAUDE_MODEL": "anthropic/claude-opus-4-6"}, clear=True):

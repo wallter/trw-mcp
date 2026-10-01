@@ -69,11 +69,9 @@ class TestMemoryToLearningDict:
             "status",
             "verification_status",
             "verification_checked_at",
-            "anchor_validity",
-        }
+        }  # anchor_validity is omitted: this entry's score was never assessed (PRD-CORE-244 FR01)
         assert result["verification_status"] is None
         assert result["verification_checked_at"] == ""
-        assert result["anchor_validity"] == entry.anchor_validity
         assert result["id"] == "L-test001"
         assert result["summary"] == "Test summary"
         assert result["tags"] == ["python", "testing"]
@@ -120,7 +118,7 @@ class TestMemoryToLearningDict:
             "phase_affinity",
             "team_origin",
             "protection_tier",
-            "anchor_validity",
+            # anchor_validity is omitted when never assessed (PRD-CORE-244 FR01); see the tests below
             # PRD-CORE-244 FR08 / trw-memory 0.16.0: sessions_surfaced,
             # avg_rework_delta and outcome_correlation are NOT here. They were
             # removed from MemoryEntry, from Learning, and from
@@ -151,7 +149,19 @@ class TestMemoryToLearningDict:
         undeclared = (full_keys | compact_keys) - declared
         assert undeclared == set(), f"transform emits keys not declared in LearningEntryDict: {undeclared}"
         # Compact base must equal the always-present LearningEntryCompactDict fields.
-        assert compact_keys == set(LearningEntryCompactDict.__annotations__)
+        assert compact_keys == set(LearningEntryCompactDict.__annotations__) - {"anchor_validity"}  # NotRequired
+
+    def test_an_unassessed_anchor_validity_is_omitted_not_reported_as_one(self) -> None:
+        """PRD-CORE-244 FR01: None means nothing was anchored; the key is absent, never 1.0 and never null."""
+        entry = self._make_entry()
+        assert entry.anchor_validity is None
+        for compact in (True, False):
+            assert "anchor_validity" not in _memory_to_learning_dict(entry, compact=compact)
+
+    def test_an_assessed_anchor_validity_is_reported(self) -> None:
+        entry = self._make_entry(anchor_validity=0.4)
+        for compact in (True, False):
+            assert _memory_to_learning_dict(entry, compact=compact)["anchor_validity"] == 0.4
 
     def test_assertions_key_present_when_entry_has_assertions(self) -> None:
         """The ``assertions`` key (declared in LearningEntryDict) is populated."""

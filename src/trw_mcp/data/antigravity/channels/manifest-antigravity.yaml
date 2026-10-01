@@ -11,8 +11,7 @@ channels:
   # path from agent_formats' registry and never reads this field, so the
   # stale value was not breaking writes -- but this manifest is the record
   # of where a channel lives, and it pointed at a directory TRW no longer
-  # writes. `.antigravitycli/agents` survives only in RELOCATED_CLIENT_AGENTS
-  # for stale-copy cleanup.
+  # writes.
   file: .agents/agents/trw-distill-explorer.md
   lock_file: .trw/channels/ag-02-distill-explorer-subagent.lock
   status: active

@@ -45,7 +45,6 @@ class TestTRWConfig:
     def test_learning_defaults(self) -> None:
         config = TRWConfig()
         assert config.learning_max_entries == 500
-        assert config.learning_promotion_impact == 0.7
         assert config.learning_repeated_op_threshold == 3
         assert config.sub_claude_md_max_lines == 50
 

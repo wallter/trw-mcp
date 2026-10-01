@@ -330,3 +330,25 @@ def test_stale_sidecar_falls_through_to_python_unchanged(tmp_path: Path, state: 
     assert with_sidecar.stderr == baseline.stderr, f"the sidecar changed what the {state} state reports"
     if state in {"contract-edited", "hook-resynced"}:
         assert baseline.returncode == 2, "the positive control is missing: a stale marker must fail closed"
+
+
+def test_a_push_blocked_by_a_c9_finding_names_the_operator_signing_remedy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    intent_env: IntentContractConfig,
+) -> None:
+    """Lead condition on UF-PRD-51: whoever trips C9 must be told the exact signed-path command."""
+    from trw_mcp.security.intent_contract._models import SignedCommitViolation, WeakenedClaim
+
+    make_project(tmp_path)
+    monkeypatch.setenv("PRE_COMMIT_TO_REF", "b" * 40)
+    c9 = WeakenedClaim(claim_id="<control-plane>", condition="C9", detail="hook registration removed or altered: x")
+    violation = SignedCommitViolation(sha="b" * 40, reason="signature_invalid", weakened=(c9,), detail="no signature")
+    monkeypatch.setattr(pre_push_check, "check_commit_range", lambda *a, **k: [violation])
+    monkeypatch.setattr(pre_push_check, "detect_range_weaken_then_edit", lambda *a, **k: [])
+
+    assert pre_push_check.main([]) == _PRE_COMMIT_BLOCK
+    err = capsys.readouterr().err
+    assert "git commit --amend -S --no-edit" in err and "git verify-commit" in err
+    assert "operator" in err.lower()

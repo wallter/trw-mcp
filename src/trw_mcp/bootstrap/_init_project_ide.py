@@ -10,6 +10,7 @@ Protocol + `_run_copilot_installer` runner.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Protocol
 
@@ -286,12 +287,16 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
         generate_copilot_path_instructions,
         install_copilot_skills,
     )
+    from ._version_manifest import _manifest_content_hashes, _read_manifest
 
+    # The PRIOR install's ownership record, read before this init rewrites it: without it an unchanged older TRW
+    # copy has no baseline but the new bundle and reads as a user edit, so it is never refreshed (UF-BOOT-07-KI2).
+    hashes = _manifest_content_hashes(_read_manifest(target_dir))
     installers = (
         ("copilot-instructions.md", generate_copilot_instructions),
-        ("copilot path instructions", generate_copilot_path_instructions),
-        ("copilot hooks", generate_copilot_hooks),
-        ("copilot skills", install_copilot_skills),
+        ("copilot path instructions", partial(generate_copilot_path_instructions, manifest_hashes=hashes)),
+        ("copilot hooks", partial(generate_copilot_hooks, manifest_hashes=hashes)),
+        ("copilot skills", partial(install_copilot_skills, manifest_hashes=hashes)),
     )
     for label, installer in installers:
         _run_copilot_installer(result, label, installer, target_dir, force=force)
@@ -300,7 +305,7 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
     try:
         from ._copilot_distill_channels import install_copilot_distill_channels
 
-        dc_result = install_copilot_distill_channels(target_dir, force=force)
+        dc_result = install_copilot_distill_channels(target_dir, force=force, manifest_hashes=hashes)
         _extend_result(result, dc_result)
     except Exception as exc:  # justified: fail-open, distill channels are additive
         result.setdefault("warnings", []).append(f"copilot distill channels skipped: {exc}")

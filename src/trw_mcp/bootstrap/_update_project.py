@@ -198,14 +198,31 @@ def _run_post_update_phases(
     )
 
     # Claude Code distill channels — always update (claude-code is the default client)
-    if "claude-code" in ide_targets or not ide_targets:
+    if "claude-code" in write_targets or not write_targets:
         _refresh_distill_channels(target_dir, manifest_hashes, result)
 
     # PRD-CORE-149 FR04 / R8 sol round 1 P1: rewrite EVERY resolved client's
-    # hook-env.d/<key>.sh on every sync, not just ide_targets[0] -- update
-    # installs integrations for all of them (run_update_integrations above).
-    result.setdefault("warnings", []).extend(_rewrite_hook_env_for_installed_profiles(target_dir, ide_targets))
+    # hook-env.d/<key>.sh on every sync, not just the first -- update installs
+    # integrations for all of them (run_update_integrations above). The SAME
+    # record-first targets: raw detection here wrote a hook env for a client the
+    # user never chose (UPDATE-PROJECT-RECORDED-CLIENTS-ONLY).
+    result.setdefault("warnings", []).extend(_rewrite_hook_env_for_installed_profiles(target_dir, write_targets))
+    if not ide:
+        result["warnings"].extend(_unrecorded_client_notes(ide_targets, write_targets))
     return retired_pins
+
+
+def _unrecorded_client_notes(detected: list[str], recorded: list[str]) -> list[str]:
+    """One line per client detected here but not recorded: update-project leaves it alone and says how to add it.
+
+    claude-code is skipped: detection reports it for any `.claude/`, which TRW creates for every client.
+    """
+    return [
+        f"{client} is detected here but not recorded for this project, so update-project left it alone; "
+        f"to add it, run: trw-mcp update-project --ide {client}"
+        for client in detected
+        if client not in recorded and client != "claude-code"
+    ]
 
 
 def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list[str]) -> list[str]:
@@ -277,7 +294,7 @@ def _apply_update(
             )
             if on_progress:
                 on_progress("Phase", "Verifying installation...")
-            targets = resolve_ide_targets(root, ide_override=ide)
+            targets = resolve_client_write_targets(root, ide_override=ide)
             _verify_installation(root, result, expects_mcp_json="claude-code" in targets or not targets)
             changes = _diff_transaction_paths(snapshot_root, root)
             if changes.keys() <= _RUN_RECORDS:
@@ -333,8 +350,8 @@ def update_project(
     all other user-configured MCP servers.
 
     Smart update: AGENTS.md -- replaces content between ``trw:start``/``trw:end``
-    markers while preserving all user-written sections. A TRW-only legacy
-    ``CLAUDE.md`` is removed; one with user content is reported, never touched.
+    markers while preserving all user-written sections. A root ``CLAUDE.md`` is
+    never touched (doctor's ``claude_md_masks_agents_md`` row reports one).
 
     Args:
         target_dir: Root of the target git repository.
@@ -450,7 +467,7 @@ def update_project(
                 result["warnings"].extend(context["warnings"])
                 result["ran"] = external
 
-    targets = resolve_ide_targets(target_dir, ide_override=ide)
+    targets = resolve_client_write_targets(target_dir, ide_override=ide)
     changed = (
         bool(result["updated"] or result["created"]) and not result["errors"]
     )  # a run that wrote nothing has nothing to reload

@@ -110,9 +110,9 @@ KNOWN_TIERS: frozenset[str] = frozenset({"frontier", "balanced", "local-large", 
 #: ``docs/CLIENT-PROFILES.md``. Clients in this set but absent from
 #: :data:`_CLIENT_MAPS` are intentional passthrough (the harness accepts the
 #: tier vocabulary directly, or the adapter has not yet been written and we
-#: prefer to surface the tier at the destination). Retired ids (``aider``) are
-#: excluded by ``builtin_client_ids()``: they take the unknown-client path and
-#: degrade to a safe default rather than receiving a raw tier token.
+#: prefer to surface the tier at the destination). An id outside
+#: ``builtin_client_ids()`` takes the unknown-client path and degrades to a safe
+#: default rather than receiving a raw tier token.
 #:
 #: DERIVED, not restated (2026-09-12). This is a membership test, not an
 #: adapter table -- the adapter tables are :data:`_CLIENT_MAPS`, and naming a

@@ -2,16 +2,9 @@
 
 Eight profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot,
 antigravity-cli, grok) with eval-data-calibrated ceremony and scoring weights.
-Unknown client IDs fall back to claude-code with a structured warning.
-
-Migration notes:
-- The bare ``cursor`` profile ID was removed in Sprint 91. Use ``cursor-ide``
-  for interactive Cursor IDE or ``cursor-cli`` for headless ``cursor-agent``
-  CI runs.
-- ``aider`` was retired 2026-07-11 (it never had an adapter).
-  ``resolve_client_profile`` still accepts it — it resolves to the claude-code
-  fallback with a single ``client_profile_retired`` warning so no tool crashes
-  on a stale ``target_platforms: [aider]`` config.
+Unknown client IDs (including withdrawn ones such as ``aider``, ``gemini`` or
+the bare ``cursor``) fall back to claude-code with a structured warning, so a
+stale ``target_platforms`` entry never crashes a tool.
 """
 
 from __future__ import annotations
@@ -363,12 +356,6 @@ _PROFILES: dict[str, ClientProfile] = {
     ),
 }
 
-# Retired client identifiers (2026-07-11): aider never had a TRW adapter. It
-# resolves to the claude-code fallback with a single ``client_profile_retired``
-# warning so a stale ``target_platforms: [aider]`` config never crashes a tool.
-_RETIRED_PROFILES: frozenset[str] = frozenset({"aider"})
-
-
 # Fail-closed floor for :func:`builtin_client_ids`. Every id TRW has shipped as
 # an active profile and not since removed appears here, so a derivation that
 # silently returns fewer ids than this cannot reach a caller.
@@ -402,9 +389,6 @@ def builtin_client_ids() -> tuple[str, ...]:
     it was never told about (three separate defects of that shape shipped in
     this repo, see ``docs/CLIENT-PROFILES.md``).
 
-    Retired ids (``aider``) are excluded: they are recognised for uninstall and
-    migration only, never installable. Use :func:`retired_client_ids` for those.
-
     Fail-closed: when the registry yields fewer ids than
     ``_BUILTIN_CLIENT_FLOOR`` (an import-order accident, a partially
     initialised module, a bad merge), the missing floor ids are added back and
@@ -427,60 +411,19 @@ def builtin_client_ids() -> tuple[str, ...]:
     return (*derived, *missing)
 
 
-def retired_client_ids() -> frozenset[str]:
-    """Client ids retained for uninstall/migration cleanup only.
-
-    Disjoint from :func:`builtin_client_ids` by construction: these ids resolve
-    to the claude-code fallback with a ``client_profile_retired`` warning and are
-    never installable. ``gemini`` is absent because it was REMOVED outright on
-    2026-07-24 rather than retired.
-    """
-    return _RETIRED_PROFILES
-
-
 def resolve_client_profile(
     client_id: str,
     model_tier: ModelTier | None = None,
 ) -> ClientProfile:
     """Resolve a built-in profile, optionally adjusted for model tier.
 
-    Unknown client_ids fall back to claude-code with a warning (F04/FR04).
-    Retired client_ids (``aider``) fall back to claude-code with a single
-    ``client_profile_retired`` warning so no tool crashes on a stale
-    ``target_platforms`` entry. Model tier adjustments return a NEW profile via
-    model_copy (F06).
+    Unknown client_ids fall back to claude-code with a warning (F04/FR04), so
+    no tool crashes on a stale ``target_platforms`` entry. Model tier
+    adjustments return a NEW profile via model_copy (F06).
     """
     profile = _PROFILES.get(client_id)
     if profile is None:
-        if client_id in _RETIRED_PROFILES:
-            logger.warning(
-                "client_profile_retired",
-                client_id=client_id,
-                fallback="claude-code",
-                message=(
-                    f"The '{client_id}' client profile was retired 2026-07-11 "
-                    "and resolves to the claude-code fallback. Pick a supported "
-                    "client profile and update your target_platforms configuration."
-                ),
-            )
-        elif client_id == "cursor":
-            logger.warning(
-                "unknown_client_id_fallback",
-                client_id=client_id,
-                fallback="claude-code",
-                message=(
-                    "The bare 'cursor' profile ID was removed in Sprint 91. "
-                    "Use 'cursor-ide' for interactive Cursor IDE sessions or "
-                    "'cursor-cli' for headless cursor-agent CI runs. "
-                    "Update your target_platforms configuration accordingly."
-                ),
-            )
-        else:
-            logger.warning(
-                "unknown_client_id_fallback",
-                client_id=client_id,
-                fallback="claude-code",
-            )
+        logger.warning("unknown_client_id_fallback", client_id=client_id, fallback="claude-code")
         profile = _PROFILES["claude-code"]
 
     if model_tier is not None:

@@ -36,15 +36,6 @@ from trw_mcp.state.claude_md._agents_md import (
 from trw_mcp.state.claude_md._agents_md import (
     _sync_instruction_targets as _sync_instruction_targets,
 )
-from trw_mcp.state.claude_md._promotion import (
-    collect_context_data as collect_context_data,
-)
-from trw_mcp.state.claude_md._promotion import (
-    collect_patterns as collect_patterns,
-)
-from trw_mcp.state.claude_md._promotion import (
-    collect_promotable_learnings as collect_promotable_learnings,
-)
 from trw_mcp.state.claude_md._review_md import (
     _REVIEW_MAX_LEARNINGS as _REVIEW_MAX_LEARNINGS,
 )

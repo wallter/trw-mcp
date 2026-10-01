@@ -149,3 +149,135 @@ def test_the_row_is_registered() -> None:
     from trw_mcp.server._doctor_checks_registry import CHECKS
 
     assert ("hook_family", "_check_hook_family") in CHECKS
+
+
+_HAD = {"lib-a.sh": {"old_helper"}, "lib-b.sh": set()}
+_HAVE = {"lib-a.sh": set(), "lib-b.sh": set()}
+
+
+@pytest.mark.parametrize(
+    "call",
+    ["time old_helper\n", "VALUE=1 old_helper\n", "command old_helper\n", "! old_helper\n", 'x="$(old_helper)"\n'],
+)
+def test_a_prefixed_or_substituted_call_is_still_a_call(call: str) -> None:
+    """Codex KI2-r2: command-position matching missed `time f`, `X=1 f` and friends (the r1 parser caught them)."""
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    text = "#!/bin/sh\n. ./lib-a.sh\n" + call
+    assert calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD) == {"old_helper"}
+
+
+@pytest.mark.parametrize(
+    "fake",
+    ["# if old_helper() { :; }\n", 'echo "if old_helper() { :; }"\n', "echo 'old_helper() { :; }'\n"],
+)
+def test_a_definition_in_a_comment_or_string_defines_nothing(fake: str) -> None:
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    text = "#!/bin/sh\n. ./lib-a.sh\n" + fake + "old_helper\n"
+    assert calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD) == {"old_helper"}
+
+
+def test_a_lib_sourced_after_the_call_does_not_define_it_in_time() -> None:
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    have = {"lib-a.sh": set(), "lib-b.sh": {"old_helper"}}
+    text = "#!/bin/sh\n. ./lib-a.sh\nold_helper\n. ./lib-b.sh\n"
+    assert calls_missing(text, ["lib-a.sh", "lib-b.sh"], have=have, had=_HAD) == {"old_helper"}
+
+
+def test_a_lib_sourced_before_the_call_defines_it() -> None:
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    have = {"lib-a.sh": set(), "lib-b.sh": {"old_helper"}}
+    text = "#!/bin/sh\n. ./lib-a.sh\n. ./lib-b.sh\nold_helper\n"
+    assert calls_missing(text, ["lib-a.sh", "lib-b.sh"], have=have, had=_HAD) == set()
+
+
+@pytest.mark.parametrize(
+    "before",
+    [
+        "cat <<EOF\nit's fine\nEOF\n",  # a heredoc body is data, apostrophe and all
+        "cat <<'EOF'\nit's\nEOF\n",
+        "cat <<-EOF\n\tit's\n\tEOF\n",
+        "z=$'can\\'t'\n",  # ANSI-C quoting escapes its own quote
+    ],
+)
+def test_literal_text_never_hides_a_later_call(before: str) -> None:
+    """Codex KI2-r3 KI1 + W1 probe: a quote inside a heredoc or $'..' blanked every later line."""
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    text = "#!/bin/sh\n. ./lib-a.sh\n" + before + "old_helper\n"
+    assert calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD) == {"old_helper"}
+
+
+def test_a_call_in_a_case_arm_is_a_call() -> None:
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    text = "#!/bin/sh\n. ./lib-a.sh\ncase $x in\n  a) old_helper ;;\nesac\n"
+    assert calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD) == {"old_helper"}
+
+
+def test_a_parameter_expansion_pattern_never_erases_a_definition() -> None:
+    """Codex KI2-r3 KI3: `${y# #}` started a comment that ate the definition after it."""
+    from trw_mcp.server._doctor_hook_family import defined_functions
+
+    assert "old_helper" in defined_functions("x=${y# #}; old_helper() { :; }\n")
+
+
+def test_a_source_after_an_attached_separator_is_recorded() -> None:
+    """Codex KI2-r3 KI5: `:;. ./lib-b.sh` was dropped, so the lib's definitions never counted."""
+    from trw_mcp.server._doctor_hook_family import calls_missing
+
+    have = {"lib-a.sh": set(), "lib-b.sh": {"old_helper"}}
+    text = "#!/bin/sh\n. ./lib-a.sh\n:;. ./lib-b.sh\nold_helper\n"
+    assert calls_missing(text, ["lib-a.sh", "lib-b.sh"], have=have, had=_HAD) == set()
+
+
+def test_deeply_nested_substitutions_never_crash() -> None:
+    """Codex KI2-r3 KI6: ~500 nested "$(..)" raised RecursionError during install and doctor."""
+    from trw_mcp.server._doctor_hook_family import calls_missing, defined_functions
+
+    deep = 'x="' + '$(echo "' * 600 + "y" + '")' * 600 + '"\n'
+    text = "#!/bin/sh\n. ./lib-a.sh\n" + deep + "old_helper\n"
+    defined_functions(text)
+    calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD)
+
+
+_DEEP = 'x="' + '$(echo "' * 600 + "y" + '")' * 600 + '"\n'
+
+
+@pytest.mark.parametrize(
+    ("body", "have"),
+    [
+        (_DEEP + "old_helper\n", _HAVE),  # codex KI2-r3 KI6: was a RecursionError
+        ('echo "$(case x in x) :;; esac; old_helper)"\n', _HAVE),  # KI2-r3 KI2
+        ("run() { old_helper; }\n. ./lib-b.sh\nrun\n", {"lib-a.sh": set(), "lib-b.sh": {"old_helper"}}),  # KI4
+    ],
+)
+def test_shell_the_checker_does_not_model_is_uncertain_never_a_guess(body: str, have: dict[str, set[str]]) -> None:
+    """Lead ruling on KI2-r3: unmodelled shell gives a reason (keep + warn), never a crash or a false miss."""
+    from trw_mcp.server._doctor_hook_family import verify_calls
+
+    missing, reason = verify_calls("#!/bin/sh\n. ./lib-a.sh\n" + body, ["lib-a.sh", "lib-b.sh"], have=have, had=_HAD)
+    assert reason and missing == set()
+
+
+def test_a_fully_modelled_miss_is_definite() -> None:
+    from trw_mcp.server._doctor_hook_family import verify_calls
+
+    assert verify_calls("#!/bin/sh\n. ./lib-a.sh\nold_helper\n", ["lib-a.sh"], have=_HAVE, had=_HAD) == (
+        {"old_helper"},
+        None,
+    )
+
+
+def test_doctor_warns_rather_than_fails_on_a_hook_it_cannot_verify(tmp_path: Path) -> None:
+    hooks = _deploy(tmp_path)
+    hook = hooks / "session-start.sh"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n" + _DEEP, encoding="utf-8")
+
+    status, message = _row(tmp_path)
+
+    assert status == "WARN", message
+    assert "session-start.sh" in message and "could not verify" in message

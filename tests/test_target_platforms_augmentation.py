@@ -8,7 +8,6 @@ The fixed implementation augments rather than narrows.
 Contract verified here:
   - Existing entries are preserved (never narrowed).
   - New ide_targets entries are appended in order.
-  - Legacy bare ``cursor`` is silently migrated to ``cursor-ide``.
   - Duplicates are deduplicated (first occurrence wins).
   - When merge is no-op, file is preserved.
   - All other config fields preserved.
@@ -117,42 +116,6 @@ class TestAugmentationAddsNewIdes:
 
         platforms = _read_platforms(cfg)
         assert platforms == ["claude-code", "cursor-ide", "cursor-cli", "antigravity-cli"]
-
-
-@pytest.mark.integration
-class TestLegacyCursorMigration:
-    """Bare `cursor` identifier is silently migrated to `cursor-ide`."""
-
-    def test_cursor_migrated_to_cursor_ide(self, tmp_path: Path) -> None:
-        """Legacy entry rewritten in-place; file marked as updated."""
-        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
-
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "cursor"])
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
-
-        # No new ide_targets — pure migration of existing list
-        _update_config_target_platforms(tmp_path, ["claude-code"], result)
-
-        platforms = _read_platforms(cfg)
-        assert "cursor" not in platforms, "Legacy `cursor` should be removed"
-        assert "cursor-ide" in platforms, "Should be replaced with cursor-ide"
-        assert "claude-code" in platforms
-        assert str(cfg) in result["updated"]
-
-    def test_cursor_migration_dedupes_when_cursor_ide_already_present(self, tmp_path: Path) -> None:
-        """If both `cursor` and `cursor-ide` exist, migration deduplicates."""
-        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
-
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "cursor", "cursor-ide"])
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
-
-        _update_config_target_platforms(tmp_path, [], result)
-
-        platforms = _read_platforms(cfg)
-        # Only one cursor-ide should remain
-        assert platforms.count("cursor-ide") == 1
-        assert "cursor" not in platforms
-        assert platforms == ["claude-code", "cursor-ide"]
 
 
 @pytest.mark.integration
@@ -296,38 +259,3 @@ class TestObservability:
             if log_entry.get("event") == "config_target_platforms_unchanged"
         ]
         assert len(unchanged_logs) == 1
-
-
-@pytest.mark.integration
-class TestRetiredIdentifierMigration:
-    """Retired ids (aider — 2026-07-11) are DROPPED with a warning, not
-    migrated to a replacement (the on-disk artifacts differ)."""
-
-    def test_aider_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
-
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "aider", "opencode"])
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
-
-        # Pure migration of the existing list (no new ide_targets).
-        _update_config_target_platforms(tmp_path, [], result)
-
-        platforms = _read_platforms(cfg)
-        assert "aider" not in platforms
-        assert platforms == ["claude-code", "opencode"]
-        assert str(cfg) in result["updated"]
-        assert any("aider support retired" in w for w in result.get("warnings", []))
-        # The retired id must NOT be silently rewritten to another client.
-        assert "antigravity-cli" not in platforms
-
-    def test_retired_id_in_ide_targets_not_appended(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
-
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code"])
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
-
-        _update_config_target_platforms(tmp_path, ["aider"], result)
-
-        platforms = _read_platforms(cfg)
-        assert platforms == ["claude-code"]
-        assert "aider" not in platforms

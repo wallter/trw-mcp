@@ -4,30 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from trw_mcp.models.config import builtin_client_ids, resolve_client_profile, retired_client_ids
+from trw_mcp.models.config import builtin_client_ids, resolve_client_profile
 from trw_mcp.models.config._client_profile import ClientProfile, WriteTargets
 from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS
 
-# ``aider`` was retired 2026-07-11 (it never had a TRW adapter). It is RETAINED
-# in ``_CLIENT_ORDER`` because ``uninstall_surfaces()`` is keyed by it —
-# existing ``.aider.conf.yml`` installs must remain removable via
-# ``trw-mcp uninstall`` forever. Presence here means "has uninstall surfaces",
-# NOT "supported": the documentation-facing ``build_client_profile_rows``
-# iterates ``_ACTIVE_CLIENT_ORDER`` (retired ids excluded) so retired clients
-# never appear as active/documented profiles.
-#
-# DERIVED (2026-09-12): active ids come from the profile registry in registry
-# order, retired ids are appended. It was a hand-written 8-tuple, and an eighth
-# profile added to the registry alone would have been absent from BOTH
-# consumers at once -- missing from the documented profile matrix and, worse,
-# missing from ``uninstall_surfaces()``, so ``trw-mcp uninstall`` would report
-# success while leaving that client's whole config tree on disk.
-_RETIRED_CLIENTS: frozenset[str] = retired_client_ids()
-
-_CLIENT_ORDER: tuple[str, ...] = (*builtin_client_ids(), *sorted(_RETIRED_CLIENTS))
-
-# Active (installable, documented) client order — retired ids removed.
-_ACTIVE_CLIENT_ORDER: tuple[str, ...] = tuple(c for c in _CLIENT_ORDER if c not in _RETIRED_CLIENTS)
+# DERIVED (2026-09-12) from the profile registry, in registry order. It was a
+# hand-written 8-tuple, and a profile added to the registry alone would have
+# been absent from BOTH consumers at once -- missing from the documented
+# profile matrix and, worse, from ``uninstall_surfaces()``, so
+# ``trw-mcp uninstall`` would report success while leaving that client's whole
+# config tree on disk.
+_CLIENT_ORDER: tuple[str, ...] = builtin_client_ids()
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +84,7 @@ def _format_pool_weights(profile: ClientProfile) -> str:
 
 
 def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
-    """Return documentation rows for all active (non-retired) built-in profiles."""
+    """Return documentation rows for all built-in profiles."""
     from trw_mcp.models.config import get_config
 
     # PRD-CORE-218 FR04: tool exposure is now a single global authority
@@ -105,7 +92,7 @@ def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
     # resolved value uniformly across profile rows.
     tool_resolution_mode = str(getattr(get_config(), "tool_resolution_mode", "standard"))
     rows: list[ClientProfileDocRow] = []
-    for client_id in _ACTIVE_CLIENT_ORDER:
+    for client_id in _CLIENT_ORDER:
         profile = resolve_client_profile(client_id)
         rows.append(
             ClientProfileDocRow(
@@ -180,20 +167,6 @@ class UninstallSurface:
     merged_config: bool = False
     config_shape: str = ""
     home_scoped: bool = False
-
-
-# Instruction-file uninstall surfaces for retired clients (2026-07-11). Resolved
-# explicitly here rather than via resolve_client_profile(), which now returns the
-# claude-code fallback for retired ids — that fallback would surface claude-code's
-# own ``AGENTS.md`` and LOSE the retired client's instruction file entirely.
-# Keeping them here guarantees existing installs stay removable forever.
-_RETIRED_INSTRUCTION_SURFACES: dict[str, UninstallSurface] = {
-    # aider's pre-retirement _light_profile wrote a managed block into
-    # ``.aider/instructions.md`` (retire commit e1466da411 removed the writer but
-    # dropped this surface — release-verify 2026-07-17 P1). Existing aider installs
-    # must stay strippable forever; managed_block preserves any user content.
-    "aider": UninstallSurface(".aider/instructions.md", managed_block=True),
-}
 
 
 # Framework-core surfaces created by init-project regardless of client profile.
@@ -375,7 +348,6 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # ``mcpServers`` map shared with the user's own servers, so strip only ``trw``.
         UninstallSurface(".github/mcp.json", merged_config=True, config_shape="mcp-server-map"),
     ),
-    "aider": (UninstallSurface(".aider.conf.yml"),),
     "antigravity-cli": (
         # settings.json is a smart-merged MCP-server map (preserves user
         # servers) -- strip only the ``trw`` entry, never rmtree the dir.
@@ -502,14 +474,6 @@ def client_surfaces(client_id: str, generated: frozenset[str] | None = None) -> 
     if generated is None:
         generated = _generated_instruction_relpaths()
     surfaces: list[UninstallSurface] = list(_PROFILE_DIR_SURFACES.get(client_id, ()))
-    if client_id in _RETIRED_CLIENTS:
-        # Retired clients no longer resolve to their own profile
-        # (resolve_client_profile returns the claude-code fallback), so use
-        # the explicit retired-instruction map to preserve their cleanup.
-        retired_instr = _RETIRED_INSTRUCTION_SURFACES.get(client_id)
-        if retired_instr is not None:
-            surfaces.append(retired_instr)
-        return tuple(surfaces)
     surfaces.extend(_instruction_surfaces(resolve_client_profile(client_id), generated))
     return tuple(surfaces)
 

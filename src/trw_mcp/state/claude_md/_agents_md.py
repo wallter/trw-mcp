@@ -36,7 +36,6 @@ from trw_mcp.state.claude_md._instructions_link import agents_link_section, writ
 from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_agents_md as _any_client_writes_agents_md
 from trw_mcp.state.claude_md._orphan_strip import _claude_code_claimed as _claude_code_claimed
 from trw_mcp.state.claude_md._orphan_strip import _strip_trw_section as _strip_trw_section
-from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md as retire_legacy_claude_md
 from trw_mcp.state.claude_md._parser import merge_trw_section, render_merged_content
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

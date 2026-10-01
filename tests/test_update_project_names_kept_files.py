@@ -101,16 +101,6 @@ class TestTheCliNamesWhatItKept:
 
         assert "WARNING: kept .agents/skills/trw-x: TRW cannot show it wrote it" in capsys.readouterr().out
 
-    def test_the_adapter_claude_md_is_reported_but_is_not_a_warning(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Lead ruling 2026-10-01: a CLAUDE.md that only imports AGENTS.md is the user's, kept and reported."""
-        _run_update(_args(tmp_path), _result(preserved=["CLAUDE.md (kept: adapter imports AGENTS.md)"]))
-
-        out = capsys.readouterr().out
-        assert "Kept CLAUDE.md (adapter imports AGENTS.md)" in out
-        assert "WARNING: kept CLAUDE.md" not in out
-
     def test_an_ordinary_preserved_entry_is_not_promoted_to_a_warning(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

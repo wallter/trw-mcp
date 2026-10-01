@@ -199,10 +199,6 @@ framework_version
 frameworks_dir
 hooks_enabled
 hybrid_rrf_k
-impact_forced_distribution_enabled
-impact_high_threshold_pct
-impact_tier_critical_cap
-impact_tier_high_cap
 index_auto_sync_on_status_change
 installation_id
 instruction_size_gate_mode
@@ -221,7 +217,6 @@ learning_decay_use_exponent
 learning_max_entries
 learning_outcome_correlation_scope
 learning_outcome_correlation_window_minutes
-learning_promotion_impact
 learning_recall_enabled
 learning_repeated_op_threshold
 learning_sharing_enabled

@@ -5,22 +5,10 @@ from __future__ import annotations
 import pytest
 
 from trw_mcp.scoring import (
-    _TIER_HIGH_CEILING,
-    _TIER_MEDIUM_CEILING,
     _clamp01,
     safe_float,
     safe_int,
 )
-
-
-class TestScoringConstants:
-    """Verify scoring constants have expected mathematical values."""
-
-    def test_tier_high_ceiling(self) -> None:
-        assert _TIER_HIGH_CEILING == 0.89
-
-    def test_tier_medium_ceiling(self) -> None:
-        assert _TIER_MEDIUM_CEILING == 0.69
 
 
 class TestClamp01:

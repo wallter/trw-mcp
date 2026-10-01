@@ -48,9 +48,6 @@ from trw_mcp.scoring._decay import (
 from trw_mcp.scoring._decay import (
     utility_params_for as utility_params_for,
 )
-from trw_mcp.scoring._distribution import (
-    enforce_tier_distribution as enforce_tier_distribution,
-)
 from trw_mcp.scoring._recall import (
     RecallContext as RecallContext,
 )
@@ -62,12 +59,6 @@ from trw_mcp.scoring._recall import (
 )
 from trw_mcp.scoring._recall import (
     utility_based_prune_candidates as utility_based_prune_candidates,
-)
-from trw_mcp.scoring._utils import (
-    _TIER_HIGH_CEILING as _TIER_HIGH_CEILING,
-)
-from trw_mcp.scoring._utils import (
-    _TIER_MEDIUM_CEILING as _TIER_MEDIUM_CEILING,
 )
 from trw_mcp.scoring._utils import (
     _clamp01 as _clamp01,
@@ -91,25 +82,6 @@ from trw_mcp.scoring.rework_rate import (
     compute_rework_rate as compute_rework_rate,
 )
 
-
-def __getattr__(name: str) -> object:
-    """Backward-compat shim for test module-level singleton patching (FIX-044).
-
-    Tests may patch module attributes like _config, _reader, _writer directly
-    on this module. This shim provides lazy construction so the attributes
-    exist on first access, enabling those patches to work.
-
-    Note: Production code should never rely on this — use get_config(),
-    FileStateReader(), FileStateWriter() directly.
-
-    Raises:
-        AttributeError: If name is not one of the known test singletons.
-    """
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
-
-
 __all__ = [
     "CeremonyDepthContract",
     "RecallContext",
@@ -118,7 +90,6 @@ __all__ = [
     "compute_rework_rate",
     "compute_utility_score",
     "correlate_recalls",
-    "enforce_tier_distribution",
     "get_ceremony_depth_contract",
     "get_phase_requirements",
     "infer_domains",

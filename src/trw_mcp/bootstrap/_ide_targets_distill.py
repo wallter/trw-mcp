@@ -61,12 +61,13 @@ def _update_codex_distill_channels(
 def _update_copilot_distill_channels(
     target_dir: Path,
     result: dict[str, list[str]],
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Update copilot distill channels (FR41-FR43 — additive, fail-open)."""
     try:
         from ._copilot_distill_channels import install_copilot_distill_channels
 
-        dc = install_copilot_distill_channels(target_dir)
+        dc = install_copilot_distill_channels(target_dir, manifest_hashes=manifest_hashes)
         for key in ("created", "updated", "preserved", "errors"):
             items = dc.get(key)
             if isinstance(items, list):

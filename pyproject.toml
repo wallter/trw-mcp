@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "8.1.5"
+version = "8.1.6"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -88,7 +88,7 @@ dependencies = [
     # 5.1.0 also carries `trw_memory.security.credentials` (the one credential detector,
     # E2E-INC-036), imported UNGUARDED by telemetry/anonymizer.py; if this ships after
     # trw-memory 5.1.0 is published, raise the floor to the release that carries it.
-    "trw-memory>=5.1.5,<6.0.0",
+    "trw-memory>=5.1.6,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -205,7 +205,6 @@ typeCheckingMode = "standard"
 [tool.deptry]
 known_first_party = ["trw_mcp"]
 optional_dependencies_dev_groups = ["dev"]
-extend_exclude = ["scripts/install-trw.template.py"]
 package_module_name_map = { "opentelemetry-api" = "opentelemetry" }
 
 [tool.deptry.per_rule_ignores]
@@ -217,7 +216,6 @@ DEP002 = ["starlette"]
 # ~850 mechanical rewrites (datetime.UTC, StrEnum); do that as its own sweep.
 target-version = "py310"
 line-length = 120
-exclude = ["scripts/install-trw.template.py", "scripts/build_installer.py"]
 
 [tool.ruff.lint]
 select = [
@@ -281,6 +279,10 @@ unfixable = ["F841"]
 # Dispatch runner — launching another coding-agent CLI is the module's whole purpose;
 # argv is a list (shell=False), env is sanitized/allowlisted, prompt is a single token.
 "src/trw_mcp/dispatch/_runner.py" = ["S603", "S607"]
+# The one-file installer (UF-BOOT-30; it ships to users' machines and runs before the package exists). It runs
+# its own pip/uv with a list argv (S603), fetches fixed https endpoints through an origin-pinned opener (S310), and
+# its urllib redirect-handler overrides inherit the untyped stdlib signatures (ANN). Everything else is enforced.
+"scripts/install-trw.template.py" = ["S603", "S310", "ANN001", "ANN202", "ANN401"]
 # Dispatch job registry — spawns the detached _run_job child via [sys.executable,
 # "-m", ...]; argv is a fixed list (shell=False), only paths we created are appended.
 "src/trw_mcp/dispatch/_jobs.py" = ["S603"]

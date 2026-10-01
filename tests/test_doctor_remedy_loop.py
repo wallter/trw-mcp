@@ -46,7 +46,7 @@ def _run_named_remedy(message: str, root: Path) -> None:
     assert match is not None, f"the row names no update-project command: {message!r}"
     command = next(group for group in match.groups() if group).split()
     args = _build_arg_parser().parse_args(command[1:])
-    assert Path(args.target_dir).resolve() == Path(".").resolve() or args.target_dir in (".", None), (
+    assert Path(args.target_dir).resolve() == Path.cwd() or args.target_dir in (".", None), (
         f"the printed command parses with target_dir={args.target_dir!r}, so it would not repair this project"
     )
     assert not update_project(root, reprovision=args.reprovision).get("errors")

@@ -207,9 +207,6 @@ class TestFullSyncNoEmptySectionHeaders:
         llm.available = False
 
         with (
-            patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),
@@ -261,9 +258,6 @@ class TestFullSyncNoUnreplacedMarkers:
         llm.available = False
 
         with (
-            patch("trw_mcp.state.claude_md._sync.collect_promotable_learnings", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_patterns", return_value=[]),
-            patch("trw_mcp.state.claude_md._sync.collect_context_data", return_value=({}, {})),
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
             patch("trw_mcp.state.analytics.update_analytics_sync"),

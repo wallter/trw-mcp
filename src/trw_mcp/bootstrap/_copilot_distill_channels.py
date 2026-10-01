@@ -37,6 +37,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+from trw_mcp.bootstrap._copilot import _keep_edited_hook
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result
 from trw_mcp.channels._manifest_loader import ManifestValidationError
@@ -89,6 +90,8 @@ def _install_c5_hook(
     repo_root: Path,
     hook_name: str,
     result: dict[str, list[str]],
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Install a bundled C5 hook script to .github/hooks/ if the source exists.
 
@@ -109,6 +112,8 @@ def _install_c5_hook(
         if existed and dest.read_text(encoding="utf-8") == content:
             result["preserved"].append(rel)
             return
+        if _keep_edited_hook(repo_root, rel, content.encode("utf-8"), result, force, manifest_hashes):
+            return
         write_checkout_file(repo_root, dest, content)
         dest.chmod(dest.stat().st_mode | 0o111)
         result["updated" if existed else "created"].append(rel)
@@ -124,6 +129,7 @@ def _install_c5_hook(
 def install_copilot_distill_channels(
     target_dir: Path,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Install all Copilot distill channel artifacts.
 
@@ -177,7 +183,7 @@ def install_copilot_distill_channels(
     #    authoritative deliver-gate. Opt-in via cc03_hook_enabled; advisory only.
     for hook_name in _C5_HOOK_NAMES:
         try:
-            _install_c5_hook(target_dir, hook_name, result)
+            _install_c5_hook(target_dir, hook_name, result, force, manifest_hashes)
         except Exception as exc:  # justified: fail-open, hook install is best-effort
             log.warning("copilot_c5_hook_install_failed", hook=hook_name, error=str(exc), outcome="warning")
             result["errors"].append(f"Copilot C5 hook {hook_name} install failed: {exc}")

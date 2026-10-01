@@ -30,13 +30,11 @@ logger = structlog.get_logger(__name__)
 #   - codex: CODEX_CLI_VERSION is set by Codex CLI — high confidence
 #   - cursor-ide: CURSOR_TRACE_ID is auto-injected by Cursor IDE — medium confidence
 #     (cursor-cli uses CURSOR_API_KEY which is user-set, not included here)
-#   - aider: AIDER_MODEL is user-set (not auto-injected) — medium confidence
 #   - opencode: OPENCODE_* is user-set (not auto-injected) — lowest confidence
 _CLIENT_SIGNALS: list[tuple[str, list[str]]] = [
     ("claude-code", ["CLAUDE_CODE_VERSION", "CLAUDE_CODE_ENTRYPOINT"]),
     ("codex", ["CODEX_CLI_VERSION", "CODEX_SANDBOX_TYPE"]),
     ("cursor-ide", ["CURSOR_TRACE_ID", "CURSOR_SESSION_ID"]),
-    ("aider", ["AIDER_MODEL", "AIDER_CHAT_HISTORY_FILE"]),
     ("opencode", ["OPENCODE_MODEL", "OPENCODE_CONFIG"]),
 ]
 
@@ -46,7 +44,7 @@ def detect_client_profile(*, cwd: str | Path | None = None) -> str:
 
     Checks env vars first (fast), then falls back to filesystem markers.
     Returns one of: ``"claude-code"``, ``"opencode"``, ``"cursor-ide"``,
-    ``"codex"``, ``"aider"``, or ``""`` (unknown).
+    ``"codex"``, or ``""`` (unknown).
 
     Note: ``cursor-ide`` is returned when Cursor IDE env vars are detected.
     ``cursor-cli`` detection requires filesystem checks (see ``detect_ide``).
@@ -63,10 +61,7 @@ def detect_client_profile(*, cwd: str | Path | None = None) -> str:
         if (base / ".opencode" / "opencode.json").is_file() or (base / "opencode.json").is_file():
             logger.debug("client_detected_fs", client="opencode")
             return "opencode"
-        if (base / ".aider.conf.yml").is_file():
-            logger.debug("client_detected_fs", client="aider")
-            return "aider"
-    except OSError:  # justified: fail-open, filesystem errors don't break detection
+    except OSError:  # trw-fail-silent-allow: fail-open; an unreadable cwd means no filesystem signal, and detection returns '' (unknown)
         pass
 
     return ""
@@ -81,7 +76,6 @@ _MODEL_ENV_VARS: list[str] = [
     "CLAUDE_MODEL",
     "ANTHROPIC_MODEL",
     "OPENCODE_MODEL",
-    "AIDER_MODEL",
     "OPENAI_MODEL",
 ]
 

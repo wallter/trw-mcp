@@ -62,9 +62,8 @@ _clients_lock = threading.Lock()
 def daemon_store_for(trw_dir: Path, project_namespace: str) -> DaemonMemoryStore:
     """The store for a pinned checkout: one ``DaemonClient`` per grant per process."""
     from trw_memory.daemon import read_checkout_grant
+    from trw_memory.daemon.client import DaemonClient
     from trw_memory.exceptions import DaemonAuthError
-
-    from trw_mcp.shared_server._daemon_launch import daemon_client
 
     try:
         token = read_checkout_grant(trw_dir.parent)
@@ -79,8 +78,8 @@ def daemon_store_for(trw_dir: Path, project_namespace: str) -> DaemonMemoryStore
     if client is None or checked != wanted:
         # A restarted daemon or a changed local setting is checked again. The cached
         # client is bound to the daemon that ANSWERED, and refuses to call any other.
-        answered_by = _require_matching_security(daemon_client(token, trw_dir), project_namespace, local)
-        client = daemon_client(token, trw_dir, instance=answered_by, keep_session=True)
+        answered_by = _require_matching_security(DaemonClient(token), project_namespace, local)
+        client = DaemonClient(token, instance=answered_by, keep_session=True)
         with _clients_lock:
             replaced, _ = _clients.get(token, (None, None))
             _clients[token] = (client, (answered_by, wanted[1]))

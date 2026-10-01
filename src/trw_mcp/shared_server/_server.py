@@ -183,12 +183,30 @@ def serve_shared(*, env: str, successor: bool) -> None:
             raise SharedServerError(
                 f"env {env!r} is already served by pid {prior.pid} (v{prior.version}); use `trw-mcp swap --env {env}`"
             )
+        _register_launcher(paths, env)
         sock = bind_loopback_socket(0)
         sock.listen(4096)  # the 64-entry default backlog drops connection bursts from many proxies
         host, port = sock.getsockname()[:2]
         app = build_served_app().http_app(transport="streamable-http", stateless_http=True, json_response=True)
         door = Door(app, token=token, env=env, version=__version__, max_inflight=config.shared_mcp.max_inflight)
         asyncio.run(_run(door, sock, paths, f"http://{host}:{port}/mcp", prior, release, config.shared_mcp))
+
+
+def _register_launcher(paths: SharedPaths, env: str) -> None:
+    """Best effort: a failed registration leaves the store on the clients' own start, as before records existed."""
+    from trw_mcp.shared_server._ops import register_launcher
+
+    try:
+        wrote = register_launcher(paths, env)
+    except (
+        OSError,
+        SharedServerError,
+        ValueError,
+    ) as exc:  # trw-fail-silent-allow: logged; serving must not wait on it
+        logger.warning("shared_mcp_launcher_register_failed", env=env, error=type(exc).__name__)
+        return
+    if wrote:
+        logger.info("shared_mcp_launcher_registered", env=env)
 
 
 async def _run(door: Door, sock: Any, paths: SharedPaths, url: str, prior: Any, release: Any, limits: Any) -> None:

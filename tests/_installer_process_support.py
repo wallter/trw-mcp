@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
-import signal
 import subprocess
-import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -347,44 +344,3 @@ def phase_prompt_features(
     if install_sqlitevec is None:
         install_sqlitevec = vec_configured
     return bool(install_ai), bool(install_sqlitevec)
-
-
-def _is_process_alive(pid: int) -> bool:
-    if sys.platform == "win32":
-        try:
-            import ctypes
-
-            SYNCHRONIZE = 0x00100000
-            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, 0, pid)  # type: ignore[union-attr]
-            if handle == 0:
-                return False
-            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[union-attr]
-            return True
-        except (OSError, AttributeError):
-            return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, OSError):
-        return False
-
-
-def _terminate_process(pid: int) -> bool:
-    try:
-        if sys.platform == "win32":
-            try:
-                os.kill(pid, signal.SIGTERM)
-                return True
-            except OSError:
-                return (
-                    subprocess.run(
-                        ["taskkill", "/PID", str(pid), "/F"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    ).returncode
-                    == 0
-                )
-        os.kill(pid, signal.SIGTERM)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False

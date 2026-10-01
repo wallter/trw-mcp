@@ -10,14 +10,19 @@ family is current, and a stale lib no longer pins old behaviour such as ignoring
 capture is refused, the lib and every hook that sources it are left exactly as they are, so the old
 family stays whole. A held hook also holds every OTHER lib it sources (codex KI1: a hook sourcing two libs
 must not run on one old and one new), so every decision is made before anything moves, and a lib already
-captured when a later one is refused is linked back from trash (the trash copy stays).
+captured when a later one is refused is linked back from trash (the trash copy stays). An EDITED hook that
+calls a function its refreshed lib no longer defines is backed up and refreshed the same way (codex KI2);
+an edited hook whose calls all still resolve is kept.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import stat
 from pathlib import Path
+
+from trw_mcp.server._doctor_hook_family import defined_functions, sourced_libs, verify_calls
 
 from ._safe_remove import remove_if_hash
 from ._version_manifest import _framework_content_hashes, _is_user_modified
@@ -36,6 +41,16 @@ def _dependents(lib: str, shipped: set[str], hooks_source: Path) -> set[str]:
         except OSError:
             out.add(name)  # unreadable bundle file: assume it depends, so it is held rather than half-updated
     return out
+
+
+def _text(path: Path) -> str:
+    try:
+        # lstat first: a FIFO or device would block or misbehave on read (codex KI2-r1 KI3).
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:  # trw-fail-silent-allow: a missing or unreadable file defines and calls nothing
+        return ""
 
 
 def _closure(held: set[str], libs: list[str], deps: dict[str, set[str]]) -> set[str]:
@@ -60,17 +75,24 @@ def _link_back(captured_at: Path | None, dest: Path) -> str | None:
     """
     if captured_at is None:
         return "was backed up, but its capture location is unknown (look in .trw/trash)"
+    linked = False
     try:
         os.link(captured_at, dest)
+        linked = True
     except FileExistsError:
         pass  # trw-fail-silent-allow: a concurrent writer got there first; its bytes are compared below
     except OSError as exc:
         return f"could not be put back ({exc}); your edit is at {captured_at}"
     try:
+        # lstat first: a FIFO or device at dest would block or misbehave on read (codex KI1-r2 KI2).
+        if not stat.S_ISREG(dest.lstat().st_mode):
+            return f"is now occupied by something that is not a regular file; your edit is at {captured_at}"
         if dest.read_bytes() == captured_at.read_bytes():
             return None
     except OSError as exc:
-        return f"could not be checked after being put back ({exc}); your edit is at {captured_at}"
+        if linked:
+            return f"could not be checked after being put back ({exc}); your edit is at {captured_at}"
+        return f"is occupied by a file that could not be read ({exc}); your edit is at {captured_at}"
     return f"was replaced by a concurrent writer while being put back; your edit is at {captured_at}"
 
 
@@ -85,6 +107,7 @@ def settle_edited_libs(
     hooks = target_dir / ".claude" / "hooks"
     libs = sorted(n for n in shipped if n.startswith("lib-"))
     deps = {lib: _dependents(lib, shipped, hooks_source) for lib in libs}
+    old_defs = {lib: defined_functions(_text(hooks / lib)) for lib in libs}
     edited: dict[str, str] = {}
     refused: dict[str, str] = {}
     for lib in libs:
@@ -103,6 +126,7 @@ def settle_edited_libs(
     # Decide before moving anything, so a refusal can never strand a family half-replaced.
     held = _closure(set(refused), libs, deps)
     captured: dict[str, Path | None] = {}
+    retained: set[str] = set()  # a file written at the name during capture holds it now
     for lib, current in edited.items():
         if lib in held:
             continue
@@ -110,6 +134,8 @@ def settle_edited_libs(
         outcome = remove_if_hash(hooks / lib, target_dir, current, key=f".claude/hooks/{lib}")
         if outcome.status in ("removed", "retained", "absent"):
             captured[lib] = outcome.retained_at
+            if outcome.status == "retained":
+                retained.add(lib)
             continue
         refused[lib] = outcome.reason
         held = _closure(held | {lib}, libs, deps)
@@ -125,7 +151,8 @@ def settle_edited_libs(
             continue
         result.setdefault("trashed", []).append(rel)  # or the dirty-file restore puts the old lib back
         warnings.append(
-            f"{rel}: your edited copy was moved to {at or '.trw/trash'} and the bundled lib installed, because"
+            f"{rel}: your edited copy was moved to {at or '.trw/trash'} and"
+            f" {'a file written there meanwhile was kept' if lib in retained else 'the bundled lib installed'}, because"
             f" the {len(deps[lib])} hooks that source it were updated and need its functions"
         )
     for lib, reason in sorted(refused.items()):
@@ -136,4 +163,60 @@ def settle_edited_libs(
     others = sorted(n for n in held if n.startswith("lib-") and n not in refused and n not in unrestored)
     if others:
         warnings.append(f"{', '.join(others)}: left unchanged too, because hooks held above also source them")
+    _refresh_stranded_hooks(target_dir, hooks_source, shipped, manifest_hashes, result, held, old_defs)
     return held
+
+
+def _refresh_stranded_hooks(
+    target_dir: Path,
+    hooks_source: Path,
+    shipped: set[str],
+    manifest_hashes: dict[str, str] | None,
+    result: dict[str, list[str]],
+    held: set[str],
+    old_defs: dict[str, set[str]],
+) -> None:
+    """Back up each edited hook that calls a function its refreshed lib drops, so the bundled hook installs."""
+    hooks = target_dir / ".claude" / "hooks"
+    new_defs = {lib: defined_functions(_text(hooks_source / lib)) for lib in old_defs}
+    for name in sorted(n for n in shipped - held if not n.startswith("lib-")):
+        dest = hooks / name
+        if not dest.is_file() or dest.is_symlink():
+            continue
+        if not _is_user_modified(
+            dest, name, manifest_hashes, framework_hashes=_framework_content_hashes(hooks_source / name)
+        ):
+            continue
+        text = _text(dest)
+        libs = sorted({lib for lib in sourced_libs(text) if lib in old_defs and lib not in held})
+        lost, unsure = verify_calls(text, libs, have=new_defs, had=old_defs)
+        rel = f".claude/hooks/{name}"
+        if unsure:
+            # Lead ruling (KI2-r3): never retire a user's edited hook on a guess. Keep it and say so.
+            result.setdefault("warnings", []).append(
+                f"{rel}: your edited hook was kept; its calls could not be verified against the updated"
+                f" {', '.join(libs) or 'libs'} ({unsure}). Check it by hand: `trw-mcp doctor` shows hook_family."
+            )
+            continue
+        if not lost:
+            continue
+        calls = ", ".join(sorted(lost))
+        outcome = remove_if_hash(dest, target_dir, hashlib.sha256(dest.read_bytes()).hexdigest(), key=rel)
+        if outcome.status in ("removed", "retained", "absent"):
+            result.setdefault("trashed", []).append(rel)
+            at = outcome.retained_at or ".trw/trash"
+            # retained: a file written at the name during capture holds it now, and the update keeps it (KI2-r1 KI4).
+            now = (
+                "a file written there meanwhile was kept"
+                if outcome.status == "retained"
+                else "the bundled hook installed"
+            )
+            result.setdefault("warnings", []).append(
+                f"{rel}: your edited hook calls {calls}, which the updated {', '.join(libs)} no longer defines;"
+                f" it was moved to {at} and {now} (to restore it, copy it back and re-add the missing functions)"
+            )
+        else:
+            result.setdefault("warnings", []).append(
+                f"{rel}: your edited hook calls {calls}, which the updated {', '.join(libs)} no longer defines,"
+                f" and it could not be backed up ({outcome.reason}); it was kept and will fail until edited"
+            )

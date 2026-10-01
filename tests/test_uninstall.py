@@ -178,7 +178,6 @@ class TestUninstallRegistryProfiles:
             tmp_path / ".opencode" / "agents",
             tmp_path / ".cursor" / "rules",
             tmp_path / ".github" / "agents",
-            tmp_path / ".aider.conf.yml",
             tmp_path / ".antigravitycli" / "agents",
         ]
         for s in surfaces:
@@ -961,7 +960,8 @@ class TestUninstallManifest:
         assert ".codex/config.toml" in relpaths
         assert ".codex/hooks.json" in relpaths
         assert ".github/agents" in relpaths
-        assert ".aider.conf.yml" in relpaths
+        # REMOVE-S3: aider is withdrawn, so uninstall registers none of its paths.
+        assert not {".aider.conf.yml", ".aider/instructions.md"} & relpaths
         # FIX 2: antigravity is no longer a single rmtree dir surface.
         assert ".antigravitycli" not in relpaths
         assert ".antigravitycli/settings.json" in relpaths
@@ -1001,14 +1001,6 @@ class TestUninstallManifest:
         assert by_path["ANTIGRAVITY.md"].managed_block is True
         # config dirs are plain removals
         assert by_path[".opencode/agents"].managed_block is False
-
-    def test_manifest_covers_retired_instruction_surface(self) -> None:
-        """The retired aider client keeps its instruction surface so
-        pre-retirement installs stay removable forever (release-verify P1)."""
-        from trw_mcp.client_profiles.catalog import uninstall_surfaces
-
-        by_path = {s.relpath: s for s in uninstall_surfaces()}
-        assert by_path[".aider/instructions.md"].managed_block is True
 
     def test_manifest_merged_config_surfaces_carry_shapes(self) -> None:
         """Merged-config surfaces declare the correct strip strategy shape."""
@@ -1480,11 +1472,6 @@ _UNINSTALL_EXEMPT_PREFIXES: tuple[tuple[str, str], ...] = (
 # entry is how `.claude/commands` came to be rmtree'd when TRW had never
 # written it.
 _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER: tuple[tuple[str, str], ...] = (
-    (
-        ".aider.conf.yml",
-        "aider was retired 2026-07-11; the surface is retained so existing "
-        "installs stay removable (see the comment above _CLIENT_ORDER)",
-    ),
     (
         ".github/instructions/trw-distill-hotspots.instructions.md",
         "PRD-CORE-239 stopped writing the copilot C2 path-instructions stub; "

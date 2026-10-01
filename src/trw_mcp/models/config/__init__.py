@@ -27,7 +27,6 @@ from trw_mcp.models.config._model_capabilities import lookup_model_effort_capabi
 from trw_mcp.models.config._profiles import (
     builtin_client_ids,
     resolve_client_profile,
-    retired_client_ids,
 )
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
@@ -75,6 +74,5 @@ __all__ = [
     "normalize_capability_tier",
     "reload_config",
     "resolve_client_profile",
-    "retired_client_ids",
     "unread_config_fields",
 ]

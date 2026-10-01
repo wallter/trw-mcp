@@ -54,7 +54,6 @@ MAINTENANCE_READERS: dict[str, str] = {
     "trw_mcp/state/analytics/entries.py::has_existing_mechanical_learning": "dedup check at write time",
     "trw_mcp/state/analytics/entries.py::resync_learning_index": "rebuilds the mirror's own index file",
     "trw_mcp/state/analytics/entries.py::apply_status_update": "sidecar status write-back",
-    "trw_mcp/state/claude_md/_promotion.py::collect_patterns": "reads the PATTERNS dir, not learning entries",
     "trw_mcp/state/tiers.py::_flush_last_accessed": "access-time bookkeeping",
     "trw_mcp/state/tiers.py::assign_impact_tiers": "impact-tier bookkeeping",
     "trw_mcp/tools/_learn_side_effects.py::_handle_consolidation": "sidecar write-back on consolidation",

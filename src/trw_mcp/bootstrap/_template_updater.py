@@ -2,7 +2,7 @@
 
 Handles:
 - Copying/updating framework-managed files (hooks, skills, agents, etc.)
-- claude-code AGENTS.md block + legacy CLAUDE.md retirement
+- claude-code AGENTS.md block
 - MCP config smart-merge
 - Artifact name discovery (bundled vs. custom)
 
@@ -510,8 +510,7 @@ def _update_mcp_config(
     Handles the smart-merge of ``.mcp.json`` (ensures the ``trw`` server entry
     is present while preserving all other user-configured MCP servers), the
     TRW block in ``AGENTS.md`` for claude-code (user content outside the
-    markers is preserved), and retirement of a TRW-only legacy ``CLAUDE.md``
-    (one with user content is reported, never touched).
+    markers is preserved). A root ``CLAUDE.md`` is never touched.
 
     Args:
         target_dir: Root of the target git repository.
@@ -536,7 +535,6 @@ def _update_mcp_config(
     from ._template_claude_md import (
         _recorded_or_detected_targets,
         claude_code_is_claimed,
-        retire_claude_md,
         write_claude_code_agents_md,
     )
 
@@ -561,17 +559,12 @@ def _update_mcp_config(
             result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
 
     # TRW 8.0: claude-code's carrier is AGENTS.md, which Claude Code reads
-    # natively. Write it BEFORE retiring the legacy CLAUDE.md so the protocol
-    # is never absent from both files.
-    errors_before = len(result.get("errors", []))
+    # natively. A root CLAUDE.md is never touched; doctor's
+    # claude_md_masks_agents_md row reports one that hides AGENTS.md.
     if claude_code_is_claimed(target_dir):
         write_claude_code_agents_md(target_dir, result)
         if on_progress and str(target_dir / "AGENTS.md") in result.get("updated", []):
             on_progress("Updated", str(target_dir / "AGENTS.md"))
-    # A failed AGENTS.md write keeps the legacy file: the protocol must not
-    # end up in neither.
-    if len(result.get("errors", [])) == errors_before:
-        retire_claude_md(target_dir, result)
 
 
 # ---------------------------------------------------------------------------

@@ -207,3 +207,21 @@ def test_corrupt_record_warning_never_reaches_stdout(paths: SharedPaths, capsys:
     out = capsys.readouterr()
     assert out.out == ""
     assert "unreadable" in out.err
+
+
+def test_swap_writes_the_stores_launcher_record(paths: SharedPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clients (trw-mcp and the trw-memory CLI) autostart from the record `swap` writes, not from envs.json."""
+    from trw_memory.daemon import DaemonPaths
+    from trw_memory.daemon._launcher_record import read_launcher_record
+
+    from trw_mcp.shared_server import _ops
+
+    python = Path("/envs/dev/bin/python")
+    monkeypatch.setattr(_ops, "env_memory_version", lambda *_a: "7.7.7")
+    (paths.user_dir("dev") / "memory").mkdir(parents=True)  # type: ignore[operator]
+
+    _ops._record_launcher(paths, "dev", python, "/src/tree")
+
+    record = read_launcher_record(DaemonPaths(user_memory_dir=_ops._memory_dir(paths, "dev")))
+    assert record is not None
+    assert (record.python, record.version, record.pythonpath) == (str(python), "7.7.7", "/src/tree")

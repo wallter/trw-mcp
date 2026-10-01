@@ -18,13 +18,3 @@ class TestOutcomeWindowDefault:
 
         cfg = TRWConfig()
         assert cfg.learning_outcome_correlation_window_minutes == 7
-
-
-class TestConfigFields:
-    """Verify new config fields exist with correct defaults."""
-
-    def test_impact_high_threshold_pct_default(self) -> None:
-        from trw_mcp.models.config import TRWConfig
-
-        cfg = TRWConfig()
-        assert cfg.impact_high_threshold_pct == 20.0

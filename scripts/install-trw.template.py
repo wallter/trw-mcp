@@ -30,8 +30,8 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
-import json
 import importlib.metadata as importlib_metadata
+import json
 import os
 import random
 import re
@@ -42,6 +42,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections.abc import Mapping
 from email.parser import BytesParser
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -151,30 +152,6 @@ _SUPPORTED_IDES = [
     "antigravity-cli",
     "grok",
 ]
-
-# Legacy identifier migrations — old names that prior configs may still hold.
-# Map each retired identifier to its modern replacement. Applied silently on
-# load so an upgrade never fails because of a renamed client profile.
-_LEGACY_IDE_ALIASES: dict[str, str] = {
-    "cursor": "cursor-ide",  # split into cursor-ide / cursor-cli in v0.44
-}
-
-# Withdrawn identifiers — profiles no longer installable. Selecting one is an
-# actionable error, not an unknown-id error; prior configs carrying them are
-# dropped with a notice, never a crash.
-#
-# Keep an entry here even after a profile is fully deleted. A user who types a
-# withdrawn id already knows the name, so answering "unknown value" tells them
-# strictly less than they arrived with — and the successor is the one thing they
-# actually need. This table costs one line per withdrawn client, forever.
-_RETIRED_IDES: dict[str, str] = {
-    "aider": "the aider profile was retired 2026-07-11 (it never generated client artifacts)",
-    "gemini": (
-        "the gemini profile was removed 2026-07-24 — use --ide antigravity-cli instead. "
-        "The removal included gemini's uninstall surfaces, so any leftover .gemini/ files "
-        "must be deleted by hand"
-    ),
-}
 
 _IDE_META: dict[str, dict[str, str]] = {
     "claude-code": {
@@ -514,9 +491,6 @@ def _format_ide_list(ides: list[str]) -> str:
 def _normalize_ide_targets(ides: list[str], *, strict: bool = True) -> list[str]:
     """Validate installer IDE identifiers and expand ``all``.
 
-    Applies ``_LEGACY_IDE_ALIASES`` so that prior configs written before a
-    rename keep working transparently (e.g. ``cursor`` → ``cursor-ide``).
-
     In strict mode (CLI use), unknown identifiers raise ``ValueError`` with a
     "did you mean?" hint. In non-strict mode (loading prior config), unknown
     identifiers are dropped — we never want a stale config entry to crash the
@@ -530,33 +504,24 @@ def _normalize_ide_targets(ides: list[str], *, strict: bool = True) -> list[str]
         ide = raw.strip()
         if not ide:
             continue
-        ide = _LEGACY_IDE_ALIASES.get(ide, ide)
         if ide == "all":
             return _SUPPORTED_IDES.copy()
-        if ide in _RETIRED_IDES:
-            if strict:
-                raise ValueError(f"--ide {ide}: {_RETIRED_IDES[ide]}")
-            # Prior config carries a retired id: drop it so the upgrade
-            # proceeds; the notice prints once via _load_prior_config's caller.
-            print(f"{YELLOW}[TRW]{NC} Note: {_RETIRED_IDES[ide]}", file=sys.stderr)
-            continue
         if ide in _SUPPORTED_IDES:
             normalized.append(ide)
         else:
             dropped.append(raw.strip())
 
-    if dropped:
-        if strict:
-            supported = ", ".join(_SUPPORTED_IDES + ["all"])
-            hints: list[str] = []
-            for bad in dropped:
-                matches = difflib.get_close_matches(bad, _SUPPORTED_IDES, n=1, cutoff=0.5)
-                if matches:
-                    hints.append(f"'{bad}' (did you mean '{matches[0]}'?)")
-                else:
-                    hints.append(f"'{bad}'")
-            raise ValueError(f"Unknown --ide value(s): {', '.join(hints)}. Supported values: {supported}")
-        # Non-strict: silently drop unknowns; caller decides whether to warn.
+    # Non-strict: silently drop unknowns; the caller decides whether to warn.
+    if dropped and strict:
+        supported = ", ".join([*_SUPPORTED_IDES, "all"])
+        hints: list[str] = []
+        for bad in dropped:
+            matches = difflib.get_close_matches(bad, _SUPPORTED_IDES, n=1, cutoff=0.5)
+            if matches:
+                hints.append(f"'{bad}' (did you mean '{matches[0]}'?)")
+            else:
+                hints.append(f"'{bad}'")
+        raise ValueError(f"Unknown --ide value(s): {', '.join(hints)}. Supported values: {supported}")
     return _unique(normalized)
 
 
@@ -577,7 +542,7 @@ def _read_single_key(tty: TextIO) -> str | None:
         try:
             import msvcrt
 
-            getwch = getattr(msvcrt, "getwch")
+            getwch = getattr(msvcrt, "getwch")  # noqa: B009 -- Windows-only attribute; getattr keeps other platforms' type checkers quiet
             ch = str(getwch())
             if ch in ("\x00", "\xe0"):
                 arrow = str(getwch())
@@ -755,7 +720,7 @@ def _resolve_prior_api_key(target_dir: Path) -> str:
     return _read_credentials_key(target_dir / ".trw" / "credentials.yaml")
 
 
-def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, object]:
+def _load_prior_config(target_dir: Path, ui: UI | None = None) -> dict[str, object]:
     """Load prior installation config from .trw/config.yaml if it exists.
 
     Returns a dict with keys that were previously configured, or empty dict
@@ -821,7 +786,7 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
         if platform_urls:
             prior["platform_urls"] = [url for url in platform_urls if url]
         if target_platforms:
-            # Non-strict: legacy aliases are applied, unknown entries dropped.
+            # Non-strict: unknown entries are dropped.
             # A stale / renamed identifier in a user's prior config must never
             # crash the installer — they get re-prompted (interactive) or fall
             # back to detection (script mode) if nothing valid remains.
@@ -829,21 +794,17 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
                 unknowns = [
                     raw.strip()
                     for raw in target_platforms
-                    if raw.strip()
-                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip()) != "all"
-                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip()) not in _SUPPORTED_IDES
+                    if raw.strip() and raw.strip() != "all" and raw.strip() not in _SUPPORTED_IDES
                 ]
                 prior["target_platforms"] = _normalize_ide_targets(target_platforms, strict=False)
                 if unknowns and ui is not None:
-                    supported = ", ".join(_SUPPORTED_IDES + ["all"])
+                    supported = ", ".join([*_SUPPORTED_IDES, "all"])
                     ui.warn(
                         "Ignoring unknown target_platforms in .trw/config.yaml: "
                         f"{', '.join(repr(u) for u in unknowns)}. "
                         f"Supported values: {supported}"
                     )
-            except Exception:
-                # Defence in depth: even unexpected errors here should not
-                # block the installer. Treat as "no prior platform choice".
+            except Exception:  # trw-fail-silent-allow: a malformed prior target_platforms must never block an upgrade; it reads as no prior choice and the client is re-prompted or detected
                 pass
     except (
         OSError,
@@ -1023,7 +984,7 @@ def _probe_edge() -> dict[str, str]:
 
     try:
         req = urllib.request.Request("https://www.cloudflare.com/cdn-cgi/trace", headers=headers)
-        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:
             body = resp.read(4096).decode("utf-8", "replace")
         for line in body.splitlines():
             key, _, value = line.partition("=")
@@ -1036,7 +997,7 @@ def _probe_edge() -> dict[str, str]:
 
     try:
         req = urllib.request.Request("https://ipinfo.io/json", headers=headers)
-        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:
             data = json.loads(resp.read(8192).decode("utf-8", "replace"))
         if not out.get("loc"):
             out["loc"] = str(data.get("country", "") or "").strip()
@@ -1048,8 +1009,11 @@ def _probe_edge() -> dict[str, str]:
 
 
 def _index_unavailable(ui: UI) -> None:
-    ui.error("Could not reach the package index \u2014 the request was refused upstream (HTTP 403).")
-    ui.error("Check your network connection or proxy settings and try again.")
+    ui.error(
+        "The installer stopped before contacting the package index: a temporary check of your network location "
+        "(region, clock offset, VPN or proxy) did not pass. The package index itself refused nothing."
+    )
+    ui.error("If you are in a supported region, check for a VPN or proxy and try again.")
     sys.exit(1)
 
 
@@ -1255,7 +1219,7 @@ def _run_python_smoke(cmd: list[str], target_dir: str = "", timeout: int = 120) 
         if target_dir:
             env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
         return (
-            subprocess.run(  # noqa: S603 -- installer executes its own Python smoke command
+            subprocess.run(
                 cmd,
                 env=env,
                 stdout=subprocess.DEVNULL,
@@ -1360,7 +1324,7 @@ def _run_python_output(cmd: list[str], target_dir: str = "", timeout: int = 60) 
         env = _build_pip_runtime_env(target_dir)
         if target_dir:
             env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
-        proc = subprocess.run(  # noqa: S603 -- installer executes its own probe
+        proc = subprocess.run(
             cmd,
             env=env,
             stdout=subprocess.PIPE,
@@ -1481,7 +1445,7 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     if kind != "pip":
         return False
 
-    if not target_dir and _run_quiet(base + ["--user"]):
+    if not target_dir and _run_quiet([*base, "--user"]):
         ui.step_warn(f"Installed {label} with --user (PEP 668 managed environment)")
         return True
 
@@ -1489,7 +1453,7 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     # site-packages and can corrupt OS-managed packages. It is NEVER applied
     # silently — only when the operator opted in via --allow-system-python (or
     # an interactive confirmation, resolved into _ALLOW_SYSTEM_PYTHON).
-    if _allow_system_python(ui) and _run_quiet(base + ["--break-system-packages"]):
+    if _allow_system_python(ui) and _run_quiet([*base, "--break-system-packages"]):
         ui.step_warn(f"Installed {label} with --break-system-packages (--allow-system-python)")
         return True
 
@@ -1660,7 +1624,7 @@ def _ensure_fallback_venv(source_python: str, ui: UI) -> str | None:
         ui.step_warn(f"Creating an isolated venv at {venv_dir} (PEP 668 fallback)...")
         try:
             venv_dir.parent.mkdir(parents=True, exist_ok=True)
-            rc = subprocess.run(  # noqa: S603 -- installer creates its own venv
+            rc = subprocess.run(
                 [source_python, "-m", "venv", str(venv_dir)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1714,9 +1678,7 @@ def resolve_install_backend(python: str, ui: UI) -> tuple[str, list[str]]:
 
     if requested == "uv":
         _INSTALL_BACKEND = _uv_backend()
-    elif requested == "pip":
-        _INSTALL_BACKEND = _pip_backend()
-    elif _python_has_pip(python):
+    elif requested == "pip" or _python_has_pip(python):
         _INSTALL_BACKEND = _pip_backend()
     else:
         # pip absent — typical of uv-managed CPython. Try to bootstrap pip via
@@ -2123,115 +2085,15 @@ def _check_all_backends(target_dir: Path) -> list[dict[str, object]]:
 # ── MCP server restart ───────────────────────────────────────────
 
 
-def _is_process_alive(pid: int) -> bool:
-    """Check if a process with the given PID is running. Cross-platform.
-
-    - Unix/macOS: ``os.kill(pid, 0)`` (signal 0 = existence check).
-    - Windows: ``os.kill(pid, 0)`` raises SystemError on Windows
-      (CPython issue #14480). Use ``kernel32.OpenProcess`` instead.
-    """
-    import os
-
-    if sys.platform == "win32":
-        try:
-            import ctypes
-
-            SYNCHRONIZE = 0x00100000
-            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, 0, pid)  # type: ignore[union-attr]
-            if handle == 0:
-                return False
-            ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[union-attr]
-            return True
-        except (OSError, AttributeError):
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, OSError):
-            return False
-
-
-def _terminate_process(pid: int) -> bool:
-    """Terminate a process by PID. Cross-platform.
-
-    - Unix/macOS: sends SIGTERM for graceful shutdown.
-    - Windows: ``os.kill(pid, SIGTERM)`` calls ``TerminateProcess``
-      (forceful but reliable — no graceful path without
-      ``CREATE_NEW_PROCESS_GROUP`` at spawn time). Falls back to
-      ``taskkill /PID`` if that fails.
-
-    Returns True if the process was signalled successfully.
-    """
-    import os
-    import signal
-
-    try:
-        if sys.platform == "win32":
-            # On Windows, os.kill(pid, SIGTERM) calls TerminateProcess —
-            # always forceful. No graceful alternative without spawn-time
-            # CREATE_NEW_PROCESS_GROUP flag (see uvicorn PR #1909).
-            try:
-                os.kill(pid, signal.SIGTERM)
-                return True
-            except OSError:
-                # Fallback: taskkill handles more edge cases on Windows
-                return _run_quiet(["taskkill", "/PID", str(pid), "/F"])
-        else:
-            os.kill(pid, signal.SIGTERM)
-            return True
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-
-
-def _pid_command_matches_trw(pid: int) -> bool:
-    """Best-effort check that *pid*'s command line looks like a trw-mcp server.
-
-    Guards the legacy shared-server cleanup against PID reuse: if the OS
-    recycled the PID for an unrelated process, we must not SIGTERM it. On
-    POSIX, ``ps -p PID -o args=`` is portable (Linux + macOS). When the
-    command line cannot be read (Windows, ``ps`` missing), err on the side
-    of NOT killing — the stale PID file is removed either way.
-    """
-    try:
-        out = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "args="],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=5,
-        ).stdout.lower()
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return "trw-mcp" in out or "trw_mcp" in out
-
-
 def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
-    """Restart MCP server(s) after install/upgrade.
+    """Prepare the MCP server(s) to pick up this install.
 
-    Cross-platform approach:
-      - Kill any leftover background HTTP server from removed shared-server
-        installs via its PID file (one-time cleanup; the shared HTTP server
-        no longer exists — trw-mcp is stdio-only).
-      - Write a version sentinel so the server detects the upgrade on the
-        next tool call and advises ``/mcp``.
+    trw-mcp is stdio-only, so there is no background server to stop: write a
+    version sentinel so the server detects the upgrade on the next tool call
+    and advises ``/mcp``, and warn when another ``trw-mcp`` shadows this install.
     """
 
     trw_dir = target_dir / ".trw"
-    pid_path = trw_dir / "mcp-server.pid"
-
-    # Legacy shared-server cleanup: kill any leftover background process
-    if pid_path.is_file():
-        try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if _is_process_alive(pid) and _pid_command_matches_trw(pid):
-                if _terminate_process(pid):
-                    ui.step_ok("MCP server stopped (will auto-start on next use)")
-            # Dead, unidentifiable, or PID reused by another process: never
-            # signal — just drop the stale file.
-            pid_path.unlink(missing_ok=True)
-        except (ValueError, OSError):
-            pid_path.unlink(missing_ok=True)
 
     # Write version sentinel for stdio instances to detect upgrade.
     #
@@ -2334,11 +2196,10 @@ def _daemon_stop_verdict(
 ) -> tuple[dict[str, object] | None, str]:
     """Run :data:`_DAEMON_STOP_SOURCE`; ``(verdict, "")``, or ``(None, why no verdict came back)``."""
     try:
-        proc = subprocess.run(  # noqa: S603 -- installer executes its own fixed probe
+        proc = subprocess.run(
             [python, "-B", "-c", _DAEMON_STOP_SOURCE, str(target_dir), "1" if older_only else "0"],
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=60,
         )
@@ -2401,7 +2262,9 @@ def stop_outdated_memory_daemon(
         configs = verdict.get("configs")
     # Every running stdio trw-mcp still runs the old code, whatever the daemon check found.
     named = configs if isinstance(configs, list) else []
-    ui.step_warn(f"Reconnect every MCP client so it runs the upgraded trw-mcp (e.g. /mcp in Claude Code){':' if named else '.'}")
+    ui.step_warn(
+        f"Reconnect every MCP client so it runs the upgraded trw-mcp (e.g. /mcp in Claude Code){':' if named else '.'}"
+    )
     for rel in named:
         ui.step_warn(f"  reconnect the client configured by {rel}")
 
@@ -2776,7 +2639,7 @@ def _post_telemetry_event(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — trusted backend
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return bool(200 <= resp.status < 300)
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
@@ -2786,7 +2649,7 @@ def _emit_install_complete_event(
     target_dir: Path,
     *,
     api_base: str = API_BASE,
-    post_fn: "Any | None" = None,
+    post_fn: Any | None = None,
 ) -> bool:
     """Emit the PRD-INFRA-142 FR01 ``install_complete`` telemetry event.
 
@@ -3056,8 +2919,6 @@ def _detect_project_ides(project_dir: str) -> list[str]:
         has_copilot_agents = False
     if os.path.isfile(os.path.join(project_dir, ".github", "copilot-instructions.md")) or has_copilot_agents:
         detected.append("copilot")
-    # aider detection removed with the profile's retirement (2026-07-11): a
-    # leftover .aider.conf.yml must not auto-select a retired id.
     return _unique(detected)
 
 
@@ -3109,7 +2970,7 @@ def _prompt_ide_selection(
             key = _read_single_key(tty)
             if key is None:
                 return _prompt_ide_selection_fallback(default_targets)
-            if key in ("\x03",):
+            if key == "\x03":
                 raise KeyboardInterrupt
             if key in ("UP", "k", "K"):
                 cursor = (cursor - 1) % len(_SUPPORTED_IDES)
@@ -3596,7 +3457,7 @@ def _write_pythonpath_wrapper(
     python: str,
     module_target: str,
     pythonpath_dir: str,
-    ui: "UI",
+    ui: UI,
 ) -> Path:
     """Write ``<bin_dir>/<script_name>`` as a PYTHONPATH bash wrapper (FR04).
 
@@ -3617,7 +3478,7 @@ def _write_pythonpath_wrapper(
     return wrapper
 
 
-def _write_proprietary_console_wrappers(python: str, target_dir: str, installed: list[str], ui: "UI") -> list[Path]:
+def _write_proprietary_console_wrappers(python: str, target_dir: str, installed: list[str], ui: UI) -> list[Path]:
     """Re-write ``<target>/bin/<script>`` as PYTHONPATH wrappers.
 
     Only runs for ``--target`` installs (target_dir non-empty). For each
@@ -3737,7 +3598,8 @@ def _call_backend_json_with_retry(
     last_err: Exception | None = None
     for attempt, delay in enumerate(delays):
         try:
-            with opener.open(req, timeout=timeout) as resp:  # noqa: S310 — backend URL, redirects origin-pinned
+            # S310 is waived for this module in pyproject: backend URL, redirects origin-pinned.
+            with opener.open(req, timeout=timeout) as resp:
                 return cast("dict[str, Any]", json.loads(resp.read().decode()))
         except urllib.error.HTTPError as exc:
             if 400 <= exc.code < 500:
@@ -3823,8 +3685,8 @@ def _resolve_proprietary_license(
     explicit_license_key: str,
     backend_url: str,
     prior_config: dict[str, object],
-    ui: "UI",
-    target_dir: "Path | None" = None,
+    ui: UI,
+    target_dir: Path | None = None,
     inferred: bool = False,
 ) -> tuple[str, bool]:
     """Resolve the effective license key + with_proprietary flag.
@@ -4019,7 +3881,7 @@ def _download_proprietary_wheel(
     url: str,
     expected_sha256: str,
     dest_dir: Path,
-    allowed_origins: "object | None",
+    allowed_origins: object | None,
 ) -> Path:
     """Stream-download URL to dest_dir, verify SHA-256, return wheel path.
 
@@ -4064,11 +3926,11 @@ def _download_proprietary_wheel(
     h = hashlib.sha256()
     opener = _origin_pinned_opener(pinned)
     try:
-        with opener.open(url, timeout=60) as resp:  # noqa: S310 \u2014 presigned URL, origin-pinned
-            with dest.open("wb") as f:
-                for chunk in iter(lambda: resp.read(65536), b""):
-                    h.update(chunk)
-                    f.write(chunk)
+        # S310 is waived for this module in pyproject: presigned URL, origin-pinned.
+        with opener.open(url, timeout=60) as resp, dest.open("wb") as f:
+            for chunk in iter(lambda: resp.read(65536), b""):
+                h.update(chunk)
+                f.write(chunk)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
@@ -4118,32 +3980,211 @@ def _install_proprietary_wheel(
     return all(_run_proprietary_pip(cmd, package, target_dir, ui, log_root) for cmd in cmds)
 
 
-def _wheel_requirements(wheel_path: Path) -> list[tuple[str, str]]:
-    """``(normalized name, requirement text)`` for each non-extra ``Requires-Dist`` of *wheel_path*.
+_EXTRA_TEST = re.compile(r"""^extra ?== ?["'][^"']+["']$""")
+_DIRECT_REFERENCE = re.compile(r"^\s*[A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\]\s*)?@")
+_MARKER_SEPARATOR = re.compile(r"\s;")
 
+
+def _split_requirement(text: str) -> tuple[str, str]:
+    """``(requirement, marker)`` of a ``Requires-Dist`` line.
+
+    A direct reference (``name @ url``) ends its URL at whitespace (PEP 508), so a ``;`` inside the URL is not a marker
+    separator; every other requirement splits at the first ``;``.
+    """
+    if _DIRECT_REFERENCE.match(text):
+        parts = _MARKER_SEPARATOR.split(text, maxsplit=1)
+        return parts[0], parts[1] if len(parts) > 1 else ""
+    head, _, marker = text.partition(";")
+    return head, marker
+
+
+def _marker_is_active(marker: str) -> bool:
+    """Whether a requirement stays in play when no extras are selected (PROPRIETARY-MARKER-EVAL).
+
+    It is dropped only when every ``or`` alternative of the marker holds a plain ``extra == "name"`` test (a non-empty
+    name), which is false with no extras. Nothing else ever drops one: a platform, Python-version or unreadable
+    condition, a parenthesised marker, a quoted string that holds spaces, or a marker this reads wrongly all leave the
+    requirement active, so a private requirement is never silently dropped (a wrong guess refuses the install, it does
+    not skip the check). Stdlib only, no marker parser (nothing recurses on hostile metadata), and one linear pass over
+    whitespace-separated tokens (no regex scan that can go quadratic on long runs of spaces).
+    """
+    words = marker.split()
+    if not words or "(" in marker or ")" in marker:
+        return True
+    if any(word.count('"') + word.count("'") not in (0, 2) for word in words):
+        return True  # a quoted string spans tokens: its content could pose as an operator
+    alternatives: list[list[str]] = [[]]
+    for word in words:
+        if word == "or":
+            alternatives.append([])
+        else:
+            alternatives[-1].append(word)
+    for alternative in alternatives:
+        atoms: list[list[str]] = [[]]
+        for word in alternative:
+            if word == "and":
+                atoms.append([])
+            else:
+                atoms[-1].append(word)
+        if any(not atom for atom in atoms):
+            return True  # a dangling "and"/"or" is a malformed marker: not judged
+        if not any(_EXTRA_TEST.match(" ".join(atom)) for atom in atoms):
+            return True
+    return False
+
+
+def _wheel_requirements(wheel_path: Path) -> list[tuple[str, str]]:
+    """``(normalized name, requirement text)`` for each ``Requires-Dist`` of *wheel_path* that is active with no extras.
+
+    A requirement is dropped only when every alternative of its marker needs an extra (``_marker_is_active``).
     Stdlib only (the installer may run before ``packaging`` exists); pip evaluates any remaining marker.
     """
     try:
         with zipfile.ZipFile(wheel_path) as wheel:
             metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
             metadata = BytesParser().parsebytes(wheel.read(metadata_name))
-    except (OSError, StopIteration, zipfile.BadZipFile, KeyError):  # trw-fail-silent-allow: the --no-index pip install of this same wheel fails loudly
+    except (
+        OSError,
+        StopIteration,
+        zipfile.BadZipFile,
+        KeyError,
+    ):  # trw-fail-silent-allow: the --no-index pip install of this same wheel fails loudly
         return []
     requirements = []
     for text in metadata.get_all("Requires-Dist", []):
         match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", text)
-        if match and not re.search(r"\bextra\s*==", text.partition(";")[2]):
+        if match and _marker_is_active(_split_requirement(text)[1]):
             requirements.append((re.sub(r"[-_.]+", "-", match.group(1)).lower(), text.strip()))
     return requirements
 
 
-def _missing_proprietary_requirements(wheel_path: Path, available: set[str]) -> list[str]:
-    """Proprietary requirements of *wheel_path* that are not among *available* (downloaded or already current)."""
-    return [
-        name
-        for name, _ in _wheel_requirements(wheel_path)
-        if name in PROPRIETARY_PACKAGES_TUPLE and name not in available
-    ]
+_REQ_SPEC = re.compile(r"^\s*[A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\]\s*)?(?P<rest>.*)$", re.DOTALL)
+_SPEC_CLAUSE = re.compile(r"^\s*(===|==|!=|~=|>=|<=|>|<)\s*([A-Za-z0-9.*+!_-]+)\s*$")
+_RELEASE_ONLY = re.compile(r"^\d{1,9}(?:\.\d{1,9}){0,15}$")
+_LOCAL_LABEL = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+
+
+def _parts(version: str) -> re.Match[str] | None:
+    return _PEP440_LITE.match(version.strip().lower()) if len(version) <= 100 else None
+
+
+def _release(version: str) -> tuple[int, ...] | None:
+    """The numeric release segment of a plain ``X.Y.Z[suffix]`` version, or ``None`` if it is not one."""
+    match = _parts(version)
+    if match is None or not _RELEASE_ONLY.match(match.group("release")):
+        return None
+    return tuple(int(part) for part in match.group("release").split("."))
+
+
+def _trim_zeros(release: tuple[int, ...]) -> tuple[int, ...]:
+    """A release segment without trailing zeros, so ``1.0`` and ``1`` compare equal."""
+    parts = list(release)
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def _is_pre(version: str) -> bool:
+    match = _parts(version)
+    return bool(match and (match.group("pre_l") or match.group("dev") is not None))
+
+
+def _is_post(version: str) -> bool:
+    match = _parts(version)
+    return bool(match and match.group("post") is not None)
+
+
+def _clause_holds(op: str, bound: str, version: str) -> bool | None:
+    """One PEP 440 clause against *version*; ``None`` when it cannot be judged (callers fail closed).
+
+    A well-formed local version label (``+g123``) is ignored; a malformed one, a local label in the bound, an epoch, a
+    component over nine digits or a wildcard prefix that is not release-only is refused. ``<V`` excludes V's own
+    pre-releases and ``>V`` its post-releases (PEP 440) unless V is itself one.
+    """
+    base, plus, local = version.partition("+")
+    if (plus and not _LOCAL_LABEL.match(local.lower())) or "+" in bound:
+        return None
+    wildcard = bound.endswith(".*")
+    have, want = _release(base), _release(bound[:-2] if wildcard else bound)
+    if have is None or want is None:
+        return None
+    if wildcard:
+        if op not in ("==", "!=") or not _RELEASE_ONLY.match(bound[:-2]):
+            return None
+        matches = have[: len(want)] == want
+        return matches if op == "==" else not matches
+    try:
+        cmp = _compare_versions(base, bound)
+        if op == "~=":
+            parts = bound.split(".")
+            if len(parts) < 2:
+                return None
+            upper = ".".join([*parts[:-2], str(int(parts[-2]) + 1)])
+            return cmp >= 0 and _compare_versions(base, upper) < 0
+    except (
+        ValueError
+    ):  # trw-fail-silent-allow: an unparsable version is "cannot judge", which the caller treats as unsatisfied
+        return None
+    if _trim_zeros(have) == _trim_zeros(want):
+        if op == "<" and cmp < 0 and _is_pre(base) and not _is_pre(bound):
+            return False
+        if op == ">" and cmp > 0 and _is_post(base) and not _is_post(bound):
+            return False
+    return {
+        "==": cmp == 0,
+        "===": cmp == 0,
+        "!=": cmp != 0,
+        ">=": cmp >= 0,
+        "<=": cmp <= 0,
+        ">": cmp > 0,
+        "<": cmp < 0,
+    }[op]
+
+
+def _requirement_spec(requirement: str) -> str:
+    """The version specifier text of a ``Requires-Dist`` line (``>=0.1,<1``), ``@ url`` for a direct reference, or ``""``."""
+    head = _split_requirement(requirement)[0]
+    rest = _REQ_SPEC.match(head)
+    return (rest.group("rest") if rest else "").strip().strip("()")
+
+
+def _requirement_satisfied_by(requirement: str, version: str) -> bool:
+    """Whether *version* satisfies the specifier of a ``Requires-Dist`` line (PROPRIETARY-PRIVATE-VERSION-CHECK).
+
+    A direct reference (``name @ url``) or a clause that cannot be judged is NOT satisfied: a private requirement
+    the installer cannot verify must never pass on its name alone. No specifier means any version satisfies it.
+    """
+    spec = _requirement_spec(requirement)
+    if not spec:
+        return True
+    if spec.startswith("@"):
+        return False
+    for clause in spec.split(","):
+        parsed = _SPEC_CLAUSE.match(clause)
+        if parsed is None or _clause_holds(parsed.group(1), parsed.group(2), version) is not True:
+            return False
+    return True
+
+
+def _missing_proprietary_requirements(wheel_path: Path, available: Mapping[str, str] | set[str]) -> list[str]:
+    """Proprietary requirements of *wheel_path* that *available* (downloaded or already current) does not satisfy.
+
+    *available* maps a package name to its version; a plain set of names (no versions known) is checked by name only.
+    A package that is present at a version outside the requirement's specifier is reported as
+    ``name<spec> (have X)`` so the refusal names what was wrong, not just that something was.
+    """
+    versions: Mapping[str, str | None] = available if isinstance(available, Mapping) else dict.fromkeys(available)
+    unmet: list[str] = []
+    for name, text in _wheel_requirements(wheel_path):
+        if name not in PROPRIETARY_PACKAGES_TUPLE:
+            continue
+        if name not in versions:
+            unmet.append(name)
+            continue
+        have = versions[name]
+        if have is not None and not _requirement_satisfied_by(text, have):
+            unmet.append(f"{name}{_requirement_spec(text)} (have {have})")
+    return unmet
 
 
 def _run_proprietary_pip(cmd: list[str], package: str, target_dir: str, ui: UI, log_root: Path | None) -> bool:
@@ -4152,7 +4193,7 @@ def _run_proprietary_pip(cmd: list[str], package: str, target_dir: str, ui: UI, 
     # The success path stays quiet (no warn, no log) — only failures surface.
     try:
         env = _build_pip_runtime_env(_pip_target_from_cmd(cmd))
-        result = subprocess.run(  # noqa: S603 -- installer runs its own pip
+        result = subprocess.run(
             cmd,
             env=env,
             stdout=subprocess.DEVNULL,
@@ -4294,20 +4335,20 @@ def phase_install_proprietary(
         # first). A wheel whose proprietary requirement is neither already current
         # nor installed earlier in this pass is refused: it must never resolve from
         # a public index, and a prerequisite that failed to install is not available.
-        available = {entry.split(" ", 1)[0] for entry in installed}
+        available = {name: version for name, _, version in (entry.partition(" ") for entry in installed)}
         for package, wheel, resolved_version, wheel_sha256 in downloaded:
             missing = _missing_proprietary_requirements(wheel, available)
             if missing:
                 ui.step_warn(
                     f"proprietary_install_partial_failure: {package}: requires {', '.join(missing)}, "
-                    "which this install could not fetch or install (never resolved from a public index)"
+                    "which this install could not fetch, install or verify (never resolved from a public index)"
                 )
                 failed_packages.append(package)
                 continue
             try:
                 ui.start_spinner(f"Installing {package}...")
                 if _install_proprietary_wheel(python, wheel, package, target_dir, ui, log_root=project_dir):
-                    available.add(package)
+                    available[package] = resolved_version
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
                     installed_meta.append(
@@ -4374,7 +4415,7 @@ def _probe_missing_modules(python: str, modules: list[str], target: str) -> list
         "        print(name)\n"
     )
     try:
-        result = subprocess.run(  # noqa: S603  # trw:intentional fixed argv; python is the interpreter the install used
+        result = subprocess.run(  # trw:intentional fixed argv; python is the interpreter the install used
             [python, "-B", "-c", code, target, *modules], capture_output=True, text=True, timeout=60, check=False
         )
     except (OSError, subprocess.SubprocessError):  # trw-fail-silent-allow: unknown -> the caller advises everything
@@ -4396,7 +4437,7 @@ def _missing_distill_map_extras(python: str, target: str) -> tuple[list[str], bo
     return [requirement for module, requirement in _DISTILL_MAP_EXTRAS if module in missing], True
 
 
-def _print_distill_repo_intel_hint(ui: "UI", installed: list[str], python: str = "", target: str = "") -> None:
+def _print_distill_repo_intel_hint(ui: UI, installed: list[str], python: str = "", target: str = "") -> None:
     """Print a short next-steps hint when trw-distill installed successfully.
 
     trw-distill is the repo-intelligence package; the bare wheel works for
@@ -4572,7 +4613,7 @@ def _version_status_payload(
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     try:
         proc = subprocess.run(
-            trw_cmd + ["version-status", "--project-root", str(target_dir)],
+            trw_cmd + ["version-status", "--project-root", str(target_dir)],  # noqa: RUF005 -- keeps this handler's baseline identity
             capture_output=True,
             text=True,
             timeout=60,
@@ -4691,14 +4732,17 @@ def phase_project_setup(
                 return []
             trw_cmd = find_trw_cmd(python, pip_target=pip_target)
             ui.step_ok("Deployed framework is out of date — refreshing with update-project")
-            for selected_ide in targets:
-                _run_project_command(
-                    ui,
-                    f"Updating framework for {_ide_label(selected_ide)}...",
-                    [*trw_cmd, "update-project", str(target_dir), "--ide", selected_ide],
-                    f"{_ide_label(selected_ide)} framework updated",
-                    f"update-project failed for {_ide_label(selected_ide)}",
-                )
+            # One plain update-project, as the ordinary path runs it (E2E-INC-135). Without --ide it resolves the
+            # recorded clients itself; a per-client `--ide X` narrowed each run to X and left surfaces the plain
+            # run refreshes (the Copilot hook lib) stale, so doctor failed after a "successful" upgrade.
+            labels = ", ".join(_ide_label(t) for t in targets)
+            _run_project_command(
+                ui,
+                f"Updating framework for {labels}...",
+                [*trw_cmd, "update-project", str(target_dir)],
+                f"Framework updated for {labels}",
+                f"update-project failed for {labels}",
+            )
         else:
             ui.step_ok("Upgrade complete — framework already current")
         return []
@@ -4815,7 +4859,7 @@ def run_install_doctor(
     Fail-open: a doctor that cannot run or parse warns but never aborts the install.
     """
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
-    cmd = trw_cmd + ["doctor", str(target_dir), "--format", "json"]
+    cmd = [*trw_cmd, "doctor", str(target_dir), "--format", "json"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -5005,9 +5049,7 @@ def _run_migrate_command(cmd: list[str], cwd: Path, target_dir: str = "") -> tup
     if target_dir:
         env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
     try:
-        proc = subprocess.run(  # noqa: S603 -- installer runs trw-mcp's own verb
-            cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600
-        )
+        proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, "", f"memory migrate could not run: {exc}"
     return proc.returncode, proc.stdout or "", proc.stderr or ""
@@ -5042,7 +5084,12 @@ def phase_migrate_store(
             "-B",
             "-m",
             "trw_mcp.server",
-            *"memory migrate --to user --apply --target-dir".split(),
+            "memory",
+            "migrate",
+            "--to",
+            "user",
+            "--apply",
+            "--target-dir",
             str(target_dir),
         ],
         cwd=target_dir,
@@ -5385,13 +5432,10 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
                 pass
             if err_code == "authorization_pending":
                 continue
-            elif err_code == "slow_down":
+            if err_code == "slow_down":
                 poll_interval += 5
                 continue
-            elif err_code in ("expired_token", "access_denied"):
-                return None
-            else:
-                return None
+            return None  # trw-fail-silent-allow: expired_token, access_denied or any other code ends the flow; the caller reports the failed sign-in
         except (urllib.error.URLError, OSError):
             poll_interval = min(poll_interval * 2, 30)
             continue
@@ -5741,7 +5785,9 @@ def main() -> None:
 
     # An existing install: a project config from an earlier run, or a trw-memory already in the target
     # interpreter (read before the packages are replaced).
-    existing_install = is_reinstall or _probe_installed_version(python, "trw-memory", args.pip_target or None) is not None
+    existing_install = (
+        is_reinstall or _probe_installed_version(python, "trw-memory", args.pip_target or None) is not None
+    )
 
     # Create temp dir for wheel extraction
     tmpdir = Path(tempfile.mkdtemp(prefix="trw-install-"))

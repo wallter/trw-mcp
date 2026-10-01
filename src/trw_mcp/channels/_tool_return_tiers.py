@@ -10,7 +10,7 @@ Design contract
 - **T2** (codex, opencode, cursor-ide, cursor-cli): full distill payload —
   importers, inferred_tests, co_change_neighbors, hotspot_warnings, risk_score
   are included without truncation.
-- **T1** (claude-code, antigravity, aider, default): compressed subset
+- **T1** (claude-code, antigravity, default): compressed subset
   — hotspot_warnings (max 3), importers (max 5), inferred_tests (max 3),
   risk_score; drops doc_references and co_change_neighbors.
 - **T0** (copilot, free tier): presence beacon only — distill_status,

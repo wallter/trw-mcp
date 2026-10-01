@@ -59,7 +59,7 @@ def render_tool_name(tool_name: str, profile: ClientProfile | None = None) -> st
     """Render a tool name with the profile's MCP namespace prefix (PRD-FIX-078).
 
     claude-code exposes MCP tools under ``mcp__{server}__{tool}``; other clients
-    (opencode, cursor-ide, codex, aider) use bare names. The ``ClientProfile``
+    (opencode, cursor-ide, codex) use bare names. The ``ClientProfile``
     carries a ``tool_namespace_prefix`` field that this helper prepends.
 
     Non-``trw_`` tool names (e.g., ``Bash``) are returned unchanged.

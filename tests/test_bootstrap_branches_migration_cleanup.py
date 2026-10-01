@@ -38,11 +38,9 @@ class TestPrefixMigrationExtra:
         target = tmp_path
         skills_dir = target / ".claude" / "skills"
         skills_dir.mkdir(parents=True)
-        for old, new in [("learn", "trw-learn"), ("deliver", "trw-deliver")]:
+        for old in ("review-pr", "trw-review-pr"):
             (skills_dir / old).mkdir()
             (skills_dir / old / "SKILL.md").write_text("old", encoding="utf-8")
-            (skills_dir / new).mkdir()
-            (skills_dir / new / "SKILL.md").write_text("new", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         call_count = 0
@@ -58,40 +56,42 @@ class TestPrefixMigrationExtra:
 
         with patch("trw_mcp.bootstrap.shutil.rmtree", side_effect=failing_rmtree):
             _migrate_prefix_predecessors(
-                target, result, manifest_hashes={"learn/SKILL.md": _sha("old"), "deliver/SKILL.md": _sha("old")}
+                target,
+                result,
+                manifest_hashes={"review-pr/SKILL.md": _sha("old"), "trw-review-pr/SKILL.md": _sha("old")},
             )
 
         assert not result.get("errors")
 
     def test_dry_run_reports_the_migration_without_deleting(self, initialized_repo: Path) -> None:
-        """A TRW-recorded predecessor is listed under ``cleaned`` by a dry run and left on disk."""
+        """A TRW-recorded retired skill is listed under ``cleaned`` by a dry run and left on disk."""
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "review-pr").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
         manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
         manifest = FileStateReader().read_yaml(manifest_path)
-        manifest["content_hashes"]["learn/SKILL.md"] = _sha("old")
+        manifest["content_hashes"]["review-pr/SKILL.md"] = _sha("old")
         FileStateWriter().write_yaml(manifest_path, manifest)
 
         result = update_project(initialized_repo, dry_run=True)
 
-        assert (skills_dir / "learn").exists()
-        assert ".claude/skills/learn/SKILL.md" in result["cleaned"]
+        assert (skills_dir / "review-pr").exists()
+        assert ".claude/skills/review-pr/SKILL.md" in result["cleaned"]
 
     def test_manifest_excludes_predecessor_names_from_custom(self, initialized_repo: Path) -> None:
-        """Predecessor names are excluded from custom_skills in manifest."""
+        """Retired names are excluded from custom_skills in manifest."""
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "review-pr").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _write_manifest(initialized_repo, result)
 
         manifest = _read_manifest(initialized_repo)
         assert manifest is not None
-        assert "learn" not in manifest.get("custom_skills", [])
+        assert "review-pr" not in manifest.get("custom_skills", [])
 
     def test_migrate_prefix_predecessors_direct_call(self, tmp_path: Path) -> None:
         """Direct call removes both skill dirs and agent files."""
@@ -101,36 +101,35 @@ class TestPrefixMigrationExtra:
         skills_dir.mkdir(parents=True)
         agents_dir.mkdir(parents=True)
 
-        (skills_dir / "audit").mkdir()
-        (skills_dir / "audit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "review-pr").mkdir()
+        (skills_dir / "review-pr" / "SKILL.md").write_text("old", encoding="utf-8")
         (skills_dir / "trw-audit").mkdir()
         (skills_dir / "trw-audit" / "SKILL.md").write_text("new", encoding="utf-8")
 
-        (agents_dir / "researcher.md").write_text("old", encoding="utf-8")
+        (agents_dir / "tester.md").write_text("old", encoding="utf-8")
         (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
-        hashes = {"audit/SKILL.md": _sha("old"), "researcher.md": _sha("old")}
+        hashes = {"review-pr/SKILL.md": _sha("old"), "tester.md": _sha("old")}
         _migrate_prefix_predecessors(target, result, manifest_hashes=hashes)
 
-        assert not (skills_dir / "audit").exists()
-        assert not (agents_dir / "researcher.md").exists()
+        assert not (skills_dir / "review-pr").exists()
+        assert not (agents_dir / "tester.md").exists()
         assert (skills_dir / "trw-audit").exists()
         assert (agents_dir / "trw-researcher.md").exists()
         assert not result.get("preserved")
 
     def test_unrecorded_predecessor_is_kept_as_not_installer_owned(self, tmp_path: Path) -> None:
-        """PRD-INFRA-190-FR06: no manifest proof, no deletion — even with a successor present."""
+        """PRD-INFRA-190-FR06: no manifest proof, no deletion of a retired name."""
         agents_dir = tmp_path / ".claude" / "agents"
         agents_dir.mkdir(parents=True)
-        (agents_dir / "researcher.md").write_text("mine", encoding="utf-8")
-        (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
+        (agents_dir / "tester.md").write_text("mine", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={"researcher.md": _sha("old")})
+        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={"tester.md": _sha("old")})
 
-        assert (agents_dir / "researcher.md").read_text(encoding="utf-8") == "mine"
-        assert result["preserved"] == [".claude/agents/researcher.md (not_installer_owned)"]
+        assert (agents_dir / "tester.md").read_text(encoding="utf-8") == "mine"
+        assert result["preserved"] == [".claude/agents/tester.md (not_installer_owned)"]
 
     def test_migrate_no_skills_dir_no_error(self, tmp_path: Path) -> None:
         """No error when .claude/skills/ directory does not exist."""
@@ -178,66 +177,11 @@ class TestPrefixMigrationExtra:
         assert not retired.exists()
         assert not result.get("preserved")
 
-    def test_retirement_chains_collapse_to_direct_deletion(self) -> None:
-        skill_map = PREDECESSOR_MAP["skills"]
-        for old_name, successor in skill_map.items():
-            if successor is not None and successor in skill_map and skill_map[successor] is None:
-                pytest.fail(f"{old_name} must map directly to None because successor {successor} is retired")
-
-
-@pytest.mark.unit
-class TestMigratePredecessorSuccessorAbsent:
-    """When the trw- successor is absent, the predecessor must NOT be removed."""
-
-    def test_skill_predecessor_kept_when_successor_missing(self, tmp_path: Path) -> None:
-        """Skill predecessor dir is left in place when trw- successor dir is absent."""
-        skills_dir = tmp_path / ".claude" / "skills"
-        skills_dir.mkdir(parents=True)
-
-        predecessor = skills_dir / "audit"
-        predecessor.mkdir()
-        (predecessor / "SKILL.md").write_text("old", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(tmp_path, result)
-
-        assert predecessor.exists()
-        assert result["updated"] == []
-
-    def test_agent_predecessor_kept_when_successor_missing(self, tmp_path: Path) -> None:
-        """Agent predecessor file is left in place when trw- successor file is absent."""
-        agents_dir = tmp_path / ".claude" / "agents"
-        agents_dir.mkdir(parents=True)
-
-        predecessor = agents_dir / "lead.md"
-        predecessor.write_text("old lead", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(tmp_path, result)
-
-        assert predecessor.exists()
-        assert result["updated"] == []
-
-    def test_both_skill_and_agent_predecessors_kept_when_successors_missing(self, tmp_path: Path) -> None:
-        """Both skill and agent predecessors are preserved when successors are absent."""
-        skills_dir = tmp_path / ".claude" / "skills"
-        agents_dir = tmp_path / ".claude" / "agents"
-        skills_dir.mkdir(parents=True)
-        agents_dir.mkdir(parents=True)
-
-        skill_pred = skills_dir / "learn"
-        skill_pred.mkdir()
-        (skill_pred / "SKILL.md").write_text("old", encoding="utf-8")
-
-        agent_pred = agents_dir / "implementer.md"
-        agent_pred.write_text("old implementer", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(tmp_path, result)
-
-        assert skill_pred.exists()
-        assert agent_pred.exists()
-        assert result["updated"] == []
+    def test_every_predecessor_entry_is_a_retirement(self) -> None:
+        """REMOVE-S1: the rename path is gone, so a non-None successor would be deleted without one."""
+        for kind, names in PREDECESSOR_MAP.items():
+            renamed = {name: successor for name, successor in names.items() if successor is not None}
+            assert not renamed, f"{kind}: rename entries are no longer migrated: {renamed}"
 
 
 @pytest.mark.unit

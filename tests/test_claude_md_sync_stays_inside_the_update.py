@@ -62,6 +62,9 @@ def test_a_slow_sync_finishes_inside_the_transaction(tmp_path: Path, monkeypatch
 
     The old code gave up waiting (its 30 s timeout, shortened here) and left the
     pool thread running; the thread then wrote after ``_apply_update`` returned.
+    The fake sync writes ``AGENTS.md``, the root file the real sync writes; a root
+    ``CLAUDE.md`` is no update-owned file since REMOVE-S2, so it is neither
+    snapshotted nor reported.
     """
     target = tmp_path / "project"
     (target / ".trw").mkdir(parents=True)
@@ -71,7 +74,7 @@ def test_a_slow_sync_finishes_inside_the_transaction(tmp_path: Path, monkeypatch
     def _slow_sync(**_kwargs: object) -> dict[str, int]:
         seen["thread"] = threading.current_thread()
         release.wait(timeout=10)
-        (target / "CLAUDE.md").write_text("# written by the sync\n", encoding="utf-8")
+        (target / "AGENTS.md").write_text("# written by the sync\n", encoding="utf-8")
         finished.set()
         return {"learnings_promoted": 0}
 
@@ -100,8 +103,8 @@ def test_a_slow_sync_finishes_inside_the_transaction(tmp_path: Path, monkeypatch
     finished.wait(timeout=5)
 
     assert done_inside, "the sync was still running when the update's transaction ended"
-    reported = "CLAUDE.md" in result["created"] or "CLAUDE.md" in result["updated"]
-    assert reported == (target / "CLAUDE.md").exists(), "a sync write escaped the transaction's report"
+    reported = "AGENTS.md" in result["created"] or "AGENTS.md" in result["updated"]
+    assert reported == (target / "AGENTS.md").exists(), "a sync write escaped the transaction's report"
     assert not any("timed out" in w for w in result["warnings"])
     assert seen["thread"] is threading.current_thread(), "the sync ran on a thread that can outlive the update"
 

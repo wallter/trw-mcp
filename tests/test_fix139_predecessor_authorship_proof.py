@@ -89,23 +89,6 @@ class TestRetiredNameNeedsAuthorshipProof:
         assert not mirror.parent.exists()
         assert not result.get("preserved")
 
-    def test_rename_migrations_need_the_same_proof(self, tmp_path: Path) -> None:
-        """PRD-INFRA-190-FR06: a present successor proves nothing about who wrote the predecessor."""
-        from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
-
-        old, new = next((o, n) for o, n in PREDECESSOR_MAP["skills"].items() if n is not None)
-        skills = tmp_path / ".claude" / "skills"
-        (skills / old).mkdir(parents=True)
-        (skills / old / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills / new).mkdir(parents=True)
-        (skills / new / "SKILL.md").write_text("new", encoding="utf-8")
-        result = _run(tmp_path, {"unrelated/SKILL.md": "0" * 64})
-        assert (skills / old).exists()
-        assert result["preserved"] == [f".claude/skills/{old} (not_installer_owned)"]
-        recorded = _run(tmp_path, {f"{old}/SKILL.md": _sha(skills / old / "SKILL.md")})
-        assert not (skills / old).exists()
-        assert not recorded.get("preserved")
-
 
 class TestClientMirrorsFollowTheirSource:
     def test_mirror_of_a_preserved_source_skill_is_kept(self, tmp_path: Path) -> None:

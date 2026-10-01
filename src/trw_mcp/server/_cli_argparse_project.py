@@ -25,22 +25,6 @@ __all__ = ["add_project_subcommands"]
 #: affordance, not a client, and must not leak into the canonical set.
 _IDE_CHOICES = [*sorted(SUPPORTED_IDES), "all"]
 
-# Retired client identifiers (2026-07-11): recognized at the CLI so ``--ide
-# aider`` reports a 'retired' message with a migration hint instead of a
-# generic "invalid choice" (retired != unknown). aider never had a TRW adapter.
-# Client ids that are recognized but no longer installable. Kept so the error
-# names the successor instead of degrading to argparse's bare "invalid choice"
-# — a user who types a withdrawn id knows the name, so telling them only that it
-# is unknown is strictly less information than they arrived with.
-_RETIRED_IDE_HINTS: dict[str, str] = {
-    "aider": "aider never had a TRW client adapter. Existing .aider.conf.yml and "
-    ".aider/instructions.md can still be cleaned with 'trw-mcp uninstall'.",
-    "gemini": "the Gemini CLI profile was removed on 2026-07-24 after Google "
-    "deprecated Gemini CLI in favour of Antigravity CLI. Use --ide antigravity-cli. "
-    "Note the removal took the uninstall surfaces with it: any leftover .gemini/ "
-    "files must be deleted by hand.",
-}
-
 
 def _init_target(value: str) -> str:
     """argparse ``type`` for init-project's target: a client id that is not an existing path meant ``--ide``.
@@ -52,19 +36,6 @@ def _init_target(value: str) -> str:
             f"{value!r} is a client id, not an existing directory: did you mean --ide {value}? "
             "(the positional argument is the target directory; pass . for the current one)"
         )
-    return value
-
-
-def _ide_choice(value: str) -> str:
-    """argparse ``type`` for ``--ide`` that distinguishes retired from unknown.
-
-    A retired id raises with a 'retired' message + migration hint (before
-    argparse's ``choices`` check fires). Any other value is returned unchanged
-    and validated against ``_IDE_CHOICES`` by argparse ("invalid choice" for a
-    genuinely unknown id).
-    """
-    if value in _RETIRED_IDE_HINTS:
-        raise argparse.ArgumentTypeError(f"'{value}' is no longer a supported client: {_RETIRED_IDE_HINTS[value]}")
     return value
 
 
@@ -89,7 +60,6 @@ def add_project_subcommands(
     init_parser.add_argument(
         "--ide",
         choices=_IDE_CHOICES,
-        type=_ide_choice,
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )
@@ -123,7 +93,6 @@ def add_project_subcommands(
     update_parser.add_argument(
         "--ide",
         choices=_IDE_CHOICES,
-        type=_ide_choice,
         default=None,
         help="Target IDE (auto-detect if not specified)",
     )

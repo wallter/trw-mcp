@@ -320,29 +320,6 @@ class TestClaudeMdWrittenOnlyWhereRead:
         assert "trw_session_start" in rule
         assert text is None
 
-    def test_a_claude_md_with_user_prose_is_left_untouched(self, tmp_path: Path) -> None:
-        """HB-2: a legacy CLAUDE.md holding user content is never edited or deleted."""
-        from trw_mcp.state.claude_md._agents_md import retire_legacy_claude_md
-
-        claude_md = tmp_path / "CLAUDE.md"
-        original = (
-            f"# My Project\n\nKeep this paragraph.\n\n{TRW_MARKER_START}\nstale protocol\n{TRW_MARKER_END}\n"
-            "\nAnd this one.\n"
-        )
-        claude_md.write_text(original, encoding="utf-8")
-
-        assert retire_legacy_claude_md(tmp_path) == "kept"
-        assert claude_md.read_text(encoding="utf-8") == original
-
-    def test_a_trw_only_claude_md_is_retired(self, tmp_path: Path) -> None:
-        from trw_mcp.state.claude_md._agents_md import retire_legacy_claude_md
-
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(f"@AGENTS.md\n\n{TRW_MARKER_START}\nprotocol\n{TRW_MARKER_END}\n", encoding="utf-8")
-
-        assert retire_legacy_claude_md(tmp_path) == "removed"
-        assert not claude_md.exists()
-
 
 class TestTheDecisionSurvivesReinstall:
     """A fix that the next `update-project` undoes is not a fix.

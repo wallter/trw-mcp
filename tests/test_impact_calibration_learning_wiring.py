@@ -12,15 +12,13 @@ from trw_mcp.models.config import TRWConfig
 
 
 @pytest.mark.parametrize("replay", [False, True])
-@pytest.mark.parametrize("forced", [False, True])
 @pytest.mark.parametrize("corpus_impact", [0.2, 0.95])
 @pytest.mark.parametrize("impact", [0.95, -0.1, 1.1])
 def test_registered_capture_preserves_clamped_impact_and_existing_rows(
-    daemon_checkout: DaemonCheckout, monkeypatch, forced, corpus_impact, impact, replay
+    daemon_checkout: DaemonCheckout, monkeypatch, corpus_impact, impact, replay
 ):
-    from trw_mcp import scoring
     from trw_mcp.state import memory_adapter
-    from trw_mcp.tools import _learning_helpers, learning
+    from trw_mcp.tools import learning
 
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
@@ -28,7 +26,6 @@ def test_registered_capture_preserves_clamped_impact_and_existing_rows(
         dedup_enabled=False,
         embeddings_enabled=False,
         telemetry_enabled=False,
-        impact_forced_distribution_enabled=forced,
     )
     monkeypatch.setattr(learning, "get_config", lambda: config)
     trw_dir = daemon_checkout.trw_dir
@@ -51,9 +48,6 @@ def test_registered_capture_preserves_clamped_impact_and_existing_rows(
     for module, name in [
         (learning, "list_active_learnings"),
         (memory_adapter, "list_active_learnings"),
-        (scoring, "enforce_tier_distribution"),
-        (_learning_helpers, "check_soft_cap"),
-        (_learning_helpers, "enforce_distribution"),
     ]:
         monkeypatch.setattr(module, name, forbidden)
     if replay:

@@ -12,18 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from tests._memory_fixtures import FAKE_NAMESPACE
-from tests._memory_store_fake import FakeMemoryStore
-from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics import (
     extract_learnings_mechanical,
     find_success_patterns,
     is_success_event,
 )
-from trw_mcp.state.claude_md import collect_context_data, collect_patterns, collect_promotable_learnings
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # PRD-CORE-294 FR01 deleted trw_mcp.state.recall_search (search_patterns /
 # collect_context) along with the execute_recall knobs that consumed it — the
@@ -68,51 +61,6 @@ class TestAnalyticsExtraction:
         # Second call with same error should skip (dedup)
         result2 = extract_learnings_mechanical(errors, [], trw_dir)
         assert len(result2) == 0
-
-
-class TestClaudeMdCollection:
-    """Unit tests for claude_md collection helpers."""
-
-    def test_collect_promotable_learnings(
-        self, tmp_project: Path, reader: FileStateReader, fake_memory_store: FakeMemoryStore
-    ) -> None:
-        """collect_promotable_learnings returns high-impact active entries.
-
-        PRD-CORE-280 slice e1: ``collect_promotable_learnings`` reads through
-        ``list_active_learnings`` -> ``selected_store`` -> ``store.list_entries``
-        (see module docstring). At baseline this test relied on the unmigrated
-        SQLite backend's one-time YAML-to-SQLite auto-migration to pick up
-        directly-written YAML files; the fake store has no such migration, so
-        entries are seeded with ``store.put`` directly instead -- same shape
-        the store would hold after that migration ran.
-        """
-        config = TRWConfig()
-        fake_memory_store.put("important", FAKE_NAMESPACE, {"entry_id": "L-high", "importance": 0.9})
-        fake_memory_store.put("trivial", FAKE_NAMESPACE, {"entry_id": "L-low", "importance": 0.2})
-        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
-            result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
-        assert any(d["id"] == "L-high" for d in result)
-        assert not any(d["id"] == "L-low" for d in result)
-
-    def test_collect_patterns(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
-        """collect_patterns returns non-index pattern files."""
-        config = TRWConfig()
-        patterns_dir = tmp_project / ".trw" / "patterns"
-        writer.write_yaml(patterns_dir / "p1.yaml", {"name": "test-pattern"})
-        writer.write_yaml(patterns_dir / "index.yaml", {"patterns": []})
-        result = collect_patterns(tmp_project / ".trw", config, reader)
-        assert len(result) == 1
-        assert result[0]["name"] == "test-pattern"
-
-    def test_collect_context_data(self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
-        """collect_context_data returns arch and conv data."""
-        config = TRWConfig()
-        context_dir = tmp_project / ".trw" / "context"
-        writer.write_yaml(context_dir / "architecture.yaml", {"style": "hexagonal"})
-        writer.write_yaml(context_dir / "conventions.yaml", {"naming": "snake_case"})
-        arch, conv = collect_context_data(tmp_project / ".trw", config, reader)
-        assert arch["style"] == "hexagonal"
-        assert conv["naming"] == "snake_case"
 
 
 class TestSuccessPatternDetection:

@@ -74,13 +74,6 @@ logger = structlog.get_logger(__name__)
 _MAX_TASK_NAME_CHARS = 128
 
 
-def __getattr__(name: str) -> object:
-    """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
-
-
 def register_orchestration_tools(server: FastMCP) -> None:
     """Register orchestration tools on the MCP server."""
 

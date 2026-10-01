@@ -190,10 +190,12 @@ class TestUpgradeRunsUpdateProject:
             installer, monkeypatch, target, _status(mismatches=["trw_mcp_installed_vs_manifest"])
         )
 
-        assert run_calls == [
-            ["trw-mcp", "update-project", str(target), "--ide", "claude-code"],
-            ["trw-mcp", "update-project", str(target), "--ide", "codex"],
-        ], "an upgrade must refresh the deployed assets for each recorded client"
+        # E2E-INC-135: one plain update-project, as the ordinary path runs it. With no --ide it resolves the
+        # recorded clients itself, so every recorded client is still refreshed; a per-client --ide narrowed each
+        # run to that client and left surfaces the plain run refreshes (the Copilot hook lib) stale.
+        assert run_calls == [["trw-mcp", "update-project", str(target)]], (
+            "an upgrade must refresh the deployed assets for every recorded client in one plain update-project"
+        )
 
     def test_a_current_project_short_circuits(
         self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

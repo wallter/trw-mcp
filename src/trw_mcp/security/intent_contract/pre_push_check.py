@@ -31,6 +31,14 @@ from trw_mcp.security.intent_contract.weaken_edit_detector import (
 __all__ = ["main", "resolve_ranges"]
 
 _BLOCK = 1
+#: Lead condition on UF-PRD-51: whoever trips C9 is told the exact signed path. An OPERATOR step: agents never
+#: amend or rebase, and scripts/git-commit-scoped.sh does not sign (BACKLOG SCOPED-COMMIT-SIGN).
+_SIGNED_PATH_REMEDY = (
+    "  remedy (operator): re-commit it signed, `git commit --amend -S --no-edit` (several commits: "
+    "`git rebase --exec 'git commit --amend -S --no-edit' <base>`), then confirm with `git verify-commit <sha>`.\n"
+    "  Signing needs a key and gpg.format (ssh also needs gpg.ssh.allowedSignersFile); "
+    "scripts/git-commit-scoped.sh does not sign."
+)
 
 
 def resolve_ranges(stream: IO[str] | None = None) -> list[tuple[str, str]]:
@@ -91,6 +99,8 @@ def main(argv: list[str] | None = None, stream: IO[str] | None = None) -> int:
                 f"  conditions: {', '.join(f'{h.condition} {h.claim_id}: {h.detail}' for h in violation.weakened)}",
                 file=sys.stderr,
             )
+        if any(h.condition == "C9" for v in violations for h in v.weakened):
+            print(_SIGNED_PATH_REMEDY, file=sys.stderr)
         for finding in findings:
             blocked = True
             if finding.claim_id == UNANSWERABLE_CLAIM_ID:

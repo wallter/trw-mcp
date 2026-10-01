@@ -692,10 +692,10 @@ def test_bundled_and_mirror_hooks_identical(name: str) -> None:
 # --------------------------------------------------------------------------- #
 def test_session_identity_registry_covers_every_active_profile() -> None:
     """A new profile must make a deliberate, truthful claim about its identity."""
-    from trw_mcp.client_profiles.catalog import _ACTIVE_CLIENT_ORDER
+    from trw_mcp.client_profiles.catalog import _CLIENT_ORDER
     from trw_mcp.client_profiles.session_identity import CLIENT_SESSION_ID_ENV_VARS
 
-    missing = set(_ACTIVE_CLIENT_ORDER) - set(CLIENT_SESSION_ID_ENV_VARS)
+    missing = set(_CLIENT_ORDER) - set(CLIENT_SESSION_ID_ENV_VARS)
     assert missing == set(), f"profiles with no session-identity claim: {sorted(missing)}"
 
 

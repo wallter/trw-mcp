@@ -20,7 +20,7 @@ class TestLearningExceptionPaths:
         return _extract_tool(server, name)
 
     def test_trw_learn_does_not_request_quota_active_listing(self, tmp_path: Path) -> None:
-        cfg = TRWConfig(impact_forced_distribution_enabled=True)
+        cfg = TRWConfig()
         tool = self._register_and_get("trw_learn")
 
         with (
@@ -47,34 +47,6 @@ class TestLearningExceptionPaths:
         assert result["learning_id"] == "L-test0001"
         listing.assert_not_called()
 
-    def test_trw_learn_does_not_call_distribution_enforcer(self, tmp_path: Path) -> None:
-        cfg = TRWConfig(impact_forced_distribution_enabled=True)
-        tool = self._register_and_get("trw_learn")
-
-        with (
-            patch("trw_mcp.tools.learning.get_config", return_value=cfg),
-            patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.learning.generate_learning_id", return_value="L-test0002"),
-            patch(
-                "trw_mcp.tools.learning.adapter_store",
-                return_value={
-                    "learning_id": "L-test0002",
-                    "path": "sqlite://L-test0002",
-                    "status": "recorded",
-                    "distribution_warning": "",
-                },
-            ),
-            patch("trw_mcp.tools.learning.update_analytics"),
-            patch("trw_mcp.tools.learning.list_active_learnings", return_value=[{"id": "L-abc", "impact": 0.8}]),
-            patch(
-                "trw_mcp.scoring.enforce_tier_distribution", side_effect=AssertionError("unexpected distribution")
-            ) as quota,
-        ):
-            result = tool(summary="test summary", detail="test detail", impact=0.9)
-
-        assert result["status"] == "recorded"
-        quota.assert_not_called()
-
     def test_trw_learn_update_write_failure(self, tmp_path: Path) -> None:
         """PRD-CORE-291 merged trw_learn_update into trw_learn's update mode."""
         tool = self._register_and_get("trw_learn")
@@ -97,41 +69,6 @@ class TestLearningExceptionPaths:
         with patch("trw_mcp.state.claude_md.execute_claude_md_sync", side_effect=RuntimeError("sync exploded")):
             with pytest.raises(RuntimeError, match="sync exploded"):
                 instructions_sync_fn(scope="root")
-
-
-@pytest.mark.usefixtures("fake_memory_store")
-class TestLearningDistributionSkipsInactiveEntries:
-    """CD: capture no longer traverses old entries for distribution."""
-
-    def test_trw_learn_leaves_inactive_entries_outside_capture(self, tmp_path: Path) -> None:
-        cfg = TRWConfig(impact_forced_distribution_enabled=True)
-        server = _make_server()
-        register_learning_tools(server)
-        tool = _extract_tool(server, "trw_learn")
-
-        with (
-            patch("trw_mcp.tools.learning.get_config", return_value=cfg),
-            patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.learning.generate_learning_id", return_value="L-new001"),
-            patch(
-                "trw_mcp.tools.learning.adapter_store",
-                return_value={
-                    "learning_id": "L-new001",
-                    "path": "sqlite://L-new001",
-                    "status": "recorded",
-                    "distribution_warning": "",
-                },
-            ),
-            patch("trw_mcp.tools.learning.update_analytics"),
-            patch("trw_mcp.tools.learning.list_active_learnings", return_value=[{"id": "L-active", "impact": 0.5}]),
-            patch(
-                "trw_mcp.scoring.enforce_tier_distribution", side_effect=AssertionError("unexpected distribution")
-            ) as quota,
-        ):
-            result = tool(summary="new summary", detail="detail", impact=0.8)
-
-        assert result["status"] == "recorded"
-        quota.assert_not_called()
 
 
 class TestLearningRecallTrackingException:

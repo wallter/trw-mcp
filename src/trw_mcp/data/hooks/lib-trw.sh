@@ -268,19 +268,7 @@ find_active_run() {
   _scan_runs() {
     for _task_dir in "$1"/*/; do
       [ -d "$_task_dir" ] || continue
-      # Pattern 1: {root}/{task}/runs/{run_id}/meta/run.yaml (legacy docs/ layout)
-      if [ -d "$_task_dir/runs" ]; then
-        for _run_dir in "$_task_dir/runs"/*/; do
-          [ -f "$_run_dir/meta/run.yaml" ] || continue
-          _run_name="${_run_dir%/}"
-          _run_name="${_run_name##*/}"
-          if [ -z "$_latest" ] || expr "$_run_name" '>' "$_latest_name" >/dev/null; then
-            _latest="$_run_dir"
-            _latest_name="$_run_name"
-          fi
-        done
-      fi
-      # Pattern 2: {root}/{task}/{run_id}/meta/run.yaml (MCP .trw/runs/ layout)
+      # {root}/{task}/{run_id}/meta/run.yaml (the .trw/runs/ layout)
       for _run_dir in "$_task_dir"/*/; do
         [ -f "$_run_dir/meta/run.yaml" ] || continue
         _run_name="${_run_dir%/}"
@@ -727,19 +715,7 @@ has_recent_deliver() {
   _hrd_scan() {
     for _hrd_task_dir in "$1"/*/; do
       [ -d "$_hrd_task_dir" ] || continue
-      # Pattern 1: {root}/{task}/runs/{run_id}/ (legacy docs/ layout)
-      if [ -d "$_hrd_task_dir/runs" ]; then
-        for _hrd_run_dir in "$_hrd_task_dir/runs"/*/; do
-          _hrd_events="${_hrd_run_dir}meta/events.jsonl"
-          [ -f "$_hrd_events" ] || continue
-          if find "$_hrd_events" -mmin "-$_hrd_max_age" 2>/dev/null | grep -q .; then
-            if has_event "$_hrd_events" "trw_deliver_complete"; then
-              return 0
-            fi
-          fi
-        done
-      fi
-      # Pattern 2: {root}/{task}/{run_id}/ (MCP .trw/runs/ layout)
+      # {root}/{task}/{run_id}/ (the .trw/runs/ layout)
       for _hrd_run_dir in "$_hrd_task_dir"/*/; do
         _hrd_events="${_hrd_run_dir}meta/events.jsonl"
         [ -f "$_hrd_events" ] || continue

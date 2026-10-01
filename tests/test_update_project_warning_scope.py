@@ -31,9 +31,11 @@ def test_pointer_claude_md_is_not_reported_as_missing_markers(fake_git_repo: Pat
     result = update_project(fake_git_repo, ide="claude-code")
 
     assert not [w for w in result.get("warnings", []) if "missing TRW auto-generated markers" in w]
-    # FB-INSTALL-02: a pointer-only CLAUDE.md imports AGENTS.md and is the user's adapter; it is kept and reported.
+    # FB-INSTALL-02: a pointer-only CLAUDE.md imports AGENTS.md and is the user's adapter; it is kept, unwarned.
+    # (REMOVE-S2: update-project no longer touches or reports a root CLAUDE.md; doctor's claude_md_masks_agents_md
+    # row passes this one.)
     assert (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
-    assert "CLAUDE.md (kept: adapter imports AGENTS.md)" in result["preserved"]
+    assert not [w for w in result.get("warnings", []) if "CLAUDE.md" in w]
 
 
 def test_an_agents_md_without_markers_that_is_not_a_pointer_still_warns(fake_git_repo: Path) -> None:

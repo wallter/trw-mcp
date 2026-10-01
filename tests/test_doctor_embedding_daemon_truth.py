@@ -66,3 +66,15 @@ def test_flag_on_is_unchanged_by_the_daemon_question(trw_dir: Path, fake_memory_
 
     assert "cache" in message and "daemon" not in message
     assert status in ("PASS", "WARN")
+
+
+def test_the_field_description_says_what_the_project_flag_governs() -> None:
+    """UF-MEM-04-CONFIG-SCOPE: the flag is trw-mcp-process-only; it cannot switch off the shared per-user daemon."""
+    from trw_mcp.models.config._field_descriptions import FIELD_DESCRIPTIONS
+
+    description = FIELD_DESCRIPTIONS["embeddings_enabled"]
+
+    assert "trw-mcp" in description
+    assert "MEMORY_EMBEDDINGS_ENABLED" in description, "the daemon-wide switch must be named"
+    assert "does not" in description and "daemon" in description
+    assert "falls back to keyword search only" not in description, "the old claim outlived the behaviour"

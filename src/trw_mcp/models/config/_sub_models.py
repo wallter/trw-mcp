@@ -130,7 +130,6 @@ class ScoringConfig(BaseModel):
 
     scoring_default_days_unused: int = DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
     learning_decay_half_life_days: float = 14.0
-    impact_forced_distribution_enabled: bool = True
     complexity_tier_minimal: int = 3
     complexity_tier_comprehensive: int = 7
 

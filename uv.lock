@@ -2954,7 +2954,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "8.1.5"
+version = "8.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -3046,7 +3046,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.5" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "trw-memory", specifier = ">=5.1.5,<6.0.0" },
+    { name = "trw-memory", specifier = ">=5.1.6,<6.0.0" },
     { name = "trw-memory", extras = ["otel"], marker = "extra == 'otel'" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "typing-extensions", specifier = ">=4.6.0" },
@@ -3056,7 +3056,7 @@ provides-extras = ["sqlite-fix", "meta-tune", "otel", "dev", "ai"]
 
 [[package]]
 name = "trw-memory"
-version = "5.1.5"
+version = "5.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -3083,9 +3083,9 @@ dependencies = [
     { name = "structlog" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6d/82/79e6ebc6c4c505bab35110a5c2e3ec2612f02fcd6592dbc073cffd1c49bc/trw_memory-5.1.5.tar.gz", hash = "sha256:adf0b9ffc289bf3b4bab5af02983964ed307a1be4eb1960e33d5f71e6fa18f60", size = 2172569, upload-time = "2026-10-01T09:17:14.746Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1a/92/e9f7e82fa53b5ddf4255fa6f0e7ec3c0a9867e197845202c082315df529f/trw_memory-5.1.6.tar.gz", hash = "sha256:b714143d8cd868f4f1d0b628cfe389b8a80f17c99bcbde961434cfe01ba1dee3", size = 2163556, upload-time = "2026-10-01T13:59:31.242Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/dd/4921ea8c9c405f7d417688385f7a8082c3dae8a7623c4d64d3450d087279/trw_memory-5.1.5-py3-none-any.whl", hash = "sha256:d664381c98c4b7ba173fdb578d377049a502c4aeaed709c842ea3637bfee12df", size = 1074380, upload-time = "2026-10-01T09:17:12.4Z" },
+    { url = "https://files.pythonhosted.org/packages/68/fa/55ce95d39442d24ba5f969d25e2e3b4cadd3a88a4a9efc5f5914f4eb95c6/trw_memory-5.1.6-py3-none-any.whl", hash = "sha256:6726625ece013905dfc5c9f6d4b43999641c145d933fba5cb7af00ee2534ea9d", size = 1066517, upload-time = "2026-10-01T13:59:28.614Z" },
 ]
 
 [package.optional-dependencies]

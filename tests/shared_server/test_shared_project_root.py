@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -287,6 +288,7 @@ def test_the_nearest_of_nested_projects_wins(tmp_path: Path, cwd_env: pytest.Mon
     assert _walk_from(start, cwd_env, home=str(tmp_path / "home"), ceiling=tmp_path) == inner.resolve()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink refusal; Windows is best-effort by design (NFR02)")
 def test_a_symlinked_trw_dir_is_not_a_project(tmp_path: Path, cwd_env: pytest.MonkeyPatch) -> None:
     """Codex P1 (W5): parent/.trw -> another project's .trw made `parent` a project with no .trw of its own."""
     other = _trw_project(tmp_path / "home" / "other", git=False)

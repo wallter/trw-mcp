@@ -301,18 +301,6 @@ def test_lands_at_the_registrys_antigravity_destination(tmp_path: Path) -> None:
     assert not (tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md").exists()
 
 
-def test_retired_location_is_swept_on_update(tmp_path: Path) -> None:
-    """A stale pre-move copy at ``.antigravitycli/agents`` is cleaned up.
-
-    ``trw-distill-explorer.md`` joined ``RELOCATED_CLIENT_AGENTS`` alongside the
-    other three antigravity agent names PRD-CORE-252 already relocated, so an
-    existing install's stale copy is removed the same way theirs is.
-    """
-    from trw_mcp.bootstrap._version_migration import RELOCATED_CLIENT_AGENTS
-
-    assert "trw-distill-explorer.md" in RELOCATED_CLIENT_AGENTS[".antigravitycli/agents"]
-
-
 # ---------------------------------------------------------------------------
 # FR21 — cross-reference to trw-distill-explorer
 #

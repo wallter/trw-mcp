@@ -31,7 +31,7 @@ success.
 
 from __future__ import annotations
 
-from trw_mcp.models.config import builtin_client_ids, retired_client_ids
+from trw_mcp.models.config import builtin_client_ids
 
 #: Count of active profiles TRW has shipped. Raising this is part of adding a
 #: profile; lowering it is part of REMOVING one (as ``gemini`` was on
@@ -40,9 +40,6 @@ MINIMUM_ACTIVE_CLIENTS = 8
 
 #: Active (installable) profile ids, registry order.
 ACTIVE_CLIENT_IDS: tuple[str, ...] = tuple(builtin_client_ids())
-
-#: Retired ids retained for uninstall/migration cleanup only.
-RETIRED_CLIENT_IDS: frozenset[str] = retired_client_ids()
 
 # Explicit raises rather than ``assert``: a floor that ``python -O`` can strip
 # is not a floor.
@@ -53,8 +50,4 @@ if len(ACTIVE_CLIENT_IDS) < MINIMUM_ACTIVE_CLIENTS:
         "Every derived per-profile parametrization would collect fewer cases than it should. "
         "Either the registry is broken or a profile was removed — if removed, lower "
         "MINIMUM_ACTIVE_CLIENTS deliberately in the same change."
-    )
-if set(ACTIVE_CLIENT_IDS) & RETIRED_CLIENT_IDS:
-    raise RuntimeError(
-        f"retired client id(s) reported as active: {sorted(set(ACTIVE_CLIENT_IDS) & RETIRED_CLIENT_IDS)}"
     )

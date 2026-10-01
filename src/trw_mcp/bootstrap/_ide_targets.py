@@ -21,9 +21,6 @@ from pathlib import Path
 import structlog
 
 from ._ide_targets_finalize import (
-    _LEGACY_PROFILE_RENAMES as _LEGACY_PROFILE_RENAMES,
-)
-from ._ide_targets_finalize import (
     _run_claude_md_sync as _run_claude_md_sync,
 )
 from ._ide_targets_finalize import (
@@ -287,7 +284,7 @@ def _update_copilot_artifacts(
         result.setdefault("warnings", []).append(f"copilot path instructions update skipped: {exc}")
 
     try:
-        hooks_result = generate_copilot_hooks(target_dir)
+        hooks_result = generate_copilot_hooks(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, hooks_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"copilot hooks.json update skipped: {exc}")
@@ -301,7 +298,7 @@ def _update_copilot_artifacts(
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_copilot_distill_channels
 
-    _update_copilot_distill_channels(target_dir, result)
+    _update_copilot_distill_channels(target_dir, result, manifest_hashes)
 
 
 # ---------------------------------------------------------------------------

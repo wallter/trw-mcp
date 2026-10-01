@@ -18,9 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from tests._client_registry import ACTIVE_CLIENT_IDS, MINIMUM_ACTIVE_CLIENTS, RETIRED_CLIENT_IDS
+from tests._client_registry import ACTIVE_CLIENT_IDS, MINIMUM_ACTIVE_CLIENTS
 from trw_mcp.models.config import _profiles as profiles_mod
-from trw_mcp.models.config import builtin_client_ids, retired_client_ids
+from trw_mcp.models.config import builtin_client_ids
 
 pytestmark = pytest.mark.unit
 
@@ -35,14 +35,8 @@ class TestAuthoritativeAccessor:
         for client_id in builtin_client_ids():
             assert profiles_mod.resolve_client_profile(client_id).client_id == client_id
 
-    def test_retired_ids_are_excluded_from_the_active_set(self) -> None:
-        assert "aider" in retired_client_ids()
-        assert not (set(builtin_client_ids()) & retired_client_ids())
-
-    def test_removed_client_is_in_neither_set(self) -> None:
-        # gemini was REMOVED outright 2026-07-24, not retired.
-        assert "gemini" not in builtin_client_ids()
-        assert "gemini" not in retired_client_ids()
+    def test_withdrawn_clients_are_not_active(self) -> None:
+        assert not {"aider", "gemini", "cursor"} & set(builtin_client_ids())
 
     def test_non_vacuity_floor(self) -> None:
         assert len(builtin_client_ids()) >= MINIMUM_ACTIVE_CLIENTS
@@ -78,11 +72,10 @@ class TestConvertedConsumers:
         assert SUPPORTED_IDES == list(ACTIVE_CLIENT_IDS)
         assert "aider" not in SUPPORTED_IDES
 
-    def test_catalog_client_order_is_active_plus_retired(self) -> None:
-        from trw_mcp.client_profiles.catalog import _ACTIVE_CLIENT_ORDER, _CLIENT_ORDER
+    def test_catalog_client_order_is_the_active_set(self) -> None:
+        from trw_mcp.client_profiles.catalog import _CLIENT_ORDER
 
-        assert _ACTIVE_CLIENT_ORDER == ACTIVE_CLIENT_IDS
-        assert set(_CLIENT_ORDER) == set(ACTIVE_CLIENT_IDS) | RETIRED_CLIENT_IDS
+        assert _CLIENT_ORDER == ACTIVE_CLIENT_IDS
 
     def test_uninstall_surfaces_cover_every_active_client(self) -> None:
         """The failure this guards: a profile absent from ``_CLIENT_ORDER`` gets
@@ -97,33 +90,6 @@ class TestConvertedConsumers:
             if client_id == "claude-code":
                 continue
             assert client_scaffold_relpaths(client_id), f"{client_id} has no uninstall surfaces"
-
-    def test_every_retired_id_is_recognised_by_the_cli(self) -> None:
-        """A retired id must stay RECOGNISED, not become "invalid choice".
-
-        ``_RETIRED_IDES`` is legitimately a superset (it also carries ``gemini``,
-        which was removed outright rather than retired), so this is containment,
-        not equality. Without it, retiring a profile in ``_profiles.py`` alone
-        would make ``--ide <id>`` degrade to argparse's bare rejection and
-        ``resolve_ide_targets`` treat the id as unknown.
-        """
-        from trw_mcp.bootstrap._utils import _RETIRED_IDES
-
-        assert RETIRED_CLIENT_IDS <= set(_RETIRED_IDES)
-
-    def test_every_retired_id_keeps_uninstall_surfaces(self) -> None:
-        """Retiring a profile must not silently strand its installed files.
-
-        A retired id no longer resolves to its own profile
-        (``resolve_client_profile`` returns the claude-code fallback), so its
-        surfaces can only come from ``_PROFILE_DIR_SURFACES`` or
-        ``_RETIRED_INSTRUCTION_SURFACES``. An empty projection means existing
-        installs of that client are no longer removable — forever.
-        """
-        from trw_mcp.client_profiles.catalog import client_surfaces
-
-        for client_id in RETIRED_CLIENT_IDS:
-            assert client_surfaces(client_id), f"retired {client_id} has no uninstall surfaces"
 
     def test_known_clients_is_derived(self) -> None:
         from trw_mcp.agents.tier_resolver import KNOWN_CLIENTS

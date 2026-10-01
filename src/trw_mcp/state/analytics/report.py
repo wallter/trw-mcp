@@ -36,9 +36,7 @@ logger = structlog.get_logger(__name__)
 
 
 def __getattr__(name: str) -> object:
-    """Backward-compat shim for removed module-level singletons (FIX-044)
-    and lazy re-exports from _stale_runs sub-module.
-    """
+    """Lazy re-exports from the _stale_runs sub-module (avoids a circular import)."""
     # Stale-run re-exports (avoid circular import with _stale_runs)
     _STALE_REEXPORTS = {
         "auto_close_stale_runs",
@@ -55,10 +53,7 @@ def __getattr__(name: str) -> object:
         globals()[name] = value
         return value
 
-    # Legacy backward-compat shim
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # --- Ceremony Scoring (FR05) ---

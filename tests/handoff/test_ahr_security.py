@@ -85,7 +85,7 @@ def test_load_refuses_an_oversized_input_without_reading_it_all(
         def __init__(self, handle: Any) -> None:
             self._h = handle
 
-        def __enter__(self) -> "_Spy":
+        def __enter__(self) -> _Spy:
             return self
 
         def __exit__(self, *exc: object) -> None:

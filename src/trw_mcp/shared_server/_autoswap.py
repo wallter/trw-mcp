@@ -15,8 +15,8 @@ twice at once (the env's spawn lock is held from the last re-check until the suc
 The memory daemon follows the same way: once this server is current, a daemon that is strictly OLDER than this
 process's trw-memory is drained by the graceful handshake (``_upgrade.drain_daemon``: in-flight calls finish, other
 sessions mid-call answer ``busy`` and the daemon resumes; never a signal), retried with backoff. The next memory
-call starts the new daemon through the client's own auto-start, which (``_daemon_launch``) runs the env's recorded
-interpreter, so a stale client that calls first cannot publish an older daemon in its place.
+call starts the new daemon through the client's own auto-start, which reads the store's launcher record
+(``launcher.json``, written by ``swap``) and runs its interpreter, so a stale client that calls first cannot publish an older daemon in its place.
 
 ``swap --src`` envs are the operator's dev flow and are left alone. Every decision is one structured log line
 (``shared_mcp_autoswap``); the last swap is kept in ``<env>.last-auto-swap`` for the successor to show in

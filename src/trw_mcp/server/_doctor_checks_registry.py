@@ -67,12 +67,12 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("hook_channel", "_check_hook_channel"),  # PRD-CORE-336-FR04: appended last, as above
     ("memory-ledger-sample", "_check_memory_ledger_sample"),  # PRD-CORE-334-FR04: appended last, as above
     ("hint_hub_downrank", "_check_hint_hub"),  # ANCHOR-HUB-DOWNRANK: appended last, as above
-    ("memory_warm_legacy", "_check_memory_warm_legacy"),  # learning L-LhQe: appended last, as above
     ("hint_delivery", "_check_hint_delivery"),  # HINT-DELIVERY-CANARY: appended last, as above
     ("shared_mcp", "_check_shared_mcp"),  # opt-in shared trw-mcp (trw_mcp.shared_server): appended last, as above
     ("distill_ingest", "_check_distill_ingest"),  # 2026-09-27 audit touchpoint #3: appended last, as above
     ("trw_trash", "_check_trw_trash"),  # SAFE-PUBLISH: appended last, as above
     # learning L-5ist: placed before codex_observation, whose own test pins that row last.
     ("user_tier_yaml", "_check_user_yaml"),
+    ("claude_md_masks_agents_md", "_check_claude_md_masks_agents_md"),  # REMOVE-S2: before codex_observation (L-5ist)
     ("codex_observation", "_check_codex_observation"),  # CODEX-P0-A S3: appended last, as above
 )

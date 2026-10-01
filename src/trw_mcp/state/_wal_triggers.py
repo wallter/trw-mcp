@@ -4,7 +4,8 @@ Parent facade: :mod:`trw_mcp.state.memory_adapter` (via ``_memory_lookups``),
 which owns the checkpoint execution. This module owns only the *decision*, so
 the ceremony layer stops holding a storage policy whose state it cannot see.
 
-Three things live here, and they are separate on purpose:
+The markers are WRITTEN by the daemon's own checkpoint (``trw_memory.storage._wal_checkpoint.stamp_checkpoint_markers``);
+this module only reads them. Three things live here, and they are separate on purpose:
 
 A note on the two size numbers, because they look like drift and are not:
 ``wal_checkpoint_threshold_mb`` (10 MB default) is the size at which a
@@ -46,7 +47,6 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
@@ -61,9 +61,6 @@ __all__ = [
     "last_checkpoint_age_seconds",
     "last_effective_checkpoint_age_seconds",
     "last_reset_checkpoint_age_seconds",
-    "record_checkpoint_attempt",
-    "record_effective_checkpoint",
-    "record_reset_checkpoint",
     "resolve_wal_paths",
 ]
 
@@ -183,57 +180,6 @@ def _marker_age(marker: Path, *, now: float | None = None) -> float | None:
     if age < -_FUTURE_MARKER_TOLERANCE_SECONDS:
         return None
     return max(age, 0.0)
-
-
-def record_checkpoint_attempt(db_path: Path, *, now: float | None = None) -> bool:
-    """Persist the last-ATTEMPT timestamp; fail-open. Returns whether it landed.
-
-    Idempotent and last-writer-wins (NFR04). Only ever called after a checkpoint
-    that did NOT raise — NFR02 requires a failed checkpoint to leave both clocks
-    alone so the age trigger retries on the next evaluation instead of going
-    quiet for a full interval.
-
-    The boolean is the point: a marker write that fails leaves the checkpoint age
-    unknown, so the age trigger fires again on the very next evaluation and the
-    documented hot-loop protection is gone. The caller reports a checkpoint that
-    persisted no clock as a PARTIAL success rather than an unqualified one.
-    """
-    return _write_marker(checkpoint_marker_path(db_path), now=now)
-
-
-def record_effective_checkpoint(db_path: Path, *, now: float | None = None) -> bool:
-    """Persist the last-EFFECTIVE timestamp; fail-open. Returns whether it landed.
-
-    Called only when the checkpoint CAUGHT UP with the WAL backlog. Note what
-    this does and does not mean: clearing the backlog is not reclamation, and on
-    an engine below SQLite 3.51.3 a store clears its backlog on every run while
-    never reclaiming a byte. Reclamation is :func:`record_reset_checkpoint`.
-    """
-    return _write_marker(effective_checkpoint_marker_path(db_path), now=now)
-
-
-def record_reset_checkpoint(db_path: Path, *, now: float | None = None) -> bool:
-    """Persist the last-RESET timestamp; fail-open. Returns whether it landed.
-
-    Called only when a resetting checkpoint actually ran. This is the only
-    observation of reclamation the system makes, so nothing else may write it.
-    """
-    return _write_marker(reset_checkpoint_marker_path(db_path), now=now)
-
-
-def _write_marker(marker: Path, *, now: float | None = None) -> bool:
-    """Write one timestamp marker beside the store. ``True`` when it is on disk, ``False`` on OSError.
-
-    Anchored on the store directory (PRD-CORE-337 FR08): a symlink planted at the marker raises
-    ``UnsafeWriteError`` instead of being followed.
-    """
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        write_checkout_file(marker.parent, marker, f"{time.time() if now is None else now:.3f}\n")
-    except OSError as exc:  # trw-fail-silent-allow: the documented contract -- the WARNING is the record and False tells the caller to report a PARTIAL checkpoint; a symlink refusal is not an OSError and propagates
-        logger.warning("wal_checkpoint_marker_write_failed", path=str(marker), error=type(exc).__name__)
-        return False
-    return True
 
 
 def evaluate_wal_trigger(trw_dir: Path, config: TRWConfig, *, now: float | None = None) -> WalTrigger:

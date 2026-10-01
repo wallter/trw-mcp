@@ -641,3 +641,25 @@ def test_post_install_lines_report_the_read_back_memory_version_not_the_wheel(
     assert claims == [], f"post-install lines must not present the pinned wheel as installed: {claims}"
     assert any("trw-memory 1.0.0" in line for line in lines), lines
     assert any("trw-mcp 5.0.0" in line for line in lines), lines
+
+
+def test_restart_no_longer_touches_a_shared_server_pid_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """REMOVE-S1: the shared HTTP server was removed in 0.6.0 (trw-mcp is stdio-only), so the
+    one-time PID-file cleanup and its process helpers are gone: no file is read, no process signalled."""
+    import os
+
+    module = _load()
+    _seed_deployment_for_restart(tmp_path)
+    monkeypatch.setattr(module, "_MCP_EFFECTIVE_VERSION", "0.55.15")
+    monkeypatch.setattr(module, "_resolve_path_trw_mcp_version", lambda: "0.55.15")
+    pid_file = tmp_path / ".trw" / "mcp-server.pid"
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
+    kills: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: kills.append((pid, sig)))
+
+    module._restart_mcp_servers(tmp_path, MagicMock())
+
+    assert kills == []
+    assert pid_file.read_text(encoding="utf-8") == str(os.getpid())
+    for helper in ("_is_process_alive", "_terminate_process", "_pid_command_matches_trw"):
+        assert not hasattr(module, helper), helper

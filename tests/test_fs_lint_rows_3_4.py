@@ -1,8 +1,9 @@
-"""FS-LINT rows 3-4: hash-then-delete sites route through ``remove_if_hash`` (HB-2).
+"""FS-LINT row 3: a hash-then-delete site routes through ``remove_if_hash`` (HB-2).
 
-Row 3, ``_remove_stale_files_in_kept_dir``, and row 4, ``retire_legacy_claude_md``, proved TRW authorship from
-bytes read earlier and then ``unlink``ed the name, so an edit saved in between (or a write through a held fd)
-was destroyed. The file is now captured into ``.trw/trash`` and re-verified there.
+Row 3, ``_remove_stale_files_in_kept_dir``, proved TRW authorship from bytes read earlier and then
+``unlink``ed the name, so an edit saved in between (or a write through a held fd) was destroyed. The file is
+now captured into ``.trw/trash`` and re-verified there. (Row 4, ``retire_legacy_claude_md``, was removed with
+the one-time 8.0 CLAUDE.md retirement in REMOVE-S2.)
 """
 
 from __future__ import annotations
@@ -12,59 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from tests._fs_hazards import open_fd_writer
-
 
 def _trash(root: Path) -> list[bytes]:
     trash = root / ".trw" / "trash"
     return sorted(p.read_bytes() for p in trash.glob("*/data")) if trash.is_dir() else []
-
-
-# --- row 4: retire_legacy_claude_md -------------------------------------------------------------------
-
-
-def _trw_only_claude_md(tmp_path: Path) -> tuple[Path, Path]:
-    root = tmp_path / "proj"
-    root.mkdir()
-    path = root / "CLAUDE.md"
-    path.write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8")
-    return root, path
-
-
-def test_trw_only_claude_md_moves_to_trash(tmp_path: Path) -> None:
-    from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md
-
-    root, path = _trw_only_claude_md(tmp_path)
-    assert retire_legacy_claude_md(root) == "removed"
-    assert not path.exists()
-    assert _trash(root) == [b"# CLAUDE.md\n\n@AGENTS.md\n"]
-
-
-def test_a_line_added_after_the_check_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Red on the old code: it decided TRW-only, then unlinked whatever the file held by then."""
-    from trw_mcp.state.claude_md import _orphan_strip
-
-    root, path = _trw_only_claude_md(tmp_path)
-    real = _orphan_strip._is_trw_only
-
-    def decide_then_edit(remaining: str) -> bool:
-        verdict = real(remaining)
-        path.write_text("@AGENTS.md\n\nMy own project notes.\n", encoding="utf-8")
-        return verdict
-
-    monkeypatch.setattr(_orphan_strip, "_is_trw_only", decide_then_edit)
-    assert _orphan_strip.retire_legacy_claude_md(root) == "kept"
-    assert path.read_text(encoding="utf-8") == "@AGENTS.md\n\nMy own project notes.\n"
-
-
-def test_a_held_fd_write_after_retire_lands_in_trash(tmp_path: Path) -> None:
-    from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md
-
-    root, path = _trw_only_claude_md(tmp_path)
-    with open_fd_writer(path) as writer:
-        assert retire_legacy_claude_md(root) == "removed"
-        writer.write(b"late edit\n")
-    assert _trash(root) == [b"late edit\n"]
 
 
 # --- row 3: _remove_stale_files_in_kept_dir -----------------------------------------------------------
@@ -129,42 +81,3 @@ def test_an_edit_after_the_hash_check_is_put_back(tmp_path: Path, monkeypatch: p
     _run_row3(root, surface, manifest, result)
     assert dropped.read_bytes() == b"my edit\n"
     assert any("old.md" in w for w in result["warnings"])
-
-
-@pytest.mark.usefixtures("no_memory_daemon")
-def test_retired_claude_md_stays_retired_in_a_real_git_repo(tmp_path: Path) -> None:
-    """Red on e547de76: the uncommitted-changes guard restored CLAUDE.md after every capture (trash 1, 2, 3)."""
-    import subprocess
-
-    from trw_mcp.bootstrap import init_project, update_project
-
-    root = tmp_path / "proj"
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(root),
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "user.name=t",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "i",
-        ],
-        check=True,
-    )
-    assert not init_project(root, ide="claude-code")["errors"]
-    claude = root / "CLAUDE.md"
-    counts = []
-    for _ in range(3):
-        claude.write_text("# CLAUDE.md\n\n@AGENTS.md\n", encoding="utf-8") if not counts else None
-        result = update_project(root, ide="claude-code")
-        counts.append(len(_trash(root)))
-        assert not claude.exists()
-        if len(counts) == 1:
-            assert "CLAUDE.md" in result.get("trashed", [])
-    assert counts == [1, 1, 1]

@@ -31,10 +31,11 @@ class TestDetectClientProfileFilesystem:
         with patch.dict("os.environ", {}, clear=True):
             assert detect_client_profile(cwd=tmp_path) == "opencode"
 
-    def test_aider_conf_file(self, tmp_path: Path) -> None:
+    def test_an_aider_conf_file_is_not_a_client_signal(self, tmp_path: Path) -> None:
+        """REMOVE-S3: aider is withdrawn; its config file selects nothing."""
         (tmp_path / ".aider.conf.yml").write_text("model: claude-sonnet-4-6")
         with patch.dict("os.environ", {}, clear=True):
-            assert detect_client_profile(cwd=tmp_path) == "aider"
+            assert detect_client_profile(cwd=tmp_path) == ""
 
     def test_no_signals_returns_empty(self, tmp_path: Path) -> None:
         with patch.dict("os.environ", {}, clear=True):

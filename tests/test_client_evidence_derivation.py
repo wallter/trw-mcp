@@ -64,3 +64,37 @@ def test_bare_update_on_a_codex_project_never_adopts_cursor_ide(tmp_path: Path, 
     assert not (tmp_path / ".cursor").exists()
     # Non-vacuity: the update actually ran and refreshed the recorded client.
     assert (tmp_path / ".codex").is_dir()
+
+
+@pytest.mark.slow
+def test_bare_update_never_writes_an_unrecorded_clients_hook_env_and_names_how_to_add_it(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """UPDATE-PROJECT-RECORDED-CLIENTS-ONLY (codex UF-BOOT-07-r1 KI3): update-project touched a detected-but-
+    unrecorded client: `ide_targets` came from detection and drove the hook-env rewrite, so a codex-only project
+    on a machine with Cursor got Cursor's hook environment. Only recorded clients (or an explicit --ide) are
+    written; a detected extra gets one line saying how to add it."""
+    from trw_mcp.bootstrap import _utils
+    from trw_mcp.bootstrap._init_project import init_project
+    from trw_mcp.bootstrap._update_project import update_project
+
+    monkeypatch.setattr(
+        _utils,
+        "detect_ide",
+        lambda target_dir: ["cursor-ide", *(["codex"] if (target_dir / ".codex").is_dir() else [])],
+    )
+    (tmp_path / ".git").mkdir()
+    init_project(tmp_path, ide="codex")
+    env_dir = tmp_path / ".trw" / "runtime" / "hook-env.d"
+    before = sorted(p.name for p in env_dir.glob("*.sh")) if env_dir.is_dir() else []
+
+    result = update_project(tmp_path)
+
+    after = sorted(p.name for p in env_dir.glob("*.sh")) if env_dir.is_dir() else []
+    # Codex r1 KI2: a rolled-back update would also leave the files unchanged; prove this one ran and wrote.
+    assert not result["errors"], result["errors"]
+    assert "codex.sh" in after, "the recorded client's hook env is still written"
+    assert after == before, f"an unrecorded client's hook env was written: {sorted(set(after) - set(before))}"
+    notes = [w for w in result.get("warnings", []) if "cursor-ide" in w]
+    assert notes and "--ide cursor-ide" in notes[0], result.get("warnings")

@@ -21,14 +21,13 @@ from tests._layout import requires_jq, requires_local_timing, requires_non_root
 from tests._timing import assert_budget
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
-    _DEFAULT_DEADLINE_RETRY_ATTEMPTS,
     _HOOKS,
     _MARKER,
     _advisories,
     _payload,
     _project,
-    _retry,
     _run,
+    frozen_clock_path,
     pytest_skip_no_jq,
     pytest_skip_no_sh,
 )
@@ -275,6 +274,10 @@ def test_cooldown_state_is_session_scoped_under_concurrency(tmp_path: Path) -> N
 
 @pytest_skip_no_sh
 @pytest_skip_no_jq
+# 220 sequential hook runs (NFR06 needs N >= 200): ~0.3 s each idle, so a loaded release gate (-n 8 beside
+# other suites) pushed it past the 120 s default and it timed out (DEGENERATE-HOOK-TEST-FLAKES). The
+# assertion is a count, not a time; the generous ceiling only stops load from failing it.
+@pytest.mark.timeout(600)
 def test_noise_budget_on_replay_corpus(tmp_path: Path) -> None:
     """NFR06: at most 5 advisories per 100 results over a corpus of N >= 200.
 
@@ -346,27 +349,22 @@ def test_posix_sh_only() -> None:
 def test_dash_executes_the_adapter_end_to_end(tmp_path: Path) -> None:
     """Parsing is not running: NFR04 asks for an execution pass under dash.
 
-    This call carries no deadline override, so it runs against the 50 ms
-    PRODUCTION default -- the same budget `test_p95_latency_under_budget`
-    measures -- and inherits the same bounded-retry treatment for the same
-    reason (see `_DEFAULT_DEADLINE_RETRY_ATTEMPTS`).
+    Runs on the frozen clock (``frozen_clock_path``) so a loaded machine cannot push it past the
+    production deadline; the deadline and its latency budget are tested elsewhere.
     """
-
-    def _attempt(index: int) -> None:
-        root = _project(tmp_path, f"dash-run-{index}")
-        child = dict(os.environ)
-        child["CLAUDE_PROJECT_DIR"] = str(root)
-        result = subprocess.run(
-            ["dash", str(root / ".claude" / "hooks" / _ADAPTER.name)],
-            input=_payload(response=""),
-            text=True,
-            capture_output=True,
-            cwd=root,
-            env=child,
-            timeout=30,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        assert len(_advisories(result)) == 1, f"{result.stdout!r} {result.stderr!r}"
-
-    _retry(_DEFAULT_DEADLINE_RETRY_ATTEMPTS, _attempt)
+    root = _project(tmp_path, "dash-run")
+    child = dict(os.environ)
+    child["CLAUDE_PROJECT_DIR"] = str(root)
+    child["PATH"] = frozen_clock_path(root) + os.pathsep + child.get("PATH", "")
+    result = subprocess.run(
+        ["dash", str(root / ".claude" / "hooks" / _ADAPTER.name)],
+        input=_payload(response=""),
+        text=True,
+        capture_output=True,
+        cwd=root,
+        env=child,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(_advisories(result)) == 1, f"{result.stdout!r} {result.stderr!r}"

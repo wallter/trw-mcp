@@ -30,6 +30,9 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._profiles import _PROFILES
 from trw_mcp.server._doctor_checks_registry import CHECKS as _CHECKS
+from trw_mcp.server._doctor_claude_md import (
+    check_claude_md_masks_agents_md as _check_claude_md_masks_agents_md,  # noqa: F401
+)
 
 # The four noqa-F401 _check_* imports below are referenced only via globals()[...]
 # in _doctor_core's dispatch loop (test-monkeypatch indirection), same as every
@@ -331,21 +334,6 @@ def _check_memory_wal(target: Path, config: TRWConfig) -> CheckResult:
 
     status, message = memory_wal_row(target, config)
     return CheckResult("memory_wal", cast("DoctorStatus", status), message)
-
-
-# ── learning L-LhQe: a leftover pre-fix per-namespace warm.db orphan ──────────
-
-
-def _check_memory_warm_legacy(target: Path, config: TRWConfig) -> CheckResult:
-    """Report a leftover legacy per-namespace ``warm.db``, never deleting it.
-
-    Delegates to the ``_doctor_memory_warm_legacy`` sibling (same shape as
-    ``_check_memory_wal``, kept out of this file for the module-size gate).
-    """
-    from trw_mcp.server._doctor_memory_warm_legacy import memory_warm_legacy_row
-
-    status, message = memory_warm_legacy_row(target, config)
-    return CheckResult("memory_warm_legacy", cast("DoctorStatus", status), message)
 
 
 # ── PRD-CORE-253-FR03: loopback memory-daemon reachability ───────────────────

@@ -24,8 +24,6 @@ _KEPT_REASONS = {
     "(not_installer_owned)": "TRW cannot show it wrote it (edited, or never recorded), so this update left it in place",
 }
 _KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
-#: The one informational ``preserved`` entry: reported plainly, never as a warning (the file is in its good state).
-_ADAPTER_KEPT = "CLAUDE.md (kept: adapter imports AGENTS.md)"
 
 __all__ = ["kept_files", "print_kept", "print_trashed", "report_kept"]
 
@@ -62,13 +60,15 @@ def print_kept(result: dict[str, list[str]], target: Path) -> None:
     """
     for path, why in kept_files(result, target):
         print(f"WARNING: kept {printable(path)}: {why}")
-    if _ADAPTER_KEPT in result.get("preserved", []):
-        print("Kept CLAUDE.md (adapter imports AGENTS.md)")
 
 
-def print_trashed(paths: list[str]) -> None:
-    """One line per file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them)."""
-    for path in paths:
+def print_trashed(paths: list[str], described: list[str] | None = None) -> None:
+    """One line per unchanged file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them).
+
+    A path a warning already describes (``"<path>: ..."``, e.g. an edited hook-family file) is skipped: it is
+    not unchanged, and saying so contradicted the warning (E2E-INC-133).
+    """
+    for path in [p for p in paths if not any(str(w).startswith(f"{p}: ") for w in described or [])]:
         print(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
 
 

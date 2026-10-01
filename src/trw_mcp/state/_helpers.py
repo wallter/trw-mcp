@@ -10,7 +10,6 @@ avoid circular dependencies. It only depends on models/ and persistence.
 from __future__ import annotations
 
 import json
-import warnings
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -297,62 +296,6 @@ from trw_mcp.state._maintenance_health import (  # noqa: E402
 from trw_mcp.state._maintenance_health import (  # noqa: E402
     maintenance_health as maintenance_health,
 )
-
-# ---------------------------------------------------------------------------
-# Backward-compat module-level singleton shim (FIX-044 DRY)
-# ---------------------------------------------------------------------------
-
-
-def _compat_getattr(name: str) -> object:
-    """Backward-compat shim for module-level ``_config``/``_reader``/``_writer`` access.
-
-    Tests patch these module attributes directly. This helper provides
-    lazy construction so the attributes exist on first access.
-
-    Usage — in each consumer module, keep a module-level ``__getattr__`` that
-    delegates here (Python requires the function to live in the module)::
-
-        from trw_mcp.state._helpers import _compat_getattr
-
-        def __getattr__(name: str) -> object:
-            return _compat_getattr(name)
-
-    .. deprecated:: v0.13
-        Migrate test patches to use ``get_config()`` / ``FileStateReader()`` /
-        ``FileStateWriter()`` directly.
-
-    Raises:
-        AttributeError: If *name* is not one of the three known singletons.
-    """
-    if name == "_config":
-        warnings.warn(
-            "Module-level '_config' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        from trw_mcp.models.config import get_config
-
-        return get_config()
-    if name == "_reader":
-        warnings.warn(
-            "Module-level '_reader' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        from trw_mcp.state.persistence import FileStateReader
-
-        return FileStateReader()
-    if name == "_writer":
-        warnings.warn(
-            "Module-level '_writer' is deprecated. Import from the canonical module instead. Will be removed in v1.0.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        from trw_mcp.state.persistence import FileStateWriter
-
-        return FileStateWriter()
-    raise AttributeError(f"module has no attribute {name!r}")
-
 
 # ---------------------------------------------------------------------------
 # Config loading

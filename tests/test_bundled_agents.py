@@ -15,7 +15,6 @@ class TestAgentDefinitions:
     Adding a new agent? Update these locations in order:
     1. Create `.claude/agents/{name}.md` (YAML frontmatter + markdown body)
     2. Copy to `trw-mcp/src/trw_mcp/data/agents/{name}.md` (bundled for pip install)
-       — or run `scripts/sync-data.sh` which copies .claude/agents/ -> data/agents/
     3. Add to parametrized lists below (test_agent_file_exists, test_agent_model_assignment,
        test_agent_no_stray_tags, test_agent_has_required_frontmatter) + role-specific tests
     4. Add to `TestAgents.EXPECTED_AGENTS` in `test_bootstrap.py`

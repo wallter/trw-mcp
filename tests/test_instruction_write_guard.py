@@ -772,9 +772,9 @@ class TestWriterTotality:
             #
             # 2026-09-26 (TRW 8.0, CLAUDE.md retired): line drift 190->176. The
             # ':145' row is the same strip write (`_strip_orphaned_block`), which
-            # the name-based scan also attributes to the module's
-            # `project_root / 'CLAUDE.md'` path in `retire_legacy_claude_md` --
-            # that function only ever deletes a TRW-only file, never writes one.
+            # the name-based scan attributes to the module's `project_root /
+            # 'CLAUDE.md'` path (REMOVE-S2: no retire function remains; if the scan
+            # stops producing this row, drop the entry).
             "state/claude_md/_orphan_strip.py::_strip_orphaned_block (project_root / 'CLAUDE.md')",
             "state/claude_md/_orphan_strip.py::strip_orphaned_agents_md_block (project_root / 'AGENTS.md')",
             # 2026-09-29: the `_withdraw.py:49` AGENTS.md row is gone -- withdraw_managed_learnings no longer

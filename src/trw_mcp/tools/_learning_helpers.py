@@ -5,14 +5,11 @@ Each function encapsulates a single concern previously inlined in the
 reducing the tool body to ~50 lines of orchestration.
 
 PRD lineage:
-- check_soft_cap: PRD-CORE-034-FR01 (distribution soft-cap)
 - check_and_handle_dedup: PRD-CORE-042 (semantic dedup)
-- enforce_distribution: PRD-CORE-034 (forced distribution enforcement)
 """
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -92,57 +89,6 @@ class LearningParams:
 # Re-exported here for backward compatibility with existing consumers.
 from trw_mcp.state.analytics.core import _NOISE_PREFIXES as _NOISE_PREFIXES
 from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
-
-
-def check_soft_cap(
-    impact: float,
-    active_entries: list[dict[str, object]],
-    config: TRWConfig,
-) -> tuple[float, str | None]:
-    """Check and apply the forced-distribution soft-cap on impact.
-
-    When high-impact entries (>= 0.8) exceed the configured threshold
-    percentage of all active learnings, the new entry's impact is reduced
-    iteratively until the ratio falls within bounds (floor 0.5).
-
-    Args:
-        impact: Incoming impact score before this independent policy.
-        active_entries: All active learning dicts (with ``impact`` key).
-        config: Framework configuration providing ``impact_high_threshold_pct``.
-
-    Returns:
-        Tuple of (possibly adjusted impact, warning message or None).
-    """
-    try:
-        high_count = sum(1 for e in active_entries if float(str(e.get("impact", 0.5))) >= 0.8)
-        total = len(active_entries)
-        new_total = total + 1
-        new_high = high_count + (1 if impact >= 0.8 else 0)
-        threshold_pct = config.impact_high_threshold_pct
-        threshold_frac = threshold_pct / 100.0
-
-        if new_total >= 5 and new_total > 0 and (new_high / new_total) > threshold_frac:
-            adjusted = impact
-            while adjusted >= 0.8 and new_total > 0 and (new_high / new_total) > threshold_frac:
-                adjusted *= 0.9
-                if adjusted < 0.8:
-                    new_high = high_count
-                if adjusted < 0.5:  # pragma: no cover — defensive guard; while condition (>=0.8) exits first
-                    adjusted = 0.5
-                    break
-            if adjusted != impact:
-                warning = (
-                    f"Impact soft-capped from {impact:.2f} to {adjusted:.2f}: "
-                    f"high-impact entries ({high_count}/{total} active) would exceed "
-                    f"{threshold_pct}% threshold."
-                )
-                return round(adjusted, 4), warning
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.debug(
-            "distribution_check_skipped", exc_info=True
-        )  # justified: fail-open, must not block learning recording
-
-    return impact, None
 
 
 def _resolve_merge_survivor(
@@ -408,76 +354,3 @@ def _merge_patch(merged_entry: dict[str, object], revision: str | None) -> Learn
             "if_revision": revision,
         }
     )
-
-
-def enforce_distribution(
-    impact: float,
-    calibrated_impact: float,
-    learning_id: str,
-    active_entries: list[dict[str, object]],
-    trw_dir: Path,
-    config: TRWConfig,
-) -> tuple[str, list[str]]:
-    """Enforce forced-distribution caps by demoting excess high-impact entries.
-
-    Appends the newly stored entry to the active list, computes tier
-    distributions, and demotes entries that exceed caps via the adapter.
-
-    Args:
-        impact: Raw (pre-calibration) impact — used for tier naming.
-        calibrated_impact: Calibrated impact score of the new entry.
-        learning_id: ID of the just-stored learning.
-        active_entries: List of all active learning dicts (mutable —
-            the new entry is appended in-place).
-        trw_dir: Path to ``.trw/`` directory.
-        config: Framework configuration.
-
-    Returns:
-        Tuple of (warning message string, list of demoted IDs).
-        Warning is empty string when no demotions occurred.
-    """
-    demoted_ids: list[str] = []
-    distribution_warning = ""
-
-    if not config.impact_forced_distribution_enabled or impact < 0.7:
-        return distribution_warning, demoted_ids
-
-    try:
-        from trw_mcp.scoring import enforce_tier_distribution
-        from trw_mcp.state.memory_adapter import update_learning as adapter_update
-
-        # Append newly stored entry so forced distribution sees it
-        active_entries.append({"id": learning_id, "impact": calibrated_impact})
-        all_entries: list[tuple[str, float]] = []
-        for e in active_entries:
-            lid = str(e.get("id", ""))
-            sc = float(str(e.get("impact", 0.5)))
-            if lid:
-                all_entries.append((lid, sc))
-
-        demotions = enforce_tier_distribution(all_entries)
-        for demoted_id, new_score in demotions:
-            demoted_ids.append(demoted_id)
-            with contextlib.suppress(OSError, RuntimeError, ValueError, TypeError):
-                adapter_update(trw_dir, demoted_id, impact=new_score)
-
-        if demotions:
-            tier_name = "critical" if impact >= 0.9 else "high"
-            logger.warning(
-                "learn_distribution_demoted",
-                n_demoted=len(demoted_ids),
-                demoted_ids=demoted_ids,
-                tier=tier_name,
-            )
-            distribution_warning = (
-                f"Impact tier '{tier_name}' exceeded cap. "
-                f"Forced distribution: demoted {len(demotions)} entr"
-                f"{'y' if len(demotions) == 1 else 'ies'} to maintain tier caps. "
-                f"IDs: {[d[0] for d in demotions]}"
-            )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.debug(
-            "distribution_enforcement_skipped", exc_info=True
-        )  # justified: fail-open, must not block learning recording
-
-    return distribution_warning, demoted_ids

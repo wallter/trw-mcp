@@ -205,12 +205,9 @@ class TestCorrelationWindowSize:
 
 @pytest.mark.unit
 class TestDecayDistributionSize:
-    """Decay/utility and tier-distribution concerns each stay under 350 raw lines.
+    """The decay/utility deep module stays under 350 raw lines.
 
-    The impact-tier distribution analysis and forced-distribution enforcement
-    were split out of ``_decay.py`` into the sibling ``_distribution.py`` deep
-    module. Both must remain under the 350-raw-line module size gate so the
-    decomposition sticks.
+    (The sibling ``_distribution.py`` was removed with the forced distribution, UF-MCP-07.)
     """
 
     _SCORING_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "scoring"
@@ -219,8 +216,3 @@ class TestDecayDistributionSize:
         """_decay.py is a focused decay/utility deep module."""
         line_count = len((self._SCORING_DIR / "_decay.py").read_text().splitlines())
         assert line_count < 350, f"_decay.py is {line_count} lines, should be < 350"
-
-    def test_distribution_under_350_lines(self) -> None:
-        """_distribution.py is a focused tier-distribution deep module."""
-        line_count = len((self._SCORING_DIR / "_distribution.py").read_text().splitlines())
-        assert line_count < 350, f"_distribution.py is {line_count} lines, should be < 350"

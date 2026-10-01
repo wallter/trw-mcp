@@ -40,13 +40,8 @@ _UNKNOWN_CLIENT = "unknown"
 # identity strings -- an explicit argument, a lowercased MCP
 # ``clientInfo.name``, or ``TRW_CLIENT_PROFILE`` -- and are deliberately NOT
 # the canonical profile ids that ``models.config._profiles.resolve_client_profile``
-# validates.  Two consequences that look like drift but are not:
-#   * ``antigravity`` sits beside ``antigravity-cli`` because the binary may
-#     report either name; both resolve to the same tier.
-#   * ``aider`` is a retired profile, retained here (and in source detection)
-#     only for the uninstall/migration cleanup path.
-# Both entries carry the same value as ``default_tier``, so removing them would
-# be behaviour-preserving; they stay for explicitness about the raw-name space.
+# validates.  So ``antigravity`` sits beside ``antigravity-cli`` (the binary may
+# report either name; both resolve to the same tier) -- not drift.
 _CLIENT_DEFAULT_TIER: dict[str, str] = {
     # grok: T1 (compressed subset) until a live probe measures its response budget.
     "grok": "T1",
@@ -57,7 +52,6 @@ _CLIENT_DEFAULT_TIER: dict[str, str] = {
     "claude-code": "T1",
     "antigravity": "T1",
     "antigravity-cli": "T1",
-    "aider": "T1",
     "copilot": "T0",
 }
 

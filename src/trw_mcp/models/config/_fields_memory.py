@@ -20,7 +20,6 @@ class _MemoryFields:
     # -- Learning storage & retrieval --
 
     learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
-    learning_promotion_impact: float = 0.7
     # learning_prune_age_days and memory_consolidation_interval_days were removed 2026-09-16
     # (PRD-QUAL-139-FR05): no consumer under the corrected scan, no originating PRD, and only
     # default pins in tests. Both keys are listed in trw_mcp/data/config-retired-keys.json.

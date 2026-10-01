@@ -60,8 +60,8 @@ def _row(target: Path, name: str = "memory_wal") -> object:
 
 def test_memory_wal_row_reports_size_and_checkpoint_age(tmp_path: Path) -> None:
     """The row carries size and checkpoint ages and WARNs under an oversized-and-stale store."""
+    from tests._wal_markers import record_checkpoint_attempt, record_effective_checkpoint
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state._wal_triggers import record_checkpoint_attempt, record_effective_checkpoint
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
@@ -98,8 +98,8 @@ def test_oversized_but_freshly_checkpointed_and_reclaimed_is_pass(tmp_path: Path
     and never reclaims a byte -- so the healthy case has to be distinguished by
     the thing that actually differs: a reset happened.
     """
+    from tests._wal_markers import record_effective_checkpoint, record_reset_checkpoint
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state._wal_triggers import record_effective_checkpoint, record_reset_checkpoint
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
@@ -172,8 +172,8 @@ def test_warn_reads_the_effective_clock_not_the_attempt_clock(tmp_path: Path) ->
     truncates — and it is exactly the case a row reading the ATTEMPT clock could
     never report, because that clock is always fresh.
     """
+    from tests._wal_markers import record_checkpoint_attempt, record_effective_checkpoint
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state._wal_triggers import record_checkpoint_attempt, record_effective_checkpoint
 
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
@@ -200,8 +200,8 @@ def _unsafe_engine_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tu
 
     from trw_memory.storage import _dbapi
 
+    from tests._wal_markers import record_effective_checkpoint
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state._wal_triggers import record_effective_checkpoint
 
     monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: False)
     monkeypatch.setattr(_dbapi, "sqlite_version", lambda: "3.50.4")
@@ -265,10 +265,10 @@ def test_a_safe_engine_probes_no_interpreters(tmp_path: Path, monkeypatch: pytes
 
     from trw_memory.storage import _dbapi
 
+    from tests._wal_markers import record_effective_checkpoint
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.server import _doctor_memory_wal
     from trw_mcp.server._doctor_memory_wal import memory_wal_row
-    from trw_mcp.state._wal_triggers import record_effective_checkpoint
 
     monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: True)
     calls: list[int] = []
@@ -400,9 +400,9 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
     from trw_memory.storage import _dbapi
     from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
 
+    from tests._wal_markers import record_effective_checkpoint
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.server._doctor_memory_wal import memory_wal_row
-    from trw_mcp.state._wal_triggers import record_effective_checkpoint
 
     monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: False)
     monkeypatch.setattr(_dbapi, "sqlite_version", lambda: "3.50.4")

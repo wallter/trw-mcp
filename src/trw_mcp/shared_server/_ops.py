@@ -259,6 +259,7 @@ def swap(
     if validate_env(env) != STABLE and not _memory_dir(paths, env).is_dir():
         ensure_env(paths, env, seed_from=None)
     set_env_python(paths, env, python, pythonpath=pythonpath)
+    _record_launcher(paths, env, python, pythonpath)  # the next client to autostart this store's daemon starts THIS one
     old = read_live_record(paths, env)
     if old is None:
         source = python if pythonpath is None else f"{python}, PYTHONPATH={pythonpath}"
@@ -269,6 +270,39 @@ def swap(
     if expect is not None and new.version != expect:  # the successor's own published version, not the probe's
         report += f" -- WARNING: the successor serves v{new.version}, expected {expect}"
     return report
+
+
+def _record_launcher(paths: SharedPaths, env: str, python: Path, pythonpath: str | None) -> None:
+    """Write *env*'s store its launcher record, naming *python* and the trw-memory it serves (trw-memory's API)."""
+    from trw_memory.daemon import DaemonPaths, write_launcher_record
+
+    write_launcher_record(
+        DaemonPaths(user_memory_dir=_memory_dir(paths, env)),
+        python,
+        env_memory_version(paths, env),
+        pythonpath=pythonpath,
+    )
+
+
+def register_launcher(paths: SharedPaths, env: str) -> bool:
+    """Boot-time self-registration: this server's own interpreter becomes its store's launcher unless one is current.
+
+    Covers an env swapped before launcher records existed (no record until its next ``swap``) and a hot-swap
+    successor. Skipped when this process is not the interpreter *env* is recorded to run (then the version
+    it would write is not that interpreter's). Returns whether it wrote.
+    """
+    from trw_memory import __version__ as memory_version
+    from trw_memory.daemon import DaemonPaths, register_launcher_record
+
+    recorded = env_python(paths, env)
+    if os.path.abspath(recorded) != os.path.abspath(sys.executable):
+        return False
+    return register_launcher_record(
+        DaemonPaths(user_memory_dir=_memory_dir(paths, env)),
+        Path(recorded),
+        memory_version,
+        pythonpath=env_pythonpath(paths, env),
+    )
 
 
 def env_memory_version(paths: SharedPaths, env: str) -> str:

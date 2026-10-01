@@ -450,21 +450,6 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 # ``.copy()`` of it as a mutable target list.
 SUPPORTED_IDES = list(builtin_client_ids())
 
-# Retired client identifiers (2026-07-11). ``aider`` never had a TRW client
-# adapter. Retired IDs are no longer installable (absent from SUPPORTED_IDES)
-# but are still RECOGNIZED (not "unknown"): ``--ide`` selection and target
-# resolution surface a 'retired' message with a migration hint instead of a
-# generic rejection, and existing ``.aider.conf.yml`` installs remain
-# uninstallable via ``trw-mcp uninstall`` forever (see client_profiles/catalog.py).
-# Recognized-but-not-installable client ids. Kept in sync with
-# ``server/_cli_argparse_project.py::_RETIRED_IDE_HINTS`` — both exist so a
-# withdrawn id produces a message naming its successor rather than a bare
-# "unknown value".
-_RETIRED_IDES: dict[str, str] = {
-    "aider": "aider never had a TRW client adapter.",
-    "gemini": "the Gemini CLI profile was removed on 2026-07-24; use antigravity-cli.",
-}
-
 
 def detect_ide(target_dir: Path) -> list[str]:
     """Detect which AI coding CLIs have configuration in the target directory.
@@ -596,22 +581,8 @@ def resolve_ide_targets(
     if ide_override:
         if ide_override in SUPPORTED_IDES:
             return [ide_override]
-        if ide_override in _RETIRED_IDES:
-            # Retired (not unknown): recognized but no longer installable. Surface
-            # a 'retired' message with the migration hint and fall back to
-            # detection so the retired id is dropped rather than scaffolded.
-            logger.warning(
-                "ide_override_retired",
-                ide_override=ide_override,
-                migration_hint=_RETIRED_IDES[ide_override],
-            )
-        else:
-            # Unknown override — do NOT use it as a target. Fall back to detection.
-            logger.warning(
-                "ide_override_rejected",
-                ide_override=ide_override,
-                supported=SUPPORTED_IDES,
-            )
+        # Unknown override — do NOT use it as a target. Fall back to detection.
+        logger.warning("ide_override_rejected", ide_override=ide_override, supported=SUPPORTED_IDES)
     detected = detect_ide(target_dir)
     return detected or ["claude-code"]  # default to Claude Code
 

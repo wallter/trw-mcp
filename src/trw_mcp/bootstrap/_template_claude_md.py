@@ -20,7 +20,6 @@ __all__ = [
     "_TRW_HEADER_MARKER",
     "_TRW_START_MARKER",
     "claude_code_is_claimed",
-    "retire_claude_md",
     "write_claude_code_agents_md",
 ]
 
@@ -63,41 +62,6 @@ def write_claude_code_agents_md(target_dir: Path, result: dict[str, list[str]]) 
         for entry in written.get(key, []):
             if entry not in result.setdefault(key, []):
                 result[key].append(entry)
-
-
-def retire_claude_md(target_dir: Path, result: dict[str, list[str]]) -> None:
-    """Remove a TRW-only root ``CLAUDE.md``; report (never touch) one with user content or a lone ``@AGENTS.md``.
-
-    Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md`` exists, so a
-    kept file masks the TRW block in ``AGENTS.md``. The warning says how to fix
-    that without TRW editing user content.
-    """
-    from trw_mcp.state.claude_md._orphan_strip import retire_legacy_claude_md
-
-    path = target_dir / "CLAUDE.md"
-    was_link = path.is_symlink()
-    try:
-        outcome = retire_legacy_claude_md(target_dir)
-    except OSError as exc:
-        # Recorded as an install error; the rest of the update still runs.
-        result.setdefault("errors", []).append(f"Failed to remove legacy {path}: {exc}")
-        outcome = "error"
-    if outcome == "removed":
-        result.setdefault("removed", []).append(str(path))
-        if not was_link:
-            # The bytes were captured into .trw/trash: the uncommitted-changes guard must not restore the file,
-            # and update-project reports the move.
-            result.setdefault("trashed", []).append("CLAUDE.md")
-    elif outcome == "adapter":
-        # The file's only content is the @AGENTS.md import: AGENTS.md still loads through it, and it is the
-        # line the warning below recommends, so it is the user's and stays. Reported, not a warning.
-        result.setdefault("preserved", []).append("CLAUDE.md (kept: adapter imports AGENTS.md)")
-    elif outcome == "kept":
-        result.setdefault("warnings", []).append(
-            f"{path} has user content and was left untouched. TRW 8.0 writes its protocol to AGENTS.md; "
-            "Claude Code skips AGENTS.md while a CLAUDE.md exists, so add an `@AGENTS.md` line to it "
-            "(and delete any old TRW block between the trw:start/trw:end markers)."
-        )
 
 
 def _recorded_targets(project_root: Path) -> list[str]:

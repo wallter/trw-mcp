@@ -3,7 +3,6 @@
 This package decomposes the monolithic claude_md module into focused submodules:
 - ``_templates``: Data-driven section builders (learnings, patterns, adherence) and constants
 - ``_static_sections``: Static content renderers (protocol, ceremony, delegation, watchlist)
-- ``_promotion``: Learning promotion logic and data collection
 - ``_parser``: Marker parsing, template loading, merge logic
 - ``_sync``: Sync orchestration (the main entry point)
 
@@ -35,11 +34,6 @@ from trw_mcp.state.claude_md._parser import (
     merge_trw_section,
     render_merged_content,
     render_template,
-)
-from trw_mcp.state.claude_md._promotion import (
-    collect_context_data,
-    collect_patterns,
-    collect_promotable_learnings,
 )
 from trw_mcp.state.claude_md._static_sections import (
     render_agents_trw_section,
@@ -76,9 +70,6 @@ __all__ = [
     "InstructionWriteVerdict",
     "apply_carrier",
     "classify_instruction_file",
-    "collect_context_data",
-    "collect_patterns",
-    "collect_promotable_learnings",
     "execute_claude_md_sync",
     "guarded_instruction_write",
     "heal_pointer",

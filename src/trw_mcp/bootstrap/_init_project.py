@@ -354,15 +354,14 @@ def _generate_root_files(
     if writes_surface(".mcp.json", ide_targets or [], explicit=ide_explicit):
         _merge_mcp_json(target_dir, result, on_progress)
     # TRW 8.0: claude-code's carrier is AGENTS.md (Claude Code reads it
-    # natively); TRW writes no CLAUDE.md. A detected list is never authoritative
-    # here, because `detect_ide` reports cursor-ide from `shutil.which("cursor")`.
-    from ._template_claude_md import claude_code_is_claimed, retire_claude_md, write_claude_code_agents_md
+    # natively); TRW writes no CLAUDE.md and never touches one (doctor's
+    # claude_md_masks_agents_md row reports one that hides AGENTS.md). A detected
+    # list is never authoritative here, because `detect_ide` reports cursor-ide
+    # from `shutil.which("cursor")`.
+    from ._template_claude_md import claude_code_is_claimed, write_claude_code_agents_md
 
-    errors_before = len(result.get("errors", []))
     if claude_code_is_claimed(target_dir, ide_targets if ide_explicit else None):
         write_claude_code_agents_md(target_dir, result)
-    if len(result.get("errors", [])) == errors_before:  # never leave the protocol in neither file
-        retire_claude_md(target_dir, result)
     _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress, root=target_dir)
 
 

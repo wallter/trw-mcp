@@ -298,10 +298,38 @@ def _merge_copilot_hooks(
     return {"version": 1, "hooks": merged_hooks}
 
 
+def _keep_edited_hook(
+    target_dir: Path,
+    rel: str,
+    incoming: bytes,
+    result: dict[str, list[str]],
+    force: bool,
+    manifest_hashes: dict[str, str] | None,
+) -> bool:
+    """Keep a user-edited ``.github/hooks`` script (UF-BOOT-07, HB-2); True when it was kept.
+
+    Replaced only when it is bytes TRW wrote: the bundled script, or the manifest's recorded hash. With no
+    manifest the bundled bytes are the baseline, so anything else is an edit and survives. Reported as
+    ``preserved`` like the other Copilot surfaces (a warning would read as a failed writer to the client
+    adoption probe). A symlink is not judged here: the safe writer refuses it as ``symlink_leaf``.
+    """
+    from ._managed_client_artifacts import artifact_user_edited
+
+    dest = target_dir / rel
+    if force or dest.is_symlink() or not dest.is_file():
+        return False
+    if not artifact_user_edited(dest, rel, incoming, manifest_hashes):
+        return False
+    logger.info("copilot_hook_user_modified", path=rel)
+    result["preserved"].append(rel)
+    return True
+
+
 def generate_copilot_hooks(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Generate ``.github/hooks/hooks.json`` and install the adapter script.
 
@@ -318,9 +346,12 @@ def generate_copilot_hooks(
     # --- Install the bundled adapter script ---
     adapter_src = _bundled_adapter_script_path()
     adapter_dest = target_dir / _COPILOT_ADAPTER_INSTALL_PATH
-    if adapter_src.is_file():
+    adapter_bytes = adapter_src.read_bytes() if adapter_src.is_file() else None
+    if adapter_bytes is not None and not _keep_edited_hook(
+        target_dir, _COPILOT_ADAPTER_INSTALL_PATH, adapter_bytes, result, force, manifest_hashes
+    ):
         try:
-            write_checkout_file(target_dir, adapter_dest, adapter_src.read_bytes())
+            write_checkout_file(target_dir, adapter_dest, adapter_bytes)
             # Make it executable
             adapter_dest.chmod(adapter_dest.stat().st_mode | 0o111)
             _record_write(result, _COPILOT_ADAPTER_INSTALL_PATH, existed=adapter_dest.exists())

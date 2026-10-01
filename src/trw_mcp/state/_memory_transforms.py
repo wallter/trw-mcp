@@ -74,7 +74,8 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
     base["verification_status"] = getattr(entry, "verification_status", None)
     checked_at = getattr(entry, "verification_checked_at", None)
     base["verification_checked_at"] = checked_at.isoformat() if isinstance(checked_at, datetime) else checked_at
-    base["anchor_validity"] = entry.anchor_validity
+    if entry.anchor_validity is not None:  # PRD-CORE-244 FR01: an unassessed score is omitted, never 1.0 or null
+        base["anchor_validity"] = entry.anchor_validity
     if compact:
         signals = current_recall_signals()
         if signals is not None:
@@ -121,7 +122,8 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
     # Code-grounded anchors (PRD-CORE-111)
     if entry.anchors:
         base["anchors"] = [a.model_dump() for a in entry.anchors]
-    base["anchor_validity"] = entry.anchor_validity
+    if entry.anchor_validity is not None:  # PRD-CORE-244 FR01: an unassessed score is omitted, never 1.0 or null
+        base["anchor_validity"] = entry.anchor_validity
 
     # PRD-CORE-231-FR02: surface the PERSISTED staleness verdict so a stale
     # claim stays visibly stale in a fresh session, not only in the session that

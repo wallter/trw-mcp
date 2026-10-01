@@ -76,19 +76,6 @@ def _get_config() -> Any:
 get_config = _get_config
 
 
-def __getattr__(name: str) -> Any:
-    """Backward-compat shim for removed module-level singletons (FIX-044).
-
-    Return type is ``Any`` (not ``object``) so Pyright does not widen every
-    imported symbol to ``object`` via fallback resolution through this
-    hook.  mypy --strict remains clean because ``Any`` is compatible with
-    every return site.
-    """
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
-
-
 # --- Session identity (PRD-FIX-042 FR03) ---
 _session_lock = threading.Lock()
 _session_id: str = uuid.uuid4().hex

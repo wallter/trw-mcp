@@ -1001,6 +1001,12 @@ class TestAnchorLookupAgainstTheInstalledDaemon:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
         monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+        # INSTALLED-DAEMON-HINT-FLAKE: the hint's recall runs under hint_recall_deadline_ms (600 ms default) and
+        # returns no learnings past it -- correct product behaviour, but a loaded release gate (-n 8 beside other
+        # suites) pushed this real-daemon recall past 600 ms and the test saw an empty list. What this test pins
+        # is WHICH learnings lead, not the latency budget (test_hint_recall_budget.py owns that), so it runs at
+        # the 10 s maximum.
+        monkeypatch.setenv("TRW_HINT_RECALL_DEADLINE_MS", "10000")
         monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
         namespace, client = attach_checkout(tmp_path / ".trw", memory_daemon)
         from trw_mcp.models.config import reload_config
@@ -1011,7 +1017,9 @@ class TestAnchorLookupAgainstTheInstalledDaemon:
         asyncio.run(client.store("_client.py pools connections per host", namespace))
         file_path = str(tmp_path / "httpx" / "_client.py")
 
-        shown = [item.summary for item in compute_before_edit_hint(file_path=file_path).learnings]
+        result = compute_before_edit_hint(file_path=file_path)
+        assert result.learnings_status == "ok", "the recall timed out: the test is measuring load, not ranking"
+        shown = [item.summary for item in result.learnings]
 
         if hasattr(DaemonClient, "anchored"):  # PRD-CORE-332 S2 has landed: the anchored lesson leads
             assert shown[0] == "Close the transport before retrying"

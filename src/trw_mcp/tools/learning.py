@@ -52,13 +52,6 @@ from trw_mcp.tools._learn_update_impl import execute_learn_update
 from trw_mcp.tools._learning_module_helpers import _read_injected_ids
 
 
-def __getattr__(name: str) -> object:
-    """Backward-compat shim for removed module-level singletons (FIX-044)."""
-    from trw_mcp.state._helpers import _compat_getattr
-
-    return _compat_getattr(name)
-
-
 def register_learning_tools(server: FastMCP) -> None:
     """Register self-learning tools on the MCP server."""
 
@@ -212,7 +205,7 @@ def register_learning_tools(server: FastMCP) -> None:
         graph_id: str = "",
     ) -> RecallResultDict | GraphRelatedResult:
         """Use when entering unfamiliar code, after a failure (query it),
-        before delegating (ids in brief). Output: stubs {id, claim, anchor}.
+        before delegating (ids in brief). Output: stubs {id, claim, anchor, flag?}.
 
         query: keywords, "*"=all. ids: full rows by id. tags: list
         or string. status: active|resolved|obsolete. max_results default

@@ -215,7 +215,8 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
 
     assert deptry["known_first_party"] == ["trw_mcp"]
     assert deptry["optional_dependencies_dev_groups"] == ["dev"]
-    assert deptry["extend_exclude"] == ["scripts/install-trw.template.py"]
+    # UF-BOOT-30: the one-file installer template is scanned too (it imports only the standard library).
+    assert "extend_exclude" not in deptry
     per_rule = deptry["per_rule_ignores"]
     assert isinstance(per_rule, dict)
     # No import is exempt from DEP001: tiktoken is no longer imported by trw-mcp, so `make dep-check` is blocking.

@@ -85,7 +85,8 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     ".mcp.json",
     "AGENTS.md",
     "ANTIGRAVITY.md",
-    "CLAUDE.md",
+    # No root CLAUDE.md: update never writes one (REMOVE-S2), so a rollback must not restore it over a concurrent
+    # edit either.
     "opencode.json",
     "REVIEW.md",
 )

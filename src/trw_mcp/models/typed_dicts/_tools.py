@@ -39,7 +39,7 @@ class RecallResultDict(TypedDict, total=False):
     """Return shape of ``trw_recall`` (PRD-CORE-294 FR01)."""
 
     query: str
-    #: Stubs ``{id, claim, anchor?}`` by default; full rows for ``ids=``.
+    #: Stubs ``{id, claim, anchor?, flag?}`` by default; full rows for ``ids=``.
     learnings: list[dict[str, object]]
     #: Rows ranked for this query after dedup and the ``max_results`` cap.
     total_matches: int

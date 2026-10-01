@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import structlog
 from trw_memory.lifecycle.scoring import (
-    _TIER_HIGH_CEILING,
-    _TIER_MEDIUM_CEILING,
     _clamp01,
     _ensure_utc,
     apply_time_decay,
@@ -23,8 +21,6 @@ logger = structlog.get_logger(__name__)
 
 
 __all__ = [
-    "_TIER_HIGH_CEILING",
-    "_TIER_MEDIUM_CEILING",
     "TRWConfig",
     "_clamp01",
     "_ensure_utc",

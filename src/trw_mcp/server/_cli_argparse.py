@@ -17,7 +17,7 @@ from trw_mcp.server._cli_argparse_code import add_code_subcommands
 from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_handoff import add_handoff_subcommands
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
-from trw_mcp.server._cli_argparse_project import _ide_choice, add_project_subcommands
+from trw_mcp.server._cli_argparse_project import add_project_subcommands
 from trw_mcp.server._cli_factory import add_factory_subcommands
 from trw_mcp.shared_server._cli import add_shared_subcommands
 from trw_mcp.tools._decision_cli import add_decision_subcommands
@@ -33,10 +33,7 @@ from trw_mcp.tools._telemetry_cli import add_telemetry_subcommands
 
 #: CLIENT-REMOVE (PRD-INFRA-192-FR09): the installable client set for
 #: ``uninstall --ide`` (the one spelling; ``--remove-ide`` was removed, not aliased). Deliberately excludes "all" (that is the plain
-#: `uninstall` — a whole-project removal, not a per-client one) and reuses
-#: ``_ide_choice`` so a retired id (e.g. ``aider``) gets the same "retired,
-#: here's the migration hint" error `--ide` gives, instead of a bare argparse
-#: "invalid choice".
+#: `uninstall` — a whole-project removal, not a per-client one).
 _REMOVE_IDE_CHOICES = sorted(SUPPORTED_IDES)
 
 #: Top-level commands that belong to the Alpha software factory. The public CLI
@@ -198,7 +195,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     uninstall_parser.add_argument(
         "--ide",
         choices=_REMOVE_IDE_CHOICES,
-        type=_ide_choice,
         default=None,
         help=(
             "Remove only this client's surfaces (its config, agents, skills, hooks) and drop it from "

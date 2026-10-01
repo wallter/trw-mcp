@@ -3,10 +3,6 @@
 FIX A: per-client stale bundled-artifact cleanup for codex/cursor/copilot.
 FIX B: codex agents/skills content-aware refresh (unmodified refreshed, edited kept).
 FIX C: SUPPORTED_IDES is the canonical client-ID source; integrations derive/validate.
-
-Retirement (2026-07-11): aider was retired. It is no longer in SUPPORTED_IDES
-and retains uninstall surfaces only (see test_uninstall). The gemini client was
-removed outright on 2026-07-24, uninstall surfaces included.
 """
 
 from __future__ import annotations
@@ -25,7 +21,7 @@ from trw_mcp.bootstrap._version_migration_clients import (
     _codex_manifest_hashes,
     _remove_stale_client_artifacts,
 )
-from trw_mcp.client_profiles.catalog import _CLIENT_ORDER, _RETIRED_CLIENTS, _write_target_label
+from trw_mcp.client_profiles.catalog import _CLIENT_ORDER, _write_target_label
 from trw_mcp.models.config._profiles import resolve_client_profile
 
 
@@ -214,19 +210,12 @@ def test_client_integrations_cover_supported_ides() -> None:
     coverage = {platform_id for integration in CLIENT_INTEGRATIONS for platform_id in integration.platform_ids}
     assert not coverage & _INTEGRATION_EXCLUDED_IDES
     assert set(SUPPORTED_IDES) == coverage | _INTEGRATION_EXCLUDED_IDES
-    # aider dropped from the exclusion set on retirement (no longer selectable);
-    # claude-code stays excluded-by-design (framework-core writes .claude/*).
+    # claude-code is excluded by design (framework-core writes .claude/*).
     assert _INTEGRATION_EXCLUDED_IDES == frozenset({"claude-code"})
 
 
-def test_client_order_covers_supported_plus_retired_ides() -> None:
-    # catalog._CLIENT_ORDER retains retired ids (aider) so their uninstall
-    # surfaces stay reachable, so it equals SUPPORTED_IDES plus the retired set.
-    assert set(_CLIENT_ORDER) == set(SUPPORTED_IDES) | _RETIRED_CLIENTS
-
-
-def test_retired_ides_absent_from_supported() -> None:
-    assert not (_RETIRED_CLIENTS & set(SUPPORTED_IDES))
+def test_client_order_is_the_supported_ides() -> None:
+    assert list(_CLIENT_ORDER) == SUPPORTED_IDES
 
 
 # ---------------------------------------------------------------------------

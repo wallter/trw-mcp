@@ -15,13 +15,6 @@ from trw_mcp.models.config._defaults import DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
 class _ScoringFields:
     """Scoring domain mixin — mixed into _TRWConfigFields via MI."""
 
-    # -- Impact score distribution (CORE-034) --
-
-    impact_forced_distribution_enabled: bool = True
-    impact_tier_critical_cap: float = 0.05
-    impact_tier_high_cap: float = 0.20
-    impact_high_threshold_pct: float = 20.0
-
     # -- Utility scoring & decay --
 
     learning_decay_half_life_days: float = 14.0
