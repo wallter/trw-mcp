@@ -103,6 +103,21 @@ class TestUpdateProjectBasics:
         result = update_project(initialized_repo)
         assert not result["errors"]
 
+    def test_a_fenced_marker_example_in_agents_md_does_not_roll_the_update_back(self, initialized_repo: Path) -> None:
+        """UPDATE-ROLLBACK-FENCED-MARKER: one file TRW cannot safely edit is skipped with a warning; the rest updates."""
+        agents = initialized_repo / "AGENTS.md"
+        user_text = "# Agents\n\nTo delimit a block write:\n\n```markdown\n<!-- trw:start -->\n```\n"
+        agents.write_text(user_text, encoding="utf-8")
+        framework = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        framework.write_text("stale\n", encoding="utf-8")
+
+        result = update_project(initialized_repo)
+
+        assert not result["errors"], result["errors"]
+        assert agents.read_text(encoding="utf-8") == user_text, "the user's file is left exactly as found"
+        assert framework.read_text(encoding="utf-8") != "stale\n", "the rest of the update was kept, not rolled back"
+        assert any("AGENTS.md" in w and "ambiguous_markers" in w for w in result["warnings"]), result["warnings"]
+
     def test_reports_updated_files(self, initialized_repo: Path) -> None:
         """update_project reports exactly the files it changed, repo-relative."""
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -945,3 +960,27 @@ class TestLivePathExistingAgentRelabel:
 
         assert ".claude/agents/trw-implementer.md" in result["updated"]
         assert ".claude/agents/trw-implementer.md" not in result["created"]
+
+
+def test_only_file_scoped_marker_refusals_are_demoted_from_errors() -> None:
+    from trw_mcp.state.claude_md._marker_layout import demote_file_scoped_refusals, refusal_message
+
+    result = {
+        "errors": [
+            refusal_message("Refused to write /p/AGENTS.md (ambiguous_markers): left as found", "ambiguous_markers"),
+            refusal_message(
+                "AGENTS.md left untouched: its TRW markers are duplicated or unbalanced, so TRW cannot tell",
+                "ambiguous_markers",
+            ),
+            refusal_message("Refused to write /p/CLAUDE.md (shrink_floor): would drop 40 lines", "shrink_floor"),
+            "update-project failed: OSError: disk full",
+        ],
+        "warnings": [],
+    }
+
+    assert demote_file_scoped_refusals(result) == 2
+    assert result["errors"] == [
+        "Refused to write /p/CLAUDE.md (shrink_floor): would drop 40 lines",
+        "update-project failed: OSError: disk full",
+    ], "every other error still rolls the update back"
+    assert len(result["warnings"]) == 2

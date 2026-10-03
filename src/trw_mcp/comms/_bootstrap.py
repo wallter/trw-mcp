@@ -127,11 +127,11 @@ def _orchestrator_binding(ctx: Context | None) -> CallerBinding | None:
 def _lead_pending(binding: CallerBinding, now: float) -> dict[str, str | int | None]:
     """Read only this lead's pending mailbox facts, without fetch or ACK."""
     from trw_mcp.comms._envelope import MessageState
-    from trw_mcp.comms._store import database_path
+    from trw_mcp.comms._store import database_path, open_mailbox_ro
 
     try:
         database = database_path(binding.manifest_path)
-        conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
+        conn = open_mailbox_ro(database)
         try:
             count, oldest = conn.execute(
                 "SELECT COUNT(*),MIN(admitted_at) FROM admissions "

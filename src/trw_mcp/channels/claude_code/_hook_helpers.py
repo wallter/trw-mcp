@@ -19,7 +19,9 @@ Authoritative field name (P1-02 fix):
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ log = structlog.get_logger(__name__)
 __all__ = [
     "CC03_HINTS_DIR",
     "DEFAULT_SKIP_EXTENSIONS",
+    "SHARED_MODULE_MIN_IMPORTERS",
     "_CEREMONY_MODE_FIELD",
     "HintAsOf",
     "as_of_line",
@@ -212,6 +215,22 @@ _T2_RECALL_LESSON_MAX_CHARS: int = 120
 #: Raised from 320 only by the lesson block; recall memory fits in what is left.
 _T2_MAX_CHARS: int = _T2_BASE_MAX_CHARS + _T2_LESSON_MAX_CHARS
 
+#: SUB-BLAST-RADIUS (2026-10-02): a file with MORE importers than this is a shared module, and its T2
+#: hint adds one line naming the dependents and the impact-selected test command. 25 sits above
+#: distill's own "non-trivial fan-in" floor (10, a WARN only) so the line marks real hubs: the
+#: incident file, trw-mcp/tests/_layout.py, had 173 importers; a typical src module has under 10.
+SHARED_MODULE_MIN_IMPORTERS: int = 25
+#: The importer count as trw-distill's hotspot warnings print it ("non-trivial fan-in (N importers)",
+#: "high fan-in hotspot (N importers) ..."): the hint already carries the count, so it is read here
+#: rather than recomputed (the ``importers`` list itself is capped at 20).
+_IMPORTERS_COUNT = re.compile(r"\((\d+) importers\)")
+#: The one-command dependents check (runs the impact-selected tests), where the project has it (TRW's own
+#: repo). Elsewhere the line names distill's importer query, so the hint never points at a missing script.
+_DEPENDENTS_SCRIPT = "scripts/check_dependents.py"
+#: The shared-module line's own cap (codex r1): past it the path is replaced by a placeholder, so a deep
+#: path cannot push the whole hint past ``_T2_MAX_CHARS`` (the line's room comes from the lesson budget).
+_SHARED_LINE_MAX_CHARS = 200
+
 #: Lesson statuses meaning the check did not finish. An empty list under these
 #: proves nothing, so T2 says so rather than implying "no lessons".
 # trw:intentional an unfinished lesson check must never render as "no lessons"
@@ -243,9 +262,12 @@ def _render_lesson(lesson: HintLesson) -> str | None:
     return f"  LESSON {sha} {lesson_id}: {_one_line(lesson.summary)}"
 
 
-def _lesson_lines(lessons: Sequence[HintLesson], lessons_status: str | None) -> list[str]:
-    """``LESSON <sha> <id>: <summary>`` lines in the lesson budget; lesson 2 goes before lesson 1 is cut."""
-    budget = _T2_LESSON_MAX_CHARS - 1  # the newline that joins the block to the base
+def _lesson_lines(lessons: Sequence[HintLesson], lessons_status: str | None, reserved: int = 0) -> list[str]:
+    """``LESSON <sha> <id>: <summary>`` lines in the lesson budget; lesson 2 goes before lesson 1 is cut.
+
+    *reserved* is what a shared-module line already took from the lesson budget (the total stays 800).
+    """
+    budget = _T2_LESSON_MAX_CHARS - 1 - reserved  # the newline that joins the block to the base
     # Sanitize BEFORE the budget, so the budget measures what is actually printed.
     rendered = [line for line in map(_render_lesson, lessons[:2]) if line is not None]
     note = [_LESSONS_UNCHECKED[lessons_status]] if lessons_status in _LESSONS_UNCHECKED else []
@@ -253,9 +275,27 @@ def _lesson_lines(lessons: Sequence[HintLesson], lessons_status: str | None) -> 
         rendered = rendered[:1]
     if rendered:
         room = budget - len("\n".join(note)) - (1 if note else 0)
-        if len(rendered[0]) > room:
+        if room < len("  LESSON ") + 3:
+            rendered = []
+        elif len(rendered[0]) > room:
             rendered = [rendered[0][: room - 3] + "..."]
     return rendered + note
+
+
+def shared_module_line(file_path: str, hotspot_warnings: Sequence[str]) -> str | None:
+    """The blast-radius line for a file with more than ``SHARED_MODULE_MIN_IMPORTERS`` importers, else None."""
+    counts = [int(m.group(1)) for warn in hotspot_warnings if (m := _IMPORTERS_COUNT.search(warn))]
+    if not counts or max(counts) <= SHARED_MODULE_MIN_IMPORTERS:
+        return None
+    root = os.environ.get("TRW_REPO_ROOT") or os.environ.get("TRW_PROJECT_ROOT")
+    if root and (Path(root) / _DEPENDENTS_SCRIPT).is_file():
+        verb = f"run: python {_DEPENDENTS_SCRIPT}"
+    else:
+        verb = "find them: trw-distill query importers"
+    head = f"  shared module: {max(counts)} dependents; prefer fixing the caller or moving the artifact; {verb}"
+    # Quoted (codex r1): the path is model-controlled and the line is a command meant to be pasted.
+    line = f"{head} {shlex.quote(_one_line(file_path))}"
+    return line if len(line) <= _SHARED_LINE_MAX_CHARS else f"{head} <this file>"
 
 
 def _recall_lesson_lines(recall_learnings: Sequence[dict[str, Any]], room: int) -> list[str]:
@@ -370,9 +410,14 @@ def format_t2_hint(
     if len(content) > _T2_BASE_MAX_CHARS:
         content = content[: _T2_BASE_MAX_CHARS - 3] + "..."
 
-    # Lessons go last, after the base cap, so that cap never cuts one mid-line;
-    # recall memory follows the distill lessons, in its own separate budget.
-    head = "\n".join([content, *_lesson_lines(lessons, lessons_status)])
+    # The shared-module line follows the base cap, so the cap never cuts its command; it takes its
+    # room from the lesson budget. Lessons go last, after the base cap, so that cap never cuts one
+    # mid-line; recall memory follows the distill lessons, in its own separate budget.
+    shared = shared_module_line(file_path, hotspot_warnings)
+    if shared is not None:
+        content = f"{content}\n{shared}"
+    reserved = len(shared) + 1 if shared is not None else 0
+    head = "\n".join([content, *_lesson_lines(lessons, lessons_status, reserved)])
     return "\n".join([head, *_recall_lesson_lines(recall_learnings, _T2_MAX_CHARS - len(head))])
 
 

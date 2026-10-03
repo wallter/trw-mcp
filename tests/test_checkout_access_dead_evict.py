@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._checkout_access_state import reset_pinned_reads
+from tests._checkout_access_state import holding, reset_pinned_reads
 from trw_mcp import _checkout_access
 from trw_mcp._checkout_access import PinnedReadCapacityExceeded, read_at
 
@@ -65,10 +65,11 @@ def test_swept_descriptors_are_actually_closed(tmp_path: Path, monkeypatch: pyte
 
 def test_all_live_cache_refuses_and_keeps_every_descriptor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_checkout_access, "_MAX_PINNED_FDS", 3)
-    for i in range(3):
-        read_at(_make(tmp_path, f"live{i}"), 4)
+    live = [_make(tmp_path, f"live{i}") for i in range(3)]
+    for path in live:
+        read_at(path, 4)
     pinned = dict(_checkout_access._fds)
-    with pytest.raises(PinnedReadCapacityExceeded):
+    with holding(*live), pytest.raises(PinnedReadCapacityExceeded):  # live AND held: never evicted
         read_at(_make(tmp_path, "extra"), 4)
     assert _checkout_access._fds == pinned
     assert all(_fd_is_open(fd) for fd in pinned.values())
@@ -82,12 +83,14 @@ def test_swapped_path_at_cap_still_refuses(tmp_path: Path, monkeypatch: pytest.M
     os.link(first, linked)  # one inode, two tracked paths: swapping `linked` frees no slot
     read_at(first, 4)
     read_at(linked, 4)
-    read_at(_make(tmp_path, "other"), 4)
+    other = _make(tmp_path, "other")
+    read_at(other, 4)
     pinned = dict(_checkout_access._fds)
     replacement = _make(tmp_path, "linked.new", b"evil")
-    os.replace(replacement, linked)
-    with pytest.raises(PinnedReadCapacityExceeded):
-        read_at(linked, 4)
+    with holding(first, other):  # held at open, so the old inode stays protected after the swap
+        os.replace(replacement, linked)
+        with pytest.raises(PinnedReadCapacityExceeded):
+            read_at(linked, 4)
     assert _checkout_access._fds == pinned
     assert all(_fd_is_open(fd) for fd in pinned.values())
     assert _checkout_access._path_inode[linked] == _checkout_access._path_inode[first]
@@ -125,8 +128,8 @@ def test_hard_link_is_evicted_only_when_every_path_is_gone(tmp_path: Path, monke
     fd = _checkout_access._fds[key]
     first.unlink()
     blocked = _make(tmp_path, "blocked")
-    with pytest.raises(PinnedReadCapacityExceeded):
-        read_at(blocked, 4)  # sibling still live: refusal stands
+    with holding(sibling), pytest.raises(PinnedReadCapacityExceeded):
+        read_at(blocked, 4)  # sibling still live and held: refusal stands
     assert _fd_is_open(fd, key)
     sibling.unlink()
     assert read_at(blocked, 4) == b"data"

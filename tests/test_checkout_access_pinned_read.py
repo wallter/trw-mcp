@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._checkout_access_state import reset_pinned_reads
+from tests._checkout_access_state import holding, reset_pinned_reads
 from trw_mcp import _checkout_access
 
 
@@ -100,7 +100,7 @@ def test_capacity_cap_raises_instead_of_growing_without_bound(tmp_path: Path, mo
         _checkout_access.read_at(path, 8)
 
     paths[2].write_bytes(b"x" * 8)
-    with pytest.raises(_checkout_access.PinnedReadCapacityExceeded):
+    with holding(*paths[:2]), pytest.raises(_checkout_access.PinnedReadCapacityExceeded):  # a HELD fd is never evicted
         _checkout_access.read_at(paths[2], 8)
     assert len(_checkout_access._fds) == 2
 
@@ -253,7 +253,7 @@ def test_capacity_exceeded_for_an_unrelated_path_never_leaks_the_previous_descri
     unrelated = tmp_path / "second.sqlite3"  # a path this module has never seen before
     unrelated.write_bytes(b"b" * 8)
 
-    with pytest.raises(_checkout_access.PinnedReadCapacityExceeded):
+    with holding(pinned), pytest.raises(_checkout_access.PinnedReadCapacityExceeded):
         _checkout_access.read_at(unrelated, 8)
 
     assert _checkout_access._fds.get(key1) == fd1, "the existing descriptor must still be tracked"
@@ -536,14 +536,16 @@ def test_stat_open_race_tracks_the_redundant_descriptor_without_closing_it(tmp_p
 
 @pytest.mark.skipif(os.name == "nt", reason="read_at pins descriptors only on POSIX; Windows reads by path")
 def test_reset_restores_room_after_the_cache_is_full(tmp_path: Path) -> None:
-    """The helper other test files use to isolate the cap: a full cache refuses a new file, a reset accepts it."""
+    """The helper other test files use to isolate the cap: a cache full of HELD fds refuses a new file, a reset accepts it."""
+    pins = []
     for index in range(_checkout_access._MAX_PINNED_FDS):
         pinned = tmp_path / f"pin{index}.txt"
         pinned.write_text("x", encoding="utf-8")
         _checkout_access.read_at(pinned, 1)
+        pins.append(pinned)
     fresh = tmp_path / "fresh.txt"
     fresh.write_text("y", encoding="utf-8")
-    with pytest.raises(_checkout_access.PinnedReadCapacityExceeded):
+    with holding(*pins), pytest.raises(_checkout_access.PinnedReadCapacityExceeded):
         _checkout_access.read_at(fresh, 1)
 
     reset_pinned_reads()

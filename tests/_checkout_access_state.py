@@ -9,6 +9,9 @@ legacy-WAL file is reported ``corrupt_store``. Tests that depend on the cache ha
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 
 from trw_mcp import _checkout_access
 
@@ -25,3 +28,13 @@ def reset_pinned_reads() -> None:
     _checkout_access._inode_paths.clear()
     _checkout_access._inode_locks.clear()
     _checkout_access._race_loser_fds.clear()
+    _checkout_access._use_order.clear()  # holds are not cleared: they belong to connections that are still open
+
+
+@contextmanager
+def holding(*paths: Path) -> Iterator[None]:
+    """Hold every path in *paths* the way an open store connection does, so the cache may never evict their fds."""
+    with ExitStack() as stack:
+        for path in paths:
+            stack.callback(_checkout_access.held_connect(path).close)
+        yield

@@ -55,7 +55,7 @@ def install_wrong_setting(monkeypatch: pytest.MonkeyPatch, pragma: str) -> list[
             return super().execute(sql, parameters)
 
     def connect(*args: Any, **kwargs: Any) -> Connection:
-        connection: Connection = original(*args, **kwargs, factory=WrongSetting)
+        connection: Connection = original(*args, **{**kwargs, "factory": WrongSetting})
         assert type(connection).__base__ is dbapi.Connection
         return connection
 

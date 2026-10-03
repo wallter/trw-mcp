@@ -100,7 +100,7 @@ def consume_next_cycle_force(next_cycle_force: bool) -> tuple[bool, bool]:
     return next_cycle_force, False
 
 
-#: Most dirty pages one call looks through while pulled rows keep filling them (a safety cap, logged when reached).
+#: Most dirty pages one call looks through while pulled or held rows keep filling them (a safety cap, logged when reached).
 _PULLED_CLEAN_PASSES = 200
 
 
@@ -113,16 +113,33 @@ def get_dirty_entries(
 ) -> list[MemoryEntry]:
     """The oldest page of this checkout's project rows not yet pushed (PRD-CORE-298 FR01).
 
-    *held* rows (the backend refused them at that ``sync_seq``, INC-147) are left
-    out until they are edited, and the page is widened by their count so a pile of
-    refused rows cannot fill it and stall every other push.
+    *held* rows (the backend refused them at that ``sync_seq``, INC-147) are left out until they are edited. The first page is widened
+    by their count so a small pile of them cannot fill it; a page that holds nothing pushable moves a keyset cursor (``"<sync_seq>:<id>"``
+    of its last row) past itself, so any number of held or pulled rows ahead can no longer hide the rows behind them
+    (SYNC-PUSH-HELD-STALL: 1000 held rows used to cost 200 reads of the same page, 8 s, and send nothing).
     """
     held = held or {}
     try:
         store, namespace = _store_selection.selected_store(trw_dir)
-        limit = page_size + len(held)
+        request = min(page_size + len(held), MAX_DIRTY_PAGE_REQUEST)
+        cursor: str | None = None
+        previous: list[tuple[int, str]] | None = None
         for _ in range(_PULLED_CLEAN_PASSES):
-            page = store.page_dirty(namespace, min(limit, MAX_DIRTY_PAGE_REQUEST))
+            page = (
+                store.page_dirty(namespace, request) if cursor is None else store.page_dirty(namespace, request, cursor)
+            )
+            keys = [
+                (e.sync_seq, e.id) for e in page
+            ]  # an edit re-stamps a row, so the same ids with new sequences are a new page
+            if keys and keys == previous:
+                # The store handed back the page it just gave: it ignored the cursor, and asking again can only repeat it.
+                logger.error(
+                    "sync_dirty_page_cursor_ignored",
+                    client_id=client_id,
+                    cursor=cursor,
+                    cause="the store returned the same page for a cursor behind it",
+                )
+                return []
             pulled = [e for e in page if is_pulled(e)]
             # A pulled row is another author's learning, not this host's to upload. One whose content still matches what
             # was pulled is dirty only through the old counter bug: acknowledge it clean (conditional on the paged
@@ -134,10 +151,10 @@ def get_dirty_entries(
             pushable = [e for e in page if not is_pulled(e) and (held.get(e.id) or {}).get("sync_seq") != e.sync_seq]
             if pushable:
                 return pushable[:page_size]
-            if not unchanged:
-                if len(page) < min(limit, MAX_DIRTY_PAGE_REQUEST):
-                    return []  # every dirty row has been seen
-                limit *= 2  # a page of edited pulled rows: look further behind them
+            if len(page) < request:
+                return []  # every dirty row has been seen
+            previous = keys
+            cursor = f"{page[-1].sync_seq}:{page[-1].id}"  # nothing here is sendable: continue behind this page
         logger.warning("sync_dirty_page_pass_cap_reached", client_id=client_id, passes=_PULLED_CLEAN_PASSES)
         return []
     except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync

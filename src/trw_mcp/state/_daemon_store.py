@@ -291,8 +291,8 @@ class DaemonMemoryStore:
                 break
         return rows
 
-    def page_dirty(self, namespace: str, limit: int) -> list[MemoryEntry]:
-        page = _run(self._client.sync_dirty_page(namespace, limit))
+    def page_dirty(self, namespace: str, limit: int, cursor: str | None = None) -> list[MemoryEntry]:
+        page = _run(self._client.sync_dirty_page(namespace, limit, cursor))
         return [_entry(row) for row in page["entries"]]
 
     def mark_synced(self, namespace: str, pushed: list[MemoryEntry]) -> int:

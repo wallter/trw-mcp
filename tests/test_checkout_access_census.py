@@ -29,6 +29,11 @@ import trw_mcp
 #: named residual, not a silently-tolerated one; each states whether it is own-state (stays) or a
 #: consolidation candidate (a backlog row).
 _ALLOWLIST: dict[str, str] = {
+    "server/_uninstall_quiesce.py": (
+        "UNINSTALL-DISTILL-RACE: opens trw-mcp's own writer lock files (post-commit, incremental, sidecar-rebuild) "
+        "O_NOFOLLOW relative to the .trw directory fd uninstall already holds, only to flock them; no byte is "
+        "read from them, and a link planted at a lock path is refused by O_NOFOLLOW. Own-state, not migrated."
+    ),
     "bootstrap/_managed_dirs.py": (
         "PRD-FIX pruned-dir probe: opens a directory O_NOFOLLOW only to lstat its `.git` entry relative "
         "to that descriptor (a symlink is never followed); the only bytes read are the first 4 KiB of "

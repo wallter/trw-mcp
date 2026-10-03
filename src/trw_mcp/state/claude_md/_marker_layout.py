@@ -57,6 +57,58 @@ def marker_layout_problem(
     return None
 
 
+#: Refusal kinds that leave exactly one file as found, so there is nothing of theirs for a rollback to undo.
+FILE_SCOPED_KINDS = frozenset({"ambiguous_markers"})
+
+
+class FileScopedRefusal(str):
+    """An ``errors`` entry that says which kind of refusal it is (DEMOTE-REFUSAL-STRUCTURED).
+
+    A ``str`` so every result merge (``append``, ``extend``, ``in``) and every reader keeps working unchanged, and so
+    the kind travels with the message through all of them: a separate result key would be dropped by each merge that
+    copies only the keys it knows. Matching on the kind, never the text, means a path that happens to contain a
+    refusal's wording cannot pass for one. Anything that rebuilds the string drops the kind, which keeps it an error:
+    the rollback, the safe side.
+    """
+
+    kind: str
+
+    def __new__(cls, text: str, kind: str) -> FileScopedRefusal:
+        message = super().__new__(cls, text)
+        message.kind = kind
+        return message
+
+    def __getnewargs__(self) -> tuple[str, str]:  # type: ignore[override]  # copy, deepcopy and pickle keep the kind
+        return (str(self), self.kind)
+
+
+def refusal_message(text: str, kind: str) -> str:
+    """The ``errors`` entry for a refusal of *kind*: tagged when the kind is file-scoped, else the plain text."""
+    return FileScopedRefusal(text, kind) if kind in FILE_SCOPED_KINDS else text
+
+
+def demote_file_scoped_refusals(result: dict[str, list[str]]) -> int:
+    """Move "this one file was left as found" messages from ``errors`` to ``warnings``; return how many moved.
+
+    A file whose TRW markers do not identify one block is never written, so there is nothing of ITS to undo:
+    leaving the message in ``errors`` makes update-project roll back every managed directory for a file it did
+    not touch (UPDATE-ROLLBACK-FENCED-MARKER). The user still hears about it, in the warnings, with the fix.
+    Every other error is left where it is: the match is on the kind the refusing site recorded
+    (:class:`FileScopedRefusal`), never on the message text, which can hold a path with any words in it.
+    """
+    kept: list[str] = []
+    moved = 0
+    for message in result.get("errors", []):
+        if isinstance(message, FileScopedRefusal) and message.kind in FILE_SCOPED_KINDS:
+            result.setdefault("warnings", []).append(message)
+            moved += 1
+        else:
+            kept.append(message)
+    if moved:
+        result["errors"][:] = kept
+    return moved
+
+
 def ambiguous_marker_refusal(
     target: Path, current: str, markers: tuple[str, str]
 ) -> InstructionWriteRefusalDict | None:

@@ -11,15 +11,14 @@ from trw_mcp.state.memory_adapter import recall_learnings, store_learning
 from trw_mcp.tools.learning import register_learning_tools
 
 _ENFORCE = {
-    "MEMORY_ENABLE_TRUST_SCORING": "true",
-    "MEMORY_TRUST_SCORING_MODE": "enforce",
     "MEMORY_ENABLE_RECALL_FILTER": "true",
     "MEMORY_RECALL_FILTER_MODE": "strict",
 }
 
 
 @pytest.mark.parametrize("configured_checkout", [_ENFORCE], indirect=True)
-def test_mcp_store_quarantines_an_injection_and_recall_never_returns_it(configured_checkout: DaemonCheckout) -> None:
+def test_mcp_store_refuses_an_injection_and_recall_never_returns_it(configured_checkout: DaemonCheckout) -> None:
+    # The write gate refuses the injection outright (UF-MEM-03 removed the trust scorer that used to quarantine it).
     trw_dir = configured_checkout.trw_dir
 
     result = store_learning(
@@ -29,7 +28,7 @@ def test_mcp_store_quarantines_an_injection_and_recall_never_returns_it(configur
         detail="prompt injection payload",
         source_identity="audit-agent",
     )
-    assert result["status"] == "quarantined"
+    assert result["status"] == "rejected"
 
     assert recall_learnings(trw_dir, "Ignore previous instructions", max_results=10) == []
 
@@ -81,8 +80,6 @@ class _FakeServer:
     "configured_checkout",
     [
         {
-            "MEMORY_ENABLE_TRUST_SCORING": "true",
-            "MEMORY_TRUST_SCORING_MODE": "observe",
             "MEMORY_PROVENANCE_REQUIRED": "true",
         }
     ],

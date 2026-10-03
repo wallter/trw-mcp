@@ -150,6 +150,8 @@ def install_grok_artifacts(target_dir: Path, force: bool, result: dict[str, list
         result["created"].extend(agents.get("updated", []))
         result.setdefault("preserved", []).extend(agents.get("preserved", []))
         result["errors"].extend(agents.get("errors", []))
+        # The writer's warnings too (L-Igk6): the one naming where the user's previous AGENTS.md was kept.
+        result.setdefault("warnings", []).extend(agents.get("warnings", []))
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"grok AGENTS.md skipped: {exc}")
 
@@ -182,10 +184,9 @@ def update_grok_artifacts(
         result.setdefault("warnings", []).append(f"grok MCP config update skipped: {exc}")
     try:
         agents = generate_grok_agents_md(target_dir)
-        result["created"].extend(agents.get("created", []))
-        result.setdefault("updated", []).extend(agents.get("updated", []))
-        result.setdefault("preserved", []).extend(agents.get("preserved", []))
-        result["errors"].extend(agents.get("errors", []))
+        from trw_mcp.bootstrap._ide_targets import _absorb_sub_result  # lazy: _ide_targets reaches this module
+
+        _absorb_sub_result(result, agents)  # every key, warnings included (L-Igk6)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"grok AGENTS.md update skipped: {exc}")
 

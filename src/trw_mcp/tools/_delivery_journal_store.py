@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from trw_mcp._checkout_access import PinnedReadCapacityExceeded, read_at
+from trw_mcp._checkout_access import PinnedReadCapacityExceeded, held_connect, read_at
 from trw_mcp.tools._delivery_journal_schema import _SCHEMA as _SCHEMA
 from trw_mcp.tools._delivery_models import (
     OperationRecord,
@@ -118,7 +118,7 @@ class JournalStore:
             os.chmod(self.db_path.parent, 0o700)
         except OSError:  # pragma: no cover - best effort on non-POSIX
             pass
-        conn = sqlite3.connect(str(self.db_path), isolation_level=None)
+        conn = held_connect(self.db_path, isolation_level=None)  # holds the inode the header read pins
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
         try:
@@ -180,7 +180,7 @@ class JournalStore:
         if self._uses_legacy_wal_mode():
             raise LegacyDeliveryJournalMigrationRequired(str(self.db_path))
         uri = f"file:{self.db_path}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = held_connect(self.db_path, uri, uri=True)
         conn.row_factory = sqlite3.Row
         return conn
 

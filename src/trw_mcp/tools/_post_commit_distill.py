@@ -26,6 +26,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.state._below_trw import ensure_dir_below_trw
 from trw_mcp.tools._distill_spawn import resolve_distill_cli, sanitized_env, spawn_detached, stderr_tail
 
 logger = structlog.get_logger(__name__)
@@ -109,6 +110,8 @@ def spawn_incremental_run(repo_root: Path, source_env: dict[str, str], *, enable
     """
     if not enabled:
         return "disabled"
+    if not (repo_root / ".trw").is_dir():  # first of all, platform or not: never create .trw from a background spawn
+        return "lock_unavailable"
     env = sanitized_env(source_env)
     cli = resolve_distill_cli(env)
     if cli is None:
@@ -121,7 +124,8 @@ def spawn_incremental_run(repo_root: Path, source_env: dict[str, str], *, enable
         return "lock_unavailable"
     lock_path = repo_root / INCREMENTAL_LOCK_REL
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if not ensure_dir_below_trw(lock_path.parent, root=repo_root / ".trw"):
+            return "lock_unavailable"  # .trw is gone (uninstalled): never recreated from here
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
     except OSError as exc:
         logger.warning("distill_incremental_lock_unavailable", error=str(exc))

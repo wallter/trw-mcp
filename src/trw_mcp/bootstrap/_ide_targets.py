@@ -133,9 +133,7 @@ def _update_opencode_artifacts(
     # Update AGENTS.md with platform-generic TRW section
     try:
         agents_result = generate_agents_md(target_dir, client_id="opencode")
-        result["created"].extend(agents_result.get("created", []))
-        result["updated"].extend(agents_result.get("updated", []))
-        result["errors"].extend(agents_result.get("errors", []))
+        _absorb_sub_result(result, agents_result)  # every key, warnings included (L-Igk6)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md update skipped: {exc}")
 

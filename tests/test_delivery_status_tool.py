@@ -422,20 +422,24 @@ def test_prd_core_215_fr05(tmp_path, monkeypatch) -> None:
 
 @pytest.fixture
 def pinned_cache_at_cap(tmp_path):
-    """Fill ``_checkout_access``'s pinned-fd cache to its cap with unrelated files, and restore it after."""
-    from tests._checkout_access_state import reset_pinned_reads
+    """Fill ``_checkout_access``'s pinned-fd cache to its cap with HELD unrelated files (an idle unheld fd would just be
+    evicted, SERIAL-RUN-LEAKS), and restore it after."""
+    from tests._checkout_access_state import holding, reset_pinned_reads
     from trw_mcp import _checkout_access
     from trw_mcp._checkout_access import read_at
 
     reset_pinned_reads()
     filler = tmp_path / "filler"
     filler.mkdir()
+    paths = []
     for index in range(_checkout_access._MAX_PINNED_FDS):
         path = filler / f"f{index}"
         path.write_bytes(b"x")
         read_at(path, 1)
+        paths.append(path)
     assert len(_checkout_access._fds) == _checkout_access._MAX_PINNED_FDS, "non-vacuity: the cache is full"
-    yield
+    with holding(*paths):
+        yield
     reset_pinned_reads()
 
 

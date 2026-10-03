@@ -27,6 +27,8 @@ from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 
+from trw_mcp._checkout_access import held_connect
+
 #: Bumped only for an incompatible on-disk change. A mismatch refuses; it never
 #: migrates silently, because a silent migration of a shared mailbox loses the
 #: evidence of what the other side thought it had written.
@@ -78,6 +80,15 @@ def database_path(manifest_path: Path) -> Path:
     """The mailbox for the formation whose manifest is *manifest_path*."""
 
     return manifest_path.parent / DATABASE_FILENAME
+
+
+def open_mailbox_ro(database: Path, *, timeout: float = 1.0) -> sqlite3.Connection:
+    """A read-only connection to *database* that holds it in the pinned-read cache while open (SERIAL-RUN-LEAKS).
+
+    Every mailbox reader outside this package (watch, hint, bootstrap, formation stall) opens through here, so the
+    upgrade's pinned header descriptor is never evicted while one of them may hold a SHARED lock on the file.
+    """
+    return held_connect(database, database.resolve().as_uri() + "?mode=ro", uri=True, timeout=timeout)
 
 
 def _apply_and_verify_pragmas(conn: sqlite3.Connection, *, busy_timeout_ms: int) -> None:
@@ -172,7 +183,7 @@ def _publish_new(path: Path, busy_timeout_ms: int) -> None:
     os.close(descriptor)
     staging = Path(temporary)
     try:
-        conn = sqlite3.connect(staging, timeout=busy_timeout_ms / 1000.0, isolation_level=None)
+        conn = held_connect(staging, timeout=busy_timeout_ms / 1000.0, isolation_level=None)
         try:
             conn.row_factory = sqlite3.Row
             _apply_and_verify_pragmas(conn, busy_timeout_ms=busy_timeout_ms)
@@ -232,8 +243,12 @@ def connect(manifest_path: Path, *, busy_timeout_ms: int) -> Iterator[sqlite3.Co
             _publish_new(path, busy_timeout_ms)
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise StoreError(StoreRefusal.CORRUPT, "mailbox is not a nonempty regular file")
-        conn = sqlite3.connect(
-            path.resolve().as_uri() + "?mode=rw", uri=True, timeout=busy_timeout_ms / 1000.0, isolation_level=None
+        conn = held_connect(
+            path,
+            path.resolve().as_uri() + "?mode=rw",
+            uri=True,
+            timeout=busy_timeout_ms / 1000.0,
+            isolation_level=None,
         )
         conn.row_factory = sqlite3.Row
         # Schema and rows must be one read snapshot; no pragma writes before validation.

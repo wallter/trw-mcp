@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from trw_mcp._checkout_access import copy_to, read_at
+from trw_mcp._checkout_access import copy_to, held_connect, read_at
 from trw_mcp.comms._envelope import canonical_bytes
 from trw_mcp.comms._pins import member_pin_entry
 from trw_mcp.comms._schema import (
@@ -96,7 +96,7 @@ def unexited_members(manifest_path: Path) -> list[str]:
 @contextmanager
 def _exclusive(path: Path, busy_timeout_ms: int) -> Iterator[sqlite3.Connection]:
     """One connection whose exclusive lock survives COMMIT until this block ends."""
-    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=busy_timeout_ms / 1000.0)
+    conn = held_connect(path, path.resolve().as_uri() + "?mode=rw", uri=True, timeout=busy_timeout_ms / 1000.0)
     conn.isolation_level = None
     conn.row_factory = sqlite3.Row
     try:

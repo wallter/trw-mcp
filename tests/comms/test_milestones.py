@@ -103,7 +103,7 @@ async def test_exception_after_each_fetch_or_ack_write_rolls_back(
                 return result
 
         with s.monkeypatch.context() as local:
-            local.setattr(_store.sqlite3, "connect", lambda *a, **k: original(*a, **k, factory=Broken))
+            local.setattr(_store.sqlite3, "connect", lambda *a, **k: original(*a, **{**k, "factory": Broken}))
             args = (
                 {}
                 if failure_prefix.startswith("INSERT OR IGNORE")
@@ -184,7 +184,7 @@ async def test_exception_after_each_handoff_write_rolls_back(
 
         args: dict[str, Any] = {"next_read": "wt@sha"} if action == "report" else {}
         with s.monkeypatch.context() as local:
-            local.setattr(_store.sqlite3, "connect", lambda *a, **k: original(*a, **k, factory=Broken))
+            local.setattr(_store.sqlite3, "connect", lambda *a, **k: original(*a, **{**k, "factory": Broken}))
             result = await invoke(client, "trw_inbox", action=action, message_ids=[message_id], **args)
         assert fired, "the injected failure never ran, so this arm proved nothing"
         assert result["reason"] == "storage_corrupt"

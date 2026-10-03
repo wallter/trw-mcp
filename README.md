@@ -65,7 +65,7 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.0.0 -->
+<!-- whats-new: 9.0.1 -->
 
 - **Share learnings from any host.** `trw-mcp sync push`, `pull` and `status` share team learnings from hosts with no MCP server running, such as CI, headless agents and containers.
 - **Faster, better-ranked team learnings.** Pulled pages are written about 3x faster, a stale session pulls the newest first, and another project's learnings rank below yours.
@@ -226,12 +226,12 @@ Model downloads are not a runtime behavior, so no consent flag governs them: `le
 | Encryption at rest | not available | planned for a later release; trw-memory 4.0 rejects `encryption_enabled=true` at config load, backend creation and `trw-memory-server` startup with `EncryptionAtRestUnsupportedError`. Use disk encryption |
 | Secret redaction in logs | on | API keys, tokens and secret-named fields are masked in log output |
 | Secrets in memory writes | refused | with PII detection on (`pii_enabled`, the default), a write containing a recognized API-key pattern is refused; a secret in a shape the patterns do not recognize is not caught. Other detected PII (emails, phone numbers) is recorded as metadata and stored as written |
-| Recall output filter | redact | flagged values are masked in recall results (`recall_filter_mode: redact`) |
-| Memory poisoning detection | observe | anomalies are recorded, not quarantined |
+| Recall integrity filter | strict | a recalled entry whose content no longer matches its signed hash is dropped (`recall_filter_mode: strict`) |
+| Prompt-injection refusal | on | instruction- and code-injection shapes are refused at write time on every path: stores, team-sync pulls and corrections |
 | Learning and telemetry upload | off | `learning_sharing_enabled: false`, `platform_telemetry_enabled: false`; the team-sync pull is separate (see above) |
 | File permissions | `0700` / `0600` | `.trw/` state directories are owner-only; `memory.db` and secret files are owner read/write |
 
-The memory security settings (RBAC, the recall filter, canary, poisoning detection, trust scoring and provenance) are daemon-wide, because one daemon serves every checkout. Set them as `MEMORY_*` variables in the environment the daemon starts from; a trw-mcp process that resolves a different value is refused and told which variable to set.
+The memory security settings (RBAC, the recall filter, canary and provenance) are daemon-wide, because one daemon serves every checkout. Set them as `MEMORY_*` variables in the environment the daemon starts from; a trw-mcp process that resolves a different value is refused and told which variable to set.
 
 **Trust boundary.** A checkout's memory grant (`.trw/runtime/memory-token`) covers its own project namespace and your shared `user:local` namespace, so a checkout cannot reach another checkout's project namespace through the daemon, and the grant files are owner-only (`0600`, in a `0700` directory). The boundary is your OS user account: grants scope what a checkout may reach, they are not isolation from same-user processes. Any process running as the same user can read those files and the store itself, so run untrusted code under a different account.
 

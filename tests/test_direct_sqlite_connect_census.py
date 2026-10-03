@@ -111,31 +111,18 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
         "archived (daemon stopped), through connect_registered, in 1000-row batches; returns a count of rows labelled "
         "above team (PRD-SEC-023 FR05), never a row."
     ),
-    ("comms/_bootstrap.py", "_lead_pending", 1): (
-        "comms.sqlite3: B71-73/FR10 -- a read-only pending-count query against the checkout-seedable "
-        "mailbox, with no deadline on the surrounding schema check today."
-    ),
-    ("comms/_hint.py", "pending_hint", 1): (
-        "comms.sqlite3: B71-73/FR10 -- a read-only poller hint query against the mailbox; same "
-        "deadline gap as _lead_pending."
+    ("_checkout_access.py", "held_connect", 1): (
+        "comms.sqlite3 + operations.sqlite3: the one opener for both pinned stores (SERIAL-RUN-LEAKS). It counts a "
+        "hold on the path before connecting so the pinned-read cache never evicts a descriptor a live connection "
+        "may lock through; the journal (JournalStore.connect/connect_ro), the mailbox writer (comms _store "
+        "connect/_publish_new, _upgrade._exclusive) and every mailbox reader (comms._store.open_mailbox_ro: "
+        "_bootstrap, _hint, _watch, formation _stall) route here. The B71-73/FR10 deadline gap of the read-only "
+        "mailbox readers is unchanged by this routing."
     ),
     ("comms/_schema.py", "_expected_ddl", 1): (
         "comms.sqlite3: an ephemeral :memory: db used only to derive the expected DDL for verify()'s "
         "comparison; not a read of the checkout-supplied mailbox itself, but lives in the module B71-73/"
         "FR10 adds the deadline to."
-    ),
-    ("comms/_store.py", "_publish_new", 1): (
-        "comms.sqlite3: the mailbox's own first-publication path (creates a fresh staging file, never "
-        "an existing checkout-supplied one); B71-73/FR10's deadline lands in this same module."
-    ),
-    ("comms/_store.py", "connect", 1): (
-        "comms.sqlite3: the canonical read-write opener every comms tool call goes through "
-        "(trw_send/trw_inbox); B71-73/FR10 adds the progress-handler deadline here before "
-        "verify()'s first read."
-    ),
-    ("comms/_upgrade.py", "_exclusive", 1): (
-        "comms.sqlite3: the schema-upgrade path's exclusive-lock connection on the checkout-supplied "
-        "mailbox; same store class as the B71-73/FR10 deadline gap."
     ),
     ("comms/_upgrade.py", "_verified_backup", 1): (
         "comms.sqlite3: opens the just-created backup COPY read-only to verify it, not the live "
@@ -144,14 +131,6 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
     ("comms/_upgrade.py", "rollback", 1): (
         "comms.sqlite3: opens the pre-upgrade backup read-only to restore it during rollback; the "
         "backup was fsynced and sha256-verified by this same module before being trusted."
-    ),
-    ("comms/_watch.py", "observe", 1): (
-        "comms.sqlite3: B71-73/FR10 -- a read-only tailer poll against the checkout-seedable mailbox; "
-        "same deadline gap as _lead_pending."
-    ),
-    ("formation/_stall.py", "stall_scan", 1): (
-        "comms.sqlite3: B71-73/FR10 -- a read-only unread-mail scan against the checkout-seedable "
-        "mailbox, same deadline gap."
     ),
     ("state/_store_migration.py", "_exclusive", 1): (
         "migrate _exclusive/_snapshot: locking/backup, non-goal -- takes the project store's exclusive "
@@ -179,13 +158,6 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
     ("state/_store_migration.py", "_swap", 1): (
         "migrate _exclusive/_snapshot: locking/backup, non-goal -- CLI restore's swap step opens the "
         "restore source (a file trw-mcp itself produced) to back it into the held project store."
-    ),
-    ("tools/_delivery_journal_store.py", "JournalStore.connect", 1): (
-        "delivery journal: trw-mcp's own local delivery-evidence journal, not checkout-supplied "
-        "content; opens (creating if absent) the read-write store with 0600 perms."
-    ),
-    ("tools/_delivery_journal_store.py", "JournalStore.connect_ro", 1): (
-        "delivery journal: read-only open of the same local, trw-mcp-owned journal file."
     ),
 }
 

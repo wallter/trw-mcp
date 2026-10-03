@@ -124,7 +124,7 @@ class PostCommitReceipt:
     verify_entries_processed: int = 0
     verify_stale_transitions: int = 0
     verify_cleared_transitions: int = 0
-    #: ``acquired`` | ``reclaimed`` | ``deferred`` | ``unlocked``. ``unlocked``
+    #: ``acquired`` | ``reclaimed`` | ``deferred`` | ``unlocked`` | ``uninstalled`` (no ``.trw``: nothing was done). ``unlocked``
     #: means the lock could not be created at all (unwritable runtime dir) and
     #: the sweep ran anyway — fail-open, but NOT single-flight, and the receipt
     #: says which of the two happened rather than implying the guarantee.
@@ -197,17 +197,24 @@ def _sweep_trw_dir(repo_root: Path) -> Path:
 def _acquire_lock(lock_path: Path, head_sha: str) -> tuple[str | None, int]:
     """Take the single-flight lock; ``(None, -1)`` when another worker holds it.
 
-    Returns ``("acquired" | "reclaimed" | "unlocked", fd)``. The kernel drops an ``flock`` when its owner
+    Returns ``("acquired" | "reclaimed" | "unlocked" | "uninstalled", fd)``; ``uninstalled`` means the ``.trw`` the
+    lock would live in does not exist (uninstall removed it), and nothing is created. The kernel drops an ``flock`` when its owner
     dies, so there is no liveness check and no reclaim-by-unlink: a crashed owner's leftover record is only
     reported (``reclaimed``). ``unlocked`` (no ``fcntl``, or the lock file cannot be created) runs the sweep
     WITHOUT the guarantee rather than skipping maintenance, and the receipt says so.
     """
+    from trw_mcp.state._below_trw import ensure_dir_below_trw
+
+    trw_dir = lock_path.parent.parent
+    if not ensure_dir_below_trw(lock_path.parent, root=trw_dir):  # first, platform or not: never create .trw
+        return "uninstalled", -1
     if fcntl is None:
         return "unlocked", -1
     for _attempt in range(3):
         try:
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileNotFoundError:  # the .trw went away between the check and the open: uninstalled, not "unlocked"
+            return "uninstalled", -1
         except OSError:
             logger.warning("post_commit_lock_unavailable", lock=str(lock_path), exc_info=True)
             return "unlocked", -1
@@ -413,6 +420,9 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
     pending_path = trw_dir / PENDING_REL_PATH
 
     lock_state, lock_fd = _acquire_lock(lock_path, head_sha)
+    if lock_state == "uninstalled":  # the project's .trw is gone: do nothing, and write nothing into the void
+        receipt.lock_state = lock_state
+        return receipt
     if lock_state is None:
         receipt.lock_state = "deferred"
         receipt.pending_marked = _mark_pending(trw_dir, head_sha)

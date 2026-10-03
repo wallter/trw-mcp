@@ -223,7 +223,7 @@ def stall_scan(
     """
     from trw_mcp.comms._handoff import open_handoffs
     from trw_mcp.comms._identity import derive_group_id
-    from trw_mcp.comms._store import database_path
+    from trw_mcp.comms._store import database_path, open_mailbox_ro
 
     unread: dict[str, tuple[int, float]] = {}
     seen: dict[str, float] = {}
@@ -232,7 +232,7 @@ def stall_scan(
     omitted, handoff_measurement = 0, "not_measured"
     try:
         group_id = derive_group_id(project_root, manifest_path)
-        conn = sqlite3.connect(database_path(manifest_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
+        conn = open_mailbox_ro(database_path(manifest_path))
         try:
             unread = {
                 str(member): (int(count), float(oldest))

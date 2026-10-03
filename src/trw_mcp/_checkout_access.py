@@ -27,7 +27,9 @@ close is safe there.
 the file was replaced or recreated, not written in place. Retirement never
 closes a descriptor a DIFFERENT tracked path still names through a hard link
 (PRD-CORE-316 FR02(a)): each inode key tracks the set of paths currently
-pointing at it, and the descriptor closes only when that set becomes empty.
+pointing at it, and the descriptor closes only when that set becomes empty. Nor is a HELD inode's descriptor
+ever closed by retirement (SERIAL-RUN-LEAKS, auditor): it stays pinned with no path naming it until the idle
+eviction finds it unheld.
 A stat-then-open race that opens a second descriptor for an inode already
 pinned closes the extra descriptor under the map lock instead of leaking it
 outside the cap (FR02(b)). The map is capped at ``_MAX_PINNED_FDS`` distinct
@@ -42,6 +44,22 @@ recorded decision (B71-08, ``docs/sprint-mcp7/PLAN-7.1.md:201``), owned by
 the lead pending worker-2's measurement of real replacement rates;
 PRD-CORE-316 preserves it unchanged (NFR04) for every descriptor still in
 use and does not revisit the eviction policy itself here.**
+
+**Idle files never freed an entry, and now a HELD fd is the only one never evicted (SERIAL-RUN-LEAKS).** Until
+2026-10-03 an entry left the map only when its file was deleted (the sweep below) or replaced (retirement above);
+a file that simply stayed on disk, unread, kept its descriptor for the life of the process. A long-lived shared
+server (one process per env, every client checkout behind it) pinned about one delivery journal per project, so
+its 65th live project's journal read was refused for good, and a serial test run hit the same wall. B71-08 is
+amended (lead, 2026-10-03) from "never evict a live pinned fd" to **"never evict a HELD pinned fd"**: closing a
+descriptor drops this process's fcntl locks on that inode only if this process can be holding one, and in a
+rollback-journal (``journal_mode=DELETE``) database, which both pinned stores are, a lock exists only while a
+connection is open on it. So every connection to a pinned store opens through :func:`held_connect`, which
+counts a hold on its PATH and the inode it names under ``_map_lock`` BEFORE ``sqlite3.connect``, and releases it
+only when the connection object is destroyed (after closing the native connection, so no cursor can still hold a
+lock); a file replaced mid-open marks the hold uncertain, and nothing is evicted while one is open. At the cap, after the dead-path sweep, :func:`_evict_idle_unheld` closes the
+least recently used descriptor whose inode no held path names and whose per-inode lock is free (no read in
+flight). The decision and the close happen under ``_map_lock``, and a hold is counted under that same lock before
+its connection exists, so no connection can take a lock on an inode between "unheld" and the close.
 
 **Dead-path sweep (E2E-INC-103).** Before that refusal stands, :func:`_evict_dead_paths` drops the
 bookkeeping (and, once no tracked path names an inode, the descriptor) of paths whose ``lstat`` raises
@@ -70,12 +88,19 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import stat
 import threading
+import time
+from collections import OrderedDict, deque
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 _CHUNK = 1 << 20
 _MAX_PINNED_FDS = 64
+#: At the cap with every unheld descriptor mid-read: how many short waits before the refusal stands.
+_BUSY_RETRIES = 200
+_BUSY_WAIT_S = 0.001
 
 #: inode key -> the one live descriptor pinned for it.
 _fds: dict[tuple[int, int], int] = {}
@@ -92,6 +117,19 @@ _map_lock = threading.Lock()
 #: too (the exact C15 hazard this module exists to prevent) -- so a redundant descriptor from a
 #: stat/open race is tracked here (never a silent, unreachable leak) rather than closed.
 _race_loser_fds: list[int] = []
+#: inode key -> None, least recently read first (SERIAL-RUN-LEAKS): the order idle eviction walks.
+_use_order: OrderedDict[tuple[int, int], None] = OrderedDict()
+#: resolved path -> open connections to it opened through `held_connect`; a held inode is never evicted.
+_holds: dict[str, int] = {}
+#: inode key -> open held connections that found it at the path when they opened. A connection keeps the inode it
+#: opened even if the path is later replaced, so the path's CURRENT inode alone would not protect it.
+_held_inodes: dict[tuple[int, int], int] = {}
+#: open held connections whose path named a different inode after the open than before it (replaced mid-open): which
+#: inode SQLite opened is unknown, so while any is open NO descriptor is evicted (codex r1).
+_uncertain_holds = 0
+#: holds of destroyed connections, appended lock-free by ``__del__`` (which can run inside a GC triggered while
+#: ``_map_lock`` is held) and applied under the lock by the next `held_connect` or eviction.
+_pending_releases: deque[tuple[str, tuple[tuple[int, int], ...], bool]] = deque()
 
 
 class PinnedReadCapacityExceeded(OSError):
@@ -197,7 +235,12 @@ def _retire_locked(path: Path, current: tuple[int, int]) -> tuple[tuple[int, int
         if siblings:
             return None
         del _inode_paths[previous]
+    if previous in _held_inodes or _uncertain_holds > 0:
+        # A connection still holds the old inode (or one whose inode is unknown is open): closing would drop its
+        # locks. The descriptor stays pinned with no path naming it; eviction closes it once it is unheld.
+        return None
     stale_fd = _fds.pop(previous, None)
+    _use_order.pop(previous, None)
     if stale_fd is None:
         return None
     # The lock object stays in `_inode_locks` until `_close_stale` actually closes the descriptor:
@@ -230,6 +273,11 @@ def _close_stale(stale: tuple[tuple[int, int], int]) -> None:
     with _map_lock:
         lock = _inode_lock_locked(stale_key)
     with lock, _map_lock:
+        if stale_key not in _fds and (stale_key in _held_inodes or _uncertain_holds > 0):
+            # Held since `_retire_locked` decided (a hard-link path opened it meanwhile): keep it pinned instead.
+            _fds[stale_key] = stale_fd
+            _use_order[stale_key] = None
+            return
         if stale_key in _fds:
             # Re-pinned while we waited for the lock: never close it (see the P0 fix above).
             # Track it exactly like a stat/open race-loser instead of silently discarding it.
@@ -275,6 +323,151 @@ def _evict_dead_paths() -> int:
     return evicted
 
 
+def _hold_key(path: Path) -> str:
+    return os.path.realpath(path)
+
+
+def _decrement(counts: dict[Any, int], key: Any) -> None:
+    remaining = counts.get(key, 0) - 1
+    if remaining > 0:
+        counts[key] = remaining
+    else:
+        counts.pop(key, None)
+
+
+def _drain_releases_locked() -> None:
+    """Apply the holds of connections destroyed since the last drain. Caller holds ``_map_lock``."""
+    global _uncertain_holds
+    while _pending_releases:
+        key, inodes, uncertain = _pending_releases.popleft()
+        _decrement(_holds, key)
+        for inode in inodes:
+            _decrement(_held_inodes, inode)
+        if uncertain:
+            _uncertain_holds -= 1
+
+
+def _inode_of(path: Path) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+    except OSError:  # trw-fail-silent-allow: no file yet means no inode to record; the caller handles None
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _native_close(conn: sqlite3.Connection) -> None:
+    """The native close ``__del__`` runs before releasing a hold; a seam so a failed close can be tested."""
+    sqlite3.Connection.close(conn)
+
+
+class _HeldConnection(sqlite3.Connection):
+    """A connection whose path stays held until the connection OBJECT is destroyed (codex r1).
+
+    Not on ``close()``: an unfinished cursor keeps SQLite's native connection, and its read lock, after a Python
+    close. A cursor references its connection, so by the time this object is destroyed no cursor can exist;
+    ``__del__`` then closes the native connection itself (releasing every lock) BEFORE queueing the release. If
+    that close fails (another thread's GC, say) the hold is kept for the life of the process: a leaked hold only
+    protects a descriptor longer. ``__del__`` never takes a lock, because a GC can run it while ``_map_lock`` is
+    held by the same thread.
+    """
+
+    _trw_hold: tuple[str, tuple[tuple[int, int], ...], bool] | None = None
+
+    def __del__(self) -> None:
+        hold = self._trw_hold
+        if hold is None:
+            return
+        self._trw_hold = None
+        try:
+            _native_close(self)
+        except Exception:  # trw-fail-silent-allow: no native close, so the hold is kept (never released)
+            return
+        _pending_releases.append(hold)
+
+
+def held_connect(path: Path, database: str | None = None, **kwargs: Any) -> sqlite3.Connection:
+    """``sqlite3.connect`` for a store whose header this module pins, holding *path* while the connection lives.
+
+    The path and the inode it names are held under ``_map_lock`` BEFORE ``sqlite3.connect`` opens the file, and the
+    inode it names afterwards is added once the open returns. If the two differ the file was replaced mid-open and
+    which inode SQLite opened is unknown, so the hold is marked uncertain and no descriptor is evicted while it
+    lives. *database* defaults to ``str(path)`` (pass a ``file:`` URI with ``uri=True`` for ``mode=ro``/``mode=rw``).
+    """
+    global _uncertain_holds
+    key = _hold_key(path)
+    with _map_lock:
+        _drain_releases_locked()
+        before = _inode_of(path)
+        _holds[key] = _holds.get(key, 0) + 1
+        if before is not None:
+            _held_inodes[before] = _held_inodes.get(before, 0) + 1
+    # The destroying thread must be able to close it: a same-thread check refusing the close in ``__del__`` would
+    # keep the hold for good, and one kept uncertain hold would stop all eviction (auditor P2).
+    kwargs.setdefault("check_same_thread", False)
+    try:
+        conn = sqlite3.connect(str(path) if database is None else database, factory=_HeldConnection, **kwargs)
+    except BaseException:
+        _pending_releases.append((key, (before,) if before is not None else (), False))
+        raise
+    after = _inode_of(path)
+    uncertain = before is not None and after != before
+    inodes = tuple(dict.fromkeys(inode for inode in (before, after) if inode is not None))
+    with _map_lock:
+        if after is not None and after != before:
+            _held_inodes[after] = _held_inodes.get(after, 0) + 1
+        if uncertain:
+            _uncertain_holds += 1
+    conn._trw_hold = (key, inodes, uncertain)
+    return conn
+
+
+def _evict_idle_unheld() -> str:
+    """Close the least recently read pinned descriptor no held path names and no reader is using.
+
+    Returns ``"evicted"``, ``"busy"`` (every unheld descriptor has a read in flight: worth a brief retry) or
+    ``"held"`` (every descriptor is held: the refusal stands).
+
+    Runs only at the cap, after the dead-path sweep freed nothing. Everything happens under ``_map_lock``,
+    the ``stat`` of each held path included (eviction is rare and the held set small), so a hold counted by
+    :func:`held_connect` either is seen here or belongs to a connection opened after this close.
+    """
+    with _map_lock:
+        _drain_releases_locked()
+        if _uncertain_holds > 0:
+            return "held"  # an open connection's inode is unknown: nothing may be closed while it lives
+        held_inodes: set[tuple[int, int]] = set(_held_inodes)
+        for held in list(_holds):
+            try:
+                st = os.stat(held)
+            except OSError:  # trw-fail-silent-allow: a held path that is gone names no inode to protect
+                continue
+            held_inodes.add((st.st_dev, st.st_ino))
+        busy = False
+        for key in list(_use_order):
+            fd = _fds.get(key)
+            if fd is None:
+                _use_order.pop(key, None)
+                continue
+            if key in held_inodes:
+                continue
+            lock = _inode_lock_locked(key)
+            if not lock.acquire(blocking=False):
+                busy = True  # a read is in flight on this descriptor
+                continue
+            try:
+                del _fds[key]
+                _use_order.pop(key, None)
+                for path in _inode_paths.pop(key, set()):
+                    if _path_inode.get(path) == key:
+                        del _path_inode[path]
+                os.close(fd)
+            finally:
+                lock.release()
+            _inode_locks.pop(key, None)
+            return "evicted"
+    return "busy" if busy else "held"
+
+
 def _pinned_fd_locked(path: Path) -> tuple[int, tuple[int, int], tuple[tuple[int, int], int] | None]:
     """Return `(fd, key, stale)` for *path*. Caller must already hold ``_map_lock``.
 
@@ -310,6 +503,7 @@ def _pinned_fd_locked(path: Path) -> tuple[int, tuple[int, int], tuple[tuple[int
             fd = existing
         else:
             _fds[opened_key] = opened_fd
+            _use_order[opened_key] = None  # visible to eviction from the moment it is pinned
             fd = opened_fd
         key = opened_key
     # Retire the path's *previous* association only now that the new fd is safely resolved: retiring
@@ -339,23 +533,35 @@ def _pinned_fd_for_io(path: Path) -> tuple[int, threading.Lock]:
     from whatever file reuses that fd number next.
     """
     swept = False
+    busy_waits = 0
     while True:
         try:
             with _map_lock:
                 fd, key, stale = _pinned_fd_locked(path)
                 lock = _inode_lock_locked(key)
         except PinnedReadCapacityExceeded:
-            # At the cap: reclaim entries whose path is gone, once per call, then retry; if nothing was
-            # dead the refusal stands (B71-08 unchanged for live descriptors).
-            if swept or _evict_dead_paths() == 0:
-                raise
+            # At the cap: reclaim entries whose path is gone, once per call, then the least recently read
+            # descriptor nothing holds (SERIAL-RUN-LEAKS; B71-08 as amended: a HELD fd is never evicted). If
+            # neither frees a slot the refusal stands.
+            if not swept and _evict_dead_paths() > 0:
+                swept = True
+                continue
             swept = True
-            continue
+            outcome = _evict_idle_unheld()
+            if outcome == "evicted":
+                continue
+            if outcome == "busy" and busy_waits < _BUSY_RETRIES:  # in-flight reads finish in microseconds
+                busy_waits += 1
+                time.sleep(_BUSY_WAIT_S)
+                continue
+            raise
         if stale is not None:
             _close_stale(stale)
         lock.acquire()
         with _map_lock:
             if _fds.get(key) == fd and _inode_locks.get(key) is lock:
+                _use_order[key] = None
+                _use_order.move_to_end(key)
                 return fd, lock
         lock.release()  # raced: retired (or retired and re-pinned) while we waited; re-resolve
 
@@ -389,4 +595,11 @@ def copy_to(path: Path, destination: Path) -> None:
         lock.release()
 
 
-__all__ = ["PinnedReadCapacityExceeded", "copy_to", "delete_regular_file_under", "open_under", "read_at"]
+__all__ = [
+    "PinnedReadCapacityExceeded",
+    "copy_to",
+    "delete_regular_file_under",
+    "held_connect",
+    "open_under",
+    "read_at",
+]

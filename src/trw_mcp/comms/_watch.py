@@ -100,7 +100,7 @@ def observe(
 ) -> Observation:
     """Authorize this caller for *member_id*, then read its pending facts. Read-only."""
     from trw_mcp.comms._identity import ELIGIBLE_STATUSES, derive_group_id
-    from trw_mcp.comms._store import database_path
+    from trw_mcp.comms._store import database_path, open_mailbox_ro
     from trw_mcp.formation import (
         FormationError,
         orchestrator_run_of,
@@ -151,7 +151,7 @@ def observe(
     count, newest = 0, 0
     pending_measured = False
     try:
-        conn = sqlite3.connect(database_path(manifest_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
+        conn = open_mailbox_ro(database_path(manifest_path))
     except (sqlite3.Error, ValueError):  # trw-fail-silent-allow: a raced read is retried at the next watch poll
         # trw-fail-silent-allow: mailbox is not_measured; call markers are still scanned below
         conn = None

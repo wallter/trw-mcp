@@ -6,6 +6,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.channels.claude_code._hook_helpers import (
     _CEREMONY_MODE_FIELD,
     DEFAULT_SKIP_EXTENSIONS,
@@ -522,3 +524,102 @@ class TestReadCc03ConfigChannelsNesting:
         )
         config = read_cc03_config(tmp_path)
         assert config["cc03_hook_enabled"] is True
+
+
+class TestSharedModuleLine:
+    """SUB-BLAST-RADIUS PREEDIT-FANIN-WARN: a widely imported file names its blast radius and the run command.
+
+    Origin (2026-10-02): tests/_layout.py (173 importers) was changed to fix one test, only that
+    test ran, and 42 tests broke in a release. The hint showed the fan-in as one WARN among several
+    and said "no inferred tests cover this file", which reads as "nothing to run".
+    """
+
+    _CMD = "python scripts/check_dependents.py trw-mcp/tests/_layout.py"
+
+    @pytest.fixture(autouse=True)
+    def _repo_with_check(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        script = tmp_path / "scripts" / "check_dependents.py"
+        script.parent.mkdir()
+        script.write_text("", encoding="utf-8")
+        monkeypatch.setenv("TRW_REPO_ROOT", str(tmp_path))
+        return tmp_path
+
+    def _hint(self, warnings: list[str], **extra: object) -> str:
+        return format_t2_hint(
+            file_path="trw-mcp/tests/_layout.py",
+            risk_score=0.3,
+            hotspot_warnings=warnings,
+            co_change_neighbors=[],
+            inferred_tests=[],
+            **extra,  # type: ignore[arg-type]
+        )
+
+    def test_test_helper_with_many_importers_gets_shared_line_with_command(self) -> None:
+        output = self._hint(
+            ["no inferred tests cover this file — change is unguarded", "non-trivial fan-in (173 importers)"]
+        )
+        assert (
+            "  shared module: 173 dependents; prefer fixing the caller or moving the artifact; run: " + self._CMD
+        ) in output.splitlines()
+
+    def test_without_the_check_script_it_names_the_importer_query_instead(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRW_REPO_ROOT", str(tmp_path / "elsewhere"))
+        output = self._hint(["non-trivial fan-in (173 importers)"])
+        assert "check_dependents" not in output
+        assert output.endswith(
+            "shared module: 173 dependents; prefer fixing the caller or moving the artifact; "
+            "find them: trw-distill query importers trw-mcp/tests/_layout.py"
+        )
+
+    def test_high_fanin_hotspot_wording_is_counted_too(self) -> None:
+        output = self._hint(["high fan-in hotspot (47 importers) — change reverberates"])
+        assert "shared module: 47 dependents;" in output
+
+    def test_threshold_is_strictly_more_than_the_documented_minimum(self) -> None:
+        from trw_mcp.channels.claude_code._hook_helpers import SHARED_MODULE_MIN_IMPORTERS
+
+        at = self._hint([f"non-trivial fan-in ({SHARED_MODULE_MIN_IMPORTERS} importers)"])
+        above = self._hint([f"non-trivial fan-in ({SHARED_MODULE_MIN_IMPORTERS + 1} importers)"])
+        assert "shared module" not in at
+        assert f"shared module: {SHARED_MODULE_MIN_IMPORTERS + 1} dependents" in above
+
+    def test_shared_line_survives_a_full_base_and_keeps_total_budget(self) -> None:
+        from trw_mcp.channels.claude_code._hook_helpers import _T2_MAX_CHARS
+
+        output = format_t2_hint(
+            file_path="trw-mcp/tests/_layout.py",
+            risk_score=0.3,
+            hotspot_warnings=["W" * 400, "W" * 400, "non-trivial fan-in (173 importers)"],
+            co_change_neighbors=["x" * 200, "y" * 200],
+            inferred_tests=["z" * 200],
+            recall_learnings=[{"summary": "m" * 500} for _ in range(3)],
+        )
+        assert self._CMD in output  # never cut by the 320-char base cap
+        assert len(output) <= _T2_MAX_CHARS
+
+    def test_a_path_with_shell_syntax_is_quoted_in_the_command(self) -> None:
+        output = format_t2_hint(
+            file_path="tests/x;rm -rf ~.py",
+            risk_score=None,
+            hotspot_warnings=["non-trivial fan-in (40 importers)"],
+            co_change_neighbors=[],
+            inferred_tests=[],
+        )
+        assert output.endswith("run: python scripts/check_dependents.py 'tests/x;rm -rf ~.py'")
+
+    def test_a_deep_path_keeps_the_whole_hint_within_budget(self) -> None:
+        from trw_mcp.channels.claude_code._hook_helpers import _T2_MAX_CHARS
+
+        output = format_t2_hint(
+            file_path="/" + "deep/" * 200 + "_layout.py",
+            risk_score=0.3,
+            hotspot_warnings=["W" * 400, "W" * 400, "non-trivial fan-in (173 importers)"],
+            co_change_neighbors=["x" * 200],
+            inferred_tests=["z" * 200],
+            lessons_status="daemon_unavailable",
+            recall_learnings=[{"summary": "m" * 500}],
+        )
+        assert len(output) <= _T2_MAX_CHARS
+        assert "run: python scripts/check_dependents.py <this file>" in output

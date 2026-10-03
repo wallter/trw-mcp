@@ -258,7 +258,12 @@ async def _run_memory_publish(cfg: MemoryConfig) -> None:
 async def _run_memory_retry_drain(cfg: MemoryConfig, tmp_path: Path) -> None:
     queue = RetryQueue(tmp_path / "retry-queue.jsonl")
     queue.enqueue("M-queued", {"source_learning_id": "M-queued", "summary": "queued content"})
-    drain_retry_queue(queue, cfg)
+    # The queued row as it is now, team-labelled, so only the contact switch can stop the send.
+    drain_retry_queue(
+        queue,
+        cfg,
+        current_row=lambda _ns, entry_id: MemoryEntry(id=entry_id, content="queued content", importance=0.95),
+    )
 
 
 async def _run_memory_retire(cfg: MemoryConfig) -> None:

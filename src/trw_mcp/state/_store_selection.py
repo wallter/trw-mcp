@@ -218,8 +218,9 @@ class MemoryStore(Protocol):
         """Up to *limit* rows of *namespace*, newest first; *status*, every tag in *tags* and *types* filter the query."""
         ...
 
-    def page_dirty(self, namespace: str, limit: int) -> list[MemoryEntry]:
-        """The oldest *limit* rows of *namespace* not yet pushed, in ``sync_seq`` order."""
+    def page_dirty(self, namespace: str, limit: int, cursor: str | None = None) -> list[MemoryEntry]:
+        """The oldest *limit* rows of *namespace* not yet pushed, in ``(sync_seq, id)`` order; with *cursor* (``"<sync_seq>:<id>"``, the last row of
+        the previous page) only the rows behind it, so a caller that holds back the front of the queue can still reach what is newer."""
         ...
 
     def mark_synced(self, namespace: str, pushed: list[MemoryEntry]) -> int:

@@ -399,12 +399,16 @@ def generate_agents_md(
 
         from trw_mcp.state.claude_md._exact_text import append_block, read_exact
         from trw_mcp.state.claude_md._instructions_link import agents_link_section, write_instructions_file
+        from trw_mcp.state.claude_md._marker_layout import refusal_message
 
         instructions = write_instructions_file(target_dir)
         if instructions.refusal is not None:
             result["errors"].append(
-                f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
-                f"{instructions.refusal['detail']}"
+                refusal_message(
+                    f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
+                    f"{instructions.refusal['detail']}",
+                    instructions.refusal["reason"],
+                )
             )
             return result
         new_block = agents_link_section()
@@ -433,8 +437,11 @@ def generate_agents_md(
                 _guarded_agents_write(agents_md_path, content, target_dir, result)
             else:
                 result["errors"].append(
-                    "AGENTS.md left untouched: its TRW markers are duplicated or unbalanced, so TRW cannot tell its "
-                    "own block from your text. Remove the stray trw:start/trw:end lines and re-run."
+                    refusal_message(
+                        "AGENTS.md left untouched: its TRW markers are duplicated or unbalanced, so TRW cannot tell "
+                        "its own block from your text. Remove the stray trw:start/trw:end lines and re-run.",
+                        "ambiguous_markers",
+                    )
                 )
         else:
             # Create only: no file is at the name. ``force`` never replaces an existing AGENTS.md wholesale (operator

@@ -286,10 +286,20 @@ class FakeMemoryStore:
             and (types is None or e.type in types)
         ][:limit]
 
-    def page_dirty(self, namespace: str, limit: int) -> list[MemoryEntry]:
-        self.calls.append(("page_dirty", (namespace, limit)))
-        dirty = [e for key, e in self.rows.items() if key[0] == namespace and self.synced.get(key) != e.sync_seq]
-        return dirty[:limit]
+    def page_dirty(self, namespace: str, limit: int, cursor: str | None = None) -> list[MemoryEntry]:
+        self.calls.append(("page_dirty", (namespace, limit) if cursor is None else (namespace, limit, cursor)))
+        order = {
+            key: index for index, key in enumerate(self.rows)
+        }  # the fake breaks a sync_seq tie by insertion order, not id
+        dirty = sorted(
+            ((key, e) for key, e in self.rows.items() if key[0] == namespace and self.synced.get(key) != e.sync_seq),
+            key=lambda item: (item[1].sync_seq, order[item[0]]),
+        )
+        if cursor is not None:
+            seq, _, row_id = cursor.partition(":")
+            after = (int(seq), order[(namespace, row_id)])
+            dirty = [item for item in dirty if (item[1].sync_seq, order[item[0]]) > after]
+        return [e for _key, e in dirty][:limit]
 
     def mark_synced(self, namespace: str, pushed: list[MemoryEntry]) -> int:
         self.calls.append(("mark_synced", (namespace, [entry.id for entry in pushed])))

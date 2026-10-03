@@ -372,9 +372,14 @@ def generate_cursor_cli_agents_md(
     config = get_config()
     instructions = write_instructions_file(target_dir, config=config)
     if instructions.refusal is not None:
+        from trw_mcp.state.claude_md._marker_layout import refusal_message
+
         result.setdefault("errors", []).append(
-            f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
-            f"{instructions.refusal['detail']}"
+            refusal_message(
+                f"Refused to write {instructions.refusal['file']} ({instructions.refusal['reason']}): "
+                f"{instructions.refusal['detail']}",
+                instructions.refusal["reason"],
+            )
         )
         return result
     trw_block = agents_link_section()
@@ -397,8 +402,13 @@ def generate_cursor_cli_agents_md(
     if verdict.written:
         _record_write(cast("dict[str, list[str]]", result), "AGENTS.md", existed=existed)
     elif verdict.refusal is not None:
+        from trw_mcp.state.claude_md._marker_layout import refusal_message
+
         result.setdefault("errors", []).append(
-            f"Refused to write {agents_file} ({verdict.refusal['reason']}): {verdict.refusal['detail']}"
+            refusal_message(
+                f"Refused to write {agents_file} ({verdict.refusal['reason']}): {verdict.refusal['detail']}",
+                verdict.refusal["reason"],
+            )
         )
         logger.warning(
             "cursor_cli_agents_md_write_refused",

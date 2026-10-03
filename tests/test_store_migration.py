@@ -288,7 +288,7 @@ def test_the_stores_canary_decoys_stay_behind(checkout: Path, daemon: MemoryDaem
 
 def _through_intake(tmp_path: Path, canary_id: str) -> MemoryEntry:
     """A seeded canary exported and imported through the real intake, as 4.0.0's CLI import did, read back:
-    its ``system_canary`` flag stripped, trust and provenance metadata added."""
+    its ``system_canary`` flag stripped, provenance metadata added."""
     from trw_memory.cli_storage import _rebuild_own_export
     from trw_memory.models.config import MemoryConfig
     from trw_memory.security._runtime_canary import _seeded_canary
@@ -302,7 +302,7 @@ def _through_intake(tmp_path: Path, canary_id: str) -> MemoryEntry:
         entry = store.get(canary_id, namespace="default")
     finally:
         store.close()
-    assert entry is not None and "trust_score" in entry.metadata and "system_canary" not in entry.metadata
+    assert entry is not None and "provenance_ts" in entry.metadata and "system_canary" not in entry.metadata
     return entry
 
 

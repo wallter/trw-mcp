@@ -554,12 +554,14 @@ def _manifest_key_path(key: str) -> str:
 def git_dirty_paths(target_dir: Path, pathspecs: list[str]) -> set[str] | None:
     """Repo-relative paths git reports modified, staged, added, renamed or untracked.
 
-    ``None`` means git could not answer (missing binary, timeout, not a work
-    tree): the caller reports ``unknown`` and falls back to the manifest guard
-    (NFR01). Ignored files are never dirty — they stay under the manifest guard.
+    ``None`` means git could not answer (missing binary, timeout, not a work tree): the caller reports ``unknown`` with a warning and falls back to the
+    manifest guard (NFR01). A flag census that cannot answer while ``status`` did is different: it yields every managed file as possibly edited, never
+    nothing, so a flagged edit is not silently replaced. Ignored files are never dirty — they stay under the manifest guard.
     """
     import os
     import subprocess
+
+    from ._git_flagged import flagged_edited_paths
 
     env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(target_dir.parent), "GIT_OPTIONAL_LOCKS": "0"}
     command = ["git", "-C", str(target_dir), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--"]
@@ -582,7 +584,7 @@ def git_dirty_paths(target_dir: Path, pathspecs: list[str]) -> set[str] | None:
         dirty.add(entry[3:].decode("utf-8", "surrogateescape").rstrip("/"))
         if entry[:1] in (b"R", b"C"):
             dirty.add(next(fields, b"").decode("utf-8", "surrogateescape"))
-    return dirty
+    return dirty | flagged_edited_paths(target_dir, pathspecs, env)
 
 
 def preserve_uncommitted_changes(

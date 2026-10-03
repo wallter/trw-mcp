@@ -251,6 +251,6 @@ def _wrap_connect(original: object) -> object:
     def traced(database: object, *args: object, **kwargs: object) -> object:
         if "factory" in kwargs:  # respect an explicit factory rather than silently replacing it
             return original(database, *args, **kwargs)  # type: ignore[operator]  # justified: original is sqlite3.connect
-        return original(database, *args, factory=_TracingConnection, **kwargs)  # type: ignore[operator]  # justified: original is sqlite3.connect
+        return original(database, *args, **{**kwargs, "factory": _TracingConnection})  # type: ignore[operator]  # justified: original is sqlite3.connect
 
     return traced

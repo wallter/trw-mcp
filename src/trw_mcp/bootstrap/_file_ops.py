@@ -494,7 +494,11 @@ def write_instruction_file_with_merge(
         refusal = verdict.refusal
         reason = refusal["reason"] if refusal is not None else "unknown"
         detail = refusal["detail"] if refusal is not None else "no detail"
-        result.setdefault("errors", []).append(f"Refused to write {target_path}: {reason} ({detail})")
+        from trw_mcp.state.claude_md._marker_layout import refusal_message
+
+        result.setdefault("errors", []).append(
+            refusal_message(f"Refused to write {target_path}: {reason} ({detail})", reason)
+        )
         return
     _record_write(result, rel_path, existed=existed)
     from ._guarded_write import name_kept_copy  # lazy: _guarded_write imports this module

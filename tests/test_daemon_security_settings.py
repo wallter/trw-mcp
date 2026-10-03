@@ -30,11 +30,8 @@ _DIFFERING = {
     "default_role": "reader",
     "namespace_roles": '{"default": "reader"}',
     "enable_recall_filter": "false",
-    "recall_filter_mode": "strict",
+    "recall_filter_mode": "observe",
     "canary_fail_mode": "degrade",
-    "poisoning_detection_mode": "enforce",
-    "enable_trust_scoring": "false",
-    "trust_scoring_mode": "enforce",
     "provenance_required": "false",
 }
 
@@ -132,26 +129,8 @@ def test_rbac_set_on_the_daemon_denies_a_write(configured_checkout: DaemonChecko
 
 @pytest.mark.parametrize(
     "configured_checkout",
-    [{"MEMORY_POISONING_DETECTION_MODE": "enforce", "MEMORY_POISONING_Z_THRESHOLD": "1.0"}],
-    indirect=True,
-)
-def test_poisoning_enforce_set_on_the_daemon_quarantines_an_anomaly(configured_checkout: DaemonCheckout) -> None:
-    from trw_mcp.state.memory_adapter import store_learning
-
-    for index in range(12):
-        store_learning(configured_checkout.trw_dir, f"L-base{index:03d}", "short baseline summary", "short detail")
-
-    outcome = store_learning(configured_checkout.trw_dir, "L-anomaly", "x" * 4000, "y" * 4000)
-
-    assert outcome["status"] == "quarantined", outcome
-
-
-@pytest.mark.parametrize(
-    "configured_checkout",
     [
         {
-            "MEMORY_ENABLE_TRUST_SCORING": "true",
-            "MEMORY_TRUST_SCORING_MODE": "enforce",
             "MEMORY_PROVENANCE_REQUIRED": "true",
             "TRW_SESSION_ID": "env-session-123",
         }
@@ -194,7 +173,7 @@ def test_a_daemon_restarted_under_other_settings_is_checked_again(
     trw_dir = tmp_path / "repo" / ".trw"
     monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(trw_dir.parent))
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "redact")
+    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")
     monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
     monkeypatch.setattr(_daemon_store, "_clients", {})
     monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _no_autostart)
@@ -207,7 +186,7 @@ def test_a_daemon_restarted_under_other_settings_is_checked_again(
 
     monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")
     with running_daemon(user_dir):
-        monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "redact")  # this client still resolves the old value
+        monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")  # this client still resolves the old value
         with pytest.raises(StoreUnavailableError, match="recall_filter_mode"):
             daemon_store_for(trw_dir, namespace)
 
@@ -239,7 +218,7 @@ def test_a_local_setting_changed_after_attach_is_checked_again(
     daemon_checkout: DaemonCheckout, fresh_clients: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     daemon_store_for(daemon_checkout.trw_dir, daemon_checkout.namespace)
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")  # the daemon keeps running on its own value
+    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")  # the daemon keeps running on its own value
 
     with pytest.raises(StoreUnavailableError, match="recall_filter_mode"):
         daemon_store_for(daemon_checkout.trw_dir, daemon_checkout.namespace)

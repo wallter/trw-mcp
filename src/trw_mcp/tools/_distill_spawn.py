@@ -57,6 +57,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
+from trw_mcp.state._below_trw import ensure_dir_below_trw
+
 if TYPE_CHECKING:
     from trw_mcp.tools._sidecar_substrate import CurrentSidecarResult
 
@@ -190,6 +192,12 @@ def spawn_detached(
 AUTO_REFRESH_FLAG = "disable with hint_sidecar_auto_refresh_enabled: false in .trw/config.yaml"
 #: The rate-limit timestamp, in the cache dir the build writes to.
 REBUILD_STAMP_NAME = "rebuild-requested.json"
+#: ``flock``-ed by the detached build for its whole lifetime (the descriptor is handed to the child), so a second request
+#: sees ``already_running`` and uninstall can wait for the build instead of racing its writes (UNINSTALL-DISTILL-RACE).
+REBUILD_LOCK_NAME = ".sidecar-rebuild.lock"
+#: Where that lock sits for a checkout's OWN cache (``.trw/distill/map-cache``): beside the cache, which is where uninstall looks. The lock always follows the
+#: cache dir the build writes to, so a build requested from a linked worktree locks the main checkout's file, and two worktrees cannot stack builds on one cache.
+REBUILD_LOCK_REL = Path(".trw") / "distill" / REBUILD_LOCK_NAME
 #: Scheduling priority of the build: it yields the CPU to the editor and to the hint itself.
 _REBUILD_NICENESS = 10
 _ROLE_ENV = "TRW_SURFACE_ROLE"
@@ -208,6 +216,8 @@ RebuildStatus = Literal[
     "nice_unavailable",
     "stamp_unwritable",
     "spawn_failed",
+    "already_running",
+    "no_trw_dir",
 ]
 
 
@@ -306,6 +316,8 @@ def _request(
     from trw_mcp.state._surface_role import reviewer_role_active
     from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
 
+    if not (repo_root / ".trw").is_dir():  # uninstalled: a background build never creates .trw from nothing
+        return _refused("no_trw_dir", trigger, reason)
     if reviewer_role_active():
         return _refused("reviewer_role", trigger, reason)
     if not check_tier_for_feature(repo_root, DISTILL_SIDECAR_FEATURE).allowed:
@@ -323,14 +335,25 @@ def _request(
     nice = ports.which("nice", os.pathsep.join(part for part in (env.get("PATH"), os.defpath) if part))
     if nice is None:
         return _refused("nice_unavailable", trigger, reason)
+    lock_fd = _take_rebuild_lock(cache_dir)
+    if lock_fd == _UNINSTALLED:
+        return _refused("no_trw_dir", trigger, reason)
+    if lock_fd is None:
+        return _refused("already_running", trigger, reason)
     if not _write_stamp(cache_dir, now, trigger):
-        return _refused("stamp_unwritable", trigger, reason, cache_dir=str(cache_dir))
+        _close(lock_fd)
+        gone = not (
+            repo_root / ".trw"
+        ).is_dir()  # the stamp's directory is below .trw: a vanished .trw is not "unwritable"
+        return _refused("no_trw_dir" if gone else "stamp_unwritable", trigger, reason, cache_dir=str(cache_dir))
     argv = (
         *(nice, "-n", str(_REBUILD_NICENESS), cli, "self-improve", "refresh-sidecars"),
         *("--repo", str(repo_root), "--cache-dir", str(cache_dir), "--trigger", trigger),
     )
     try:
-        pid = spawn_detached(argv, cwd=repo_root, env=env, popen=ports.popen)
+        pid = spawn_detached(
+            argv, cwd=repo_root, env=env, pass_fds=(lock_fd,) if lock_fd >= 0 else (), popen=ports.popen
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning(
             "sidecar_rebuild_request",
@@ -341,10 +364,45 @@ def _request(
             disable=AUTO_REFRESH_FLAG,
         )
         return RebuildRequest(status="spawn_failed", reason=reason, argv=argv)
+    finally:
+        _close(lock_fd)  # the child holds its own descriptor: closing ours never releases its lock
     logger.info(
         "sidecar_rebuild_request", outcome="spawned", trigger=trigger, reason=reason, pid=pid, disable=AUTO_REFRESH_FLAG
     )
     return RebuildRequest(status="spawned", reason=reason, pid=pid, argv=argv)
+
+
+#: ``_take_rebuild_lock``'s answer when the project's ``.trw`` is gone (``-1`` is "no lock could be made", ``None`` "held").
+_UNINSTALLED = -2
+
+
+def _take_rebuild_lock(cache_dir: Path) -> int | None:
+    """The build's single-flight ``flock``, beside *cache_dir* (the cache it writes): a descriptor, ``-1`` when no lock can be made (build unlocked), ``None`` when held."""
+    try:
+        import fcntl
+
+        lock = cache_dir.parent / REBUILD_LOCK_NAME
+        if not ensure_dir_below_trw(lock.parent):
+            return _UNINSTALLED  # first, platform or not: a background build never creates .trw from nothing
+        fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except FileNotFoundError:  # the .trw went away between the check and the open
+        return _UNINSTALLED
+    except (
+        ImportError,
+        OSError,
+    ):  # trw-fail-silent-allow: no lock means an unlocked build, as before this lock existed
+        return -1
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:  # trw-fail-silent-allow: EWOULDBLOCK is the answer: a live build holds the lock
+        os.close(fd)
+        return None
+    return fd
+
+
+def _close(fd: int) -> None:
+    if fd >= 0:
+        os.close(fd)
 
 
 def _refused(status: RebuildStatus, trigger: str, reason: str, **detail: object) -> RebuildRequest:
@@ -385,7 +443,8 @@ def _write_stamp(cache_dir: Path, now: float, trigger: str) -> bool:
     """Atomically replace the stamp (temp file, then rename); False when the cache dir is unwritable."""
     tmp: str | None = None
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        if not ensure_dir_below_trw(cache_dir):
+            return False
         fd, tmp = tempfile.mkstemp(prefix=".rebuild-requested-", suffix=".tmp", dir=cache_dir)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump({"requested_at_unix": now, "trigger": trigger, "pid": os.getpid()}, handle)

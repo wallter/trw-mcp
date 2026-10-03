@@ -448,3 +448,154 @@ def test_the_suite_guard_reaches_a_child_started_with_a_literal_env(child_env: d
     ).stdout.strip()
 
     assert out == expected
+
+
+# -- UNINSTALL-DISTILL-RACE: the detached build holds a lock uninstall can wait on -----------
+
+
+def test_the_spawned_build_holds_the_rebuild_lock_for_its_lifetime(
+    tmp_path: Path, ports: Ports, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fcntl = pytest.importorskip("fcntl")
+
+    from trw_mcp.tools._distill_spawn import REBUILD_LOCK_REL
+
+    repo, _head = _repo(tmp_path)
+    held: list[int] = []
+
+    def child_keeps_the_lock(argv: list[str], **kwargs: Any) -> _Child:
+        # A real child inherits the descriptor (same open file description, so the flock lives as long as it does):
+        # a dup stands in for that inheritance, because the parent closes its own copy right after the spawn.
+        held.extend(os.dup(fd) for fd in kwargs["pass_fds"])
+        return _Child(pid=4242)
+
+    monkeypatch.setattr(
+        _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=child_keeps_the_lock, which=ports.which, clock=ports.clock)
+    )
+
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+
+    assert outcome.status == "spawned" and len(held) == 1
+    probe = os.open(repo / REBUILD_LOCK_REL, os.O_RDWR)
+    try:
+        with pytest.raises(OSError):  # another locker (an uninstall) is refused while the child lives
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(probe)
+        for fd in held:
+            os.close(fd)
+
+
+def test_a_second_request_while_a_build_is_alive_is_refused_not_stacked(tmp_path: Path, ports: Ports) -> None:
+    fcntl = pytest.importorskip("fcntl")
+
+    from trw_mcp.tools._distill_spawn import REBUILD_LOCK_REL
+
+    repo, _head = _repo(tmp_path)
+    lock = repo / REBUILD_LOCK_REL
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    live_build = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(live_build, fcntl.LOCK_EX)
+    try:
+        outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+    finally:
+        os.close(live_build)
+
+    assert outcome.status == "already_running"
+    assert ports.popen.calls == [], "a second detached build was spawned on top of the live one"
+
+
+def test_trw_removed_between_the_entry_check_and_the_lock_stops_with_no_trw_dir(
+    tmp_path: Path, ports: Ports, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1's repro: uninstall lands after _request's .trw check. No lock, no stamp, no spawn, nothing recreated."""
+    import shutil
+
+    repo, _head = _repo(tmp_path)
+
+    class _ClockThatUninstalls(Clock):
+        def __call__(self) -> float:
+            shutil.rmtree(repo / ".trw")  # the first thing _request does after its checks is read the clock
+            return self.now
+
+    monkeypatch.setattr(
+        _distill_spawn,
+        "DEFAULT_PORTS",
+        SpawnPorts(popen=ports.popen, which=ports.which, clock=_ClockThatUninstalls()),
+    )
+
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+
+    assert outcome.status == "no_trw_dir"
+    assert ports.popen.calls == []
+    assert not (repo / ".trw").exists(), "the stamp or lock recreated .trw after uninstall"
+
+
+# -- UNINSTALL-QUIESCE-KIS (1): the rebuild lock lives beside the cache the build writes ----------------------------------
+
+
+def _linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    repo, _head = _repo(tmp_path)
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "--detach", str(worktree))
+    (worktree / ".trw").mkdir()
+    (worktree / ".trw" / "entitlements.yaml").write_text((repo / ".trw" / "entitlements.yaml").read_text())
+    return repo, worktree
+
+
+def _keep_child_lock(held: list[int]) -> Any:
+    def child(argv: list[str], **kwargs: Any) -> _Child:
+        held.extend(
+            os.dup(fd) for fd in kwargs["pass_fds"]
+        )  # a real child inherits the descriptor; a dup stands in for it
+        return _Child(pid=4242)
+
+    return child
+
+
+def test_a_linked_worktree_build_takes_the_lock_beside_the_shared_cache_it_writes(
+    tmp_path: Path, ports: Ports, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Uninstalling the main checkout waits on <main>/.trw/distill/.sidecar-rebuild.lock; the build from a linked worktree writes the main checkout's cache,
+    so that is the file it must lock (it used to lock the worktree's own, which uninstall never looks at)."""
+    fcntl = pytest.importorskip("fcntl")
+
+    from trw_mcp.tools._distill_spawn import REBUILD_LOCK_REL
+
+    repo, worktree = _linked_worktree(tmp_path)
+    held: list[int] = []
+    monkeypatch.setattr(
+        _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=_keep_child_lock(held), which=ports.which, clock=ports.clock)
+    )
+
+    outcome = request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="hint")
+
+    assert outcome.status == "spawned" and len(held) == 1
+    assert not (worktree / REBUILD_LOCK_REL).exists(), "the worktree's own lock is not the one that protects the cache"
+    probe = os.open(repo / REBUILD_LOCK_REL, os.O_RDWR)
+    try:
+        with pytest.raises(OSError):  # the main checkout's uninstall is refused (it waits) while the build lives
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(probe)
+        for fd in held:
+            os.close(fd)
+
+
+def test_one_build_at_a_time_across_every_worktree_that_shares_the_cache(
+    tmp_path: Path, ports: Ports, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("fcntl")  # the lock under test is flock-based
+    repo, worktree = _linked_worktree(tmp_path)
+    held: list[int] = []
+    monkeypatch.setattr(
+        _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=_keep_child_lock(held), which=ports.which, clock=ports.clock)
+    )
+    assert request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="hint").status == "spawned"
+    try:
+        (_stamp(repo)).unlink(missing_ok=True)  # the rate limit is not what is under test
+        again = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+        assert again.status == "already_running", "two builds were stacked on one shared cache"
+    finally:
+        for fd in held:
+            os.close(fd)

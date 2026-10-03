@@ -208,7 +208,7 @@ def test_failure_after_each_admission_write_rolls_back_everything(scene: SendSce
             return result
 
     def connect(*args: Any, **kwargs: Any) -> Any:
-        return real_connect(*args, **kwargs, factory=Failing)
+        return real_connect(*args, **{**kwargs, "factory": Failing})
 
     before = scene.rows("SELECT * FROM groups")
     with scene.monkeypatch.context() as patch:

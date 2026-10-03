@@ -300,7 +300,14 @@ def _verify_installation(target_dir: Path, result: dict[str, list[str]], *, expe
     client instruction file has TRW markers.  Adds warnings for any failures.
     *expects_mcp_json* is False for a project whose clients keep their MCP entry elsewhere (codex, cursor,
     copilot, ...): a missing ``.mcp.json`` is then the expected state, not a warning.
+
+    First it settles the file-scoped marker refusals (UPDATE-ROLLBACK-FENCED-MARKER): a file left as found
+    because its TRW markers are ambiguous is a warning, so the caller's "any error rolls everything back" rule
+    does not undo a whole update for a file that was never touched.
     """
+    from trw_mcp.state.claude_md._marker_layout import demote_file_scoped_refusals
+
+    demote_file_scoped_refusals(result)
     # Check hooks are executable
     hooks_dir = target_dir / ".claude" / "hooks"
     if hooks_dir.is_dir():

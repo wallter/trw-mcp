@@ -79,7 +79,9 @@ def guarded_bootstrap_write(
     refusal = verdict.refusal
     detail = refusal["detail"] if refusal is not None else "guard declined the write"
     reason = refusal["reason"] if refusal is not None else "unknown"
-    result.setdefault("errors", []).append(f"Refused to write {target} ({reason}): {detail}")
+    from trw_mcp.state.claude_md._marker_layout import refusal_message
+
+    result.setdefault("errors", []).append(refusal_message(f"Refused to write {target} ({reason}): {detail}", reason))
     logger.warning("instruction_bootstrap_write_refused", path=str(target), reason=reason)
     return False
 

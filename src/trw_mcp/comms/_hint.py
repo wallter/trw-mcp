@@ -134,7 +134,7 @@ def pending_hint(
     caller_parent_pid: int | None = None,
 ) -> PendingHint | None:
     from trw_mcp.comms._identity import ELIGIBLE_STATUSES, derive_group_id
-    from trw_mcp.comms._store import database_path
+    from trw_mcp.comms._store import database_path, open_mailbox_ro
     from trw_mcp.formation import FormationError, read_manifest, resolve_manifest_path
 
     try:
@@ -159,7 +159,7 @@ def pending_hint(
         return PendingHint(count=0, watermark="", member_status=status)
     database = database_path(manifest_path)
     try:
-        conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
+        conn = open_mailbox_ro(database)
     except sqlite3.Error:
         # trw-fail-silent-allow: an unopenable mailbox gives no hint; the poller falls back
         return None

@@ -136,6 +136,22 @@ def _fresh_session_label_mark() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_pinned_read_cache() -> Iterator[None]:
+    """TEST ISOLATION ONLY (SERIAL-RUN-LEAKS A): every test starts with an empty pinned-read fd cache.
+
+    ``trw_mcp._checkout_access`` is process-global and frees an entry only when its file is deleted or replaced. pytest
+    keeps every tmp_path for the session, so in one process (a serial run, or one xdist worker over thousands of tests)
+    earlier tests' journals filled its 64 slots and a later journal read failed with read_capacity_exceeded. This
+    does not fix that limit for a long-lived server; the hold-aware eviction slice does.
+    """
+    from tests._checkout_access_state import reset_pinned_reads
+
+    reset_pinned_reads()
+    yield
+    reset_pinned_reads()
+
+
+@pytest.fixture(autouse=True)
 def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Stop every daemon this test's in-process client auto-started, published or not.
 

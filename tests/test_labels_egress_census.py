@@ -69,14 +69,13 @@ GUARDED: dict[Site, Guarded] = {
     ("trw_memory/sync/_remote_fetch.py", "fetch_shared_memories"): Guarded(
         by=(("trw_memory/_client_org_shared.py", "merge_shared_results"),)
     ),
+    # The retry drain was listed as admitted upstream until SYNC-RETRY-LABEL-RECHECK: a row relabelled while its record waited was sent.
+    # It now asks the label of the current row itself.
     ("trw_memory/sync/_remote_publish.py", "_publish_payload_result"): Guarded(
-        by=(("trw_memory/sync/_remote_publish.py", "publish_memory_result"),),
-        admitted_upstream={
-            ("trw_memory/sync/_remote_publish.py", "_drain_retry_queue_with_ids.publish_payload"): (
-                "drains the retry queue, which holds only payloads publish_entry queued after publish_memory_result admitted the row "
-                "and the platform answered retryably"
-            ),
-        },
+        by=(
+            ("trw_memory/sync/_remote_publish.py", "publish_memory_result"),
+            ("trw_memory/sync/_remote_publish.py", "_drain_retry_queue_with_ids.publish_payload"),
+        ),
     ),
 }
 

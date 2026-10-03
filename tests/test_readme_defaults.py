@@ -67,7 +67,9 @@ def test_readme_has_security_defaults_table(readme_text: str) -> None:
     lowered = readme_text.lower()
     assert "security defaults" in lowered
     assert "pii detection" in lowered
-    assert "observe" in lowered  # poisoning observe-mode
+    # UF-MEM-03: the observe-only poisoning detector is gone; the table names what enforces instead.
+    assert "prompt-injection refusal" in lowered and "recall integrity filter | strict" in lowered
+    assert "observe" not in lowered.split("security defaults", 1)[1].split("\n\n", 2)[1]
     assert "0700" in readme_text and "0600" in readme_text
 
 

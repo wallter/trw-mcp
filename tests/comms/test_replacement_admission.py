@@ -169,7 +169,7 @@ def test_failure_after_each_replacement_write_preserves_old_endpoint_and_message
             return result
 
     def connect(*args: Any, **kwargs: Any) -> Any:
-        return real_connect(*args, **kwargs, factory=Failing)
+        return real_connect(*args, **{**kwargs, "factory": Failing})
 
     _endpoints._reset_process_incarnations_for_test()
     scene.actor("impl-2")

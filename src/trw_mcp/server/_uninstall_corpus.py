@@ -14,6 +14,7 @@ import os
 import shlex
 import shutil
 import stat
+import time
 from collections.abc import Callable, Iterator
 from functools import lru_cache
 from importlib import resources
@@ -21,6 +22,9 @@ from pathlib import Path
 
 from trw_mcp.bootstrap._safe_remove import TRASH_DIR_NAME, safe_remove
 from trw_mcp.bootstrap._utils import printable
+from trw_mcp.server._uninstall_quiesce import WRITER_DIRS, WriterStillRunning, quiesced_writers
+
+_RMTREE_ATTEMPTS = 3
 
 # Subpaths of a ``.trw`` dir that hold the durable learning corpus.
 # ``--keep-memory`` preserves these; the blast-radius warning is gated on them.
@@ -93,26 +97,47 @@ def _remove_children(trw_dir: Path, keep: Callable[[str], bool]) -> Iterator[tup
     """
     fd = os.open(trw_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for name in sorted(os.listdir(fd)):
-            if keep(name):
-                continue
-            try:
-                mode = os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode
-                if stat.S_ISLNK(mode):
-                    yield name, "refused: path is a symlink"
-                    continue
-                if stat.S_ISDIR(mode):
-                    shutil.rmtree(name, dir_fd=fd)  # fd-based walk; refuses a symlink swapped in
-                else:
-                    os.unlink(name, dir_fd=fd)
-            except FileNotFoundError:  # trw-fail-silent-allow: already gone is the goal
-                continue
-            except OSError as exc:
-                yield name, f"error removing {name}: {exc}"
-                continue
-            yield name, None
+        try:
+            with quiesced_writers(fd):  # a detached post-commit worker finishes first (UNINSTALL-DISTILL-RACE)
+                yield from _remove_listed_children(fd, keep)
+        except WriterStillRunning as live:  # a holder outlived the wait: keep .trw, say who, remove nothing
+            yield live.lock, str(live)
     finally:
         os.close(fd)
+
+
+def _rmtree_retrying(name: str, fd: int) -> None:
+    """``shutil.rmtree`` relative to *fd*, retried a few times on ``ENOTEMPTY`` (a writer created a file mid-walk)."""
+    for attempt in range(_RMTREE_ATTEMPTS):
+        try:
+            shutil.rmtree(name, dir_fd=fd)
+            return
+        except OSError as exc:
+            if exc.errno != errno.ENOTEMPTY or attempt == _RMTREE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05)
+
+
+def _remove_listed_children(fd: int, keep: Callable[[str], bool]) -> Iterator[tuple[str, str | None]]:
+    # The directories that carry the writer locks go last, so the held locks outlive the rest of the walk.
+    for name in sorted(os.listdir(fd), key=lambda n: (n in WRITER_DIRS, n)):
+        if keep(name):
+            continue
+        try:
+            mode = os.stat(name, dir_fd=fd, follow_symlinks=False).st_mode
+            if stat.S_ISLNK(mode):
+                yield name, "refused: path is a symlink"
+                continue
+            if stat.S_ISDIR(mode):
+                _rmtree_retrying(name, fd)  # fd-based walk; refuses a symlink swapped in
+            else:
+                os.unlink(name, dir_fd=fd)
+        except FileNotFoundError:  # trw-fail-silent-allow: already gone is the goal
+            continue
+        except OSError as exc:
+            yield name, f"error removing {name}: {exc}"
+            continue
+        yield name, None
 
 
 def remove_trw_dir(trw_dir: Path, target: Path, display: Callable[[Path, Path], str]) -> tuple[int, int]:
@@ -133,7 +158,23 @@ def remove_trw_dir(trw_dir: Path, target: Path, display: Callable[[Path, Path], 
     gone = _finish_trash(trw_dir, remove_trw_dir=errors == 0)
     if gone:
         print(f"  Removed: {display(trw_dir, target)}")
+    elif not errors and (left := _left_behind(trw_dir)):
+        # Never success while .trw survives: a TRW background writer recreated these after the walk passed them
+        # (or the platform has no flock to hold its locks), and an emptied-looking ENOTEMPTY would read as done.
+        errors = 1
+        print(
+            f"  Error: {', '.join(left)} left in {display(trw_dir, target)}: a TRW background writer recreated "
+            "them while uninstall ran; run uninstall again"
+        )
     return (1 if gone else 0), errors
+
+
+def _left_behind(trw_dir: Path) -> list[str]:
+    """Names still in *trw_dir* once the walk is done, apart from ``trash`` (reported by :func:`_finish_trash`)."""
+    try:
+        return sorted(e.name for e in os.scandir(trw_dir) if e.name.casefold() != TRASH_DIR_NAME)
+    except OSError:  # trw-fail-silent-allow: the directory is gone or unreadable: nothing is left to name
+        return []
 
 
 #: Top-level ``.trw/`` names TRW creates lazily at runtime and that no scaffold

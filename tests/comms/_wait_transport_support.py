@@ -214,7 +214,7 @@ def _serve(events: int, release: int) -> None:
             state["connections"] -= 1
 
     def connect(*args: Any, **kwargs: Any) -> Any:
-        return original_sqlite(*args, **kwargs, factory=Connection)
+        return original_sqlite(*args, **{**kwargs, "factory": Connection})
 
     def sleep(_seconds: float) -> None:
         emit("sleep", connections=state["connections"], guard=comms._WAIT_GUARD.locked())

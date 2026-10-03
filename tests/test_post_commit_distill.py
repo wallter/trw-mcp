@@ -52,6 +52,7 @@ sys.exit(1 if os.environ.get("FAKE_DISTILL_FAIL") == "1" else 0)
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
+    (root / ".trw").mkdir()  # a TRW project: background writers never create .trw themselves
     for cmd in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
         subprocess.run(["git", *cmd], cwd=root, check=True)
     (root / "a.py").write_text("x = 1\n", encoding="utf-8")
