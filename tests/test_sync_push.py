@@ -46,6 +46,9 @@ def _make_mock_entry(
     entry.id = entry_id
     entry.sync_hash = sync_hash
     entry.sync_seq = sync_seq
+    entry.namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+    entry.tags = []
+    entry.metadata = {}
     entry.to_dict.return_value = {
         "id": entry_id,
         "sync_hash": sync_hash,
@@ -272,7 +275,7 @@ async def test_push_batch_boundary_failure_logs_warning_with_traceback() -> None
 
     with (
         patch("httpx.AsyncClient", mock_client_cls),
-        patch("trw_mcp.sync.push.logger.warning") as mock_warning,
+        patch("trw_mcp.sync._push_batch.logger.warning") as mock_warning,
     ):
         result = await pusher.push_learnings(entries)
 
@@ -575,3 +578,75 @@ async def test_push_body_redacts_a_json_authorization_header_and_tuple_metadata(
     body = json.dumps(mock_client_cls.return_value.__aenter__.return_value.post.call_args.kwargs["json"])
     assert basic not in body and live_key not in body
     assert "Authorization" in body and '"ok"' in body
+
+
+# ── SYNC-PROJECT-IDENTITY (a): every pushed learning says which project wrote it ──────────────────────────────
+
+
+def _serialize_in_project(monkeypatch: pytest.MonkeyPatch, metadata: dict[str, object], *, identity: str) -> dict:
+    from trw_mcp.sync import push as push_module
+    from trw_mcp.sync.push import SyncPusher
+
+    monkeypatch.setattr(push_module, "project_id", lambda _root, *, namespace: identity)
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
+    entry = _make_mock_entry("L-origin", summary="discovery body")
+    entry.to_dict.return_value = {**entry.to_dict.return_value, "namespace": "project:x-1", "metadata": metadata}
+    return pusher._serialize_entry(entry)["metadata"]  # type: ignore[no-any-return,index]
+
+
+def test_a_pushed_learning_names_the_project_that_wrote_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    metadata = _serialize_in_project(monkeypatch, {"source": "unit-test"}, identity="git:0123456789abcdef")
+
+    assert metadata["origin_project"] == "git:0123456789abcdef"
+    assert metadata["source"] == "unit-test"
+
+
+def test_a_row_that_already_records_its_origin_keeps_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A teammate's row merged with a local edit is still the teammate's project's knowledge."""
+    metadata = _serialize_in_project(
+        monkeypatch, {"origin_project": "git:feedfacefeedface"}, identity="git:0123456789abcdef"
+    )
+
+    assert metadata["origin_project"] == "git:feedfacefeedface"
+
+
+def test_a_row_pulled_without_an_origin_is_not_claimed_by_this_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    metadata = _serialize_in_project(monkeypatch, {"origin_project": "unknown"}, identity="git:0123456789abcdef")
+
+    assert metadata["origin_project"] == "unknown"
+
+
+def test_no_id_no_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.sync import push as push_module
+
+    def _boom(_root: object, *, namespace: str) -> str:
+        raise OSError("no git")
+
+    monkeypatch.setattr(push_module, "project_id", _boom)
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
+    metadata = pusher._serialize_entry(_make_mock_entry("L-origin"))["metadata"]
+
+    assert "origin_project" not in metadata  # type: ignore[operator]
+
+
+def test_a_namespace_the_id_cannot_encode_still_pushes_without_an_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Why the fallback catches broadly (FIX062): a lone surrogate in the namespace raises UnicodeEncodeError."""
+    from trw_mcp.state import _project_identity
+    from trw_mcp.sync import push as push_module
+    from trw_mcp.sync.push import SyncPusher
+
+    monkeypatch.setattr(_project_identity, "_roots", lambda _root: [])  # no git: the namespace hash is the id
+    monkeypatch.setattr(push_module, "project_id", _project_identity.project_id)
+    _project_identity.reset_cache()
+    pusher = SyncPusher(
+        backend_url="http://localhost:5002", api_key="test", client_id="sync-test", source_trw_dir=payload_trw_dir()
+    )
+
+    assert pusher._own_project_id("bad\udcff") == ""
+    _project_identity.reset_cache()

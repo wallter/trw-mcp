@@ -119,7 +119,10 @@ class TestNoIntelligenceImports:
 
     def test_import_trw_mcp_succeeds(self) -> None:
         """import trw_mcp works after intelligence code removal."""
-        import trw_mcp  # noqa: F401
+        import trw_mcp
+
+        assert Path(trw_mcp.__file__).resolve().parent == _SRC_ROOT.resolve()
+        assert trw_mcp.__version__ and isinstance(trw_mcp.__version__, str)
 
     def test_package_import_boundaries_are_clean(self) -> None:
         """Coarse package import-boundary policy passes for public/private package seams."""

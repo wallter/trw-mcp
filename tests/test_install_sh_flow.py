@@ -315,7 +315,7 @@ def test_repo_embeddings_failure_fails_the_install_loudly(tmp_path: Path) -> Non
     assert result.returncode != 0, output
     assert "Semantic embeddings are not working" in output, output
     assert "--no-embeddings" in output, output
-    assert "TRW Framework — ready" not in output, output
+    assert "TRW Framework is ready" not in output, output
 
 
 def test_repo_no_embeddings_records_the_choice(tmp_path: Path) -> None:
@@ -343,7 +343,7 @@ def test_repo_migrates_a_store_with_learnings_and_prints_the_rollback(tmp_path: 
     assert "-m trw_mcp.server memory migrate --to user --apply --target-dir" in call, call
     assert "Undo: trw-mcp memory migrate --to user --rollback /p/.trw/memory/migration-1.json" in output, output
     assert "launched by claude (pid 6)" in output, output
-    assert "TRW Framework — ready" in output, output
+    assert "TRW Framework is ready" in output, output
 
 
 def test_repo_nothing_to_migrate_runs_nothing(tmp_path: Path) -> None:
@@ -362,7 +362,7 @@ def test_repo_an_unfinished_migration_fails_the_install(tmp_path: Path, code: in
     assert said in output, output
     assert _MANUAL in output, output
     assert "--force" not in output, output
-    assert "TRW Framework — ready" not in output, output
+    assert "TRW Framework is ready" not in output, output
 
 
 def test_repo_no_migrate_leaves_the_store_and_prints_the_command(tmp_path: Path) -> None:

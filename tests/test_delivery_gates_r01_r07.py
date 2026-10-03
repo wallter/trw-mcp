@@ -646,3 +646,10 @@ class TestCheckpointBlockerWarning:
 
         result = _check_checkpoint_blocker_gate(run_dir, mock_reader)
         assert result is None
+        mock_reader.read_jsonl.assert_called_once()  # the failing read really was reached
+
+        # Contrast: the same mock reading cleanly with a blocker as the last checkpoint does warn.
+        mock_reader.read_jsonl.side_effect = None
+        mock_reader.read_jsonl.return_value = [{"message": "Found a BLOCKER in the build"}]
+        warned = _check_checkpoint_blocker_gate(run_dir, mock_reader)
+        assert warned is not None and "blocker" in warned.lower()

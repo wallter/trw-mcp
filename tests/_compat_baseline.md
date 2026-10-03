@@ -49,6 +49,14 @@ monkeypatch lambdas in unit tests were the only consumers forced to update.
   is `trw-memory/tests/test_remote_admission_single_path.py` plus the three repointed wiring tests in
   `trw-mcp/tests/test_tools_learning_wiring.py`, which still prove `_augment_with_remote` is reached and
   still fail open.
+- `TestRemoteRecallWiring` (`test_tools_learning_wiring.py`), the remote-recall contact-switch tests in
+  `test_platform_trust.py`, the recall entry points in `test_platform_contact_governing_root.py`, and the
+  `[shared]`-row tests in `test_record_surfaced.py`, `test_recall_exposure_attribution.py`,
+  `test_recall_record_type_filter.py`, `test_recall_validity_surfacing.py`, `test_store_contract.py` and
+  `test_store_selection.py` -- removed with `_augment_with_remote` by SHARED-RECALL-LOCAL. The platform's
+  `POST /v1/learnings/search` never ranked by the query, so `trw_recall` is local-only; learnings from the
+  operator's other hosts arrive by team sync and are recalled locally.
+  `TestRecallIsLocalOnly::test_recall_never_asks_the_platform_search_endpoint` holds the deletion.
 
 These paths are omitted rather than left as missing entries that make the FR15 command fail before collection.
 

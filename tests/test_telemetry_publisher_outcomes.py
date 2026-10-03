@@ -80,14 +80,18 @@ class TestPublishNetworkError:
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True, exist_ok=True)
         (entries_dir / "bad.yaml").write_text("impact: [not a float", encoding="utf-8")
+        _write_learning(entries_dir, "good.yaml", _make_learning(impact=0.9))
 
         with (
             patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
             patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", return_value=True),
         ):
             result = publish_learnings()
 
-        assert isinstance(result["errors"], int)
+        # The malformed file is counted as an error; the good learning beside it is still published.
+        assert result["errors"] == 1
+        assert result["published"] == 1
 
 
 class TestPublishAnonymization:

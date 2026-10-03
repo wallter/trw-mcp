@@ -14,11 +14,16 @@ import json
 
 import pytest
 
-pytestmark = pytest.mark.unit
+from tests._layout import MONOREPO_ROOT, requires_monorepo
+
+pytestmark = [pytest.mark.unit, requires_monorepo]
 
 _SIDE = ".trw/contracts/enrollment.globs"
 _MARKER = ".trw/contracts/enrollment.yaml"
-_REPO = __import__("pathlib").Path(__file__).resolve().parents[2]
+if MONOREPO_ROOT is None:
+    # Reads monorepo-only files; the public package (and the release check's export of it) has none of them.
+    pytest.skip("needs the monorepo checkout (public repo is the package alone)", allow_module_level=True)
+_REPO = MONOREPO_ROOT
 _CONTRACT = ".trw/contracts/must-not-happen.yaml"
 
 

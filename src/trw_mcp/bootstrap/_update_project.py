@@ -25,15 +25,18 @@ from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
 from ._client_integrations import run_update_integrations
 from ._namespace_pin import pin_empty_checkout
+from ._template_claude_md import link_claude_md_after_update
 
 # --- from _update_phases (split out for the eLOC ratchet) ---
 from ._update_phases import (
+    relabel_kept_files_that_changed,
     _generate_behavioral_protocol_md as _generate_behavioral_protocol_md,
     _init_result_dict as _init_result_dict,
     _refresh_distill_channels as _refresh_distill_channels,
     _restore_dirty_files as _restore_dirty_files,
     _run_core_update_phases as _run_core_update_phases,
     _RUN_RECORDS as _RUN_RECORDS,
+    _unrecorded_client_notes as _unrecorded_client_notes,
 )
 
 # ---------------------------------------------------------------------------
@@ -110,14 +113,25 @@ from ._version_manifest import (
 )
 from ._client_adoption import adopt_for_update
 from ._tombstones import enforce_and_write_manifest, prepare_update_manifest_state
+from trw_mcp._checkout_write import recording_writes
+
+from ._refused_restore import (
+    UnsavedPreUpdate,
+    copy_now_lines,
+    is_durable_snapshot,
+    record_refused,
+    release_snapshot,
+    retry_refused,
+)
 from ._update_transaction import (
     _TRANSACTION_DIRS as _TRANSACTION_DIRS,
     _TRANSACTION_FILES as _TRANSACTION_FILES,
     _diff_transaction_paths,
     _remove_transaction_path as _remove_transaction_path,
     _restore_transaction_file,
-    _restore_transaction_snapshot as _restore_transaction_snapshot,
     _snapshot_transaction_paths as _snapshot_transaction_paths,
+    _surface_files,
+    _validate_transaction_surface,
     dirty_state,
     park_surface_links,
     run_in_scratch,
@@ -209,19 +223,6 @@ def _run_post_update_phases(
     return retired_pins
 
 
-def _unrecorded_client_notes(detected: list[str], recorded: list[str]) -> list[str]:
-    """One line per client detected here but not recorded: update-project leaves it alone and says how to add it.
-
-    claude-code is skipped: detection reports it for any `.claude/`, which TRW creates for every client.
-    """
-    return [
-        f"{client} is detected here but not recorded for this project, so update-project left it alone; "
-        f"to add it, run: trw-mcp update-project --ide {client}"
-        for client in detected
-        if client not in recorded and client != "claude-code"
-    ]
-
-
 def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list[str]) -> list[str]:
     """Refresh every resolved client's ``.trw/runtime/hook-env.d/<key>.sh`` on every sync.
 
@@ -234,6 +235,39 @@ def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list
     warnings: list[str] = []
     write_hook_env_for_clients(target_dir / ".trw", ide_targets, warnings=warnings)
     return warnings
+
+
+def _rollback_preserves(root: Path, rel: str) -> bool:
+    """True for what the rollback itself never removes: a pruned name (a ``.git`` marker) or anything inside a
+    pruned nested dir. Those were never snapshotted, so the proof check must not move them either."""
+    from ._managed_dirs import _PRUNED_NESTED_DIR_NAMES, _is_pruned_nested_dir
+
+    parts = Path(rel).parts
+    if any(part in _PRUNED_NESTED_DIR_NAMES for part in parts):
+        return True
+    return any(
+        _is_pruned_nested_dir(root.joinpath(*parts[:i]), root, denied_is_marker=True) for i in range(1, len(parts))
+    )
+
+
+def _rollback(root: Path, snapshot_root: Path, result: dict[str, list[str]]) -> None:
+    """Put the snapshot back without ever deleting bytes this run did not write (FB-01-KI1-RACE).
+
+    Each surface name (except what a rollback always preserves) is left INTACT, CLEARED on proof, or KEPT
+    (remove_proven_or_keep); the snapshot is then copied back only into absent names, so one refusal never
+    strands the rest and a writer landing mid-rollback keeps its file. A refused copy-back keeps the snapshot's
+    copy in ``.trw/trash`` and names it (put_back_or_preserve).
+    """
+    from ._restore_proof import Cleared, remove_proven_or_keep, restore_snapshot_exclusive
+
+    _validate_transaction_surface(root, denied_is_marker=True)
+    intact = frozenset(
+        rel
+        for rel in sorted(_surface_files(root, denied_is_marker=True))
+        if _rollback_preserves(root, rel)
+        or remove_proven_or_keep(root, snapshot_root, rel, result["warnings"]) is Cleared.INTACT
+    )
+    restore_snapshot_exclusive(root, snapshot_root, intact, result["warnings"])
 
 
 def _apply_update(
@@ -259,11 +293,17 @@ def _apply_update(
     if (prepared := prepare_update_manifest_state(root, reprovision, result)) is None:
         return
     manifest_hashes, tombstones, skill_dir_snapshot = prepared
+    retry_refused(root, result["warnings"])  # an earlier full-disk rollback's copies, into .trw/trash now
     try:
         snapshot_root = _snapshot_transaction_paths(root)
     except OSError as exc:
         result["errors"].append(f"Failed to snapshot update targets: {exc}")
         return
+    if not is_durable_snapshot(snapshot_root):  # lead r8 L3: the user hears about the fallback
+        result["warnings"].append(
+            f"the TRW user directory is unusable, so this update's snapshot is in the temporary folder "
+            f"{snapshot_root}; if the update fails and is refused there, no retry record is kept"
+        )
     changes: dict[str, str] = {}
     # Every renderer that resolves "the project" (instruction sync, manifest
     # baselines, store counts) must resolve *root* — for a dry run the scratch
@@ -271,7 +311,7 @@ def _apply_update(
     # context-locally (B71-118): process-wide os.environ would make every other
     # thread in this process (an MCP request, an overlapping install) resolve
     # *root* as its own project for the whole writer phase.
-    with installing_into(root):
+    with installing_into(root), recording_writes():
         # Set only when the whole writer phase finished: an interrupt (a BaseException
         # such as KeyboardInterrupt) bypasses the handler below and never records an
         # error, so the rollback below keys on this too — parked links come back on
@@ -296,7 +336,7 @@ def _apply_update(
             changes = _diff_transaction_paths(snapshot_root, root)
             if changes.keys() <= _RUN_RECORDS:
                 for rel in changes:
-                    _restore_transaction_file(root, snapshot_root, rel)
+                    _restore_transaction_file(root, snapshot_root, rel, result["warnings"])
                 changes = {}
             completed = True
         except Exception as exc:  # justified: fail-open — errors captured here, rolled back in finally
@@ -307,7 +347,7 @@ def _apply_update(
             if result["errors"] or not completed:
                 changes = {}
                 try:
-                    _restore_transaction_snapshot(root, snapshot_root)
+                    _rollback(root, snapshot_root, result)
                     result["warnings"].append("update-project rolled back managed directories after write failure")
                 except OSError as exc:
                     # The snapshot is the only copy of what the rollback could not put
@@ -317,6 +357,13 @@ def _apply_update(
                     result["errors"].append(
                         f"Failed to restore update snapshot: {exc}; recovery copy kept at {snapshot_root}"
                     )
+                    if isinstance(exc, UnsavedPreUpdate):  # copy-now lines + a retry record (durable only)
+                        result["errors"].extend(copy_now_lines(root, snapshot_root, exc.rels))
+                        if not is_durable_snapshot(snapshot_root):
+                            result["errors"].append("no retry record: the snapshot is in the temporary folder")
+                        elif record_refused(root, snapshot_root, exc.rels) is None:
+                            result["errors"].append("the retry record could not be written; copy those files now")
+            release_snapshot(snapshot_root)  # this update is over: its snapshot is no longer live (E2E-INC-143)
             if not keep_snapshot:
                 remove_tree(snapshot_root, purpose="update snapshot")
     for key, kind in (("updated", "updated"), ("created", "created"), ("cleaned", "deleted")):
@@ -348,7 +395,9 @@ def update_project(
 
     Smart update: AGENTS.md -- replaces content between ``trw:start``/``trw:end``
     markers while preserving all user-written sections. A root ``CLAUDE.md`` is
-    never touched (doctor's ``claude_md_masks_agents_md`` row reports one).
+    never created, deleted or moved; in one the project has, only TRW's marked
+    block (an import of ``.trw/INSTRUCTIONS.md``) is added or refreshed, after the
+    update committed.
 
     Args:
         target_dir: Root of the target git repository.
@@ -429,8 +478,8 @@ def update_project(
                 ),
             )
             result["would_run"] = external
-            # The scratch copy's trash captures went with it: the preview names no capture folder (S8a r1 KI3).
-            result.pop("trash_captures", None)
+            result.pop("_kept_digests", None)  # the scratch copy's bytes say nothing about the real files
+            link_claude_md_after_update(target_dir, result, dry_run=True)
             # The scratch copy holds only the managed surface, so create-only files outside it (the learnings
             # index) were never seen there; the real run reports them preserved, so the preview must too.
             for rel_path in sorted(_NEVER_OVERWRITE):
@@ -447,6 +496,7 @@ def update_project(
                 dirty=dirty,
                 reprovision=reprovision,
             )
+            relabel_kept_files_that_changed(target_dir, result)  # the final bytes, after any rollback
             # Effects outside the managed surface run only once the transaction
             # committed; context files are live session state rollback never covers.
             if not result["errors"]:
@@ -455,6 +505,7 @@ def update_project(
                         on_progress("Phase", "Reinstalling package...")
                     _pip_install_package(target_dir, result)
                 _update_git_hooks(target_dir, result)
+                link_claude_md_after_update(target_dir, result)
                 pin_empty_checkout(target_dir, result)  # PRD-CORE-280 FR06: the real store, never the scratch copy
                 if on_progress:
                     on_progress("Phase", "Running auto-maintenance...")

@@ -102,10 +102,18 @@ class TestBestEffortMigrationCheck:
     def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no root")
+
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", _boom)
         config = TRWConfig(migration_gate_enabled=True)
         failures: list[ValidationFailure] = []
         _best_effort_migration_check(config, failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure
 
 
 class TestBestEffortDryCheck:
@@ -121,10 +129,18 @@ class TestBestEffortDryCheck:
     def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no root")
+
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", _boom)
         config = TRWConfig(dry_check_enabled=True)
         failures: list[ValidationFailure] = []
         _best_effort_dry_check(config, failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure
 
 
 class TestBestEffortSemanticCheck:
@@ -140,7 +156,15 @@ class TestBestEffortSemanticCheck:
     def test_exception_in_check_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no root")
+
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", _boom)
         config = TRWConfig(semantic_checks_enabled=True)
         failures: list[ValidationFailure] = []
         _best_effort_semantic_check(config, failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure

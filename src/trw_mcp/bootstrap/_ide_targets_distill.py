@@ -47,7 +47,7 @@ def _update_codex_distill_channels(
         from ._codex_distill_channels import install_codex_distill_channels
 
         dc = install_codex_distill_channels(target_dir)
-        for key in ("created", "updated", "preserved", "errors", "removed", "trashed"):
+        for key in ("created", "updated", "preserved", "errors", "removed", "retired"):
             items = dc.get(key)
             if isinstance(items, list):
                 result.setdefault(key, []).extend(items)

@@ -25,6 +25,7 @@ _PEM_BODY = "MIIB" * 20
 # (case id, secret text, the substring that must not survive anywhere on disk)
 _BLOCKED: list[tuple[str, str, str]] = [
     ("sk-ant", "sk-" + "ant-api03-" + "A" * 93, "ant-api03-" + "A" * 93),
+    ("sk-ant-invisible-split", "sk-" + "\u200b" + "ant-api03-" + "A" * 93, "ant-api03-" + "A" * 93),
     ("trw", "trw_" + "FAKE" + "a" * 30, "FAKE" + "a" * 30),
     ("aiza", "AIza" + "B" * 35, "B" * 35),
     (

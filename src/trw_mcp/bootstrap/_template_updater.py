@@ -12,8 +12,8 @@ lives in ``_ide_targets.py`` and is re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-import hashlib
 import os
+import shlex
 import stat
 from pathlib import Path
 
@@ -23,6 +23,9 @@ from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.canons.registry import install_view, load_registry
 
 from ._gitignore_merge import _ensure_credentials_gitignored as _ensure_credentials_gitignored
+from ._guarded_refresh import _claim_for_refresh as _claim_for_refresh
+from ._guarded_refresh import _create_if_absent as _create_if_absent
+from ._guarded_refresh import _sha_of_regular_file as _sha_of_regular_file
 from ._ide_targets import _extract_trw_section_content as _extract_trw_section_content
 from ._ide_targets import _run_claude_md_sync as _run_claude_md_sync
 from ._ide_targets import _update_antigravity_artifacts as _update_antigravity_artifacts
@@ -31,7 +34,8 @@ from ._ide_targets import _update_config_target_platforms as _update_config_targ
 from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
-from ._safe_remove import path_refusal, remove_if_hash
+from ._retire import as_retirement, record_retirement, retire_file
+from ._safe_remove import path_refusal
 from ._settings_merge import _merge_settings_json as _merge_settings_json
 from ._template_claude_md import (
     _TRW_END_MARKER,
@@ -170,6 +174,7 @@ def _guarded_copy_update(
     *,
     make_executable: bool = False,
     on_progress: ProgressCallback = None,
+    root: Path | None = None,
 ) -> None:
     """Copy *src*→*dest* unless the user edited *dest* since last install.
 
@@ -189,8 +194,19 @@ def _guarded_copy_update(
     content, it fails toward preservation.
     """
     framework_hashes = _framework_content_hashes(src)
+    # Hashed BEFORE the check: the bytes the check approves are the only bytes the refresh may replace.
+    checked = _sha_of_regular_file(dest)
+    absent = not os.path.lexists(dest)
     if _is_user_modified(dest, manifest_key, manifest_hashes, framework_hashes=framework_hashes):
         logger.info("artifact_user_modified", path=str(dest))
+        result.setdefault("modified", []).append(str(dest))
+        return
+    if root is not None and absent:  # the check saw no file: create it only if it is still absent (test_E)
+        _create_if_absent(src, dest, result, make_executable=make_executable)
+        return
+    claim_needed = root is not None and checked is not None and not _files_identical(src, dest)
+    if claim_needed and not _claim_for_refresh(dest, root, checked, manifest_key):  # type: ignore[arg-type]
+        logger.info("artifact_changed_during_update", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
         return
     _update_or_report(src, dest, result, make_executable=make_executable, on_progress=on_progress)
@@ -246,6 +262,7 @@ def _update_hooks(
             manifest_hashes,
             make_executable=True,
             on_progress=on_progress,
+            root=target_dir,
         )
     _rebless_intent_hook_digest(target_dir, result)
 
@@ -266,36 +283,21 @@ def _withdraw_retired_hooks(
         if "/" in name or not name.endswith(".sh") or name in shipped or name in _CC03_HOOKS:
             continue
         rel = f".claude/hooks/{name}"
-        # Rechecked per file, before the read and the unlink: the manifest key is data, not a trusted path.
-        refusal = path_refusal(dest, target_dir)
-        if refusal:
-            result.setdefault("warnings", []).append(f"{rel}: left untouched ({refusal})")
-            continue
         if not dest.is_file():
             continue
-        # The pre-check keeps an edited hook out of trash; remove_if_hash re-verifies after capture and
-        # never unlinks, so an edit or open-fd write racing this step keeps its bytes (HB-2).
-        try:
-            unedited = hashlib.sha256(dest.read_bytes()).hexdigest() == recorded
-        except OSError as exc:  # unreadable: keep it and say so, never abort the update
-            result.setdefault("warnings", []).append(f"{rel}: left untouched (could not read it: {exc})")
-            continue
-        if unedited:
-            outcome = remove_if_hash(dest, target_dir, recorded, key=rel)
-            where = outcome.retained_at or ".trw/trash (exact folder unknown)"
-            if outcome.status == "removed":
-                result.setdefault("removed", []).append(rel)
-                result.setdefault("trashed", []).append(rel)
-            elif outcome.status == "retained":
-                result.setdefault("warnings", []).append(
-                    f"{rel}: kept your version in {where} ({outcome.reason}); nothing was overwritten"
-                )
-            elif outcome.status == "kept" and outcome.published is None and outcome.retained_at is not None:
-                result.setdefault("warnings", []).append(f"{rel}: kept ({outcome.reason}); a copy is in {where}")
-            elif outcome.status == "kept":
-                result.setdefault("warnings", []).append(f"{rel}: kept ({outcome.reason})")
-        else:
-            result.setdefault("warnings", []).append(f"{rel}: no longer shipped by TRW; kept because it was edited")
+        outcome = retire_file(dest, target_dir, {recorded})
+        if outcome.status in ("removed", "git"):
+            result.setdefault("removed", []).append(rel)
+            record_retirement(result, as_retirement(rel, outcome))
+        elif outcome.status == "kept":
+            what = (
+                "kept because it was edited"
+                if outcome.why.startswith("not TRW's")
+                else f"left untouched ({outcome.why})"
+            )
+            result.setdefault("warnings", []).append(
+                f"{rel}: no longer shipped by TRW; {what}; to remove it yourself run: rm {shlex.quote(rel)}"
+            )
 
 
 def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) -> None:
@@ -367,6 +369,7 @@ def _update_skills(
                             result,
                             manifest_hashes,
                             on_progress=on_progress,
+                            root=target_dir,
                         )
 
 
@@ -558,9 +561,8 @@ def _update_mcp_config(
         if agents_removed:
             result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
 
-    # TRW 8.0: claude-code's carrier is AGENTS.md, which Claude Code reads
-    # natively. A root CLAUDE.md is never touched; doctor's
-    # claude_md_masks_agents_md row reports one that hides AGENTS.md.
+    # claude-code's carrier is AGENTS.md, which Claude Code reads natively. A root CLAUDE.md is never created or
+    # deleted; TRW's marked block is kept in one that exists after the update commits (_update_project).
     if claude_code_is_claimed(target_dir):
         write_claude_code_agents_md(target_dir, result)
         if on_progress and str(target_dir / "AGENTS.md") in result.get("updated", []):

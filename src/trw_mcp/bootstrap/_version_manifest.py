@@ -610,14 +610,13 @@ def preserve_uncommitted_changes(
     from ._dirty_refresh import refresh_loses_nothing
     from ._update_transaction import _file_signature, _is_under_pruned_dir, _restore_transaction_file
 
-    # A path remove_if_hash moved to .trw/trash this run was proven, from its captured bytes, to be TRW's
-    # unchanged file, and those bytes are kept in trash: restoring it would re-deploy a withdrawn hook and
-    # add a fresh capture on every update.
-    trashed = set(result.get("trashed", []))
+    # A path retired in place this run was proven TRW's, or is committed in git: restoring it would
+    # re-deploy a withdrawn hook on every update.
+    retired = set(result.get("retired", []))
     for rel in sorted(dirty):
         if _is_under_pruned_dir(target_dir, rel):  # never snapshotted, never written: not ours to inspect
             continue
-        if rel in trashed:
+        if rel in retired:
             continue
         before, after = snapshot_root / rel, target_dir / rel
         if rel == INSTRUCTIONS_RELPATH or _file_signature(before) == _file_signature(after):
@@ -639,5 +638,5 @@ def preserve_uncommitted_changes(
             recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
             if recorded == hashlib.sha256(before.read_bytes()).hexdigest():
                 continue
-        _restore_transaction_file(target_dir, snapshot_root, rel)
+        _restore_transaction_file(target_dir, snapshot_root, rel, result.setdefault("warnings", []))
         result.setdefault("preserved", []).append(f"{rel} (uncommitted_changes)")

@@ -38,7 +38,11 @@ UNSCREENED_BODIES: dict[str, str] = {
 
 @pytest.mark.parametrize("body", UNSCREENED_BODIES.values(), ids=list(UNSCREENED_BODIES))
 def test_validate_reads_the_bodys_bytes_and_never_its_meaning(body: str) -> None:
-    Envelope("impl-2", "key", body, "request", "on_demand").validate()
+    assert Envelope("impl-2", "key", body, "request", "on_demand").validate() is None
+    # Control: the same body is still read as bytes, so one unencodable character is refused.
+    with pytest.raises(AdmissionError) as invalid:
+        Envelope("impl-2", "key", body + "\ud800", "request", "on_demand").validate()
+    assert invalid.value.reason == "invalid_utf8"
 
 
 @pytest.mark.parametrize("body", UNSCREENED_BODIES.values(), ids=list(UNSCREENED_BODIES))

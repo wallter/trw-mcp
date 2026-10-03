@@ -16,7 +16,7 @@ __all__ = ["add_memory_subcommands", "add_models_subcommands"]
 def add_memory_subcommands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``memory token``, ``memory migrate`` and ``memory reembed``."""
+    """Register ``memory token``, ``migrate``, ``reembed`` and ``repair-anchors``."""
     memory_parser = subparsers.add_parser("memory", help="Memory daemon grants and store migration for this checkout")
     memory_sub = memory_parser.add_subparsers(dest="memory_command")
     token_parser = memory_sub.add_parser(
@@ -44,6 +44,11 @@ def add_memory_subcommands(
     )
     reembed_parser.add_argument("--target-dir", default=".", help="Checkout root (default: .)")
     reembed_parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
+    repair_parser = memory_sub.add_parser(
+        "repair-anchors", help="Rewrite or drop this checkout's machine-path anchors until the repair completes"
+    )
+    repair_parser.add_argument("--target-dir", default=".", help="Checkout root (default: .)")
+    repair_parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
 
 
 def add_models_subcommands(

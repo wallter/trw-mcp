@@ -111,11 +111,6 @@ _TOOL_OWNER: dict[str, str] = {
     "trw_dispatch": "tools.dispatch",
 }
 
-#: Deprecated tools (still registered, in the removal queue). Empty since the
-#: former deprecated alias of the instructions-sync tool (PRD-CORE-218 §4) was
-#: deleted outright (PRD-CORE-300 S6c) rather than merely marked deprecated.
-_DEPRECATED_TOOLS: frozenset[str] = frozenset()
-
 _MANIFEST_VALIDATION_REF = "trw-mcp/tests/test_tool_presets.py::test_prd_core_218_fr01"
 
 
@@ -126,7 +121,7 @@ def _build_tool_manifest() -> tuple[SurfaceManifestEntry, ...]:
             kind=SurfaceKind.TOOL,
             owner=_TOOL_OWNER[name],
             pack=pack,
-            lifecycle=(SurfaceLifecycle.DEPRECATED if name in _DEPRECATED_TOOLS else SurfaceLifecycle.ACTIVE),
+            lifecycle=SurfaceLifecycle.ACTIVE,
             validation_reference=_MANIFEST_VALIDATION_REF,
         )
         for pack, tools in PACK_TOOLS.items()

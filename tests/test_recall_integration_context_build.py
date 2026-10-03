@@ -38,8 +38,14 @@ def test_recall_context_returns_none_when_empty(tmp_path: Path) -> None:
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         ctx = build_recall_context(trw_dir, "src")
+        assert ctx is None
 
-    assert ctx is None
+        # Contrast: the same call with a modified file in git yields a populated context.
+        mock_run.return_value = MagicMock(returncode=0, stdout="src/auth/middleware.py\n")
+        populated = build_recall_context(trw_dir, "src")
+
+    assert populated is not None
+    assert "auth" in populated.active_domains
 
 
 def test_build_recall_context_ignores_a_cache_with_bandit_params(tmp_path: Path) -> None:
@@ -54,8 +60,15 @@ def test_build_recall_context_ignores_a_cache_with_bandit_params(tmp_path: Path)
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         ctx = build_recall_context(trw_dir, "src")
+        assert ctx is None
+        assert "L-boosted" in (trw_dir / "intel-cache.json").read_text(encoding="utf-8")  # the cache is real
 
-    assert ctx is None
+        # Contrast: with a modified file the cache does not suppress the context.
+        mock_run.return_value = MagicMock(returncode=0, stdout="src/auth/middleware.py\n")
+        populated = build_recall_context(trw_dir, "src")
+
+    assert populated is not None
+    assert "auth" in populated.active_domains
 
 
 def test_recall_context_git_failure_graceful(tmp_path: Path) -> None:

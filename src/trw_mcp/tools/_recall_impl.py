@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from trw_memory.labels import Surface
 from trw_memory.retrieval.recall_policy import RECALL_PREFETCH_MULTIPLIER
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallResultDict
 from trw_mcp.scoring._recall import RecallContext
-from trw_mcp.state._platform_trust import platform_contact_enabled
+from trw_mcp.state._recall_admission import label_scope
+from trw_mcp.state._session_mark import session_mark
 
 # PRD-CORE-146 follow-up: build_recall_context was relocated to
 # ``trw_mcp.state.recall_context`` so state/ callers no longer need an
@@ -96,8 +98,7 @@ def execute_recall(
 
     recall_fn = _adapter_recall or _default_recall
     # PRD-CORE-125-FR03: off, nothing is retrieved and the envelope is otherwise normal.
-    recall_on = learnings_injection_allowed(config, "tool")
-    if not recall_on:
+    if not learnings_injection_allowed(config, "tool"):
         recall_fn = lambda *_a, **_k: []  # noqa: E731
     rank_fn: Callable[..., list[dict[str, object]]] = _rank_by_utility or _default_rank
 
@@ -128,6 +129,13 @@ def execute_recall(
         max_results = config.recall_max_results
     is_wildcard = query.strip() in ("*", "")
     query_tokens = [] if is_wildcard else query.lower().split()
+    # SHARED-RECALL-LOCAL: learnings from the operator's other hosts arrive by team pull;
+    # catch a stale one up first, bounded, and answer from local rows when it runs long.
+    fresh_pull = None
+    if not is_wildcard and not _read_only:
+        from trw_mcp.sync import _fresh_pull
+
+        fresh_pull = _fresh_pull.ensure_fresh(trw_dir, config)
 
     # Build recall context for contextual boosting (PRD-CORE-102)
     recall_context: RecallContext | None = None
@@ -164,7 +172,9 @@ def execute_recall(
     from trw_mcp.state._recall_signals import recall_signal_scope
 
     pop_store_error()  # report only THIS call's store failure, never one left by an earlier recall
-    with recall_signal_scope(query):
+    # PRD-SEC-023 FR03: trw_recall is the one surface where the agent ASKED, so it admits up to agent_max (personal by default); everything
+    # else keeps the auto default. The scope counts what the labels withheld, as a number only.
+    with recall_signal_scope(query), label_scope(Surface.AGENT) as withheld:
         matching_learnings = recall_fn(trw_dir, **recall_kwargs)
         store_error = pop_store_error()
 
@@ -172,13 +182,6 @@ def execute_recall(
         topic_filter_warning = ""
         if topic is not None:
             topic_filter_warning = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
-
-        # Augment local results with remote shared learnings (PRD-CORE-033)
-        remote_recall_status: dict[str, object] | None = None
-        if recall_on and not is_wildcard:
-            matching_learnings, remote_recall_status = _augment_with_remote(query, matching_learnings)
-        if record_type is not None:  # a shared row without a type is not known to match, so it is left out
-            matching_learnings = [row for row in matching_learnings if row.get("type") == record_type]
 
         # Qualify stored evidence before the one authoritative final ranking.
         ranked_learnings = _verify_assertions(
@@ -191,7 +194,9 @@ def execute_recall(
     # rows synced from other projects penalized.
     from trw_mcp.tools._recall_order import order_ranked_for_response
 
-    ranked_learnings = order_ranked_for_response(ranked_learnings, deprioritized_ids)
+    ranked_learnings = order_ranked_for_response(
+        ranked_learnings, deprioritized_ids, all_projects=bool(getattr(config, "team_sync_all_projects", False))
+    )
 
     # F-DEDUP-001: collapse near-duplicate entries on the ranked candidate set
     # BEFORE the cap, so N near-identical copies of one finding can't crowd out
@@ -208,14 +213,18 @@ def execute_recall(
     # presenter so the byte budget covers them.
     if topic_filter_warning:
         recall_result["topic_filter_warning"] = topic_filter_warning
-    if remote_recall_status is not None:
-        recall_result["remote_recall"] = remote_recall_status
+    if fresh_pull is not None and fresh_pull.get("status") in ("timeout", "in_flight", "pull_failed", "failed"):
+        recall_result["fresh_pull"] = fresh_pull  # only when recall may be missing another host's rows
     retrieval = retrieval_note(trw_dir, query)
     if retrieval is not None:
         recall_result["retrieval_note"] = retrieval
     if store_error:
         # An unopenable store is not an empty one: say so, or zero results read as "nothing learned".
         recall_result["store_unavailable"] = store_error
+    if withheld.count:
+        recall_result["withheld_by_label"] = withheld.count
+    if session_label := session_mark().reported():
+        recall_result["session_label"] = session_label  # PRD-SEC-023 FR04: absent while the session is still at team
     if not _read_only:
         # Row 3: attaching the status line increments the ceremony tool-call counter.
         from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
@@ -240,10 +249,7 @@ def execute_recall(
     if surfaced_ids and not _read_only:
         from trw_mcp.state import memory_adapter
 
-        # A shared (remote) row is not a local row: its id may collide with one
-        # this checkout holds, which was not shown and must not be counted.
-        local_ids = [str(entry["id"]) for entry in shown if entry.get("id") and entry.get("source") != "shared"]
-        memory_adapter.record_surfaced(trw_dir, local_ids)
+        memory_adapter.record_surfaced(trw_dir, surfaced_ids)
         _track_recall(surfaced_ids, query)
 
     # PRD-CORE-236: counters a caller cannot act on are logged, not returned.
@@ -274,9 +280,10 @@ def recall_by_ids(
     from trw_mcp.tools._recall_assertion_verification import qualify_stored_evidence
     from trw_mcp.tools._recall_projection import strip_internal_response_fields
 
-    admitted = {
-        entry.id: entry for entry in fetch_admitted(trw_dir, ids, status=status or "active")
-    }  # search's FIX-071 default
+    with label_scope(Surface.AGENT) as withheld:
+        admitted = {
+            entry.id: entry for entry in fetch_admitted(trw_dir, ids, status=status or "active")
+        }  # search's FIX-071 default
     rows: list[dict[str, object]] = []
     missing: list[str] = []
     for learning_id in dict.fromkeys(ids):
@@ -291,6 +298,10 @@ def recall_by_ids(
         "learnings": strip_internal_response_fields(rows, config.recall_internal_fields),
         "total_matches": len(rows),
     }
+    if withheld.count:
+        result["withheld_by_label"] = withheld.count  # PRD-SEC-023 FR03: a count only; the ids stay under missing_ids
+    if session_label := session_mark().reported():
+        result["session_label"] = session_label
     if missing:
         # INC-119 b: "missing" also covers a row the requested status filtered out. FR01 keeps a refused row
         # indistinguishable from an absent one, so say what the list means instead of confirming anything.
@@ -411,80 +422,6 @@ def _track_recall(matched_ids: list[str], query: str) -> None:
             _record_recall(lid, query)
     except (ImportError, OSError, RuntimeError, ValueError, TypeError):
         logger.debug("recall_tracking_failed", exc_info=True)
-
-
-def _augment_with_remote(
-    query: str,
-    matching_learnings: list[dict[str, object]],
-) -> tuple[list[dict[str, object]], dict[str, object] | None]:
-    """Augment local results with remote shared learnings (PRD-CORE-033).
-
-    Returns the (possibly augmented) learnings plus a ``remote_recall`` status
-    payload when the remote leg was incomplete, failed, or returned records
-    without temporal validation. ``None`` means no advisory is needed. The caller puts that payload on the response so
-    a fetch that raised is not indistinguishable from an empty remote corpus
-    (wiring-defect pattern P5: the warning log never reached the agent).
-
-    PRD-CORE-245 FR06: this reaches the platform through trw-memory's
-    ``fetch_shared_memories``, which is now the ONE client for the platform
-    learning-search endpoint and runs every result through the admission gate
-    before returning it. The duplicate client this used to call
-    (``trw_mcp.telemetry.remote_recall``) is deleted: it had a divergent
-    redaction posture and no gate at all, so unvetted peer text reached agent
-    context directly.
-    """
-    from trw_mcp.state._paths import resolve_trw_dir
-
-    # Census-named exception: the query is agent-typed, so its source is the caller's project,
-    # resolved ONCE -- the store the answers are admitted into. No .trw there: nothing is asked.
-    trw_dir = resolve_trw_dir()
-    if not platform_contact_enabled(trw_dir):  # the operator's egress switch: the query text never leaves the box
-        return matching_learnings, None
-    try:
-        from trw_memory.models.config import MemoryConfig
-        from trw_memory.sync import fetch_shared_memories
-
-        from trw_mcp.state._store_selection import selected_store
-
-        cfg = MemoryConfig(project_root=str(trw_dir.parent))  # trw-memory's switch reads the same project
-        # The checkout's store runs the admission gate, in-process or in the daemon
-        # (PRD-CORE-280 FR01); a fetch it cannot gate raises and is reported below.
-        store, _ = selected_store(trw_dir)
-        remote = fetch_shared_memories(query, cfg, admit=store.admit_shared)
-        status: dict[str, object] | None = None
-        if remote.status not in {"ok", "disabled"}:
-            status = {"status": remote.status, "fetched": remote.fetched, "refused": remote.refused}
-            # ``remote.results`` being empty has several causes and they are not
-            # interchangeable: nothing matched, nothing was asked, the platform
-            # did not answer, or the admission gate refused everything it sent.
-            logger.warning(
-                "remote_recall_incomplete",
-                component="recall",
-                op="augment_with_remote",
-                outcome=remote.status,
-                fetched=remote.fetched,
-                refused=remote.refused,
-            )
-        if remote.results:
-            from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD
-
-            # Admission verifies content safety, not a peer's claimed temporal
-            # eligibility. Only the local producer may supply this marker.
-            sanitized = [{k: v for k, v in row.items() if k != TEMPORAL_ELIGIBILITY_FIELD} for row in remote.results]
-            status = dict(status or {"status": remote.status, "fetched": remote.fetched, "refused": remote.refused})
-            status["temporal_coverage"] = "not_evaluated"
-            return list(matching_learnings) + sanitized, status
-        return list(matching_learnings), status
-    except Exception as exc:  # justified: boundary, remote recall hits network/auth
-        logger.warning(
-            "remote_recall_failed_unexpected",
-            component="recall",
-            op="augment_with_remote",
-            outcome="fail_open",
-            query_excerpt=query[:80],
-            exc_info=True,
-        )
-        return list(matching_learnings), {"status": "failed", "reason": type(exc).__name__}
 
 
 # Historical facade imports remain compatible; recall now interprets stored

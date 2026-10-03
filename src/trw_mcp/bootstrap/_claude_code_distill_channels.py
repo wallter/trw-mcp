@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shlex
 import stat
 from pathlib import Path
 
@@ -34,7 +35,8 @@ import structlog
 from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result
-from trw_mcp.bootstrap._safe_remove import path_refusal, remove_if_hash
+from trw_mcp.bootstrap._retire import as_retirement, record_retirement, retire_file
+from trw_mcp.bootstrap._safe_remove import path_refusal
 from trw_mcp.bootstrap._settings_merge import _hook_entry_identity, _set_hook_registration
 from trw_mcp.channels._manifest_loader import ManifestValidationError
 from trw_mcp.channels.claude_code._explorer_subagent import (
@@ -117,40 +119,20 @@ def _withdraw_hook(repo_root: Path, hook_name: str, result: dict[str, list[str]]
     """Remove the installed copy of *hook_name* if it is still the bundled bytes."""
     dest = repo_root / ".claude" / "hooks" / hook_name
     rel = str(dest.relative_to(repo_root))
-    refusal = path_refusal(dest, repo_root)  # a symlinked hook (or parent) is never followed or unlinked
-    if refusal:
-        result.setdefault("warnings", []).append(f"{rel}: left untouched ({refusal})")
-        return
     if not dest.is_file():
         return
     content = _get_hook_content(hook_name)
     if content is None:  # no bundled bytes to prove ownership against: keep it
         return
-    bundled = content.encode("utf-8")
-    try:
-        unedited = dest.read_bytes() == bundled
-    except OSError as exc:  # trw-fail-silent-allow: reported as a warning; the hook is kept, never guessed at
-        result.setdefault("warnings", []).append(f"{rel}: left untouched (could not read it: {exc})")
-        return
-    if not unedited:
-        result["preserved"].append(rel)
-        return
-    # remove_if_hash captures into .trw/trash, re-verifies there and links back on a mismatch; it never
-    # unlinks, so an edit or open-fd write racing this step keeps its bytes (HB-2).
-    outcome = remove_if_hash(dest, repo_root, hashlib.sha256(bundled).hexdigest(), key=rel)
-    if outcome.status == "removed":
+    outcome = retire_file(dest, repo_root, {hashlib.sha256(content.encode("utf-8")).hexdigest()})  # refuses symlinks
+    if outcome.status in ("removed", "git"):
         result.setdefault("removed", []).append(rel)
-        result.setdefault("trashed", []).append(rel)
-    elif outcome.status == "kept" and outcome.published is not None:
-        result["preserved"].append(rel)  # changed at the act and put back where it was
-    elif outcome.status == "retained" or outcome.retained_at is not None:
-        # The bytes were captured but are not back at their name (could not restore, or the folder moved).
-        where = outcome.retained_at or ".trw/trash (exact folder unknown)"
+        record_retirement(result, as_retirement(rel, outcome))
+    elif outcome.status == "kept":
+        result["preserved"].append(rel)
         result.setdefault("warnings", []).append(
-            f"{rel}: moved to .trw/trash and not put back ({outcome.reason}); your copy is in {where}"
+            f"{rel}: kept ({outcome.why}); to remove it yourself run: rm {shlex.quote(rel)}"
         )
-    else:  # kept before any capture: nothing was moved
-        result.setdefault("warnings", []).append(f"{rel}: left untouched ({outcome.reason})")
 
 
 def _restore_exec_bit(dest: Path, hook_name: str, rel: str, result: dict[str, list[str]]) -> bool:
@@ -215,7 +197,8 @@ def _install_hook(
                         f"{rel}: your edited copy is not executable (chmod +x {rel})"
                     )
                 return
-        write_checkout_file(repo_root, dest, content)
+        # Bytes, never str: a str write gets CRLF on Windows (UF-BOOT-07-KI1-LEGACY-CRLF).
+        write_checkout_file(repo_root, dest, content.encode("utf-8"))
         # Make shell scripts executable
         if hook_name.endswith(".sh"):
             dest.chmod(dest.stat().st_mode | 0o111)
@@ -358,10 +341,8 @@ def install_claude_code_distill_channels(
                 from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes, _read_manifest
 
                 manifest_hashes = _manifest_content_hashes(_read_manifest(target_dir))
-            if withdraw_cc05_subagent_if_unedited(target_dir, manifest_hashes):
+            if withdraw_cc05_subagent_if_unedited(target_dir, manifest_hashes, result):
                 result["updated"].append(EXPLORER_AGENT_RELPATH)
-                # Captured into .trw/trash: the uncommitted-changes guard must not restore it.
-                result.setdefault("trashed", []).append(EXPLORER_AGENT_RELPATH)
     except Exception as exc:  # justified: fail-open, subagent is best-effort
         log.warning("cc05_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"CC-05 subagent install failed: {exc}")

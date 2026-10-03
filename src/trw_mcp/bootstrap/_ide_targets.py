@@ -34,9 +34,9 @@ logger = structlog.get_logger(__name__)
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 
-# ``trashed`` is what tells the uncommitted-changes guard a retired file was moved to .trw/trash on purpose;
+# ``retired`` is what tells the uncommitted-changes guard a retired file was deleted on purpose;
 # without it a copy with no recorded hash (an orphaned install) is restored right after it was retired.
-_SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors", "warnings", "trashed")
+_SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors", "warnings", "retired")
 
 #: Cursor IDE's approximate combined-MCP tool ceiling (PRD-CORE-136 NFR). A
 #: vendor figure, so it is a named constant rather than derivable — unlike the

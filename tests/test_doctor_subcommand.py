@@ -663,9 +663,13 @@ def test_one_broken_check_does_not_abort_report(tmp_path: Path, monkeypatch: pyt
 
 
 def test_no_production_endpoint_in_messages(tmp_path: Path) -> None:
-    """The doctor never references or contacts a production/marketing host."""
+    """The doctor never references or contacts a production/marketing host, except the one documented access link
+    the distill row prints when trw-distill is absent (test_fb_install_server_wording pins that wording). In the
+    monorepo trw-distill is installed so the row never printed it; a clean install does (9.0.0 release check)."""
+    from trw_mcp.server._doctor_distill import _PROPRIETARY_ACCESS_URL
+
     results = _doctor_core(tmp_path, _make_config(tmp_path))
-    joined = " ".join(r.message for r in results)
+    joined = " ".join(r.message for r in results).replace(_PROPRIETARY_ACCESS_URL, "")
     assert "api.trwframework.com" not in joined
     assert "://trwframework.com" not in joined
 

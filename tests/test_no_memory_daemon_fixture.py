@@ -37,9 +37,11 @@ def test_embeddings_env_reaches_config_and_skips_auto_maintenance_store(
     no_memory_daemon: list[DaemonPaths], tmp_path: Path
 ) -> None:
     """TRW_EMBEDDINGS_ENABLED=false gates ``selected_store`` in auto-maintenance (the cached config was reloaded)."""
+    result: dict[str, list[str]] = {"warnings": []}
     with patch("trw_mcp.state._store_selection.selected_store") as store:
-        _run_auto_maintenance(tmp_path, {"warnings": []})
+        _run_auto_maintenance(tmp_path, result)
     store.assert_not_called()
+    assert result == {"warnings": []}, "the skipped store check adds no warning"
 
 
 def test_embeddings_env_true_control_does_reach_the_store(
@@ -48,9 +50,13 @@ def test_embeddings_env_true_control_does_reach_the_store(
     """Control: the same call with the var flipped back does reach ``selected_store``, so the gate above is the var."""
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "true")
     reload_config()
-    with patch("trw_mcp.state._store_selection.selected_store", return_value=(MagicMock(), "ns")) as store:
-        _run_auto_maintenance(tmp_path, {"warnings": []})
+    result: dict[str, list[str]] = {"warnings": []}
+    embedder_down = MagicMock()
+    embedder_down.embedder_status.return_value = {"available": False, "reason": "model missing"}
+    with patch("trw_mcp.state._store_selection.selected_store", return_value=(embedder_down, "ns")) as store:
+        _run_auto_maintenance(tmp_path, result)
     store.assert_called_once()
+    assert result["warnings"] == ["Memory daemon cannot encode: model missing"]
 
 
 def test_autostart_env_alone_makes_attach_refuse_without_spawning(

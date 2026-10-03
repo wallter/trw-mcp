@@ -93,7 +93,7 @@ def _merged_by_client(rel: str, client: str) -> bool:
 
 
 #: Result keys that report advice or a retirement, never an overwrite: cursor's tool-ceiling and tmux notes
-#: (``info``) and a retired file's ``removed``. ``trashed`` is already among the keys update merges
+#: (``info``) and a retired file's ``removed``. ``retired`` is already among the keys update merges
 #: (``_ide_targets._SUB_RESULT_KEYS``, added to the recognised set at use).
 _ADVISORY_KEYS: frozenset[str] = frozenset({"info", "removed"})
 

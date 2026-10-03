@@ -1,12 +1,4 @@
-"""PRD-FIX-140-FR09 — every shipped hook parses with the shell it declares.
-
-``make bundle-sync`` compared bytes between the bundle and its client projections
-and never parsed a script, so ``.claude/hooks/self-review.sh`` shipped a bash 3.2
-parse error (a nested ``case`` inside ``$( ... )`` inside an enclosing ``case``
-branch) while the sync check stayed green. These tests exercise the same helper
-the gate now runs, plus a deliberately broken fixture so the check cannot pass by
-never failing.
-"""
+"""PRD-FIX-140-FR09 — every bundled hook parses with the shell it declares."""
 
 from __future__ import annotations
 
@@ -38,7 +30,7 @@ def _parses(script: Path) -> subprocess.CompletedProcess[str]:
 
 
 class TestEveryBundledHookParses:
-    """The bundle, the gate's own helper, and the repaired repo-local script."""
+    """The bundle and the gate's own helper."""
 
     def test_the_bundle_is_not_empty(self) -> None:
         """Guards the parametrized scan below against a vacuous pass.
@@ -57,16 +49,6 @@ class TestEveryBundledHookParses:
         result = _parses(script)
 
         assert result.returncode == 0, f"{script.name}: {result.stderr.strip()}"
-
-    @requires_monorepo
-    def test_the_repaired_repo_local_self_review_hook_parses(self) -> None:
-        """It was dead on arrival under bash 3.2 and no gate could see it."""
-        script = _REPO_ROOT / ".claude" / "hooks" / "self-review.sh"
-        assert script.is_file()
-
-        for shell in ("sh", "bash"):
-            result = subprocess.run([shell, "-n", str(script)], capture_output=True, text=True, check=False)
-            assert result.returncode == 0, f"{shell}: {result.stderr.strip()}"
 
     @requires_monorepo
     def test_the_gate_runs_the_syntax_pass(self) -> None:

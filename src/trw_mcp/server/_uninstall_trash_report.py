@@ -19,6 +19,16 @@ from trw_mcp.bootstrap._safe_remove import (
 )
 
 
+def _take_trw_only_captures(apply_result: dict[str, list[str]], target: Path) -> None:
+    """Add this run's captures of instruction files that held only TRW's blocks (CLAUDE-MD S2) to *apply_result*."""
+    from trw_mcp.server._subcommands_uninstall_config import TRW_ONLY_CAPTURES
+
+    for path, capture in [(p, c) for p, c in TRW_ONLY_CAPTURES.items() if p.is_relative_to(target)]:
+        del TRW_ONLY_CAPTURES[path]
+        apply_result.setdefault("trashed", []).append(str(path))
+        apply_result.setdefault("trashed_at", []).append(str(capture))
+
+
 def _move_matched_captures_to_os_trash(
     apply_result: dict[str, list[str]], target: Path, display: Callable[[Path, Path], str]
 ) -> None:
@@ -27,6 +37,7 @@ def _move_matched_captures_to_os_trash(
     Off macOS there is no system Trash: a capture whose ``meta.json`` hash still matches its bytes is deleted, and
     any capture that cannot be proven unchanged stays in ``.trw/trash`` with the reason printed.
     """
+    _take_trw_only_captures(apply_result, target)
     pairs = list(zip(apply_result.get("trashed", []), apply_result.get("trashed_at", []), strict=True))
     captures = [Path(at) for _orig, at in pairs if at]
     if sys.platform == "darwin":
@@ -44,8 +55,11 @@ def _move_matched_captures_to_os_trash(
             print(f"  Kept in .trw/trash: {display(Path(orig), target)} ({left[at]}; see doctor; {remove})")
         elif not at:
             print(f"  Moved to .trw/trash: {display(Path(orig), target)} (unchanged TRW file; see doctor)")
-    # Every capture moved on: leave no empty .trw/trash behind, even on a refused run that keeps .trw.
-    if captures and not kept:
+    # Every capture moved on: leave no empty .trw/trash behind, even on a refused run that keeps .trw -- unless it was
+    # there before this uninstall began, which makes it not this run's to remove (CLAUDE-MD S1 red team).
+    from trw_mcp.server._uninstall_corpus import PREEXISTING_TRASH
+
+    if captures and not kept and trash_dir(target) not in PREEXISTING_TRASH:
         try:
             os.rmdir(trash_dir(target))
         except OSError:  # trw-fail-silent-allow: not empty (another capture) or already gone; rmdir only

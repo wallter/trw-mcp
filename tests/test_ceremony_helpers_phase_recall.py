@@ -63,7 +63,20 @@ class TestPerformSessionRecalls:
         ):
             perform_session_recalls(trw_dir, "", config, reader)
 
-        mock_record_surfaced.assert_called_once_with(trw_dir, ["L-001"], session_start=True)
+        assert mock_record_surfaced.call_count == 1
+        assert mock_record_surfaced.call_args.args == (trw_dir, ["L-001"])
+        assert mock_record_surfaced.call_args.kwargs == {"session_start": True}
+
+        # Contrast: nothing recalled -> no surfaced ids are recorded.
+        mock_record_surfaced.reset_mock()
+        with (
+            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
+            patch("trw_mcp.state.memory_adapter.record_surfaced", mock_record_surfaced),
+            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
+        ):
+            learnings, _extra = perform_session_recalls(trw_dir, "", config, reader)
+        assert learnings == []
+        assert [c.args[1] for c in mock_record_surfaced.call_args_list if len(c.args) > 1 and c.args[1]] == []
 
     def test_increments_session_counts_for_surfaced_learnings(
         self,

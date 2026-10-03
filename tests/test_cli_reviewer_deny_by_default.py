@@ -198,7 +198,10 @@ def test_allowlisted_leaves_actually_run_without_refusal_under_reviewer_role(
 ) -> None:
     """Every allowlist entry, invoked in its read-only mode, must not be refused (a false positive is as bad as a miss)."""
     monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
-    for command_path in classified_command_paths():
+    allowlisted = classified_command_paths()
+    assert allowlisted
+    passed: list[str] = []
+    for command_path in allowlisted:
         cmd = command_path.split(" ", 1)[0]
         ns = _namespace_for_path(command_path)
         for key, value in _CONDITIONAL_SAFE_KWARGS.get(command_path, {}).items():
@@ -207,6 +210,14 @@ def test_allowlisted_leaves_actually_run_without_refusal_under_reviewer_role(
             enforce_state_changing_guard(cmd, ns)
         except SystemExit:
             pytest.fail(f"{command_path!r} is on the read-only allowlist but the guard refused it")
+        passed.append(command_path)
+    assert sorted(passed) == sorted(allowlisted)
+
+    # Contrast: a leaf outside the allowlist IS refused under the same role.
+    unlisted = next(p for p in _all_guarded_leaf_paths() if p not in allowlisted)
+    with pytest.raises(SystemExit) as exc_info:
+        enforce_state_changing_guard(unlisted.split(" ", 1)[0], _namespace_for_path(unlisted))
+    assert exc_info.value.code == 1
 
 
 # ---------------------------------------------------------------------------

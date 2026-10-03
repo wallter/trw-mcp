@@ -781,3 +781,46 @@ def test_submit_feedback_via_http_200_with_non_dict_body_is_success() -> None:
     assert result.success is True
     assert result.submission_id == ""
     assert result.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# TRW platform keys never leave unredacted (REDACT-TRW-PLATFORM-KEYS)
+# ---------------------------------------------------------------------------
+_TRW_KEY_BODY = ("Ab3-Zk9_Qw2xYv7LmN4pRs8TuC1dEf" * 2)[:43]  # synthetic token_urlsafe(32) shape
+_TRW_KEY = "trw_" + _TRW_KEY_BODY
+
+
+def test_submit_feedback_never_sends_a_trw_platform_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    from trw_mcp.tools import submit_feedback as sf
+
+    sent: list[Any] = []
+    monkeypatch.setattr(sf, "_backend", lambda: ("https://api.trw.test", "k"))
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: tmp_path / ".trw")
+    monkeypatch.setattr(sf, "_send_recorded", lambda _u, _k, payload, _r: sent.append(payload) or MagicMock())
+
+    sf._submit_feedback_impl(
+        category="bugfix",
+        subject=f"fails with {_TRW_KEY}",
+        message=f"TRW_PLATFORM_API_KEY={_TRW_KEY} was rejected by trw_status",
+        contact_email=None,
+        metadata={"note": f"key {_TRW_KEY}", _TRW_KEY: "v"},
+    )
+
+    assert len(sent) == 1
+    assert _TRW_KEY_BODY not in repr(sent[0])
+    assert "trw_status" in sent[0]["message"]
+
+
+def test_feedback_outbox_replay_never_sends_a_trw_platform_key() -> None:
+    from trw_mcp.tools._feedback_cli import _stored_payload
+
+    payload, _err = _stored_payload(
+        {
+            "category": "bugfix",
+            "subject": f"hand-edited {_TRW_KEY}",
+            "message": f"leaked {_TRW_KEY} in the record",
+            "metadata": {"k": _TRW_KEY},
+        }
+    )
+    assert payload is not None
+    assert _TRW_KEY_BODY not in repr(payload)

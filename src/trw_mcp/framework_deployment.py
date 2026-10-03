@@ -21,6 +21,8 @@ from pathlib import Path
 
 from trw_memory._tree_removal import remove_tree
 
+from trw_mcp._checkout_write import record_run_write
+
 DEPLOYMENT_RELATIVE_PATH = Path(".trw/frameworks/DEPLOYMENT.json")
 _LOCK_RELATIVE_PATH = Path(".trw/frameworks/.deployment.lock")
 _BACKUPS_RELATIVE_PATH = Path(".trw/frameworks/.rollback")
@@ -74,11 +76,15 @@ def _write_durable(path: Path, data: bytes) -> None:
         handle.write(data)
         handle.flush()
         os.fsync(handle.fileno())
+    record_run_write(path, data)  # canon writes are this run's own (lead review N7)
     _fsync_directory(path.parent)
 
 
 def _replace_durable(source: Path, destination: Path) -> None:
+    published = source.read_bytes() if source.is_file() and not source.is_symlink() else None
     os.replace(source, destination)
+    if published is not None:
+        record_run_write(destination, published)  # framework promotions are this run's writes (codex r4 KI4)
     _fsync_directory(destination.parent)
 
 

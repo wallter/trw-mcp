@@ -31,7 +31,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp._checkout_write import write_checkout_file
+from trw_mcp._checkout_write import append_checkout_file, write_checkout_file
 from trw_mcp.models.requirements import (
     EvaluationEpoch,
     ExecutionState,
@@ -146,8 +146,8 @@ class RegistryWriter:
             payload=payload,
         )
         self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._ledger_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(action.model_dump(mode="json"), sort_keys=True) + "\n")
+        line = json.dumps(action.model_dump(mode="json"), sort_keys=True) + "\n"
+        append_checkout_file(self._ledger_path.parent, self._ledger_path, line)  # a symlinked ledger is refused
         _write_anchor(self._ledger_path, action.sequence, action_digest(action))
         logger.info("scheduling_action_appended", kind=kind, sequence=action.sequence)
         return action

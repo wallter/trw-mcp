@@ -13,7 +13,6 @@ from trw_memory.lifecycle.correction import LearningPatch
 from trw_memory.lifecycle.dedup import DedupResult
 from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings, assertion_health
 from trw_memory.models.memory import MemoryEntry, MemoryType
-from trw_memory.sync import AdmissionOutcome
 
 from trw_mcp.state._store_selection import (
     EmbedderStatus,
@@ -127,11 +126,6 @@ class FakeMemoryStore:
             and spec.record_type in (None, entry.type)
         ]
         return sorted(hits, key=lambda entry: entry.updated_at, reverse=True)[:limit]
-
-    def admit_shared(self, results: list[dict[str, object]]) -> AdmissionOutcome:
-        # No write gate here: sqlite and daemon run the real one.
-        self.calls.append(("admit_shared", len(results)))
-        return AdmissionOutcome(list(results), 0, 0)
 
     def vectors(self, ids: list[str]) -> VectorSet | None:
         self.calls.append(("vectors", tuple(ids)))
@@ -313,6 +307,22 @@ class FakeMemoryStore:
             e for (ns, eid), e in self.rows.items() if ns == namespace and (e.remote_id == remote_id or eid in ids)
         )
         return next(matches, None)
+
+    def find_synced_many(self, namespace: str, remote_ids: list[str], ids: list[str]) -> list[MemoryEntry]:
+        self.calls.append(("find_synced_many", (namespace, list(remote_ids), list(ids))))
+        if getattr(self, "batched_find_unavailable", False):  # a daemon from before the batched tool
+            raise RuntimeError("unknown tool: memory_sync_find_many")
+        return [
+            e for (ns, eid), e in self.rows.items() if ns == namespace and (e.remote_id in remote_ids or eid in ids)
+        ]
+
+    def apply_synced_many(
+        self, namespace: str, items: list[tuple[MemoryEntry, str | None, bool]]
+    ) -> list[tuple[str, str]]:
+        self.calls.append(("apply_synced_many", (namespace, len(items))))
+        if getattr(self, "batched_apply_unavailable", False):  # a daemon from before the batched tool
+            raise RuntimeError("unknown tool: memory_sync_apply_many")
+        return [self.apply_synced(namespace, entry, if_revision=rev, synced=synced) for entry, rev, synced in items]
 
     def apply_synced(
         self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True

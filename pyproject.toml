@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "8.1.7"
+version = "9.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -69,8 +69,13 @@ dependencies = [
     # UNGUARDED by _recall_impl.py — plus the earlier hard deps rrf_fuse(importances=)
     # and SQLiteBackend.find_active_by_content. A lower floor lets pip resolve an older
     # trw-memory that satisfies the constraint but lacks the symbol, so the call raises
-    # at runtime; the floor makes the skew fail fast at install instead. When adding an
-    # import from a new trw-memory symbol, bump this floor IN THE SAME PR.
+    # at runtime; the floor makes the skew fail fast at install instead. The guard is
+    # scripts/_release_public/floor_import_proof.py (FLOOR-IMPORT-PROOF), a row of
+    # `release_public.py check trw-mcp`: it installs exactly the trw-memory this floor names
+    # (the paired wheel when the run publishes it, else the published one) and imports every
+    # trw_memory symbol src/ imports, found by AST. A floor below the release that carries a
+    # newly imported symbol REFUSES the publish and names the symbol, so the floor is raised
+    # by the release cut (release_cut_prep.py) or by the PR that adds the import.
     #
     # RELEASE ORDER (docs/deployment/AGENTS.md): trw-memory ships FIRST. This floor
     # resolves from PyPI as of 2026-07-30 — the 0.11.0-era block described here
@@ -88,7 +93,7 @@ dependencies = [
     # 5.1.0 also carries `trw_memory.security.credentials` (the one credential detector,
     # E2E-INC-036), imported UNGUARDED by telemetry/anonymizer.py; if this ships after
     # trw-memory 5.1.0 is published, raise the floor to the release that carries it.
-    "trw-memory>=5.1.7,<6.0.0",
+    "trw-memory>=5.2.0,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 

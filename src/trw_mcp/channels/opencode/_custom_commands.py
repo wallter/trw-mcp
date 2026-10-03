@@ -22,6 +22,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import record_run_write
 from trw_mcp.channels._telemetry import append_channel_event
 
 log = structlog.get_logger(__name__)
@@ -216,6 +217,7 @@ def install_custom_commands(
 
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(final_content, encoding="utf-8")
+            record_run_write(target, final_content.encode("utf-8"))  # FB-01-KI1-RACE restore proof
 
             log.debug(
                 "opencode_custom_command_installed",

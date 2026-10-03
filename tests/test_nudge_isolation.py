@@ -269,4 +269,6 @@ def test_append_ceremony_status_uses_workspace_config_not_global_singleton(tmp_p
     with patch("trw_mcp.models.config._loader.get_config", side_effect=AssertionError("should not use global config")):
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
-    assert isinstance(result.get("nudge_content"), str)
+    # The workspace config (nudge_enabled, minimal messenger) governed the call: a nudge was emitted and counted.
+    assert "trw_session_start" in result["nudge_content"]
+    assert read_ceremony_state(trw_dir).nudge_counts.get("session_start") == 1

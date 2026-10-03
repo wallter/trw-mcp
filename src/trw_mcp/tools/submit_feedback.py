@@ -32,6 +32,7 @@ from typing_extensions import TypedDict
 
 # Secret/PII redaction: the single trw-mcp redactor lives in ``telemetry.anonymizer`` (R2-014).
 from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+from trw_mcp.state._session_mark import session_egress_refusal
 from trw_mcp.telemetry.anonymizer import redact_metadata, redact_secrets
 from trw_mcp.tools import _feedback_outbox as _outbox
 
@@ -248,6 +249,10 @@ def submit_feedback_via_http(
     if not platform_contact_enabled(source_trw_dir):  # the operator's egress switch covers agent-invoked sends too
         error = "platform contact is disabled (platform_contact_enabled: false); nothing was sent"
         return SubmitFeedbackResult(success=False, error=error, metadata_attached=attached)
+    if (
+        refusal := session_egress_refusal()
+    ):  # PRD-SEC-023 FR06: session text stays home once the session read above team
+        return SubmitFeedbackResult(success=False, error=refusal, metadata_attached=attached)
     url = f"{backend_url.rstrip('/')}/v1/submissions"
     # platform_auth_headers is the ONE function that may build this header —
     # see trw_mcp.state._platform_trust module docstring. A project-tracked
@@ -342,6 +347,8 @@ def _submit_feedback_impl(
     backend_url, api_key = _backend()
     if not backend_url or not api_key:
         return SubmitFeedbackResult(success=False, error=_NOT_CONFIGURED, status_code=0)
+    if refusal := session_egress_refusal():  # FR06: not even queued, so a later flush cannot send it
+        return SubmitFeedbackResult(success=False, error=refusal, status_code=0)
 
     final_metadata = _merge_metadata(metadata, _build_auto_metadata())
     payload: SubmissionPayload = {

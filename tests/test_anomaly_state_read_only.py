@@ -24,6 +24,7 @@ def _detector(state_dir: Path):  # type: ignore[no-untyped-def]
     from trw_mcp.security.anomaly_detector import AnomalyDetector, AnomalyDetectorConfig
 
     config = AnomalyDetectorConfig(
+        checkout_root=state_dir,
         shadow_clock_path=state_dir / "security" / "mcp_shadow_start.yaml",
         baseline_store_path=state_dir / "security" / "mcp_arg_baseline.jsonl",
     )

@@ -307,3 +307,15 @@ class TestEnqueueScrubsFullCredentialSurface:
         serialized = str(queued)
         for secret in (self._JWT, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", self._BEARER_TOKEN):
             assert secret not in serialized
+
+
+class TestTrwPlatformKeyScrub:
+    """REDACT-TRW-PLATFORM-KEYS: a TRW platform key in any telemetry field is scrubbed before storage."""
+
+    def test_scrub_pii_removes_trw_platform_key(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: None, raising=False)
+        body = ("Ab3-Zk9_Qw2xYv7LmN4pRs8TuC1dEf" * 2)[:43]  # synthetic token_urlsafe(32) shape
+        event: dict[str, object] = {"error": f"auth failed for trw_{body}", "tool_name": "trw_recall"}
+        pipeline_cls()._scrub_pii(event)
+        assert body not in str(event["error"])
+        assert event["tool_name"] == "trw_recall"

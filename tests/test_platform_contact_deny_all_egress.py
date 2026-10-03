@@ -285,7 +285,38 @@ async def _run_memory_sse_subscriber(cfg: MemoryConfig) -> None:
         subscriber_module.RECONNECT_DELAY = delay
 
 
-async def _drive_all_senders(project: Path, tmp_path: Path, pipeline_factory: type) -> None:
+async def _run_jev_judge() -> None:
+    from trw_memory.decisions._jev_http import JevHttpJudge
+    from trw_memory.decisions._models import NoulQuestion
+
+    judge = JevHttpJudge("fake-key")
+    outcome = judge.decide("user content", {"q": NoulQuestion(instructions="Q?", criteria={"true": "t", "false": "f"})})
+    assert getattr(outcome, "kind", None) == "disabled", f"a vetoed judge must say so, got {outcome!r}"
+
+
+async def _run_remote_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.clients.llm import LLMClient
+
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama.example.invalid:11434")
+    assert await LLMClient()._ask_ollama("a prompt with user content") is None
+
+
+async def _run_anthropic_client() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from trw_mcp.clients.llm import LLMClient
+
+    client = LLMClient()
+    sdk = MagicMock()
+    sdk.messages.create = AsyncMock()
+    client._async_client, client._available = sdk, True
+    assert await client.ask("a prompt with user content") is None
+    sdk.messages.create.assert_not_awaited()
+
+
+async def _drive_all_senders(
+    project: Path, tmp_path: Path, pipeline_factory: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Call every one of the 10 inventoried senders with arguments that would
     send if contact were on."""
     _reset_config(_mcp_config_that_would_send())
@@ -306,6 +337,9 @@ async def _drive_all_senders(project: Path, tmp_path: Path, pipeline_factory: ty
     await _run_memory_retire(cfg)
     await _run_memory_fetch(cfg)
     await _run_memory_sse_subscriber(cfg)
+    await _run_jev_judge()
+    await _run_remote_ollama(monkeypatch)
+    await _run_anthropic_client()
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +364,7 @@ async def test_no_sender_opens_a_connection_when_contact_is_off(
     assert mcp_platform_contact_enabled(project / ".trw") is False
     assert memory_platform_contact_enabled(project_root=str(project)) is False
 
-    await _drive_all_senders(project, tmp_path, pipeline_cls)
+    await _drive_all_senders(project, tmp_path, pipeline_cls, monkeypatch)
 
     assert egress_recorder == [], f"a sender opened a connection with contact off ({mode}): {egress_recorder}"
 
@@ -359,3 +393,41 @@ async def test_control_senders_do_attempt_egress_when_contact_is_on(
     await _run_memory_publish(cfg)
 
     assert egress_recorder, "control failed: no sender attempted egress with contact ON"
+
+
+async def test_control_remote_ollama_attempts_egress_when_contact_is_on_and_loopback_never_is_vetoed(
+    isolated_project: Path,
+    egress_recorder: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With contact ON the remote host is tried (the harness sees it); a loopback host is tried even with it OFF."""
+    from trw_mcp.clients.llm import LLMClient
+
+    # The client asks the switch of the project it runs in; the suite sandbox roots that at tmp_path.
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: isolated_project / ".trw")
+    monkeypatch.setenv("OLLAMA_HOST", "http://ollama.example.invalid:11434")
+    await LLMClient()._ask_ollama("a prompt")
+    assert egress_recorder, "control failed: a remote Ollama was not attempted with contact ON"
+
+    egress_recorder.clear()
+    monkeypatch.setenv("TRW_PLATFORM_CONTACT_ENABLED", "false")
+    for host in ("http://localhost:11434", "127.0.0.1:11434", "http://[::1]:11434"):
+        monkeypatch.setenv("OLLAMA_HOST", host)
+        await LLMClient()._ask_ollama("a prompt")
+    assert egress_recorder, "a loopback Ollama must not be vetoed by the contact switch"
+
+
+async def test_control_anthropic_client_sends_when_contact_is_on(
+    isolated_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from trw_mcp.clients.llm import LLMClient
+
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: isolated_project / ".trw")
+    client = LLMClient()
+    sdk = MagicMock()
+    sdk.messages.create = AsyncMock(return_value=MagicMock(content=[], stop_reason="end_turn"))
+    client._async_client, client._available = sdk, True
+    await client.ask("a prompt")
+    sdk.messages.create.assert_awaited_once()

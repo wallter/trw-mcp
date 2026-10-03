@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("llm_contact_on")
+
 
 class TestLLMClientAskSync:
     """Cover the ThreadPoolExecutor branch when event loop is already running."""

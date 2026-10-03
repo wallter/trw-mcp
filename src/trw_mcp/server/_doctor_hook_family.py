@@ -289,7 +289,7 @@ def hook_family_row(target: Path) -> tuple[Literal["PASS", "WARN", "FAIL", "SKIP
     return "FAIL", (
         "; ".join(problems)
         + ". These hooks fail silently (they exit 0). Run `trw-mcp update-project` to refresh the hook family;"
-        + " an edited lib is backed up to .trw/trash first."
+        + " an edited lib with uncommitted changes is backed up to .trw/trash first; one committed in git is replaced in place."
     )
 
 

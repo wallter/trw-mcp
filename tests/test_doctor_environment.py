@@ -75,6 +75,10 @@ def test_rows_are_registered_in_the_doctor_catalogue() -> None:
     assert [name for name in names if name in ordered] == ordered
 
 
+#: PRD-FIX-153 FR05: the row only checks servers recorded in pins.json.
+_SCOPE_SENTENCE = "Only servers recorded in pins.json are checked."
+
+
 class TestStrayServersRow:
     def test_stray_servers_warn_with_each_line(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         lines = ["trw-mcp pid 7 is orphaned (its client exited): stop it with `kill 7`"]
@@ -84,6 +88,7 @@ class TestStrayServersRow:
 
         assert status == "WARN"
         assert "1 stray" in message and "kill 7" in message
+        assert _SCOPE_SENTENCE in message
 
     def test_no_stray_server_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: list[Path] = []
@@ -91,7 +96,9 @@ class TestStrayServersRow:
             "trw_mcp.server._doctor_environment.stray_servers", lambda trw_dir: seen.append(trw_dir) or []
         )
 
-        assert stray_servers_row(tmp_path)[0] == "PASS"
+        status, message = stray_servers_row(tmp_path)
+        assert status == "PASS"
+        assert _SCOPE_SENTENCE in message
         assert seen == [tmp_path / ".trw"]
 
 

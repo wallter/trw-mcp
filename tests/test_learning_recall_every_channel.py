@@ -195,8 +195,6 @@ CLASSIFIED: dict[str, str] = {
     "tools/_ceremony_status_nudge.py": "channel nudge_pool (status learning nudge)",
     "state/claude_md/_sync.py": "channel review_md",
     "resources/config.py": "channel summary_resource",
-    "state/_tier_sweep.py": "excluded: tier maintenance, no agent output",
-    "state/tiers.py": "excluded: tier maintenance, no agent output",
     "state/analytics/dedup.py": "excluded: dedup metrics",
     "state/analytics/entries.py": "excluded: analytics",
     "state/claude_md/_review_md.py": "channel review_md (aliased; the reader holds the gate)",

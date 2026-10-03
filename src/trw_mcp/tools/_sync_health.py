@@ -100,35 +100,58 @@ def step_sync_health(
             except ValueError:
                 last_push_age_hours = None  # unparseable => never
 
+        # INC-147: learnings the backend refused are held back from push; their
+        # count and the server's reason belong on the same line an operator reads.
+        held_raw = raw.get("rejected_entries")
+        held = [v for v in held_raw.values() if isinstance(v, dict)] if isinstance(held_raw, dict) else []
+        last_error = raw.get("last_error") if isinstance(raw.get("last_error"), str) else None
+
         threshold = config.sync_health_failure_threshold
         stale_hours = config.sync_health_stale_hours
 
         failure_degraded = consecutive_failures >= threshold
         stale_degraded = last_push_age_hours is None or last_push_age_hours > stale_hours
-        degraded = failure_degraded or stale_degraded
+        degraded = failure_degraded or stale_degraded or bool(held)
 
         advisory = ""
-        if degraded:
+        if failure_degraded or stale_degraded:
             push_desc = "never" if last_push_at is None else last_push_at
             advisory = (
                 f"Backend sync-push is degraded: {consecutive_failures} consecutive failures; "
-                f"last successful push {push_desc}. "
-                "Restore platform_urls in .trw/config.yaml and verify the backend is reachable."
+                f"last successful push {push_desc}"
+                + (f"; last error: {last_error}. " if last_error else ". ")
+                + "Restore platform_urls in .trw/config.yaml and verify the backend is reachable."
+            )
+        if held:
+            newest = max(held, key=lambda item: str(item.get("at", "")))
+            advisory = " ".join(
+                part
+                for part in (
+                    advisory,
+                    f"The backend rejected {len(held)} learning(s), held back from push "
+                    f"(latest reason: {newest.get('reason') or 'unknown'}). "
+                    "Once the cause is fixed, run `trw-mcp sync push --retry-rejected`.",
+                )
+                if part
             )
             logger.warning(
                 "sync_push_degraded_warning",
                 consecutive_failures=consecutive_failures,
+                rejected=len(held),
                 last_push_at=last_push_at,
                 threshold=threshold,
                 stale_hours=stale_hours,
             )
 
-        return {
+        result: dict[str, object] = {
             "degraded": degraded,
             "consecutive_failures": consecutive_failures,
             "last_push_at": last_push_at,
             "advisory": advisory,
         }
+        if held:  # only when there is something to act on (response token budget)
+            result["rejected"] = len(held)
+        return result
     except Exception as exc:
         # Fail-open, but the failure is REPORTED rather than erased: the step is
         # non-critical (an unreadable sidecar must not block session start), so

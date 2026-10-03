@@ -292,34 +292,6 @@ async def _entry_pipeline(_tmp: Path, pipeline: Any, _egress: list[str]) -> None
     instance.flush_now()
 
 
-async def _entry_recall(_tmp: Path, _pipeline: Any, egress: list[str]) -> None:
-    from unittest.mock import MagicMock, patch
-
-    from trw_mcp.tools._recall_impl import _augment_with_remote
-
-    def fetch(*_args: object, **_kwargs: object) -> Any:
-        egress.append("fetch_shared_memories")
-        return MagicMock(status="ok", results=[], fetched=0, refused=0)
-
-    store = (MagicMock(admit_shared=None), None)
-    with (
-        patch("trw_memory.sync.fetch_shared_memories", fetch),
-        patch("trw_mcp.state._store_selection.selected_store", lambda _trw_dir: store),
-    ):
-        _augment_with_remote("secret query text", [{"id": "L-local"}])
-
-
-async def _entry_recall_ungated_fetch(_tmp: Path, _pipeline: Any, _egress: list[str]) -> None:
-    """Remote recall with trw-memory's real fetch, whose own sync gate a fresh install keeps shut."""
-    from unittest.mock import MagicMock, patch
-
-    from trw_mcp.tools._recall_impl import _augment_with_remote
-
-    store = (MagicMock(admit_shared=lambda *_a: None), None)
-    with patch("trw_mcp.state._store_selection.selected_store", lambda _trw_dir: store):
-        _augment_with_remote("secret query text", [{"id": "L-local"}])
-
-
 _ENTRY_POINTS = {
     "tools/submit_feedback": _entry_feedback,
     "sync/push": _entry_sync_push,
@@ -328,7 +300,6 @@ _ENTRY_POINTS = {
     "telemetry/sender": _entry_telemetry_sender,
     "telemetry/publisher": _entry_publisher,
     "telemetry/pipeline": _entry_pipeline,
-    "tools/_recall_impl": _entry_recall,
 }
 
 
@@ -541,7 +512,7 @@ async def test_a_fresh_install_makes_zero_platform_contacts(
     _seed(project)
     _run_from(project, monkeypatch)
 
-    entry = _entry_recall_ungated_fetch if module == "tools/_recall_impl" else _ENTRY_POINTS[module]
+    entry = _ENTRY_POINTS[module]
     try:
         await entry(tmp_path, pipeline_cls, egress)
     finally:

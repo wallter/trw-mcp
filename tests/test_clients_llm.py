@@ -6,10 +6,11 @@ import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from trw_mcp.clients.llm import LLMClient, _resolve_model
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("llm_contact_on")]
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +217,24 @@ class TestAsk:
         mock_response = MagicMock()
         mock_response.content = []
         ac.messages.create = AsyncMock(return_value=mock_response)
-        assert await _make_client(ac).ask("test") is None
+        with capture_logs() as logs:
+            assert await _make_client(ac).ask("test") is None
+        # The call succeeded (one request, no failure event): None comes from the empty content.
+        assert ac.messages.create.await_count == 1
+        assert [e["event"] for e in logs if e["log_level"] == "warning"] == []
 
     @pytest.mark.asyncio
     async def test_ask_returns_none_on_api_failure(self) -> None:
         """ask() returns None when the API call raises an exception."""
         ac = MagicMock()
         ac.messages.create = AsyncMock(side_effect=RuntimeError("API error"))
-        assert await _make_client(ac).ask("test") is None
+        with capture_logs() as logs:
+            assert await _make_client(ac).ask("test") is None
+        assert ac.messages.create.await_count == 1
+        failures = [e for e in logs if e["event"] == "llm_call_failed"]
+        assert len(failures) == 1
+        assert failures[0]["log_level"] == "warning"
+        assert failures[0]["prompt_preview"] == "test"
 
     @pytest.mark.asyncio
     async def test_ask_skips_leading_thinking_blocks(self) -> None:
@@ -261,7 +272,10 @@ class TestAsk:
         mock_response.stop_reason = "end_turn"
         mock_response.content = [MagicMock(type="thinking", thinking="", signature="sig")]
         ac.messages.create = AsyncMock(return_value=mock_response)
-        assert await _make_client(ac).ask("test") is None
+        with capture_logs() as logs:
+            assert await _make_client(ac).ask("test") is None
+        assert ac.messages.create.await_count == 1
+        assert [e["event"] for e in logs if e["log_level"] == "warning"] == []
 
     @pytest.mark.asyncio
     async def test_ask_returns_none_when_block_has_no_text(self) -> None:
@@ -270,7 +284,10 @@ class TestAsk:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(spec=[])]  # No attributes at all
         ac.messages.create = AsyncMock(return_value=mock_response)
-        assert await _make_client(ac).ask("test") is None
+        with capture_logs() as logs:
+            assert await _make_client(ac).ask("test") is None
+        assert ac.messages.create.await_count == 1
+        assert [e["event"] for e in logs if e["log_level"] == "warning"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -514,3 +531,20 @@ class TestOllamaLLMClient:
 
         result = await client.ask("Test prompt", model="some-model")
         assert result == "Fallback Ollama response"
+
+
+class TestFailurePreviewTrwKey:
+    """REDACT-TRW-PLATFORM-KEYS: a TRW platform key in a failed prompt never reaches prompt_preview."""
+
+    @pytest.mark.asyncio
+    async def test_failed_call_prompt_preview_redacts_trw_platform_key(self) -> None:
+        import structlog.testing
+
+        body = ("Ab3-Zk9_Qw2xYv7LmN4pRs8TuC1dEf" * 2)[:43]  # synthetic token_urlsafe(32) shape
+        ac = MagicMock()
+        ac.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+        client = _make_client(ac)
+        with structlog.testing.capture_logs() as logs:
+            assert await client.ask(f"key trw_{body} failed") is None
+        events = [e for e in logs if e.get("event") == "llm_call_failed"]
+        assert events and body not in str(events[0]["prompt_preview"])

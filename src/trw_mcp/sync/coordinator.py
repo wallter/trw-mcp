@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +111,9 @@ class SyncCoordinator:
         state["last_push_at"] = now
         state["last_push_seq"] = max(self._int_field(state, "last_push_seq"), push_seq or 0)
         state["push_count"] = self._int_field(state, "push_count") + 1
+        # last_push_at/push_count stamp every completed cycle, even pushed=0; only these two are content egress.
+        state["last_content_push_at"] = now if pushed > 0 else state.get("last_content_push_at")
+        state["content_pushed_total"] = self._int_field(state, "content_pushed_total") + max(pushed, 0)
         state["last_pull_at"] = state.get("last_pull_at")
         state["last_pull_seq"] = self._int_field(state, "last_pull_seq")
         state["pull_count"] = self._int_field(state, "pull_count")
@@ -263,6 +266,34 @@ class SyncCoordinator:
         state = self._read_state()
         if state.pop("replay", None) is not None:
             self._write_state(state)
+
+    def rejected_entries(self) -> dict[str, dict[str, object]]:
+        """Learnings the backend refused (INC-147): ``{id: {sync_seq, reason, at}}``, held back from push."""
+        raw = self._read_state().get("rejected_entries")
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
+
+    def update_rejected(self, *, add: Mapping[str, tuple[int, str]] | None = None, drop: Iterable[str] = ()) -> None:
+        """Hold *add* (``id -> (sync_seq, reason)``) back from push; release *drop*. Writes only on a change."""
+        state = self._read_state()
+        raw = state.get("rejected_entries")
+        held = dict(raw) if isinstance(raw, dict) else {}
+        before = len(held)
+        dropped = [held.pop(entry_id) for entry_id in drop if entry_id in held]
+        now = datetime.now(tz=timezone.utc).isoformat()
+        for entry_id, (sync_seq, reason) in (add or {}).items():
+            held[entry_id] = {"sync_seq": int(sync_seq), "reason": reason[:_MAX_ERROR_CHARS], "at": now}
+        if not add and not dropped and len(held) == before:
+            return
+        state["rejected_entries"] = held
+        state["version"] = 1
+        self._write_state(state)
+
+    def clear_rejected(self) -> int:
+        """Release every held learning so the next push re-offers it; returns how many were held."""
+        held = self.rejected_entries()
+        if held:
+            self.update_rejected(drop=list(held))
+        return len(held)
 
     def get_last_outcome_line(self) -> int:
         """Read the last successfully pushed local outcome line number."""

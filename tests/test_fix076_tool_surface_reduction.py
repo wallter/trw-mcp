@@ -115,13 +115,23 @@ def test_internal_state_logic_importable_by_consumers() -> None:
     ``test_internal_state_logic_behaves`` (an integration test, since the real
     calls touch the filesystem).
     """
-    from trw_mcp.state.ceremony_feedback import (  # noqa: F401
+    from trw_mcp.state.ceremony_feedback import (
         approve_proposal,
         get_ceremony_status,
         revert_change,
     )
-    from trw_mcp.state.knowledge_topology import execute_knowledge_sync  # noqa: F401
-    from trw_mcp.state.memory_adapter import backfill_graph  # noqa: F401
+    from trw_mcp.state.knowledge_topology import execute_knowledge_sync
+    from trw_mcp.state.memory_adapter import backfill_graph
+
+    consumed = {
+        "ceremony_feedback": (approve_proposal, get_ceremony_status, revert_change),
+        "knowledge_topology": (execute_knowledge_sync,),
+        "memory_adapter": (backfill_graph,),
+    }
+    for module, fns in consumed.items():
+        for fn in fns:
+            assert callable(fn), f"{module}.{fn!r} is not callable"
+            assert fn.__module__.startswith("trw_mcp.state."), f"{fn.__name__} left the state package ({module})"
 
 
 @pytest.mark.integration

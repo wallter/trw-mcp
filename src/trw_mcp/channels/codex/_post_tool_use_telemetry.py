@@ -372,7 +372,7 @@ def install_hook_script(
             )
             return {"installed": False, "path": str(hook_path), "skipped": True, "outcome": "preserved"}
 
-    write_checkout_file(target_dir, hook_path, content)
+    write_checkout_file(target_dir, hook_path, content.encode("utf-8"))  # bytes: no CRLF on Windows
 
     log.debug(
         "codex_hook_installed",

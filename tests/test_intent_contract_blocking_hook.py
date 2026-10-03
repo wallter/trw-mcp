@@ -187,7 +187,7 @@ def test_hook_latency_budget_budget(
 
     start = time.monotonic()
     check_write.run(payload(root))
-    assert_budget("pre_write_hook", time.monotonic() - start, intent_env.pre_write_hook_budget_seconds, "s")
+    assert_budget("pre_write_hook", time.monotonic() - start, 1.0, "s")
 
     # One anchored falsifier averaging ~1s wall clock, per NFR02's wording.
     monkeypatch.setattr(
@@ -197,7 +197,7 @@ def test_hook_latency_budget_budget(
     )
     start = time.monotonic()
     post_edit_check.run(payload(root))
-    assert_budget("post_edit_hook", time.monotonic() - start, intent_env.post_edit_hook_budget_seconds, "s")
+    assert_budget("post_edit_hook", time.monotonic() - start, 5.0, "s")
 
 
 def test_pre_write_never_reads_the_target_file_contents(tmp_path: Path, intent_env: IntentContractConfig) -> None:
@@ -216,6 +216,4 @@ def test_pre_write_also_matches_a_hardlink_alias(tmp_path: Path, intent_env: Int
     root = make_project(tmp_path)
     os.link(root / PROTECTED, root / "alias.py")
     assert check_write.run(payload(root, "alias.py")).code == ALLOW
-    outcomes = read_telemetry(root)["recent_outcomes"]
-    assert isinstance(outcomes, list)
-    assert outcomes[-1] == "allowed_match"
+    assert read_telemetry(root)["last_outcome"] == "allowed_match"

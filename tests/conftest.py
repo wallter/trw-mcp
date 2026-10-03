@@ -53,6 +53,7 @@ from trw_memory.testing.daemon_reaper import (
     tag_daemon_ownership,
 )
 
+from tests._daemon_escape import escape_message, published_daemon_pids, session_homes, stop_escaped
 from tests._otel_support import otel_spans  # noqa: F401  (PRD-CORE-342 FR09 shared fixture)
 from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
 from tests._timing import pytest_sessionfinish as _timing_sessionfinish
@@ -124,6 +125,17 @@ def _xdist_fanout_violation(numprocesses: object, allow_wide: bool) -> str | Non
 
 
 @pytest.fixture(autouse=True)
+def _fresh_session_label_mark() -> Iterator[None]:
+    """Every test starts a new session at ``team`` (PRD-SEC-023): the mark is process state, and a test that recalls a labelled row must not
+    stamp the rows another test writes."""
+    from trw_mcp.state._session_mark import reset_session_mark
+
+    reset_session_mark()
+    yield
+    reset_session_mark()
+
+
+@pytest.fixture(autouse=True)
 def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Stop every daemon this test's in-process client auto-started, published or not.
 
@@ -147,16 +159,24 @@ def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator
 
 
 @pytest.fixture(autouse=True)
-def _reap_isolated_home_daemons(isolated_trw_home: None) -> Iterator[None]:
+def _reap_isolated_home_daemons(isolated_trw_home: None, tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Stop the memory daemon a test auto-started under its isolated HOME.
 
     Kept here, not in the shared ``_trw_home.py`` (byte-identical across packages),
     because only trw-mcp's store calls auto-start a daemon. Depending on
     ``isolated_trw_home`` sets this up after it, so HOME is already the test's.
+
+    A daemon that appears in the worker's SESSION home during the test means the test escaped its isolated HOME
+    (a mid-test ``monkeypatch.undo()`` reverts the autouse redirect too): it is stopped and fails THIS test, named,
+    instead of failing the whole run at the session-end sweep with no test named (DAEMON-LEAK-INTERMITTENT).
     """
     home = Path(os.environ["HOME"])
+    homes = session_homes(tmp_path_factory.getbasetemp())
+    before = published_daemon_pids(homes)
     yield
     reap_daemons_under(home)
+    if escaped := stop_escaped(before, published_daemon_pids(homes)):
+        pytest.fail(escape_message(escaped), pytrace=False)
 
 
 @pytest.fixture(autouse=True)
@@ -1091,3 +1111,9 @@ def _absolute_pythonpath(value: str, base: Path) -> str:
 
 if os.environ.get("PYTHONPATH"):
     os.environ["PYTHONPATH"] = _absolute_pythonpath(os.environ["PYTHONPATH"], Path.cwd())
+
+
+@pytest.fixture
+def llm_contact_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Platform contact reads as on for LLMClient: the suite sandbox has no project, which fails closed."""
+    monkeypatch.setattr("trw_mcp.clients.llm._contact_allowed", lambda: True)

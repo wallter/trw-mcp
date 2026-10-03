@@ -264,12 +264,10 @@ class TestConfigYamlLoading:
     [
         ("compliance_review_retention_days", 365),
         ("compact_instructions_template", ""),
-        ("self_review_blocking", False),
     ],
     ids=[
         "compliance_review_retention_days",
         "compact_instructions_template",
-        "self_review_blocking",
     ],
 )
 def test_config_defaults(field: str, expected: object) -> None:
@@ -280,8 +278,7 @@ def test_config_defaults(field: str, expected: object) -> None:
     incremental_validation_enabled, security_check_enabled, and
     pause_after_compaction were removed under PRD-CORE-291 (slice 2): each had
     no production reader and this default pin was its only reference outside
-    models/config. self_review_blocking stayed -- see its declaration comment
-    in _fields_ceremony.py for the real external consumer that kept it.
+    models/config.
     """
     config = TRWConfig()
     assert getattr(config, field) == expected

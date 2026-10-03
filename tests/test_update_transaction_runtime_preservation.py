@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.bootstrap._update_project import _rollback
 from trw_mcp.bootstrap._update_transaction import (
     _MANAGED_CANON_FILES,
     _is_surface_path,
-    _restore_transaction_snapshot,
     _snapshot_transaction_paths,
 )
 from trw_mcp.canons.registry import install_view, load_registry
@@ -56,7 +56,7 @@ def test_transaction_restore_preserves_runtime_writes_after_snapshot(tmp_path: P
         wal.parent.mkdir(parents=True)
         wal.write_bytes(b"live-wal")
 
-        _restore_transaction_snapshot(target, snapshot)
+        _rollback(target, snapshot, {"warnings": [], "errors": []})
 
         assert config.read_text(encoding="utf-8") == "version: before\n"
         assert framework.read_text(encoding="utf-8") == "before framework\n"
@@ -97,7 +97,7 @@ def test_transaction_restore_refuses_replaced_trw_symlink(tmp_path: Path) -> Non
 
     try:
         with pytest.raises(OSError, match="contains a symlink"):
-            _restore_transaction_snapshot(target, snapshot)
+            _rollback(target, snapshot, {"warnings": [], "errors": []})
         assert external_config.read_text(encoding="utf-8") == "must survive\n"
     finally:
         shutil.rmtree(snapshot, ignore_errors=True)
@@ -278,7 +278,7 @@ def test_rollback_restores_the_legacy_hook_env_for_a_not_yet_upgraded_lib(tmp_pa
         after_update = legacy.read_text(encoding="utf-8")
         assert after_update != before, "fixture must actually change the legacy file to be non-vacuous"
 
-        _restore_transaction_snapshot(target, snapshot)
+        _rollback(target, snapshot, {"warnings": [], "errors": []})
 
         assert legacy.exists(), "rollback must not leave the not-yet-upgraded lib without its env file"
         assert legacy.read_text(encoding="utf-8") == before

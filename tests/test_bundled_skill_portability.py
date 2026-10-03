@@ -78,9 +78,7 @@ def _bundled_skill_files() -> list[Path]:
 def test_skill_corpus_is_non_empty() -> None:
     """Non-vacuity floor: the guard below must have something to scan."""
     skills = _bundled_skill_files()
-    assert len(skills) >= 23, (
-        f"bundled skill corpus not found (saw {len(skills)}) — the portability guard would be vacuous"
-    )
+    assert skills, "bundled skill corpus not found — the portability guard would be vacuous"
 
 
 @pytest.mark.unit

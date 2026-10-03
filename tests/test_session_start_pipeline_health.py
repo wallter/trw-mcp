@@ -182,6 +182,23 @@ def _tripped_gate_trw_dir(tmp_path: Path) -> Path:
     return trw_dir
 
 
+def _tripped_health_result() -> dict[str, object]:
+    """The aggregate a probe of ``_tripped_gate_trw_dir`` reports: a stale, failing push.
+
+    PRD-FIX-131-FR05: the gate judges the aggregate the advisory computed rather
+    than probing the store again, so the stub must carry the tripped push state.
+    """
+    health = _healthy_health_result()
+    health["sync_push"] = {
+        "degraded": True,
+        "measured": True,
+        "consecutive_failures": 10653,
+        "last_push_at": "2026-04-21T18:08:05.640262+00:00",
+        "advisory": "sync_push degraded",
+    }
+    return health
+
+
 def _config_with_secret(secret: str):
     from pydantic import SecretStr
 
@@ -206,7 +223,7 @@ def test_warning_names_primary_target_last_success(tmp_path: Path) -> None:
     results: dict[str, object] = {}
 
     with patch(
-        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_tripped_health_result()
     ):
         step_pipeline_health_advisory(trw_dir, results, _config_with_secret("pk-secret"))
 
@@ -227,7 +244,7 @@ def test_warning_never_leaks_credentials(tmp_path: Path) -> None:
     results: dict[str, object] = {}
 
     with patch(
-        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_tripped_health_result()
     ):
         step_pipeline_health_advisory(trw_dir, results, _config_with_secret(secret))
 

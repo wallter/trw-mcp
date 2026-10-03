@@ -35,16 +35,19 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "trw-memory"))  # benchmarks.engmem (not part of the trw_memory package)
-sys.path.insert(0, str(_REPO / "trw-mcp"))  # tests._memory_daemon / _memory_fixtures: one daemon plumbing
+sys.path.insert(0, str(_REPO / "trw-mcp"))  # tests._memory_daemon: one daemon plumbing
 
 from benchmarks.engmem import synth  # noqa: E402
 from benchmarks.engmem.arms import GrepArm, RecencyArm, TrwHybridArm  # noqa: E402
@@ -54,9 +57,9 @@ from trw_memory.client import MemoryClient as _RealMemoryClient  # noqa: E402
 from trw_memory.daemon import DaemonPaths  # noqa: E402
 from trw_memory.daemon.client import DaemonClient  # noqa: E402
 
+from tests._memory_daemon import MemoryDaemon  # noqa: E402
+from tests._memory_daemon import attach_checkout as _real_attach_checkout  # noqa: E402
 from tests._memory_daemon import running_daemon as _real_running_daemon  # noqa: E402
-from tests._memory_fixtures import MemoryDaemon  # noqa: E402
-from tests._memory_fixtures import attach_checkout as _real_attach_checkout  # noqa: E402
 
 PAIRED_METRICS = ("hit@5", "complete@5", "hit@10")
 LIBRARY_ARM = "trw-hybrid"
@@ -140,6 +143,44 @@ def _p50(values: list[int]) -> int:
     return ordered[len(ordered) // 2] if ordered else 0
 
 
+HOOK_SAMPLES = 16  # 1 cold + 15 warm: the soak's whole hook measurement stays well under a minute
+_HOOK_ARGV = ("-m", "trw_mcp.state._auto_recall_hook")
+
+
+async def _hook_recall_latency(project: Path, prompts: list[str]) -> dict[str, float]:
+    """Wall time of the UserPromptSubmit recall hook's own module against the seeded, daemon-served store.
+
+    Each sample is a fresh interpreter, as the shell hook starts one per prompt. The first is ``cold_ms``;
+    the rest give ``p50_ms``/``p95_ms``/``n``. Platform contact is off for the child, so nothing leaves the
+    box. A store the hook cannot reach raises: a latency of "no recall" would be a fabricated number.
+    """
+    env = {**os.environ, "TRW_PLATFORM_CONTACT_ENABLED": "false"}
+    injected = project / ".trw" / "context" / "hook-bench-injected.txt"
+    injected.parent.mkdir(parents=True, exist_ok=True)
+    times: list[float] = []
+    for prompt in prompts[:HOOK_SAMPLES]:
+        injected.unlink(missing_ok=True)  # a session's dedup file would shorten every later sample
+        argv = [sys.executable, *_HOOK_ARGV, str(project), "-", str(injected), "3", "100", "0.35", "10000"]
+        t0 = time.perf_counter()
+        done = await asyncio.to_thread(
+            subprocess.run, argv, input=prompt, capture_output=True, text=True, env=env, timeout=30, check=False
+        )
+        elapsed_ms = 1000 * (time.perf_counter() - t0)
+        if done.returncode != 0 or "store_unavailable" in done.stderr:
+            raise RuntimeError(f"the recall hook did not reach the store (rc={done.returncode}): {done.stderr[-200:]}")
+        if "no_keywords" not in done.stderr:  # a prompt with nothing to search measures nothing
+            times.append(elapsed_ms)
+    if len(times) < 2:
+        raise RuntimeError(f"only {len(times)} hook sample(s) carried keywords")
+    warm = sorted(times[1:])
+    return {
+        "cold_ms": times[0],
+        "p50_ms": warm[len(warm) // 2],
+        "p95_ms": warm[min(len(warm) - 1, int(0.95 * len(warm)))],
+        "n": len(warm),
+    }
+
+
 def _prepare_root(root: Path) -> tuple[Path, Path]:
     """An empty trw-mcp project and an empty daemon home beside it."""
     if root.exists():
@@ -148,6 +189,51 @@ def _prepare_root(root: Path) -> tuple[Path, Path]:
     (project / ".trw").mkdir(parents=True, mode=0o700)
     user_dir.mkdir(mode=0o700)
     return project, user_dir
+
+
+@contextmanager
+def _isolated_project_session(project: Path, user_dir: Path) -> Iterator[None]:
+    """Bind one benchmark run to a fresh project, pin store, and session identity.
+
+    The in-process MCP client can inherit the launching agent's session-id env
+    and cached config. Keep both out of the benchmark: session-start may write
+    run events and surface artifacts, so those writes must stay in this fresh
+    project's ``.trw/runtime/pins.json`` and never resolve the caller's pin.
+    """
+    from trw_mcp.client_profiles.session_identity import known_session_id_env_vars
+    from trw_mcp.models.config import _reset_config
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache
+    from trw_mcp.state._project_root_binding import project_bound
+
+    identity_vars = (*known_session_id_env_vars(), "TRW_SESSION_ID", "TRW_PROJECT_ROOT", "TRW_USER_DIR")
+    previous = {name: os.environ.get(name) for name in identity_vars}
+    old_cwd = Path.cwd()
+    runtime_dir = project / ".trw" / "runtime"
+    runtime_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    pins_path = runtime_dir / "pins.json"
+    if pins_path.exists():
+        raise RuntimeError(f"benchmark project must start with an empty pin store: {pins_path}")
+
+    for name in known_session_id_env_vars():
+        os.environ.pop(name, None)
+    os.environ["TRW_SESSION_ID"] = f"engmem-bench-{uuid4().hex}"
+    os.environ["TRW_PROJECT_ROOT"] = str(project)
+    os.environ["TRW_USER_DIR"] = str(user_dir)
+    _reset_config()
+    invalidate_pin_store_cache()
+    try:
+        with project_bound(project):
+            os.chdir(project)
+            yield
+    finally:
+        os.chdir(old_cwd)
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _reset_config()
+        invalidate_pin_store_cache()
 
 
 async def _await_daemon_store_ready(client: DaemonClient, namespace: str) -> None:
@@ -196,10 +282,7 @@ async def _open_single_writer(
 async def run(size: int, args: argparse.Namespace) -> dict[str, Any]:
     events, queries, successor_of = synth.generate(seed=args.seed, distractors=size)
     project, user_dir = _prepare_root(Path(args.store).expanduser().resolve() / f"n{size}")  # noqa: ASYNC240 - one-shot CLI
-    os.environ["TRW_PROJECT_ROOT"] = str(project)
-    os.environ["TRW_USER_DIR"] = str(user_dir)
-    os.chdir(project)
-    with _real_running_daemon(user_dir, keyword_only=False) as paths:
+    with _isolated_project_session(project, user_dir), _real_running_daemon(user_dir, keyword_only=False) as paths:
         namespace, _store, library = await _open_single_writer(project, user_dir, paths)
         return await _run_against(size, args, events, queries, successor_of, namespace, library)
 
@@ -233,8 +316,23 @@ async def _run_against(
         # session already surfaced, so scoring both in one replay makes the second
         # arm measure the first's side effects instead of retrieval.
         mcp_arm = McpSessionStartArm(mcp_client) if args.entry == "session-start" else McpRecallArm(mcp_client)
+        # The first call into a fresh daemon loads the embedding models (~6 s): it is the max of any small-n sample, so p95 at n=16 would be the cold call. Time one
+        # throwaway call first, report it as cold_ms, and keep it out of the scored latencies.
+        warm_tool = (
+            ("trw_session_start", {"query": "warm-up"})
+            if args.entry == "session-start"
+            else ("trw_recall", {"query": "warm-up", "max_results": 1})
+        )
+        t_cold = time.perf_counter()
+        await mcp_client.call_tool(*warm_tool)
+        cold_ms = 1000 * (time.perf_counter() - t_cold)
         arms = [RecencyArm(mirror.rows), GrepArm(mirror.rows), TrwHybridArm(library, namespace), mcp_arm]
         results = await replay_and_score(events, queries, arms, client=library, state=mirror, limit=args.limit)
+        hook = (
+            await _hook_recall_latency(Path(os.environ["TRW_PROJECT_ROOT"]), [q.text for q in queries])
+            if args.hook_recall
+            else None
+        )
     wall_s = time.perf_counter() - t0
 
     out: dict[str, Any] = {}
@@ -251,9 +349,12 @@ async def _run_against(
         }
     out["_per_query"] = {name: _per_query(scored) for name, scored in results.items()}
     out["_paired"] = _paired(results[LIBRARY_ARM], results[mcp_arm.name])
+    if hook is not None:
+        out["_hook_recall"] = hook
     out["_run"] = {
         "rows": size,
         "queries": len(queries),
+        "cold_ms": cold_ms,
         "seed": args.seed,
         "wall_s": wall_s,
         "entry": args.entry,
@@ -277,6 +378,11 @@ def main() -> None:
         choices=("recall", "session-start"),
         default="recall",
         help="which MCP entry point to score against the library (one per pass; see run())",
+    )
+    p.add_argument(
+        "--hook-recall",
+        action="store_true",
+        help="after the replay, time the UserPromptSubmit recall hook against the same store (adds _hook_recall)",
     )
     args = p.parse_args()
     result = asyncio.run(run(args.size, args))

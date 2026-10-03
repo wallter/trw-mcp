@@ -40,6 +40,14 @@ def _switch(project: Path, value: str) -> None:
 
 class _Entry:
     sync_seq = 1
+    namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+    tags: list[str] = []
+    metadata: dict[str, str] = {}
+    # PRD-CORE-333: the quarantine gate keys a row on its id, remote id and content, as on a MemoryEntry.
+    id = "L-1"
+    remote_id = None
+    content = "a shareable learning"
+    detail = ""
 
     def to_dict(self) -> dict[str, object]:
         return {"summary": "a shareable learning", "importance": 0.9, "tags": []}

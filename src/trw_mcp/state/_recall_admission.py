@@ -9,13 +9,16 @@ cannot be fetched by id either (PRD-CORE-294 FR01).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
+from trw_memory.labels import LabelPolicy, Surface
 from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
 from trw_memory.retrieval.temporal_selection import TemporalSelection
@@ -25,9 +28,55 @@ if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
 
 
+from trw_mcp.state._session_mark import session_mark
+
 logger = structlog.get_logger(__name__)
 
-__all__ = ["RecallAdmission", "fetch_admitted"]
+__all__ = ["RecallAdmission", "WithheldTally", "fetch_admitted", "label_scope", "strict_policy_notice"]
+
+
+@dataclass
+class WithheldTally:
+    """The rows a recall's labels withheld, each counted once however many times admission examines it (PRD-SEC-023 FR03)."""
+
+    keys: set[tuple[str, str]] = field(default_factory=set)
+
+    @property
+    def count(self) -> int:
+        return len(self.keys)
+
+
+@dataclass(frozen=True)
+class _LabelScope:
+    surface: Surface
+    tally: WithheldTally
+
+
+_SCOPE: ContextVar[_LabelScope | None] = ContextVar("recall_label_scope", default=None)
+
+
+@contextmanager
+def label_scope(surface: Surface) -> Iterator[WithheldTally]:
+    """Every :class:`RecallAdmission` built inside this block serves *surface* and counts what its labels withhold into the yielded tally.
+
+    ``trw_recall`` opens it with ``Surface.AGENT``; everything else keeps the ``auto`` default.
+    """
+    tally = WithheldTally()
+    token = _SCOPE.set(_LabelScope(surface, tally))
+    try:
+        yield tally
+    finally:
+        _SCOPE.reset(token)
+
+
+def strict_policy_notice() -> str:
+    """One line for ``trw_session_start`` when labels.yaml could not be trusted (PRD-SEC-023 FR01); empty when the policy is fine.
+
+    The reason and the file path are in the log (one warning per file); this line names neither contents nor categories.
+    """
+    if LabelPolicy.current().source != "strict":
+        return ""
+    return "strict: labels.yaml is invalid or writable by others, so every user-tier row is treated as personal until it is fixed (see the log)"
 
 
 @dataclass(frozen=True)
@@ -37,10 +86,18 @@ class RecallAdmission:
     sec_cfg: MemoryConfig
     selection: TemporalSelection
     mem_status: MemoryStatus | None
+    surface: Surface = Surface.AUTO
+    withheld: WithheldTally = field(default_factory=WithheldTally)
 
     @classmethod
     def build(
-        cls, trw_dir: Path, *, status: str | None, as_of: datetime | None, include_superseded: bool
+        cls,
+        trw_dir: Path,
+        *,
+        status: str | None,
+        as_of: datetime | None,
+        include_superseded: bool,
+        surface: Surface | None = None,
     ) -> RecallAdmission:
         mem_status: MemoryStatus | None = None
         if status is not None:
@@ -49,7 +106,10 @@ class RecallAdmission:
             except ValueError:
                 logger.debug("invalid_status_ignored", status=status)
         selection = TemporalSelection(as_of=as_of, include_superseded=include_superseded, exclude_system_canaries=True)
-        return cls(MemoryConfig(storage_path=str(trw_dir / "memory")), selection, mem_status)
+        scope = _SCOPE.get()
+        config = MemoryConfig(storage_path=str(trw_dir / "memory"))
+        chosen = surface or (scope.surface if scope else Surface.AUTO)
+        return cls(config, selection, mem_status, chosen, scope.tally if scope else WithheldTally())
 
     def admit(self, entries: Sequence[MemoryEntry]) -> list[MemoryEntry]:
         """The rows of *entries* a caller may see, in order (superseded last when included)."""
@@ -75,9 +135,25 @@ class RecallAdmission:
         # PRD-CORE-292 FR03: MemoryClient.recall's exclude_expired default.
         policy = SourcePolicy.resolve(reference_time=selection.as_of or selection.reference_time)
         rows = [entry for entry in rows if policy.allows(entry_policy_fields(entry))]
-        if not self.sec_cfg.enable_recall_filter:
-            return rows
-        return list(filter_recall_window(rows, mode=self.sec_cfg.recall_filter_mode).accepted)
+        if self.sec_cfg.enable_recall_filter:
+            rows = list(filter_recall_window(rows, mode=self.sec_cfg.recall_filter_mode).accepted)
+        return self._by_label(rows)
+
+    def note_returned(self, entries: Sequence[MemoryEntry]) -> None:
+        """Raise the session mark to the highest label among *entries*: they were just returned to the caller (PRD-SEC-023 FR04)."""
+        session_mark().raise_to(LabelPolicy.current().highest(entries))
+
+    def _by_label(self, rows: list[MemoryEntry]) -> list[MemoryEntry]:
+        """PRD-SEC-023 FR03: keep the rows whose label this request's surface may show; the rest are counted, never named.
+
+        This is the one predicate search, listing and the by-id fetch share, so it runs before any per-namespace cap and a withheld row
+        cannot crowd out an admitted one.
+        """
+        result = LabelPolicy.current().admit(rows, self.surface)
+        if result.withheld:
+            kept = {id(entry) for entry in result.admitted}
+            self.withheld.keys.update((entry.namespace, entry.id) for entry in rows if id(entry) not in kept)
+        return result.admitted
 
     def representative(self, rows: Iterable[MemoryEntry]) -> MemoryEntry | None:
         """The row that represents one id in one store, on BOTH recall paths (PRD-CORE-294 FR01).
@@ -130,4 +206,6 @@ def fetch_admitted(trw_dir: Path, ids: Sequence[str], *, status: str | None = "a
 
     admission = RecallAdmission.build(trw_dir, status=status, as_of=None, include_superseded=False)
     store, _ = selected_store(trw_dir)
-    return store.recall(RecallSpec(admission=admission, ids=tuple(dict.fromkeys(ids))))
+    rows = store.recall(RecallSpec(admission=admission, ids=tuple(dict.fromkeys(ids))))
+    admission.note_returned(rows)
+    return rows

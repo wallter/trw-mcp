@@ -50,7 +50,12 @@ def test_validate_defaults_passes_when_safe_defaults_resolve(tmp_path: Path, mon
     monkeypatch.setattr("trw_mcp.meta_tune.boot_checks._IS_LINUX", True)
     monkeypatch.setattr("trw_mcp.meta_tune.boot_checks.shutil.which", lambda _: "/usr/bin/unshare")
 
-    validate_defaults(cfg, repo_root=repo_root)
+    assert validate_defaults(cfg, repo_root=repo_root) is None
+
+    # Control: without the kill-switch config the same setup is refused, naming the key.
+    (repo_root / ".trw" / "config.yaml").unlink()
+    with pytest.raises(MetaTuneBootValidationError, match=r"kill_switch_path: missing"):
+        validate_defaults(cfg, repo_root=repo_root)
 
 
 def test_validate_defaults_raises_when_kill_switch_missing(tmp_path: Path) -> None:

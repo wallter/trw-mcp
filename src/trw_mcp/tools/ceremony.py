@@ -201,6 +201,9 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_first_session_marker as _ss_first_session_marker,
 )
 from trw_mcp.tools._ceremony_step_table import (
+    _ss_fresh_pull as _ss_fresh_pull,
+)
+from trw_mcp.tools._ceremony_step_table import (
     _ss_graph_health as _ss_graph_health,
 )
 from trw_mcp.tools._ceremony_step_table import (

@@ -16,7 +16,7 @@ from typing import NamedTuple
 
 import pytest
 
-from trw_mcp.bootstrap import _safe_remove, _template_updater, _uninstall_manifest
+from trw_mcp.bootstrap import _retire, _safe_remove, _template_updater, _uninstall_manifest
 from trw_mcp.bootstrap._uninstall_manifest import KeyDisposition, apply_removal
 from trw_mcp.server import _uninstall_corpus
 
@@ -84,7 +84,7 @@ def test_retired_hook_withdrawal_does_not_unlink_a_file_swapped_for_a_symlink(
     hook.write_text("#!/bin/sh\n", encoding="utf-8")
     outside.write_text("#!/bin/sh\n", encoding="utf-8")  # same bytes: the hash match must not reach an unlink
     recorded = hashlib.sha256(hook.read_bytes()).hexdigest()
-    swapped = _arm_swap(monkeypatch, hook, outside, _template_updater, _safe_remove)
+    swapped = _arm_swap(monkeypatch, hook, outside, _template_updater, _safe_remove, _retire)
     result: dict[str, list[str]] = {}
     _template_updater._withdraw_retired_hooks(root, set(), {"old.sh": recorded}, result)
     assert swapped == [True]

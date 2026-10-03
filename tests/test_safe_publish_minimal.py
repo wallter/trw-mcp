@@ -224,14 +224,15 @@ def test_swap_between_stat_and_capture(
     assert_user_bytes_preserved(holder["snap"], tmp_path)
 
 
-def test_file_vanishes_before_capture_is_absent_and_folder_stays(
+def test_file_vanishes_before_capture_is_absent_and_no_empty_folder_stays(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: Path
 ) -> None:
+    """FB-01-KI1-RACE r6: a capture folder that received nothing (only its meta file) is removed, so a
+    failed capture never uses up a full disk's last space."""
     probe = race_after(monkeypatch, target="f.txt", op="rename", when="before", interloper=lambda: os.unlink(target))
     result = remove_if_hash(target, tmp_path, GOOD)
     assert probe.fired and result.status == "absent"
-    folders = list(trash_dir(tmp_path).iterdir())
-    assert len(folders) == 1 and (folders[0] / "meta.json").is_file()
+    assert list(trash_dir(tmp_path).iterdir()) == []
 
 
 @pytest.mark.parametrize("swap", ["inplace", "atomic"])

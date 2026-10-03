@@ -2,7 +2,7 @@
 
 On an 8.1.2 upgrade over an existing project the installer printed nothing about a kept, edited ``lib-trw.sh``
 (and the hooks that depend on it), about a git-dirty ``AGENTS.md`` it did not refresh, or about the skill files it
-moved to ``.trw/trash``. Three producers recorded those only as a count (``preserved``), in a key nothing reads
+deleted or kept. Three producers recorded those only as a count (``preserved``), in a key nothing reads
 (``modified``), or under a path the spinner-mode installer discarded (it re-surfaces only ``WARNING:`` lines).
 
 The producer is ``server/_subcommands.py``; the consumer is ``install-trw.py``'s ``run_with_progress``; the two
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import sys
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import patch
@@ -146,7 +145,7 @@ class TestAnEditedLibraryIsReportedByARealUpdate:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """FB-INSTALL-01 replaced "keep an edited lib-trw.sh" (its refreshed hooks then called functions the kept
-        lib lacked): the user's copy goes to .trw/trash byte for byte, the bundled lib is installed, and the run
+        lib lacked): the user's uncommitted copy goes to .trw/trash byte for byte, the bundled lib is installed, and the run
         names the backup. Naming it is still this file's contract."""
         import subprocess
 
@@ -175,8 +174,8 @@ class TestAnEditedLibraryIsReportedByARealUpdate:
 _RETIRED = "trw-release-verify"
 
 
-def test_a_retired_skill_moved_to_trash_is_reported_as_trashed(tmp_path: Path) -> None:
-    """The uncommitted-changes guard skips only paths in ``trashed``, and the CLI names only those: a captured
+def test_a_retired_skill_is_deleted_in_place_and_reported_as_retired(tmp_path: Path) -> None:
+    """The uncommitted-changes guard skips only paths in ``retired``, and the CLI names only those: a deleted
     retired skill left both blind (the nine silent skill files in sub_i7UMmxUbTbsdW0eD)."""
     skill = tmp_path / ".claude" / "skills" / _RETIRED / "SKILL.md"
     skill.parent.mkdir(parents=True)
@@ -192,75 +191,20 @@ def test_a_retired_skill_moved_to_trash_is_reported_as_trashed(tmp_path: Path) -
     _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes=hashes)
 
     assert not skill.parent.exists()
-    assert result["trashed"] == [f".claude/skills/{_RETIRED}/SKILL.md"]
+    assert result["retired"] == [f".claude/skills/{_RETIRED}/SKILL.md"]
+    assert not (tmp_path / ".trw" / "trash").exists()
 
 
-def test_the_cli_line_names_the_capture_folder_that_holds_the_bytes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_the_cli_names_each_retired_file_unless_a_warning_already_describes_it(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """S8a (lead): "Moved to .trw/trash/<stamp>-<id>: <rel>", so the operator can find the bytes without doctor."""
-    from trw_mcp.server._update_report import print_trashed
+    from trw_mcp.server._update_report import print_retired
 
-    rel = f".claude/skills/{_RETIRED}/SKILL.md"
-    skill = tmp_path / rel
-    skill.parent.mkdir(parents=True)
-    skill.write_text("# release gate\n", encoding="utf-8")
-    digest = hashlib.sha256(skill.read_bytes()).hexdigest()
-    (tmp_path / ".trw").mkdir()
-    (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
-        f"version: 2\ncontent_hashes:\n  {_RETIRED}/SKILL.md: {digest}\n", encoding="utf-8"
+    print_retired(
+        [".claude/hooks/old.sh", "a.md", "b.md"],
+        ["b.md: removed; your version differs from TRW's but is committed in git (restore: git restore -- b.md)"],
     )
-    result: dict[str, list[str]] = {"updated": [], "errors": []}
-
-    _cleanup_stale_artifacts(tmp_path, result, None, manifest_hashes={f"{_RETIRED}/SKILL.md": digest})
-
-    [row] = result["trash_captures"]
-    path, _, folder = row.rpartition("\t")
-    assert path == rel
-    assert folder.startswith(".trw/trash/")
-    assert (tmp_path / folder / "data").read_text(encoding="utf-8") == "# release gate\n"
-    print_trashed(result["trashed"], captures=result["trash_captures"])
-    assert capsys.readouterr().out == f"Moved to {folder}: {rel}\n"
-
-
-def test_a_trashed_file_without_a_known_folder_keeps_the_generic_line(capsys: pytest.CaptureFixture[str]) -> None:
-    """Producers that do not record a capture folder (hooks, distill channels) print the line they always did."""
-    from trw_mcp.server._update_report import print_trashed
-
-    print_trashed([".claude/hooks/old.sh", "a.md"], captures=["a.md\t.trw/trash/20261001T000000Z-ab"])
     assert capsys.readouterr().out.splitlines() == [
-        "Moved to .trw/trash: .claude/hooks/old.sh (unchanged TRW file; see doctor)",
-        "Moved to .trw/trash/20261001T000000Z-ab: a.md",
+        "Removed retired TRW file: .claude/hooks/old.sh",
+        "Removed retired TRW file: a.md",
     ]
-
-
-# ── Consumer: the installer's progress reader ────────────────────────────
-
-
-def _child(*lines: str) -> list[str]:
-    program = "\n".join(f"print({line!r}, flush=True)" for line in lines)
-    return [sys.executable, "-c", program]
-
-
-class TestTheInstallerSurfacesWhatItWasTold:
-    def test_a_trashed_file_line_survives_the_spinner(
-        self, installer: ModuleType, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        ui = installer.UI(interactive=True)
-        trashed = "Moved to .trw/trash: .claude/skills/trw-x/SKILL.md (unchanged TRW file; see doctor)"
-
-        ok = installer.run_with_progress(ui, "Updating project...", _child("Updated: a.md", trashed))
-        ui.stop_spinner(ok, "Project updated")
-
-        out = capsys.readouterr().out
-        assert trashed in out
-        assert out.index("Project updated") < out.index(trashed)
-
-    def test_a_kept_line_survives_the_spinner(self, installer: ModuleType, capsys: pytest.CaptureFixture[str]) -> None:
-        ui = installer.UI(interactive=True)
-        kept = "kept .claude/hooks/lib-trw.sh: you edited it since TRW last wrote it, so this update did not replace it"
-
-        ok = installer.run_with_progress(ui, "Updating project...", _child(f"WARNING: {kept}"))
-        ui.stop_spinner(ok, "Project updated")
-
-        assert kept in capsys.readouterr().out

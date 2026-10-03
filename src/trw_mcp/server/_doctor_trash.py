@@ -1,7 +1,7 @@
 """The ``trw_trash`` row of ``trw-mcp doctor``: what ``.trw/trash`` holds.
 
-``remove_if_hash`` moves a file it is about to remove into ``.trw/trash/<capture>/``
-and TRW never deletes those backups automatically, so this row is where the
+``remove_if_hash`` (uninstall, and an edited hook with uncommitted changes that an update must replace) moves
+a file it is about to remove into ``.trw/trash/<capture>/`` and TRW never deletes those backups automatically, so this row is where the
 operator learns the folder exists and how big it has grown. Read-only: it never
 removes, creates or follows anything. Bounded: it stops counting after
 ``MAX_SCANNED`` directory entries and reports the totals as lower bounds.

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing_extensions import NotRequired, TypedDict
-
-from trw_mcp.models.typed_dicts._analytics import TierDistribution
+from typing_extensions import TypedDict
 
 # LearnResult was merged into LearnResultDict in _tools.py (PRD-CORE-080).
 # Re-exported here so existing ``from ... _delivery import LearnResult`` call-sites work.
@@ -57,17 +55,6 @@ class TelemetryStepResult(StepResultBase):
     ceremony_score: int
     build_passed: bool
     coverage_delta: float
-
-
-class TierSweepStepResult(TypedDict):
-    """Return shape of ``_step_tier_sweep()``."""
-
-    status: str
-    promoted: int
-    demoted: int
-    purged: int
-    errors: int
-    impact_tier_distribution: NotRequired[TierDistribution]
 
 
 class MemoryDecayStepResult(TypedDict):

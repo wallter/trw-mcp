@@ -106,6 +106,11 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
         "served store: a read-only COUNT(*) GROUP BY namespace on the store `backup create` just archived (daemon "
         "stopped), through connect_registered; counts only, decides whether the remote upload is refused."
     ),
+    ("server/_backup_remote_scope.py", "labelled_row_count", 1): (
+        "served store: a read-only (mode=ro) scan of namespace, tags and metadata on the store `backup create` just "
+        "archived (daemon stopped), through connect_registered, in 1000-row batches; returns a count of rows labelled "
+        "above team (PRD-SEC-023 FR05), never a row."
+    ),
     ("comms/_bootstrap.py", "_lead_pending", 1): (
         "comms.sqlite3: B71-73/FR10 -- a read-only pending-count query against the checkout-seedable "
         "mailbox, with no deadline on the surrounding schema check today."
@@ -165,6 +170,11 @@ _AUDITED_EXCEPTIONS: dict[tuple[str, str, int], str] = {
         "migrate _exclusive/_snapshot: locking/backup, non-goal -- an empty :memory: db backed into "
         "the held project-store connection to empty it after a successful migration; not a read of "
         "checkout content."
+    ),
+    ("state/_store_migration.py", "_stamp_origin_project", 1): (
+        "checkout memory.db: UF-PRD-22 -- opens the private working COPY that _source_rows already probed with "
+        "probe_store (never the live checkout store, never the user store) to stamp origin_project on the rows "
+        "being migrated; the daemon, not this open, reads the result."
     ),
     ("state/_store_migration.py", "_swap", 1): (
         "migrate _exclusive/_snapshot: locking/backup, non-goal -- CLI restore's swap step opens the "

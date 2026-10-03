@@ -84,7 +84,19 @@ class TestUpdateOSErrorPaths:
                 raise OSError("permission denied")
             write_checkout_file(root, dst, data)
 
-        with patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=selective_fail):
+        from trw_mcp.bootstrap import _restore_proof
+
+        real_create = _restore_proof.copy_back_exclusive
+
+        def fail_create(src: Path, dst: Path, rel: str, notes: list[str], **kw: int) -> bool:
+            if dst.suffix == ".sh":  # an absent hook is published by an exclusive create (GUARDED-COPY test_E)
+                raise OSError("permission denied")
+            return real_create(src, dst, rel, notes, **kw)
+
+        with (
+            patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=selective_fail),
+            patch.object(_restore_proof, "copy_back_exclusive", side_effect=fail_create),
+        ):
             result = update_project(initialized_repo)
         assert any("Failed to copy" in e or "Failed to snapshot" in e for e in result["errors"])
 
@@ -101,7 +113,19 @@ class TestUpdateOSErrorPaths:
                 raise OSError("skill copy failed")
             write_checkout_file(root, dst, data)
 
-        with patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=fail_skills):
+        from trw_mcp.bootstrap import _restore_proof
+
+        real_create = _restore_proof.copy_back_exclusive
+
+        def fail_create(src: Path, dst: Path, rel: str, notes: list[str], **kw: int) -> bool:
+            if "skills" in str(dst):  # an absent skill file is published by an exclusive create
+                raise OSError("skill copy failed")
+            return real_create(src, dst, rel, notes, **kw)
+
+        with (
+            patch("trw_mcp.bootstrap._template_updater.write_checkout_file", side_effect=fail_skills),
+            patch.object(_restore_proof, "copy_back_exclusive", side_effect=fail_create),
+        ):
             result = update_project(initialized_repo)
         assert any("skill" in e.lower() or "Failed to copy" in e for e in result["errors"])
 

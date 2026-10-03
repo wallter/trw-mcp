@@ -522,11 +522,24 @@ class TestLockForRmw:
     def test_lock_released_after_context(self, tmp_path: Path) -> None:
         """Lines 344-346: lock is released after context exits normally."""
         target = tmp_path / "data.yaml"
+        fcntl = pytest.importorskip("fcntl")
+        lock_path = tmp_path / "data.yaml.lock"
+
+        def _try_nonblocking() -> bool:
+            fd = os.open(lock_path, os.O_WRONLY)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:  # trw-fail-silent-allow: the probe's answer is "the lock is held"
+                return False
+            finally:
+                os.close(fd)
+            return True
+
         with lock_for_rmw(target):
-            pass
-        # Can acquire again immediately (lock was released)
-        with lock_for_rmw(target):
-            pass
+            # Contrast: while held, an independent descriptor cannot take the lock.
+            assert _try_nonblocking() is False
+        # After the context exits the lock is genuinely free.
+        assert _try_nonblocking() is True
 
     def test_lock_released_on_exception(self, tmp_path: Path) -> None:
         """Finally block releases lock even when exception is raised."""

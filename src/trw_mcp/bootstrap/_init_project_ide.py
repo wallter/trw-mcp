@@ -45,8 +45,8 @@ def _extend_result(
     result["skipped"].extend(update.get("preserved", []))
     result["errors"].extend(update.get("errors", []))
     # A sub-installer's warnings (e.g. the global antigravity config it refused to replace) must reach the caller.
-    # A sub-installer's removals (e.g. a withdrawn CC-03 hook moved to .trw/trash) are reported too.
-    for key in ("warnings", "removed", "trashed"):
+    # A sub-installer's removals (e.g. a withdrawn CC-03 hook) are reported too.
+    for key in ("warnings", "removed", "retired"):
         items = update.get(key)
         if isinstance(items, list):
             result.setdefault(key, []).extend(items)

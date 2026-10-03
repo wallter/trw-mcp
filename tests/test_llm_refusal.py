@@ -14,6 +14,8 @@ import pytest
 
 from trw_mcp.clients.llm import LLMClient
 
+pytestmark = pytest.mark.usefixtures("llm_contact_on")
+
 
 def _wired_client(response: object) -> LLMClient:
     client = LLMClient()

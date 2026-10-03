@@ -52,16 +52,14 @@ proof of authorship rather than on "it is inside a trw- directory".
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
 
-from ._ownership_proof import _trw_authored, preserve_unowned, remove_proven
-from ._safe_remove import remove_if_hash
-from ._utils import printable
+from ._ownership_proof import _trw_authored, remove_proven
+from ._retire import as_retirement, record_retirement, retire_file
 
 logger = structlog.get_logger(__name__)
 
@@ -258,14 +256,9 @@ def _remove_stale_files_in_kept_dir(
     with no manifest record — and freezes at its old bytes the moment upstream
     re-adds that filename (PRD-FIX-121 round-2 regression).
 
-    Deletion requires POSITIVE proof of TRW authorship: the pre-run manifest
-    records the key AND the on-disk bytes still hash to that record. Anything
-    else is preserved:
-
-    - no record at all → a file the user created inside a TRW skill dir;
-    - record present but content drifted → TRW wrote it, the user edited it since.
-
-    Both are uncommitted user work, and HB-2 forbids trading them for cleanliness.
+    Only a file the pre-run manifest records is TRW's to retire (no record means a file the user created inside
+    a TRW skill dir, which is never touched). A recorded file is deleted in place when its bytes still hash to
+    that record or git holds it clean; an uncommitted edit is kept and named with the command that removes it.
     A surface whose bundle contributes no key under this directory is skipped
     entirely: an unreadable/absent content source must not read as "everything
     here is stale".
@@ -280,17 +273,7 @@ def _remove_stale_files_in_kept_dir(
         recorded = (manifest_hashes or {}).get(key)
         if key in bundled_keys or recorded is None:
             continue
-        try:
-            if hashlib.sha256(path.read_bytes()).hexdigest() != recorded:
-                continue
-        except OSError:
-            logger.debug(surface.log_event, path=str(path), exc_info=True)
-            continue
-        # remove_if_hash re-hashes the captured bytes and links them back on a mismatch, so an edit saved
-        # after the check above keeps its bytes (HB-2); a matched file stays in .trw/trash, never unlinked.
-        outcome = remove_if_hash(path, target_dir, recorded, key=key)
-        if outcome.status in ("kept", "retained"):
-            result.setdefault("warnings", []).append(f"{printable(key)} ({outcome.reason}): kept")
+        record_retirement(result, as_retirement(key, retire_file(path, target_dir, {recorded})))
 
 
 def _surface_bundled_file_keys(surface: ClientArtifactSurface) -> set[str]:
@@ -372,8 +355,6 @@ def _remove_stale_client_surface(
         # that key proves it; a skill-dir mirror keeps the documented suffix rule (its bare .claude key holds the
         # same bytes).
         exact = (not surface.is_dir_artifact) if surface.exact_proof is None else surface.exact_proof
-        if preserve_unowned(entry, manifest_hashes, target_dir, result, exact=exact):
-            continue
         remove_proven(entry, manifest_hashes, target_dir, result, exact=exact)
 
 
@@ -459,6 +440,28 @@ def _codex_manifest_hashes(target_dir: Path, prev_hashes: dict[str, str] | None 
         except OSError:
             logger.warning("codex_content_hash_failed", path=str(dest))
     return hashes
+
+
+def client_skill_lists() -> dict[str, set[str] | None]:
+    """Each client skill mirror's own shipped list, as the stale sweep judges it (DOCTOR-PER-CLIENT-SKILL-PREDICATE).
+
+    ``None`` means the list is unknown (a failing source, or no OpenCode inventory): the sweep judges nothing
+    there, and neither may the doctor. Built from the sweep's own name sources so the two cannot disagree.
+    """
+    from ._artifact_names import _opencode_skill_names
+    from ._utils import _DATA_DIR
+
+    lists: dict[str, set[str] | None] = {}
+    for surface in _CLIENT_ARTIFACT_SURFACES:
+        if surface.is_dir_artifact:
+            try:
+                lists[surface.client_dir] = set(surface.bundled_names())
+            except Exception:  # justified: a broken bundled-name source means an unknown list, as in the sweep
+                logger.debug("client_bundled_names_failed", surface=surface.client_dir, exc_info=True)
+                lists[surface.client_dir] = None
+    opencode = _opencode_skill_names(_DATA_DIR / "opencode", _DATA_DIR / "skills")
+    lists[".opencode/skills"] = None if opencode is None else set(opencode)
+    return lists
 
 
 def _remove_stale_client_artifacts(

@@ -157,7 +157,7 @@ def test_the_whole_response_never_exceeds_the_byte_budget(
 ) -> None:
     envelope: dict[str, object] = {"query": query, "total_matches": len(rows), **advisories}
     if nested:
-        envelope["remote_recall"] = nested
+        envelope["advisory_detail"] = nested
 
     stubs = present(envelope, rows, byte_budget=budget)
 

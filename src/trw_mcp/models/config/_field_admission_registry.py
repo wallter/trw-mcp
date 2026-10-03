@@ -44,6 +44,7 @@ from trw_mcp.models.config._field_admission_requirement_drift import REQUIREMENT
 from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT_ADMISSIONS
 from trw_mcp.models.config._field_admission_shared_mcp import SHARED_MCP_ADMISSIONS
 from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
+from trw_mcp.models.config._field_admission_team_sync import TEAM_SYNC_ADMISSIONS
 from trw_mcp.models.config._field_admission_time import TIME_ADMISSIONS
 from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
 
@@ -352,6 +353,8 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **REQUIREMENT_DRIFT_ADMISSIONS,
     # PRD-CORE-338: wall-clock tracking switch + display zone (own table).
     **TIME_ADMISSIONS,
+    # SHARED-RECALL-LOCAL: pre-recall team pull freshness threshold (own table).
+    **TEAM_SYNC_ADMISSIONS,
     **SHARED_MCP_ADMISSIONS,
     # PRD-CORE-335-FR01: project-level nudge pool-weight override (own table).
     **NUDGE_POOL_ADMISSIONS,

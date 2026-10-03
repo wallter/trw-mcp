@@ -187,13 +187,30 @@ class TestChangedFiles:
         with patch(
             f"{_MOD}.subprocess.run",
             return_value=subprocess.CompletedProcess([], 128, stdout="", stderr="not a repo"),
-        ):
+        ) as mock_run:
             assert fa.changed_files() is None
+        # The first failing git call short-circuits: the --cached diff is never attempted.
+        assert mock_run.call_count == 1
+
+        # Control: exit 0 with no output is an empty set (git available, nothing changed), not None.
+        with patch(
+            f"{_MOD}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ) as mock_run:
+            assert fa.changed_files() == set()
+        assert mock_run.call_count == 2
 
     def test_git_missing_yields_none(self) -> None:
         """git binary absent -> None, no exception."""
         with patch(f"{_MOD}.subprocess.run", side_effect=FileNotFoundError):
             assert fa.changed_files() is None
+
+        # Control: a successful git run yields the real change set, so None comes from the error path.
+        with patch(
+            f"{_MOD}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="src/a.py\n", stderr=""),
+        ):
+            assert fa.changed_files() == {"src/a.py", "a.py"}
 
     def test_timeout_yields_none(self) -> None:
         """git timing out -> None, no exception."""
@@ -202,6 +219,13 @@ class TestChangedFiles:
             side_effect=subprocess.TimeoutExpired(cmd="git", timeout=15),
         ):
             assert fa.changed_files() is None
+
+        # Control: a successful git run yields the real change set, so None comes from the error path.
+        with patch(
+            f"{_MOD}.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, stdout="src/a.py\n", stderr=""),
+        ):
+            assert fa.changed_files() == {"src/a.py", "a.py"}
 
 
 class TestBuildCheckIntegration:

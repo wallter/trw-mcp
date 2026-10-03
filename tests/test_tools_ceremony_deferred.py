@@ -124,7 +124,6 @@ class TestRunDeferredSteps:
 
         step_names = [
             "_step_auto_prune",
-            "_step_tier_sweep",
             "_do_index_sync",
             "_step_auto_progress",
             "_step_publish_learnings",
@@ -162,7 +161,6 @@ class TestLaunchDeferred:
 
         step_names = [
             "_step_auto_prune",
-            "_step_tier_sweep",
             "_do_index_sync",
             "_step_auto_progress",
             "_step_publish_learnings",
@@ -382,9 +380,7 @@ class TestMemoryDecayStep:
         from trw_mcp.tools._delivery_tracer import DEFERRED_STEP_EFFECT_IDS
 
         assert "memory_decay" in DEFERRED_STEPS
-        # It runs AFTER the tier sweep so a row demoted this delivery is not also
-        # decayed in the same pass.
-        assert DEFERRED_STEPS.index("memory_decay") > DEFERRED_STEPS.index("tier_sweep")
+        assert "tier_sweep" not in DEFERRED_STEPS  # the YAML tier sweep was retired (UF-PRD-23)
         assert DEFERRED_STEP_EFFECT_IDS["memory_decay"] == "D25"
 
 

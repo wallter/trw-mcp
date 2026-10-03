@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -33,38 +34,25 @@ def test_user_edited_explorer_is_preserved(tmp_path: Path) -> None:
     assert target.exists()
 
 
-def test_unreadable_explorer_is_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode-000 files")
+def test_unreadable_explorer_is_preserved(tmp_path: Path) -> None:
     """A file we cannot inspect is not proven TRW-owned, so it must not be deleted."""
     target = _install(tmp_path)
-    real_read_bytes = Path.read_bytes
-
-    def _deny(self: Path) -> bytes:
-        if self == target:
-            raise PermissionError("unreadable")
-        return real_read_bytes(self)
-
-    monkeypatch.setattr(Path, "read_bytes", _deny)
-    assert withdraw_cc05_subagent_if_unedited(tmp_path, None) is False
+    target.chmod(0)
+    try:
+        assert withdraw_cc05_subagent_if_unedited(tmp_path, None) is False
+    finally:
+        target.chmod(0o644)
     assert target.exists()
 
 
-def test_a_read_that_fails_after_the_first_is_still_preserved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ownership is decided from ONE read; a later read failing cannot turn 'unknown' into 'unedited'."""
+def test_an_edited_explorer_is_kept_and_named_when_a_result_is_passed(tmp_path: Path) -> None:
     target = _install(tmp_path)
-    real_read_bytes = Path.read_bytes
-    reads: list[int] = []
-
-    def _second_read_fails(self: Path) -> bytes:
-        if self == target:
-            reads.append(1)
-            if len(reads) > 1:
-                raise PermissionError("unreadable on the second read")
-        return real_read_bytes(self)
-
-    monkeypatch.setattr(Path, "read_bytes", _second_read_fails)
     target.write_text("user edit\n", encoding="utf-8")
-    assert withdraw_cc05_subagent_if_unedited(tmp_path, None) is False
-    assert target.exists()
+    result: dict[str, list[str]] = {}
+    assert withdraw_cc05_subagent_if_unedited(tmp_path, None, result) is False
+    assert target.read_text(encoding="utf-8") == "user edit\n"
+    assert any(w.endswith(f"rm {EXPLORER_AGENT_RELPATH}") for w in result["warnings"])
 
 
 def test_manifest_recorded_hash_counts_as_unedited(tmp_path: Path) -> None:

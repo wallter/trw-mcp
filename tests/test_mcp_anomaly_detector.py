@@ -25,6 +25,7 @@ def _cfg(tmp_path: Path, *, sigma: float = DEFAULT_SIGMA_THRESHOLD) -> AnomalyDe
     return AnomalyDetectorConfig(
         sigma_threshold=sigma,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "mcp_shadow_start.yaml",
     )
 
@@ -172,13 +173,22 @@ def test_never_raises_on_degenerate_baseline(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
     # No baseline seeded → only first_observation may fire; no crash.
-    det.observe(
+    fired = det.observe(
         AnomalyObservation(
             ts=datetime.now(tz=timezone.utc),
             server="trw",
             tool="trw_recall",
             session_id="s",
         )
+    )
+    assert fired == ["first_observation_after_deploy"]
+    # A known tool seeded into the baseline does not fire at all.
+    det.seed_baseline(known_pairs={("trw", "trw_recall")})
+    assert (
+        det.observe(
+            AnomalyObservation(ts=datetime.now(tz=timezone.utc), server="trw", tool="trw_recall", session_id="s")
+        )
+        == []
     )
 
 
@@ -208,6 +218,7 @@ def test_baseline_arg_hashes_bounded_per_pair(tmp_path: Path) -> None:
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "clock.yaml",
         max_arg_hashes_per_pair=8,
     )
@@ -234,6 +245,7 @@ def test_baseline_eviction_lets_old_arg_pattern_refire(tmp_path: Path) -> None:
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "clock.yaml",
         max_arg_hashes_per_pair=2,
     )
@@ -269,6 +281,7 @@ def test_novel_arg_pattern_stops_firing_after_the_per_pair_shape_cap(tmp_path: P
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "clock.yaml",
         max_novel_arg_shapes_per_pair=3,
     )
@@ -299,6 +312,7 @@ def test_novel_arg_pattern_cap_is_per_pair_not_global(tmp_path: Path) -> None:
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "clock.yaml",
         max_novel_arg_shapes_per_pair=1,
     )
@@ -328,6 +342,7 @@ def test_baseline_store_file_rolls_at_cap(tmp_path: Path) -> None:
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "clock.yaml",
         baseline_store_path=baseline_path,
         max_baseline_store_lines=10,
@@ -359,6 +374,7 @@ def test_mode_property_reflects_config(tmp_path: Path) -> None:
         mode="enforce",
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "enforce_clock.yaml",
     )
     enforce_det = AnomalyDetector(config=enforce_cfg, run_dir=None, fallback_dir=tmp_path)
@@ -372,6 +388,7 @@ def test_config_rejects_unknown_mode(tmp_path: Path) -> None:
     with pytest.raises(pydantic.ValidationError):
         AnomalyDetectorConfig(
             mode="enfroce",  # typo
+            checkout_root=tmp_path,
             shadow_clock_path=tmp_path / "security" / "clock.yaml",
         )
 
@@ -383,6 +400,7 @@ def test_novel_arg_pattern_uses_persisted_baseline_not_process_local_first_seen(
     cfg = AnomalyDetectorConfig(
         sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
         window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "mcp_shadow_start.yaml",
         baseline_store_path=baseline_path,
     )

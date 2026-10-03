@@ -39,6 +39,10 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
         "Set to 1 to let `update-project` proceed against a dirty bundled-data checkout.",
     ),
     EnvOnlyVar(
+        "TRW_API_KEY",
+        "Alias of TRW_PLATFORM_API_KEY; the headless installer also scrubs its literal value from the run log.",
+    ),
+    EnvOnlyVar(
         "TRW_CHAIN_ID",
         "Fallback source-run identity for chain-evaluation runs when TRW_RUN_ID is unset.",
     ),
@@ -73,6 +77,10 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
     EnvOnlyVar(
         "TRW_JEV_ENABLED",
         "Process-scope switch for the trw_assess backend; an explicit value beats project and machine config.",
+    ),
+    EnvOnlyVar(
+        "TRW_LICENSE_KEY",
+        "Read only by the headless installer, which scrubs its literal value from the run log.",
     ),
     EnvOnlyVar(
         "TRW_LOG_LEVEL",

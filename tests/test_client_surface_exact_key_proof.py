@@ -60,4 +60,4 @@ def test_the_exact_key_still_proves_and_sweeps(tmp_path: Path, surface: str, fil
     result = _sweep(tmp_path, {f"{surface}/{filename}": _sha(b"stale")})
 
     assert not copy.exists()
-    assert f"{surface}/{filename}" in result["trashed"]
+    assert f"{surface}/{filename}" in result["retired"]

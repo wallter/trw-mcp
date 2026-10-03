@@ -110,11 +110,15 @@ class TestValidationImplementPhaseInvalidStatus:
         ):
             result = check_phase_exit(Phase.IMPLEMENT, run_path, config)
 
-        prd_enforcement.assert_called_once()
-        build_check.assert_called_once()
-        assert result is not None
-        assert hasattr(result, "valid")
-        assert isinstance(result.failures, list)
+        assert prd_enforcement.call_count == 1
+        assert build_check.call_count == 1
+        # The invalid configured status falls back to APPROVED.
+        from trw_mcp.models.requirements import PRDStatus
+
+        assert prd_enforcement.call_args.args[2] == PRDStatus.APPROVED
+        assert prd_enforcement.call_args.args[3] == "implement"
+        # Enforcement stubbed to no failures, so nothing else contributes any.
+        assert {f.rule for f in result.failures} <= {"manifest_exists"}
 
 
 class TestValidationBuildStatusTimestampParseError:

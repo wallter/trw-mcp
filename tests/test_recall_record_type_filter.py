@@ -109,25 +109,6 @@ def test_ids_and_graph_modes_refuse_record_type(tools: dict[str, Any], mode: dic
         tools["trw_recall"].fn(options={"record_type": "decision"}, **mode)
 
 
-def test_shared_results_are_filtered_by_their_type(
-    tools: dict[str, Any], mixed: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    shared = [
-        {"id": "S-decision", "summary": "[shared] ledger one", "type": "decision", "source": "shared", "impact": 0.9},
-        {"id": "S-incident", "summary": "[shared] ledger two", "type": "incident", "source": "shared", "impact": 0.9},
-        {"id": "S-untyped", "summary": "[shared] ledger three", "source": "shared", "impact": 0.9},
-    ]
-    monkeypatch.setattr(
-        "trw_mcp.tools._recall_impl._augment_with_remote", lambda _query, rows: ([*rows, *shared], None)
-    )
-
-    filtered = _ids(tools["trw_recall"].fn(query="ledger", options={"record_type": "decision"}))
-    unfiltered = _ids(tools["trw_recall"].fn(query="ledger"))
-
-    assert filtered == {mixed["decision"], "S-decision"}
-    assert {"S-decision", "S-incident", "S-untyped"} <= unfiltered
-
-
 def test_a_daemon_refusing_the_filter_is_an_error_not_unfiltered_rows(
     tools: dict[str, Any], mixed: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

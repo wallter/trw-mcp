@@ -31,11 +31,17 @@ logger = structlog.get_logger(__name__)
 #: row outranks a local one only when it is a strong match in both and the local
 #: row is not. Non-positive scores are pushed further down, never raised.
 FOREIGN_SCORE_PENALTY = 0.5
+#: The same, for a row another project PROVABLY wrote (a different portable project id): a quarter of its
+#: relevance, so it still wins when the query is really about that project. ``team_sync_all_projects`` turns the
+#: extra step off.
+OTHER_PROJECT_SCORE_PENALTY = 0.75
 
 
 def order_ranked_for_response(
     ranked: list[dict[str, object]],
     deprioritized_ids: set[str] | None,
+    *,
+    all_projects: bool = False,
 ) -> list[dict[str, object]]:
     """Return *ranked* in the order the caller receives it.
 
@@ -43,7 +49,7 @@ def order_ranked_for_response(
     attribution-adjusted score. Temporal eligibility stays outermost, so an
     ineligible local row never outranks an eligible foreign one.
     """
-    ranked = _apply_foreign_penalty(ranked)
+    ranked = _apply_foreign_penalty(ranked, all_projects=all_projects)
     if deprioritized_ids:
         fresh = [entry for entry in ranked if str(entry.get("id", "")) not in deprioritized_ids]
         seen = [entry for entry in ranked if str(entry.get("id", "")) in deprioritized_ids]
@@ -51,7 +57,7 @@ def order_ranked_for_response(
     return prioritize_temporal_eligibility(ranked)
 
 
-def _apply_foreign_penalty(ranked: list[dict[str, object]]) -> list[dict[str, object]]:
+def _apply_foreign_penalty(ranked: list[dict[str, object]], *, all_projects: bool = False) -> list[dict[str, object]]:
     """Re-sort by ``combined_score`` with foreign rows penalized; fail open.
 
     Ties (including rows that carry no score) put this project's row first and
@@ -65,7 +71,8 @@ def _apply_foreign_penalty(ranked: list[dict[str, object]]) -> list[dict[str, ob
             score = float(raw) if isinstance(raw, (int, float)) else 0.0
             local = _origin_project.is_attributable_to_this_project(entry)
             if not local:
-                score -= FOREIGN_SCORE_PENALTY * abs(score)
+                other = not all_projects and _origin_project.is_other_project(entry)
+                score -= (OTHER_PROJECT_SCORE_PENALTY if other else FOREIGN_SCORE_PENALTY) * abs(score)
             keyed.append(((score, int(local), -index), entry))
         if all(key[1] for key, _ in keyed):
             return ranked

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+from trw_mcp._checkout_write import record_run_write
 from trw_mcp.channels._manifest_models import ChannelEntry
 
 log = structlog.get_logger(__name__)
@@ -222,7 +223,9 @@ def _atomic_dump_yaml(data: dict[str, Any], path: Path) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             yaml.dump(data, fh)
+        published = tmp_path.read_bytes()  # private temp file: exactly the bytes about to be published
         os.replace(tmp_path, path)
+        record_run_write(path, published)  # FB-01-KI1-RACE restore proof
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise

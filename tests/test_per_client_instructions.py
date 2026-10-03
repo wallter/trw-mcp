@@ -253,19 +253,21 @@ class TestGenerateOpencodeInstructions:
         instructions_path.parent.mkdir(parents=True)
 
         def mock_write(*args: object, **kwargs: object) -> None:
-            raise OSError("Disk full")
+            raise OSError(28, "Disk full")
 
-        # PRD-FIX-123-FR06 moved this write onto the atomic
-        # ``FileStateWriter.write_text`` path (temp file + rename), which does not
-        # go through ``Path.write_text`` — patching only the latter would leave the
-        # write succeeding and assert nothing.
-        monkeypatch.setattr(Path, "write_text", mock_write)
-        monkeypatch.setattr("trw_mcp.state.persistence.FileStateWriter.write_text", mock_write)
+        # PUBLISH-RACE-HARDEN: the guard stages the new bytes through
+        # ``_proven_replace._write_new`` (fd-anchored, then linked at the name), so
+        # that is where a full disk surfaces.
+        monkeypatch.setattr("trw_mcp.bootstrap._proven_replace._write_new", mock_write)
 
         result = generate_opencode_instructions(tmp_path)
 
         assert result["errors"]
         assert any("Disk full" in err for err in result["errors"])
+        # An I/O failure is reported as one, never as a concurrent save; nothing is left behind.
+        assert any("write_failed" in err for err in result["errors"]), result["errors"]
+        assert not instructions_path.exists()
+        assert not (tmp_path / ".trw").exists()
 
 
 @pytest.mark.unit

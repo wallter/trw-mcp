@@ -47,6 +47,22 @@ def _load(installer_path: Path):
     return module
 
 
+def test_regional_preflight_failure_discloses_probes_without_claiming_index_403() -> None:
+    """The local regional gate must not imply the package index rejected a request."""
+    module = _load(_TEMPLATE)
+    messages: list[str] = []
+    ui = SimpleNamespace(error=messages.append)
+
+    with pytest.raises(SystemExit):
+        module._index_unavailable(ui)
+
+    joined = "\n".join(messages)
+    assert "before contacting the package index" in joined
+    assert "Cloudflare" in joined and "ipinfo.io" in joined
+    assert "TRW_SKIP_INDEX_PREFLIGHT=1" in joined
+    assert "HTTP 403" not in joined
+
+
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])
 def test_phase_install_packages_uses_combined_find_links(installer_path: Path, tmp_path: Path, monkeypatch) -> None:
     """phase_install_packages must install both wheels in ONE pip call with

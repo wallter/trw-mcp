@@ -90,7 +90,6 @@ EFFECT_BOUNDARIES: dict[str, EffectBoundary] = {
     "S23b": _own("journal_step('S23b') wraps record_outcome inside the gate dispatcher"),
     "D00": _unjournaled("deferred lock record is coordination; liveness is its own proof"),
     "D01": _own("deferred chokepoint journals the auto_prune roster step"),
-    "D03": _own("deferred chokepoint journals the tier_sweep roster step"),
     "D04": _own("deferred chokepoint journals the index_sync roster step"),
     "D05": _shared("D04", f"ROADMAP projection inside _do_index_sync, {_NESTED}"),
     "D06": _own("deferred chokepoint journals the auto_progress roster step"),

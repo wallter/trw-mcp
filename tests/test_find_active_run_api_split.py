@@ -43,6 +43,10 @@ def test_find_active_run_returns_none_when_no_pin(
     with patch("trw_mcp.state._paths.get_pinned_run", return_value=None):
         result = find_active_run()
     assert result is None
+    # Contrast: the identical on-disk state resolves once a pin names the run.
+    run_dir = tmp_path / ".trw" / "runs" / "t" / "r-001"
+    with patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir):
+        assert find_active_run() == run_dir
 
 
 def test_find_active_run_returns_pinned_run(

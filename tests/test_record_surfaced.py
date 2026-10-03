@@ -140,7 +140,6 @@ def test_reviewer_role_never_calls_record_surfaced(tmp_path: Path, monkeypatch: 
 
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: (list(m), None)),
         patch("trw_mcp.state.memory_adapter.record_surfaced", side_effect=_spy_record_surfaced),
     ):
         result = execute_recall(
@@ -153,31 +152,3 @@ def test_reviewer_role_never_calls_record_surfaced(tmp_path: Path, monkeypatch: 
 
     assert result["learnings"], "sanity: the reviewer still gets results back"
     assert recorded["called"] is False, "reviewer role must never write access-tracking telemetry"
-
-
-def test_a_shared_row_never_counts_the_local_row_sharing_its_id(tmp_path: Path) -> None:
-    """A remote result whose id collides with a local row was shown; the local row was not."""
-    from unittest.mock import patch
-
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._recall_impl import execute_recall
-
-    local = {"id": "L-local1", "summary": "local hit", "impact": 0.5}
-    shared = {"id": "L-collide", "summary": "[shared] remote hit", "impact": 0.5, "source": "shared"}
-    recorded: list[list[str]] = []
-
-    with (
-        patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: ([*m, shared], None)),
-        patch("trw_mcp.state.memory_adapter.record_surfaced", side_effect=lambda _d, ids, **_k: recorded.append(ids)),
-    ):
-        result = execute_recall(
-            "hit",
-            tmp_path / ".trw",
-            TRWConfig(),
-            _adapter_recall=lambda _dir, **_kw: [local],
-            _rank_by_utility=lambda matches, *_a, **_k: list(matches),
-        )
-
-    assert {row["id"] for row in result["learnings"]} == {"L-local1", "L-collide"}  # type: ignore[index]
-    assert recorded == [["L-local1"]]

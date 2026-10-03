@@ -144,6 +144,13 @@ def _strip_orphaned_block(path: Path, *, surface: str) -> bool:
     except (OSError, UnicodeDecodeError):
         return False
 
+    from trw_mcp.state.claude_md._marker_layout import marker_layout_problem
+
+    if problem := marker_layout_problem(
+        content, (TRW_MARKER_START, TRW_MARKER_END), repeats_allowed=True
+    ):  # never guess a span (S1 red team B5)
+        logger.warning("instruction_orphan_block_kept", surface=surface, path=str(path), reason=problem)
+        return False
     stripped, remaining = _strip_trw_section(content)
     if not stripped:
         return False
@@ -217,12 +224,10 @@ def _is_trw_only(content: str) -> bool:
 
 
 def strip_legacy_claude_md(content: str) -> tuple[bool, str, bool]:
-    """Uninstall's cut of a legacy root ``CLAUDE.md``: ``(changed, rendered, delete)``.
+    """Uninstall's cut of a root ``CLAUDE.md``: ``(changed, rendered, delete)``, where *delete* is always False.
 
-    TRW-only content deletes the file; otherwise only TRW's marker block goes and
-    every user line stays.
+    Only TRW's marker block goes; every other line stays, and a file left holding nothing is kept, empty
+    (operator P0, 2026-10-01: a project's CLAUDE.md is never deleted, whatever TRW once wrote into it).
     """
     had_block, remaining = _strip_trw_section(content)
-    if _is_trw_only(remaining):
-        return True, "", True
     return had_block, remaining, False

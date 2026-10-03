@@ -1,7 +1,7 @@
 """An upgrade must leave the project consistent: FB-INSTALL-08, -09 and -11 (2026-09-30 second-machine feedback).
 
 08: a retired skill is removed from every client mirror or kept and named, never half-removed by the
-    uncommitted-changes guard restoring a copy TRW had just captured into ``.trw/trash``.
+    uncommitted-changes guard restoring a copy TRW had just deleted.
 09: a git-dirty ``AGENTS.md`` still gets its TRW block refreshed; the user's text outside the markers is
     kept byte for byte.
 11: the retired agent-memory list covers every retired ``trw-`` agent, and the removal advice fits what it
@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import shlex
 import subprocess
 from pathlib import Path
@@ -19,7 +18,6 @@ from pathlib import Path
 import pytest
 from ruamel.yaml import YAML
 
-from tests._fs_hazards import snapshot_user_bytes
 from trw_mcp.bootstrap import init_project, update_project
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_memory_daemon")]
@@ -72,12 +70,6 @@ def _plant_old_skill(root: Path, name: str, *, list_in_manifest: bool = True) ->
     return body
 
 
-def _trashed_paths(root: Path) -> set[str]:
-    return {
-        json.loads(meta.read_text(encoding="utf-8"))["path"] for meta in (root / ".trw" / "trash").glob("*/meta.json")
-    }
-
-
 # ---- FB-INSTALL-08: retired skills across every client mirror ------------------------------------
 
 
@@ -93,14 +85,18 @@ def test_a_retired_skill_goes_from_every_client_mirror_even_when_the_mirror_is_g
     survivors = [base for base in _SKILL_ROOTS if (root / base / _RETIRED).exists()]
     assert survivors == [], f"retired skill still present in {survivors}"
     assert not [p for p in result["preserved"] if _RETIRED in p and "uncommitted_changes" in p], result["preserved"]
-    # HB-2: the removed bytes are recoverable, one capture per client copy.
-    assert {f"{base}/{_RETIRED}/SKILL.md" for base in _SKILL_ROOTS} <= _trashed_paths(root)
-    assert hashlib.sha256(body).hexdigest() in snapshot_user_bytes(root)
-    # A second update neither re-creates a copy nor grows the trash.
-    captures = len(list((root / ".trw" / "trash").glob("*/data")))
+    # Deleted in place, no trash; the committed copy stays recoverable from git.
+    assert not (root / ".trw" / "trash").exists()
+    shown = subprocess.run(
+        ["git", "-C", str(root), "show", f"HEAD:.claude/skills/{_RETIRED}/SKILL.md"],
+        capture_output=True,
+        check=True,
+    )
+    assert shown.stdout == body
+    # A second update neither re-creates a copy nor creates a trash.
     assert not update_project(root, ide="all")["errors"]
     assert not [base for base in _SKILL_ROOTS if (root / base / _RETIRED).exists()]
-    assert len(list((root / ".trw" / "trash").glob("*/data"))) == captures
+    assert not (root / ".trw" / "trash").exists()
 
 
 def test_an_edited_retired_mirror_is_kept_byte_for_byte_and_named_with_a_remedy(tmp_path: Path) -> None:
@@ -142,6 +138,95 @@ def test_a_retired_skill_the_project_itself_keeps_is_not_reported_as_dead(tmp_pa
 
     assert own.is_file()
     assert not [w for w in result["warnings"] if w.startswith("retired_artifact_present:") and _RETIRED in w]
+
+
+def _curated_out(client_root: str) -> str:
+    """A skill TRW ships (full bundle, not flag-gated) that *client_root*'s own list leaves out."""
+    from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+    from trw_mcp.bootstrap._version_migration_clients import client_skill_lists
+
+    bundled = {path.name for path in (_DATA_DIR / "skills").iterdir() if path.is_dir()}
+    listed = client_skill_lists()[client_root]
+    assert listed is not None
+    out = sorted(bundled - listed - set(CONDITIONAL_SKILLS))
+    assert out, f"precondition: {client_root} leaves out a shipped skill"
+    return out[0]
+
+
+@pytest.mark.parametrize("client_root", [".github/skills", ".opencode/skills"])
+def test_doctor_names_a_copy_its_client_no_longer_ships_though_the_full_bundle_has_it(
+    tmp_path: Path, client_root: str
+) -> None:
+    """DOCTOR-PER-CLIENT-SKILL-PREDICATE: the sweep judges a mirror by its client's list, so the doctor must too.
+
+    Judged against the full bundle, a curated-out copy the sweep kept (edited or unrecorded) was never reported,
+    and the live ``.claude/skills`` copy every such skill has hid it a second time.
+    """
+    from trw_mcp.bootstrap._retired_artifacts import _CURATED_OUT_SKILL_WHY, _retired_skill_mirrors
+    from trw_mcp.bootstrap._version_migration_clients import client_skill_lists
+
+    name = _curated_out(client_root)
+    for base in (".claude/skills", client_root):
+        (tmp_path / base / name).mkdir(parents=True)
+        (tmp_path / base / name / "SKILL.md").write_text("x", encoding="utf-8")
+    kept = sorted(client_skill_lists()[client_root] or ())[0]
+    (tmp_path / client_root / kept).mkdir()
+
+    found = _retired_skill_mirrors(tmp_path)
+
+    assert found == [(f"{client_root}/{name}", _CURATED_OUT_SKILL_WHY)], "a skill on the client's list is not named"
+
+
+def test_doctor_never_names_a_flag_gated_skill_in_a_client_mirror(tmp_path: Path) -> None:
+    """Lead ruling (b): flag-gated skills belong to retire_disabled_skills on every surface, doctor included."""
+    from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+    from trw_mcp.bootstrap._retired_artifacts import _retired_skill_mirrors
+    from trw_mcp.bootstrap._version_migration_clients import client_skill_lists
+
+    name = "trw-assess"
+    assert name in CONDITIONAL_SKILLS and name not in (client_skill_lists()[".agents/skills"] or ())
+    (tmp_path / ".agents" / "skills" / name).mkdir(parents=True)
+
+    assert _retired_skill_mirrors(tmp_path) == []
+
+
+@pytest.mark.parametrize("failure", [FileNotFoundError, PermissionError])
+def test_doctor_judges_no_opencode_copy_when_the_inventory_cannot_be_read_and_still_judges_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[OSError]
+) -> None:
+    """Without a readable inventory OpenCode's list is unknown, not empty: the sweep skips the surface and so does
+    doctor (codex DOCTOR r1: a PermissionError there failed the whole check and hid every other client's notice)."""
+    from trw_mcp.bootstrap import _opencode
+    from trw_mcp.bootstrap._retired_artifacts import _CURATED_OUT_SKILL_WHY, _retired_skill_mirrors
+
+    opencode_name = _curated_out(".opencode/skills")
+    copilot_name = _curated_out(".github/skills")
+    (tmp_path / ".opencode" / "skills" / opencode_name).mkdir(parents=True)
+    (tmp_path / ".github" / "skills" / copilot_name).mkdir(parents=True)
+
+    def unreadable(*_args: object, **_kwargs: object) -> dict[str, dict[str, str]]:
+        raise failure("skills_inventory.yaml")
+
+    monkeypatch.setattr(_opencode, "load_opencode_skill_inventory", unreadable)
+
+    assert _retired_skill_mirrors(tmp_path) == [(f".github/skills/{copilot_name}", _CURATED_OUT_SKILL_WHY)]
+
+
+def test_after_an_update_a_curated_out_copy_is_either_retired_or_named(tmp_path: Path) -> None:
+    """The sweep and doctor never disagree silently: an unrecorded copy the sweep keeps is the doctor's to name."""
+    root = _all_client_repo(tmp_path)
+    name = _curated_out(".github/skills")
+    copy = root / ".github" / "skills" / name / "SKILL.md"
+    copy.parent.mkdir(parents=True)
+    copy.write_text("my own copy\n", encoding="utf-8")
+
+    result = update_project(root, ide="all")
+
+    assert not result["errors"], result["errors"]
+    assert copy.read_text(encoding="utf-8") == "my own copy\n", "unrecorded: the sweep keeps it"
+    named = [w for w in result["warnings"] if w.startswith("retired_artifact_present:") and name in w]
+    assert len(named) == 1 and str(copy.parent.resolve()) in named[0]
 
 
 def test_trw_decision_is_a_retired_skill_in_every_client_dir() -> None:
@@ -289,7 +374,7 @@ def _skill_dir(root: Path, rel: str, files: dict[str, bytes]) -> Path:
 
 
 def test_remove_proven_reports_only_the_files_it_actually_captured(tmp_path: Path) -> None:
-    """``trashed`` is what keeps the uncommitted-changes guard from restoring a capture; a kept file is not in it."""
+    """``retired`` is what keeps the uncommitted-changes guard from restoring a deleted file; a kept file is not in it."""
     from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     skill = _skill_dir(tmp_path, ".agents/skills/trw-sprint-init", {"SKILL.md": b"shipped\n", "notes.md": b"mine\n"})
@@ -298,9 +383,11 @@ def test_remove_proven_reports_only_the_files_it_actually_captured(tmp_path: Pat
 
     remove_proven(skill, hashes, tmp_path, result)
 
-    assert result["trashed"] == [".agents/skills/trw-sprint-init/SKILL.md"]
+    assert result["retired"] == [".agents/skills/trw-sprint-init/SKILL.md"]
     assert (skill / "notes.md").read_bytes() == b"mine\n", "an unrecorded file keeps its bytes and its directory"
-    assert any("notes.md" in w and w.endswith(": kept") for w in result["warnings"]), result["warnings"]
+    assert any(
+        "notes.md" in w and w.endswith("rm .agents/skills/trw-sprint-init/notes.md") for w in result["warnings"]
+    ), result["warnings"]
     assert not (skill / "SKILL.md").exists()
 
 
@@ -329,7 +416,7 @@ def test_the_most_specific_ownership_record_decides_a_capture(
 
     remove_proven(skill, hashes, tmp_path, result)
 
-    assert (rel in result.get("trashed", [])) is captured
+    assert (rel in result.get("retired", [])) is captured
     assert (not (skill / "SKILL.md").exists()) is captured
     if not captured:
         assert (skill / "SKILL.md").read_bytes() == on_disk
@@ -394,7 +481,7 @@ def test_advice_for_a_symlinked_and_an_unreadable_retired_directory(tmp_path: Pa
     assert (elsewhere / "keep.md").read_text(encoding="utf-8") == "not TRW's\n"
 
 
-def test_remove_proven_leaves_a_symlinked_retired_directory_alone_and_reports_nothing_trashed(tmp_path: Path) -> None:
+def test_remove_proven_leaves_a_symlinked_retired_directory_alone_and_reports_nothing_retired(tmp_path: Path) -> None:
     from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     shared = _skill_dir(tmp_path / "shared", "trw-sprint-init", {"SKILL.md": b"shipped\n"})
@@ -407,7 +494,7 @@ def test_remove_proven_leaves_a_symlinked_retired_directory_alone_and_reports_no
     remove_proven(link, hashes, tmp_path, result)
 
     assert link.is_symlink() and (shared / "SKILL.md").read_bytes() == b"shipped\n", "a symlink is never TRW's file"
-    assert result.get("trashed", []) == []
+    assert result.get("retired", []) == []
 
 
 @pytest.mark.parametrize(

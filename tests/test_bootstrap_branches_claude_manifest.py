@@ -33,6 +33,14 @@ class TestReadManifest:
         with patch("trw_mcp.state.persistence.FileStateReader", return_value=mock_reader):
             result = _read_manifest(tmp_path)
         assert result is None
+        assert result != {"skills": [], "agents": [], "hooks": []}
+        assert mock_reader.read_yaml.call_count == 1
+
+        # Contrast: the same file with a real mapping is accepted.
+        manifest_path.write_text("version: 1\nskills: [deliver]\n", encoding="utf-8")
+        parsed = _read_manifest(tmp_path)
+        assert parsed is not None
+        assert parsed["skills"] == ["deliver"]
 
     def test_returns_none_on_oserror(self, tmp_path: Path) -> None:
         """Returns None when OSError reading manifest."""
@@ -43,6 +51,12 @@ class TestReadManifest:
         with patch("trw_mcp.state.persistence.FileStateReader.read_yaml", side_effect=OSError("io error")):
             result = _read_manifest(tmp_path)
         assert result is None
+        assert result != {"skills": [], "agents": [], "hooks": []}
+
+        # Contrast: without the injected I/O error the same file reads back.
+        parsed = _read_manifest(tmp_path)
+        assert parsed is not None
+        assert parsed["version"] == 1
 
     def test_returns_dict_with_lists(self, tmp_path: Path) -> None:
         """Returns dict with skills/agents/hooks lists."""

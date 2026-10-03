@@ -14,13 +14,13 @@ def test_printable_escapes_control_characters() -> None:
 
 
 def test_a_kept_file_with_a_control_character_name_is_escaped_in_the_warning(tmp_path: Path) -> None:
-    """Red before: remove_tree_if_hash echoed the raw name, so a crafted file name could drive the terminal."""
-    from trw_mcp.bootstrap._safe_remove import remove_tree_if_hash
+    """Red before: the sweep echoed the raw name, so a crafted file name could drive the terminal."""
+    from trw_mcp.bootstrap._retire import retire_tree
 
     root = tmp_path / "proj"
     skill = root / ".claude" / "skills" / "trw-x"
     skill.mkdir(parents=True)
     (skill / "evil\x1b[2J.md").write_bytes(b"user\n")
-    kept = remove_tree_if_hash(skill, root, lambda _f: set())
+    kept = [f"{p} ({why})" for p, why in retire_tree(skill, root, lambda _f: set()).kept]
     assert kept and all("\x1b" not in k for k in kept)
     assert any("\\x1b[2J.md" in k for k in kept)

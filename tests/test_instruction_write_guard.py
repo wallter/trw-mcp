@@ -490,6 +490,70 @@ class TestBackup:
 
         assert sorted(backups.glob("AGENTS.md.*")) == first
 
+    def test_the_newest_backup_is_never_replaced(self, tmp_path: Path) -> None:
+        """PUBLISH-RACE-HARDEN codex r1: a backup is the user's former file; replacing it could drop a late save."""
+        import os
+
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# a\n", encoding="utf-8")
+        backups = tmp_path / TRWConfig().instruction_backup_dir
+        guarded_instruction_write(target, "# a\n# b\n", markers=_MARKERS, project_root=tmp_path)
+        (newest,) = sorted(backups.glob("AGENTS.md.*"))
+        inode = os.stat(newest).st_ino
+        target.write_text("# a\n", encoding="utf-8")
+
+        guarded_instruction_write(target, "# a\n# b\n", markers=_MARKERS, project_root=tmp_path)
+
+        assert os.stat(newest).st_ino == inode and newest.read_text(encoding="utf-8") == "# a\n"
+
+    def test_retention_keeps_a_backup_whose_bytes_changed_after_it_was_taken(self, tmp_path: Path) -> None:
+        """PUBLISH-RACE-HARDEN codex r1: a program that kept the former file open wrote to it; that save is kept."""
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# v1\n", encoding="utf-8")
+        config = TRWConfig(instruction_backup_retention=1)
+        backups = tmp_path / config.instruction_backup_dir
+        guarded_instruction_write(target, "# v2\n", markers=_MARKERS, project_root=tmp_path, config=config)
+        (first,) = sorted(backups.glob("AGENTS.md.*"))
+        first.write_text("# saved through an old descriptor\n", encoding="utf-8")
+
+        guarded_instruction_write(target, "# v3\n", markers=_MARKERS, project_root=tmp_path, config=config)
+
+        assert first.read_text(encoding="utf-8") == "# saved through an old descriptor\n"
+        assert len(list(backups.glob("AGENTS.md.*"))) == 2, "kept past retention rather than deleted"
+
+    def test_a_backup_name_already_taken_is_never_replaced(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PUBLISH-RACE-HARDEN codex r2: the generated name collides with a retained copy holding other bytes."""
+        import datetime as _dt
+        import hashlib
+
+        from trw_mcp.state.claude_md import _write_backup
+
+        frozen = _dt.datetime(2026, 10, 1, 12, 0, 0, 1, tzinfo=_dt.timezone.utc)
+
+        class _Frozen(_dt.datetime):
+            @classmethod
+            def now(cls, tz: _dt.tzinfo | None = None) -> _dt.datetime:  # type: ignore[override]
+                return frozen
+
+        monkeypatch.setattr(_write_backup, "datetime", _Frozen)
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# a\n", encoding="utf-8")
+        backups = tmp_path / TRWConfig().instruction_backup_dir
+        backups.mkdir(parents=True)
+        digest = hashlib.sha256(b"# a\n").hexdigest()[:16]
+        taken = backups / f"AGENTS.md.20261001T120000000001Z.{digest}"
+        taken.write_text("# saved through an old descriptor\n", encoding="utf-8")
+
+        verdict = guarded_instruction_write(target, "# a\n# b\n", markers=_MARKERS, project_root=tmp_path)
+
+        assert taken.read_text(encoding="utf-8") == "# saved through an old descriptor\n"
+        assert verdict.written and target.read_text(encoding="utf-8") == "# a\n# b\n"
+        assert any(p.read_text(encoding="utf-8") == "# a\n" for p in backups.glob("AGENTS.md.*")) or (
+            verdict.backup_path is not None and Path(verdict.backup_path).read_text(encoding="utf-8") == "# a\n"
+        ), "the previous version is kept somewhere named"
+
     def test_each_real_change_takes_exactly_one_backup_and_at_most_retention_stay(self, tmp_path: Path) -> None:
         target = tmp_path / "AGENTS.md"
         target.write_text("# v0\n", encoding="utf-8")
@@ -1105,10 +1169,17 @@ class TestFailClosed:
         assert target.read_bytes() == before
 
     def test_writes_land_atomically(self, tmp_path: Path) -> None:
-        """The write goes through FileStateWriter's temp-file-then-rename path."""
-        source = (_SRC_ROOT / "state" / "claude_md" / "_write_guard.py").read_text(encoding="utf-8")
-        assert "FileStateWriter().write_text" in source
-        assert ".write_text(" not in source.replace("FileStateWriter().write_text(", "")
+        """The write goes through ``_publish.publish``, built on the bootstrap publish primitives.
+
+        PUBLISH-RACE-HARDEN: an existing file is captured, re-proven and replaced by one no-replace link
+        (``replace_proven``); a missing one is staged and linked (``create_exclusive``). The guard itself writes no
+        file directly.
+        """
+        guard = (_SRC_ROOT / "state" / "claude_md" / "_write_guard.py").read_text(encoding="utf-8")
+        publish = (_SRC_ROOT / "state" / "claude_md" / "_publish.py").read_text(encoding="utf-8")
+        assert "published = publish(" in guard
+        assert ".write_text(" not in guard
+        assert "replace_proven(" in publish and "create_exclusive(" in publish
 
 
 class TestSecurity:
@@ -1189,7 +1260,11 @@ class TestPerformance:
             delta = guarded.target_ms[name] - baseline.target_ms[name]
             assert_budget(f"guard_overhead_{name}", delta, 50.0, "ms")
 
-    def test_guard_reads_the_target_at_most_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_guard_reads_the_target_once_to_judge_and_once_to_confirm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLAUDE-MD S1 codex r1: the second read, right before the replace, refuses a save made while the backup
+        ran (a stale candidate must never overwrite it). Two reads of one small file, never more."""
         target = tmp_path / "AGENTS.md"
         target.write_text("# original\n", encoding="utf-8")
         reads: list[str] = []
@@ -1210,7 +1285,7 @@ class TestPerformance:
         monkeypatch.setattr(Path, "read_bytes", _counting_bytes)
         guarded_instruction_write(target, "# original\n# more\n", markers=_MARKERS, project_root=tmp_path)
 
-        assert len(reads) == 1
+        assert len(reads) == 2
 
 
 class TestAdjacentPathsPreserved:

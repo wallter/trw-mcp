@@ -169,7 +169,6 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
     ),
     ("D00", "deferred lock-holder record", "_try_acquire_deferred_lock", _O, _CO, "lock/lease owner + liveness"),
     ("D01", "learning auto-prune mutations/audit", "_step_auto_prune", _O, _NR, "per-action proof"),
-    ("D03", "tier sweep, impact assignment, purge", "_step_tier_sweep", _O, _NR, "stable per-transition proof"),
     ("D04", "requirements INDEX projection", "_do_index_sync", _O, _PP, "generated digest"),
     ("D05", "requirements ROADMAP projection", "_do_index_sync", _O, _PP, "generated digest"),
     (

@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import httpx
 import structlog
+from trw_memory.labels import LabelPolicy, Sink
+from trw_memory.models.memory import MemoryEntry
 from typing_extensions import TypedDict
 
 from trw_mcp.models.config import get_config
@@ -25,6 +29,7 @@ from trw_mcp.state._platform_trust import (
     payload_trw_dir,
     platform_auth_headers,
     platform_contact_enabled,
+    send_policy,
     send_policy_all,
 )
 from trw_mcp.state.persistence import FileStateReader
@@ -152,6 +157,24 @@ def _save_hashes(entries_dir: Path, hashes: dict[str, str]) -> None:
         logger.debug("publish_hash_save_failed", path=str(path))
 
 
+def _sidecar_row(entry_id: str, data: dict[str, object]) -> MemoryEntry:
+    """The sidecar as a row the label policy can judge (PRD-SEC-023 FR05): only its tags can match a rule.
+
+    A row labelled by its namespace or a stamp gets no sidecar at all (``_writes_project_yaml``); this catches a sidecar written before one
+    of its tags was given a rule.
+    """
+    from trw_memory.models.entry_factory import new_entry
+
+    tags = data.get("tags")
+    return new_entry(  # a label-only probe, never stored: built by the one sanctioned constructor
+        entry_id=entry_id or "-",
+        content="",
+        namespace="default",
+        local_node_id="label-probe",
+        fields={"tags": [str(t) for t in tags] if isinstance(tags, list) else []},
+    )
+
+
 def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> PublishResult:
     """Publish high-impact learnings to the platform backend.
 
@@ -234,6 +257,19 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
     prev_hashes = _load_hashes(entries_dir) if not force else {}
     new_hashes: dict[str, str] = dict(prev_hashes)
 
+    labels = LabelPolicy.current()
+    from trw_mcp.telemetry._publish_quarantine import quarantine_check
+
+    quarantined = quarantine_check(source_trw_dir)
+    if quarantined is None:  # PRD-CORE-333: no namespace pin to check ids against, so no learning leaves the host
+        logger.warning("learning_publish_skipped", reason="quarantine_namespace_unknown")
+        return {
+            "published": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "errors": 0,
+            "skipped_reason": "quarantine_namespace_unknown",
+        }
     use_parallel = len(urls) > 1
     executor = ThreadPoolExecutor(max_workers=len(urls)) if use_parallel else None
 
@@ -252,6 +288,14 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     continue
 
                 entry_id = str(data.get("id", yaml_file.stem))
+                if not labels.admit([_sidecar_row(entry_id, data)], Sink.PLATFORM).admitted:
+                    skipped += 1  # PRD-SEC-023 FR05: a row labelled above team never leaves the host
+                    continue
+                # Asked again right before every POST attempt, retries included (EGRESS-RECHECK-INNER-RETRIES).
+                sendable = partial(lambda eid, row: not quarantined(eid, row), entry_id, data)
+                if not sendable():
+                    skipped += 1  # PRD-CORE-333: a quarantined learning never leaves the host
+                    continue
                 current_hash = _content_hash(data)
 
                 # Skip if content hasn't changed since last successful publish
@@ -287,6 +331,7 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                             payload,
                             cfg.platform_api_key.get_secret_value(),
                             source_trw_dir=source_trw_dir,
+                            sendable=sendable,
                         ): url
                         for url in urls
                     }
@@ -295,7 +340,11 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                 else:
                     any_success = any(
                         _post_learning(
-                            url, payload, cfg.platform_api_key.get_secret_value(), source_trw_dir=source_trw_dir
+                            url,
+                            payload,
+                            cfg.platform_api_key.get_secret_value(),
+                            source_trw_dir=source_trw_dir,
+                            sendable=sendable,
                         )
                         for url in urls
                     )
@@ -330,7 +379,12 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
 
 
 def _post_learning(
-    platform_url: str, payload: _LearningPayload, api_key: str = "", *, source_trw_dir: Path | None
+    platform_url: str,
+    payload: _LearningPayload,
+    api_key: str = "",
+    *,
+    source_trw_dir: Path | None,
+    sendable: Callable[[], bool] | None = None,
 ) -> bool:
     """POST a learning to the backend. Returns True on 2xx.
 
@@ -347,6 +401,10 @@ def _post_learning(
             source_trw_dir
         ):  # every POST asks: the switch may flip mid-publish (sol r3, B71-106)
             return False
+        if sendable is not None and not sendable():  # PRD-CORE-333: quarantined since the last attempt
+            return False
+        if not send_policy(source_trw_dir).learning_sharing:
+            return False  # consent withdrawn mid-publish (CONSENT-FLAGS-READ-LIVE)
         try:
             # platform_auth_headers is the ONE function that may build the
             # Authorization header — see _platform_trust module docstring.

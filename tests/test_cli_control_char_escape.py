@@ -35,12 +35,12 @@ def test_the_warning_block_escapes_control_characters_and_keeps_the_prefix(capsy
     assert "WARNING: plain: kept" in out, "an ordinary warning is unchanged"
 
 
-def test_the_trashed_listing_escapes_control_characters(capsys: pytest.CaptureFixture[str]) -> None:
-    _subcommands._print_trashed([HOSTILE, "docs/ok.md"])
+def test_the_retired_listing_escapes_control_characters(capsys: pytest.CaptureFixture[str]) -> None:
+    _subcommands._print_retired([HOSTILE, "docs/ok.md"])
 
     out = capsys.readouterr().out
     _no_raw_controls(out)
-    assert "Moved to .trw/trash: docs/ok.md " in out
+    assert "Removed retired TRW file: docs/ok.md" in out
 
 
 def test_display_escapes_and_leaves_printable_paths_byte_identical(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_update_project_prints_a_hostile_kept_name_escaped_end_to_end(
         "cleaned": [],
         "errors": [],
         "warnings": [f"{HOSTILE} (not TRW's unchanged bytes): kept"],
-        "trashed": [HOSTILE],
+        "retired": [HOSTILE],
     }
     monkeypatch.setattr("trw_mcp.bootstrap.update_project", lambda *a, **k: result)
     args = argparse.Namespace(target_dir=str(tmp_path), pip_install=False, dry_run=False, ide=None, reprovision=None)
@@ -75,7 +75,7 @@ def test_update_project_prints_a_hostile_kept_name_escaped_end_to_end(
 
     out = capsys.readouterr()
     _no_raw_controls(out.out + out.err)
-    assert out.out.count("\\x1b[2J") >= 2, "both the warning and the trash line name the file, escaped"
+    assert out.out.count("\\x1b[2J") >= 2, "both the warning and the retired line name the file, escaped"
 
 
 def test_the_helper_is_the_one_from_untracked_trw_entries() -> None:
@@ -104,14 +104,14 @@ def test_a_real_kept_reason_from_the_sweep_passes_the_boundary_unchanged(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """W1's source-level escape (556760161c) and this boundary compose: one escape, never two."""
-    from trw_mcp.bootstrap._safe_remove import remove_tree_if_hash
+    from trw_mcp.bootstrap._retire import retire_tree
 
     root = tmp_path / "proj"
     skill = root / ".claude" / "skills" / "old-skill"
     skill.mkdir(parents=True)
     (skill / f"notes{ESC}[2J.md").write_text("mine", encoding="utf-8")
 
-    kept = remove_tree_if_hash(skill, root, lambda _f: set())
+    kept = [f"{p} ({why})" for p, why in retire_tree(skill, root, lambda _f: set()).kept]
 
     assert kept, "non-vacuity: an unlisted file is kept and named"
     assert all("\x1b" not in reason for reason in kept), "the source already escaped the name"

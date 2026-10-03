@@ -156,6 +156,62 @@ _STRIP_LABEL: ContextVar[str] = ContextVar("_STRIP_LABEL", default="")
 
 # Why each file was last refused (a symlink, or a read failure the path guard cannot see), for the report.
 REFUSAL_REASONS: dict[Path, str] = {}
+# Where uninstall kept an instruction file's previous version (it held the user's text), named in the summary.
+PREVIOUS_VERSIONS: dict[Path, Path] = {}
+# Captures of an instruction file that held nothing but TRW's blocks: they leave with TRW's other files.
+TRW_ONLY_CAPTURES: dict[Path, Path] = {}
+#: A project's own instruction files: uninstall takes TRW's blocks out and never deletes them (CLAUDE-MD S2).
+_INSTRUCTION_FILES = frozenset({"CLAUDE.md", "AGENTS.md"})
+
+
+def _ambiguous_block(text: str) -> str | None:
+    """Why a CLAUDE.md / AGENTS.md's TRW blocks cannot be told from its user's text (nested or fenced), else None."""
+    from trw_mcp.state.claude_md._marker_layout import marker_layout_problem
+
+    for pair in _MANAGED_BLOCK_MARKERS:
+        if problem := marker_layout_problem(text, pair, repeats_allowed=True):
+            return problem
+    return None
+
+
+def _holds_only_trws_own_blocks(raw: str) -> bool:
+    """True when *raw* is nothing but the blocks TRW writes today, byte for byte (line endings aside).
+
+    Stripping a block leaves only whitespace also for a block the user edited inside, or a pre-8.0 block TRW can
+    no longer reproduce; neither capture is provably TRW's alone, so it is kept as a previous version (S1 B4).
+    """
+    from trw_mcp.state.claude_md._instructions_link import agents_link_section, claude_md_link_section
+
+    text = raw.replace("\r\n", "\n")
+    for block in (agents_link_section(), claude_md_link_section()):
+        text = text.replace(block.strip("\n"), "")
+    return not text.strip()
+
+
+def _rewrite_instruction_file(path: Path, root: Path, raw: str, rendered: str) -> str:
+    """Rewrite a user's CLAUDE.md or AGENTS.md without TRW's text; never delete it.
+
+    The file is captured into ``.trw/trash`` by rename and re-proven to hold *raw*, and only then is *rendered*
+    created at the free name (``replace_proven``), so a save made while uninstall runs is never replaced (CLAUDE-MD
+    S2 codex r1). The displaced file stays in its capture as the previous version; no copy is ever taken, and
+    nothing of the user's is unlinked. An empty result stays as an empty file. A file that changed since it was
+    read is left as found (or, when a save took its name, that save is kept) and reported refused.
+    """
+    from trw_mcp.bootstrap._proven_replace import replace_proven
+
+    outcome = replace_proven(path, root, raw.encode("utf-8"), rendered.encode("utf-8"))
+    trw_only = not rendered.strip() and _holds_only_trws_own_blocks(raw)
+    if outcome.status == "replaced" and outcome.previous is not None and trw_only:
+        # Structure: taking TRW's verified blocks out left only whitespace, so not one byte of user text was in
+        # it. Hash: the capture is proven to hold *raw*. It goes on with TRW's other captures (system Trash, or
+        # the purge that re-proves its hash) instead of staying behind as clutter (lead, S2).
+        TRW_ONLY_CAPTURES[path] = outcome.previous
+    elif outcome.previous is not None:  # it held the user's text: kept, and named once in the summary
+        PREVIOUS_VERSIONS[path] = outcome.previous
+    if outcome.status != "replaced":
+        REFUSAL_REASONS[path] = f"kept: {outcome.reason}"
+        return "refused"
+    return "stripped"
 
 
 def _remove_managed_block_file(path: Path, root: Path, dry_run: bool) -> str | None:
@@ -188,13 +244,20 @@ def _remove_managed_block_file(path: Path, root: Path, dry_run: bool) -> str | N
         _runtime_logger().warning("uninstall_marker_orphan", path=str(path), detail=warning)
     if not changed:
         return None  # no verified TRW block present -- leave the user's file alone
+    if path.name in _INSTRUCTION_FILES and (problem := _ambiguous_block(original)):
+        REFUSAL_REASONS[path] = f"kept as found: {problem}"  # a user's text is never inside a guessed span (S1 B5)
+        return "refused"
     # A post-commit hook TRW created holds only its shim header once the block goes (E2E-UNINSTALL-EMPTY-DIRS).
-    empty = not stripped.strip() or stripped.strip() == _GIT_HOOK_SHIM_PREAMBLE.strip()
+    # A project's AGENTS.md is never deleted: emptied, it stays (CLAUDE-MD S2).
+    instruction = path.name in _INSTRUCTION_FILES
+    empty = not instruction and (not stripped.strip() or stripped.strip() == _GIT_HOOK_SHIM_PREAMBLE.strip())
     if dry_run:
         return "removed" if empty else "stripped"
     if empty:
         path.unlink()
         return "removed"
+    if instruction:
+        return _rewrite_instruction_file(path, root, original, stripped)
     atomic_write_text(path, stripped)
     return "stripped"
 
@@ -319,6 +382,8 @@ def _strip_trw_from_merged_config(
         delete = True  # nothing the user owns is left: the file is only TRW's shell
     if delete:
         return "removed" if dry_run else _delete_judged(path, root, raw, rel, captures)
+    if not dry_run and path.name in _INSTRUCTION_FILES:
+        return _rewrite_instruction_file(path, root, raw, rendered)
     if not dry_run:
         atomic_write_text(path, rendered)
     return "stripped"

@@ -461,7 +461,8 @@ def write_instruction_file_with_merge(
         result.setdefault("preserved", []).append(rel_path)
         return
     try:
-        if existed and not force:
+        # ``force`` too: it refreshes TRW's block, never the user's text (FORCE-WHOLESALE-OTHER-CLIENTS, as S1 B1).
+        if existed:
             from trw_mcp.state.claude_md._exact_text import read_exact
 
             existing = read_exact(target_path)
@@ -476,9 +477,7 @@ def write_instruction_file_with_merge(
                 return
         else:
             candidate = trw_section
-    except (
-        OSError
-    ) as exc:  # trw-fail-silent-allow: the failure is recorded in result["errors"], which the caller surfaces
+    except (OSError, ValueError) as exc:  # trw-fail-silent-allow: recorded in result["errors"]; ValueError: not UTF-8
         result.setdefault("errors", []).append(f"Failed to write {target_path}: {exc}")
         return
 
@@ -498,6 +497,9 @@ def write_instruction_file_with_merge(
         result.setdefault("errors", []).append(f"Refused to write {target_path}: {reason} ({detail})")
         return
     _record_write(result, rel_path, existed=existed)
+    from ._guarded_write import name_kept_copy  # lazy: _guarded_write imports this module
+
+    name_kept_copy(result, rel_path, verdict.backup_path, (start_marker, end_marker))
 
 
 def replace_marker_region(

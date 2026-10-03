@@ -16,9 +16,8 @@ a small adapter per step. Behaviour is preserved exactly:
   exception escape the mandated first tool call); the rest are fail-open
   (recorded as a degradation, then skipped) exactly like the old inline
   ``except`` blocks.
-- ``timed=False`` reproduces the two steps the old code never recorded a
-  duration for (``first_session_marker`` and ``graph_health``) — so
-  ``step_durations_ms`` keeps the same key set.
+- Every table step is timed (PRD-FIX-131-FR04): ``first_session_marker`` and
+  ``graph_health`` used to be ``timed=False``, so their cost was invisible.
 """
 
 from __future__ import annotations
@@ -33,6 +32,7 @@ import structlog
 
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.state._paths import TRWCallContext
+from trw_mcp.state._store_counts import one_health_reading
 from trw_mcp.tools._ceremony_degradations import (
     DegradationCollector,
 )
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state._store_selection import NamespaceHealth
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +92,9 @@ class SessionStartContext:
     errors: list[str]
     step_durations_ms: dict[str, float] = field(default_factory=dict)
     verbose: bool = False
+    #: PRD-FIX-131: the one namespace-health reading the adjacent graph_health and
+    #: pipeline_health steps share (nothing writes the store between them).
+    health_readings: dict[str, NamespaceHealth] = field(default_factory=dict)
     run_dir: Path | None = None
     call_ctx: TRWCallContext | None = None
     # mcp-x-failopen: typed fail-open degradation collector for this call. The
@@ -287,6 +291,15 @@ def _ss_sanitize_maintain(sctx: SessionStartContext) -> None:
             results[key] = value
 
 
+def _ss_fresh_pull(sctx: SessionStartContext) -> None:
+    from trw_mcp.sync import _fresh_pull
+    from trw_mcp.tools import ceremony as _ceremony
+
+    answer = _fresh_pull.ensure_fresh(_ceremony.resolve_trw_dir(), sctx.config)
+    if answer is not None:
+        sctx.results["fresh_pull"] = answer
+
+
 def _ss_sync_health(sctx: SessionStartContext) -> None:
     from trw_mcp.tools import ceremony as _ceremony
     from trw_mcp.tools._ceremony_helpers import step_sync_health
@@ -305,7 +318,8 @@ def _ss_assertion_health(sctx: SessionStartContext) -> None:
 def _ss_graph_health(sctx: SessionStartContext) -> None:
     from trw_mcp.tools import ceremony as _ceremony
 
-    gh = step_graph_health(_ceremony.resolve_trw_dir(), sctx.degradations)
+    with one_health_reading(sctx.health_readings):
+        gh = step_graph_health(_ceremony.resolve_trw_dir(), sctx.degradations)
     if gh is not None:
         sctx.results["graph_health"] = gh
 
@@ -348,7 +362,8 @@ def _ss_moved_checkout(sctx: SessionStartContext) -> None:
 def _ss_pipeline_health(sctx: SessionStartContext) -> None:
     from trw_mcp.tools import ceremony as _ceremony
 
-    step_pipeline_health_advisory(_ceremony.resolve_trw_dir(), cast("dict[str, object]", sctx.results), sctx.config)
+    with one_health_reading(sctx.health_readings):
+        step_pipeline_health_advisory(_ceremony.resolve_trw_dir(), cast("dict[str, object]", sctx.results), sctx.config)
 
 
 def _ss_retrieval(sctx: SessionStartContext) -> None:
@@ -372,18 +387,21 @@ SESSION_START_STEPS: tuple[Step, ...] = (
     Step("hook_flags", "_ss_hook_flags"),
     # Recall off: strip learnings an earlier sync wrote to AGENTS.md/REVIEW.md.
     Step("recall_withdraw", "_ss_recall_withdraw"),
+    # SHARED-RECALL-LOCAL. Non-critical: catches a stale team pull up within a fixed budget so
+    # recall below ranks other hosts' learnings; a timeout leaves recall on local rows.
+    Step("fresh_pull", "_ss_fresh_pull"),
     Step("recall", "_ss_recall", critical=True),
     Step("run_resolve", "_ss_run_resolve", critical=True),
     Step("surface_stamp", "_ss_surface_stamp", critical=True),
     Step("profile_resolve", "_ss_profile_resolve", critical=True),
     Step("log_event", "_ss_log_event"),
     Step("telemetry", "_ss_telemetry"),
-    Step("first_session_marker", "_ss_first_session_marker", timed=False),
+    Step("first_session_marker", "_ss_first_session_marker"),
     Step("counter", "_ss_counter"),
     Step("sanitize_maintain", "_ss_sanitize_maintain"),
     Step("sync_health", "_ss_sync_health"),
     Step("assertion_health", "_ss_assertion_health"),
-    Step("graph_health", "_ss_graph_health", timed=False),
+    Step("graph_health", "_ss_graph_health"),
     Step("pipeline_health", "_ss_pipeline_health"),
     # PLAN.md §3b item 3. Non-critical: a capability probe that fails records a
     # degradation and never blocks session start.

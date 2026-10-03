@@ -260,14 +260,20 @@ class TestOtherConfidenceSurfacesReachTheGate:
         assert asyncio.run(_do()).get("status") != "ok", "a refused learning is not stored"
 
     def test_sync_pull_routes_through_the_store_gate(self) -> None:
-        """A pulled peer entry is written by the store's apply_synced, which runs prepare_entry_for_store."""
+        """A pulled peer entry is written by the store's apply_synced (one row) or apply_synced_many (a page), both of which
+        end in the same apply_synced_entry, which runs prepare_entry_for_store."""
         import inspect
 
         from trw_memory.sync.delta import apply_synced_entry
+        from trw_memory.tools import sync as daemon_sync_tools
 
-        from trw_mcp.sync import pull
+        from trw_mcp.sync import _team_apply, pull
 
-        assert "store.apply_synced(" in inspect.getsource(pull)
+        assert "merge_page(" in inspect.getsource(pull)  # the merge hands the page to the module that writes it
+        apply_source = inspect.getsource(_team_apply)
+        assert "store.apply_synced(" in apply_source and "store.apply_synced_many(" in apply_source
+        # the daemon's single-row and batched tools share one body, and that body is the gate
+        assert "apply_synced_entry(" in inspect.getsource(daemon_sync_tools._apply_row)
         assert "prepare_entry_for_store" in inspect.getsource(apply_synced_entry)
 
 

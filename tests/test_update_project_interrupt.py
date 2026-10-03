@@ -60,11 +60,11 @@ def test_interrupt_after_parking_restores_the_link(tmp_path: Path, monkeypatch: 
 def test_failed_restore_keeps_the_snapshot_and_names_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root, _link, external = _project_with_link(tmp_path)
 
-    def _broken_restore(_target: Path, _snapshot: Path) -> None:
+    def _broken_rollback(_target: Path, _snapshot: Path, _result: dict[str, list[str]]) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(_update_project, "_run_core_update_phases", _interrupt)
-    monkeypatch.setattr(_update_project, "_restore_transaction_snapshot", _broken_restore)
+    monkeypatch.setattr(_update_project, "_rollback", _broken_rollback)  # the rollback the interrupt really drives
     result: dict[str, list[str]] = {"errors": [], "warnings": [], "preserved": []}
 
     with pytest.raises(KeyboardInterrupt):
@@ -78,3 +78,16 @@ def test_failed_restore_keeps_the_snapshot_and_names_it(tmp_path: Path, monkeypa
         assert (snapshot / ".claude" / "settings.json").readlink() == external
     finally:
         shutil.rmtree(snapshot, ignore_errors=True)
+
+
+def test_the_interrupt_test_depends_on_the_rollback_it_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FB-01-KI1-RACE r5b pin: with the rollback stubbed to do nothing, the parked link is NOT restored. So
+    test_interrupt_after_parking_restores_the_link is proven to exercise _rollback, not pass vacuously."""
+    root, link, _external = _project_with_link(tmp_path)
+    monkeypatch.setattr(_update_project, "_run_core_update_phases", _interrupt)
+    monkeypatch.setattr(_update_project, "_rollback", lambda *_a, **_k: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        _apply(root)
+
+    assert not link.is_symlink(), "a do-nothing rollback must leave the parked link missing"

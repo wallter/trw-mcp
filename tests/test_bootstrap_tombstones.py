@@ -357,7 +357,9 @@ class TestOnlyKeysTrwRecordsAreTombstoned:
         result = update_project(repo)
 
         assert not result["errors"], result["errors"]
-        assert user_file.read_text(encoding="utf-8") == "my notes\n"
+        # The user's file survives byte for byte; a root CLAUDE.md also gains TRW's marked block once the update
+        # committed (operator P0 2026-10-01), which is outside the tombstone question.
+        assert user_file.read_text(encoding="utf-8").startswith("my notes\n")
         assert forged not in _tombstones(repo), "an unrecorded key is not carried forward either"
 
     def test_a_deleted_trw_file_a_writer_recreates_is_still_removed(self, tmp_path: Path) -> None:

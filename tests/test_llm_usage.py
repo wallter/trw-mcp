@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from structlog.testing import capture_logs
+
+pytestmark = pytest.mark.usefixtures("llm_contact_on")
+
 # ---------------------------------------------------------------------------
 # LLMClient Instrumentation Tests
 # ---------------------------------------------------------------------------
@@ -298,8 +303,16 @@ class TestLLMClientEdgeCases:
         client._available = True
         client._async_client = mock_async_client
 
-        result = await client.ask("test")
+        with capture_logs() as logs:
+            result = await client.ask("test")
         assert result is None
+        # None comes from the empty-content branch, not from a failed or refused call.
+        assert [e for e in logs if e["event"] in {"llm_call_failed", "llm_call_refused"}] == []
+        assert mock_async_client.messages.create.await_count == 1
+
+        # Control: the same client with one text block returns that text.
+        mock_response.content = [MagicMock(type="text", text="real answer")]
+        assert await client.ask("test") == "real answer"
 
     async def test_ask_returns_none_when_content_item_has_no_text(self, tmp_path: Path) -> None:
         """ask() returns None when content[0] has no .text attribute."""
@@ -317,8 +330,14 @@ class TestLLMClientEdgeCases:
         client._available = True
         client._async_client = mock_async_client
 
-        result = await client.ask("test")
+        with capture_logs() as logs:
+            result = await client.ask("test")
         assert result is None
+        assert [e for e in logs if e["event"] in {"llm_call_failed", "llm_call_refused"}] == []
+
+        # Control: a typed text block next to the attribute-less item is the only text returned.
+        mock_response.content = [content_item, MagicMock(type="text", text="real answer")]
+        assert await client.ask("test") == "real answer"
 
     async def test_ask_handles_invalid_token_types(self, tmp_path: Path) -> None:
         """ask() handles TypeError/ValueError from bad token values gracefully."""

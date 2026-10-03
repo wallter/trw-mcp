@@ -58,18 +58,8 @@ from trw_mcp.state.recall_tracking import (
     record_recall as record_recall,
 )
 
-# --- Tier management ---
-from trw_mcp.state.tiers import (
-    TierManager as TierManager,
-)
-from trw_mcp.state.tiers import (
-    compute_importance_score as compute_importance_score,
-)
-
 __all__ = [
     "DedupResult",
-    "TierManager",
-    "compute_importance_score",
     "count_entries",
     "dedup_verdict",
     "find_entry_by_id",

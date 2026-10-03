@@ -684,6 +684,14 @@ def _check_checkout_access(_target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("checkout_access", cast("DoctorStatus", status), message)
 
 
+def _check_antigravity_hook(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report a TRW AG-03 hook left where agy 1.2.14 does not read it (UF-BOOT-08)."""
+    from trw_mcp.server._doctor_antigravity_hook import antigravity_hook_row
+
+    status, message = antigravity_hook_row(target)
+    return CheckResult("antigravity_hook", cast("DoctorStatus", status), message)
+
+
 def _format_human(results: list[CheckResult], overall: str) -> str:
     glyph = {"PASS": "PASS", "WARN": "WARN", "FAIL": "FAIL", "SKIP": "SKIP"}
     lines = [f"[{glyph[r.status]}] {r.name}: {r.message}" for r in results]

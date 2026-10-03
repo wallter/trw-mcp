@@ -22,14 +22,21 @@ def test_all_none_safe() -> None:
     from trw_mcp.scoring._recall import RecallContext
 
     ctx = RecallContext()
-    # Accessing all fields should not raise
-    _ = ctx.current_phase
-    _ = ctx.inferred_domains
-    _ = ctx.team
-    _ = ctx.prd_knowledge_ids
-    _ = ctx.modified_files
-    _ = ctx.client_profile
-    _ = ctx.model_family
+    # Every default is falsy/empty, so downstream scoring sees "no context" rather than a crash.
+    values = (
+        ctx.current_phase,
+        ctx.inferred_domains,
+        ctx.team,
+        ctx.prd_knowledge_ids,
+        ctx.modified_files,
+        ctx.client_profile,
+        ctx.model_family,
+    )
+    assert not any(values)
+    # Contrast: populating one field changes only that field.
+    populated = RecallContext(team="core")
+    assert populated.team == "core"
+    assert populated.current_phase is None
 
 
 def test_importable_from_scoring() -> None:

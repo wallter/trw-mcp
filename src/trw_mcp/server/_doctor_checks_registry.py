@@ -74,5 +74,6 @@ CHECKS: tuple[tuple[str, str], ...] = (
     # learning L-5ist: placed before codex_observation, whose own test pins that row last.
     ("user_tier_yaml", "_check_user_yaml"),
     ("claude_md_masks_agents_md", "_check_claude_md_masks_agents_md"),  # REMOVE-S2: before codex_observation (L-5ist)
+    ("antigravity_hook", "_check_antigravity_hook"),  # UF-BOOT-08: before codex_observation (L-5ist)
     ("codex_observation", "_check_codex_observation"),  # CODEX-P0-A S3: appended last, as above
 )

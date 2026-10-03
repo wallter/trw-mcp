@@ -4,7 +4,7 @@ description: >-
   Convert an approved PRD into a repository-grounded execution plan with
   behavior-sized tasks, verified paths/interfaces, tests or other proof,
   dependencies, ownership, migration concerns, and exact project-native
-  verification. Internal phase used by trw-prd-ready and trw-prd-new.
+  verification. Internal phase used by trw-prd-ready and trw-prd-ready.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 ---

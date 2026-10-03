@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +11,9 @@ from typing import TYPE_CHECKING, Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.meta_tune.audit import append_audit_entry
+from trw_mcp.meta_tune.promote_helpers import resolve_repo
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
@@ -108,8 +109,15 @@ def rollback_proposal(
             )
         target_path = Path(snapshot["target_path"])
         backup_path = Path(snapshot["backup_path"])
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_path, target_path)
+        # Resolve the directory, not the leaf: a symlink AT the target is refused by the write, never followed
+        # (CORE-337-D; was shutil.copy2). The backup's mode bits travel with its bytes, as copy2 carried them.
+        resolved_target = target_path.parent.resolve() / target_path.name
+        write_checkout_file(
+            resolve_repo(resolved_target).resolve(),
+            resolved_target,
+            backup_path.read_bytes(),
+            mode=backup_path.stat().st_mode & 0o7777,
+        )
         snapshot_path.replace(rolled_path)
         elapsed = (time.monotonic() - start) * 1000.0
         append_audit_entry(
@@ -124,12 +132,13 @@ def rollback_proposal(
             payload={"target_path": str(target_path), "backup_path": str(backup_path)},
             _config=cfg,
         )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, UnsafeWriteError) as exc:
         try:
             snapshot_data: Any = json.loads(snapshot_path.read_text(encoding="utf-8"))
             if isinstance(snapshot_data, dict):
                 snapshot_data["rollback_attempts"] = int(snapshot_data.get("rollback_attempts", 0)) + 1
-                snapshot_path.write_text(json.dumps(snapshot_data), encoding="utf-8")
+                state_root = dir_.resolve()
+                write_checkout_file(state_root, state_root / snapshot_path.name, json.dumps(snapshot_data))
         except Exception as attempts_exc:
             logger.warning(
                 "rollback_attempt_counter_update_failed",

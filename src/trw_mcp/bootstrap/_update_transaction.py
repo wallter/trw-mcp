@@ -6,7 +6,6 @@ import os
 import shutil
 import stat
 import subprocess
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,7 +14,6 @@ from trw_memory._tree_removal import remove_tree
 from trw_mcp.canons.registry import install_view, load_registry
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
 from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH
-from trw_mcp.state.claude_md._sync_hash import _hash_file_path
 
 from ._managed_dirs import (
     _PRUNED_NESTED_DIR_NAMES as _PRUNED_NESTED_DIR_NAMES,
@@ -38,6 +36,8 @@ from ._managed_dirs import (
 from ._managed_dirs import (
     _managed_kind as _managed_kind,
 )
+from ._refused_restore import new_snapshot_dir, release_snapshot
+from ._retire import git_view_of
 from ._utils import printable
 
 _CANON_REGISTRY = load_registry()
@@ -296,7 +296,7 @@ def _snapshot_transaction_paths(target_dir: Path) -> Path:
     _validate_transaction_surface(target_dir)
     _refuse_git_marked_owned_dirs(target_dir)
     _refuse_special_managed_files(target_dir)
-    snapshot_root = Path(tempfile.mkdtemp(prefix="trw-update-snapshot-"))
+    snapshot_root = new_snapshot_dir(target_dir)  # the TRW user directory: durable, one trusted location
     try:
         for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
             _reject_symlink_path(target_dir, rel)
@@ -310,56 +310,10 @@ def _snapshot_transaction_paths(target_dir: Path) -> Path:
             else:
                 shutil.copy2(src, dest, follow_symlinks=False)
     except OSError:
+        release_snapshot(snapshot_root)
         remove_tree(snapshot_root, purpose="unfinished update snapshot")
         raise
     return snapshot_root
-
-
-def _restore_transaction_snapshot(target_dir: Path, snapshot_root: Path) -> None:
-    _validate_transaction_surface(target_dir, denied_is_marker=True)
-    for rel in (*_TRANSACTION_DIRS, *_TRANSACTION_FILES):
-        _reject_symlink_path(target_dir, rel)
-        dest = target_dir / rel
-        src = snapshot_root / rel
-        if dest.is_dir() and not dest.is_symlink():
-            if src.is_dir() and not src.is_symlink():
-                # Snapshot HAD this dir: remove only the MANAGED children,
-                # preserving the pruned nested runtime dirs (worktrees / nested
-                # repos) that were never snapshotted — else a rollback would
-                # delete them — then restore the snapshotted managed content.
-                for child in dest.iterdir():
-                    if _is_pruned_nested_dir(child, target_dir, denied_is_marker=True):
-                        continue
-                    _remove_transaction_path(child, target_dir)
-                shutil.copytree(
-                    src,
-                    dest,
-                    symlinks=True,
-                    dirs_exist_ok=True,
-                    ignore=_snapshot_copy_ignore(snapshot_root, denied_is_marker=True),
-                )
-                continue
-            # Snapshot did NOT have this dir — it was newly created by the failed
-            # update. Remove the managed dir entirely (rmdir once its managed
-            # children are gone), preserving only any pruned nested runtime dirs.
-            _remove_transaction_path(dest, target_dir)
-            continue
-        if dest.exists() or dest.is_symlink():
-            _remove_transaction_path(dest, target_dir)
-        if not src.exists() and not src.is_symlink():
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir() and not src.is_symlink():
-            shutil.copytree(
-                src, dest, symlinks=True, ignore=_snapshot_copy_ignore(snapshot_root, denied_is_marker=True)
-            )
-        else:
-            shutil.copy2(src, dest, follow_symlinks=False)
-    # The CLAUDE.md sync runs inside the transaction and records its render in the
-    # sync cache; the instruction files it wrote were just put back, so that record
-    # now names a render that no longer exists and the next sync would skip it as a
-    # cache hit. Dropping it forces a re-render; an OSError fails the rollback loudly.
-    _hash_file_path(target_dir / ".trw").unlink(missing_ok=True)
 
 
 def _is_surface_path(rel: str) -> bool:
@@ -380,8 +334,11 @@ def _file_signature(path: Path) -> tuple[str, int, bytes] | None:
     return ("file", stat.S_IMODE(path.stat().st_mode), path.read_bytes())
 
 
-def _surface_files(root: Path) -> set[str]:
-    """Repo-relative paths of every file or symlink in *root*'s transaction surface."""
+def _surface_files(root: Path, *, denied_is_marker: bool = False) -> set[str]:
+    """Repo-relative paths of every file or symlink in *root*'s transaction surface.
+
+    *denied_is_marker* treats an unreadable nested dir as pruned, as the rollback must (it never scanned it).
+    """
     found = {rel for rel in _TRANSACTION_FILES if (root / rel).is_file() or (root / rel).is_symlink()}
     for rel_dir in _TRANSACTION_DIRS:
         top = root / rel_dir
@@ -389,7 +346,9 @@ def _surface_files(root: Path) -> set[str]:
             continue
         for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
             base = Path(dirpath)
-            dirnames[:] = [d for d in dirnames if not _is_pruned_nested_dir(base / d, root)]
+            dirnames[:] = [
+                d for d in dirnames if not _is_pruned_nested_dir(base / d, root, denied_is_marker=denied_is_marker)
+            ]
             found.update((base / name).relative_to(root).as_posix() for name in filenames)
             found.update((base / d).relative_to(root).as_posix() for d in dirnames if (base / d).is_symlink())
     return found
@@ -410,16 +369,19 @@ def _diff_transaction_paths(before_root: Path, after_root: Path) -> dict[str, st
     return changes
 
 
-def _restore_transaction_file(target_dir: Path, snapshot_root: Path, rel: str) -> None:
-    """Put one surface file back to its snapshot state (restored, or removed if it was absent)."""
+def _restore_transaction_file(target_dir: Path, snapshot_root: Path, rel: str, notes: list[str] | None = None) -> None:
+    """Put one surface file back to its snapshot state (restored, or removed if it was absent).
+
+    The name is cleared only on proof (:func:`remove_proven_or_keep`); a name that cannot be cleared is kept
+    as it is, named in *notes*, and the snapshot copy is put only into an absent name.
+    """
+    from ._restore_proof import Cleared, put_back_or_preserve, remove_proven_or_keep
+
     _reject_symlink_path(target_dir, rel)
-    dest = target_dir / rel
-    src = snapshot_root / rel
-    if dest.is_symlink() or dest.is_file():
-        dest.unlink()
-    if src.is_symlink() or src.is_file():
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest, follow_symlinks=False)
+    sink = notes if notes is not None else []
+    settled = remove_proven_or_keep(target_dir, snapshot_root, rel, sink) is Cleared.INTACT
+    if not settled and not put_back_or_preserve(target_dir, snapshot_root, rel, sink):
+        raise OSError(f"pre-update copy of {rel} not saved in the project")  # the caller keeps the snapshot
 
 
 def park_surface_links(root: Path) -> list[str]:
@@ -441,7 +403,7 @@ def unpark_surface_links(root: Path, snapshot_root: Path, parked: list[str], res
     for rel in parked:
         if (root / rel).exists() or (root / rel).is_symlink():
             result.setdefault("preserved", []).append(f"{rel} (symlink)")
-        _restore_transaction_file(root, snapshot_root, rel)
+        _restore_transaction_file(root, snapshot_root, rel, result.setdefault("warnings", []))
 
 
 #: Analytics inputs the instruction render reads. They sit outside the
@@ -505,7 +467,8 @@ def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callab
         if token.is_file() and not token.is_symlink():
             (scratch / CHECKOUT_TOKEN_RELPATH).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(token, scratch / CHECKOUT_TOKEN_RELPATH)  # keeps the 0600 mode
-        apply(scratch)
+        with git_view_of(scratch, target_dir):  # the git-clean retire rule must see the real checkout
+            apply(scratch)
     finally:
         remove_tree(scratch, purpose="update dry-run scratch")
     # Writers name absolute paths in their notes; point them at the real target.

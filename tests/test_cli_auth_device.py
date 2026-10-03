@@ -84,6 +84,8 @@ class TestDeviceAuthLogin:
             result = device_auth_login(mock_server, interactive=True)
 
         assert result is None
+        # Terminal error: polling stopped after the first token request.
+        assert _DeviceAuthHandler.poll_count == 1
 
     def test_expired_token(self, mock_server: str) -> None:
         """expired_token error stops polling and returns None."""
@@ -94,6 +96,7 @@ class TestDeviceAuthLogin:
             result = device_auth_login(mock_server, interactive=True)
 
         assert result is None
+        assert _DeviceAuthHandler.poll_count == 1
 
     def test_slow_down_increases_interval(self, mock_server: str) -> None:
         """slow_down response permanently increases poll interval by 5s."""
@@ -115,13 +118,18 @@ class TestDeviceAuthLogin:
         _DeviceAuthHandler.max_pending = 0
         _DeviceAuthHandler.token_error = ""
 
+        sleeps: list[float] = []
         with (
             patch("trw_mcp.cli.auth._post_json", side_effect=_mock_post),
             patch("trw_mcp.cli.auth.webbrowser"),
+            patch("trw_mcp.cli.auth.time.sleep", side_effect=sleeps.append),
         ):
             result = device_auth_login(mock_server, interactive=False)
 
         assert result is not None
+        assert result["api_key"] == "trw_dk_test123"
+        # Server interval is 1s; after one slow_down the next wait is 5s longer.
+        assert sleeps == [1, 6]
 
     def test_network_error_returns_none(self) -> None:
         """Network failure on initial code request returns None."""

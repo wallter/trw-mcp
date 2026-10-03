@@ -34,6 +34,7 @@ def guarded_bootstrap_write(
     rel_path: str,
     force: bool = False,
     enforce_shrink_floor: bool = True,
+    expected_current: str | None = None,
 ) -> bool:
     """Write *content* to *target* through the guard, recording the outcome.
 
@@ -52,6 +53,7 @@ def guarded_bootstrap_write(
         rel_path: Label recorded under ``created`` / ``updated`` / ``errors``.
         force: Bypass the shrink floors (the installer's ``--force``).
         enforce_shrink_floor: ``False`` for wholly TRW-owned managed files.
+        expected_current: The text *content* was built from; a file that changed since is left as found.
 
     Returns:
         Whether the bytes landed. A refusal leaves *target* byte-identical and
@@ -67,9 +69,11 @@ def guarded_bootstrap_write(
         force=force,
         enforce_shrink_floor=enforce_shrink_floor,
         project_root=project_root,
+        expected_current=expected_current,
     )
     if verdict.written:
         _record_write(result, rel_path, existed=existed)
+        name_kept_copy(result, rel_path, verdict.backup_path, markers)
         return True
 
     refusal = verdict.refusal
@@ -80,4 +84,26 @@ def guarded_bootstrap_write(
     return False
 
 
-__all__ = ["guarded_bootstrap_write"]
+def name_kept_copy(result: dict[str, list[str]], rel_path: str, backup: str | None, markers: tuple[str, str]) -> None:
+    """Name the previous version's backup when it held the user's own text (CANARY-ACCEPT dev22 P0).
+
+    The guard backs a file up before every change, but a backup nobody is told about is not a copy the user can
+    find, and an uncommitted file has no other. A previous version that held only TRW's block is not named: it is
+    TRW's own text, and naming it would add a line to every upgrade. An unreadable backup is named, to be safe.
+    """
+    if backup is None:
+        return
+    from trw_mcp.state.claude_md._write_measure import non_generated_bytes
+
+    try:
+        if not non_generated_bytes(Path(backup).read_text(encoding="utf-8"), markers):
+            return
+    except (OSError, ValueError):  # trw-fail-silent-allow: unreadable or not UTF-8 -> named below, never hidden
+        pass
+    result.setdefault("warnings", []).append(
+        f"{rel_path}: TRW updated its block; your previous version is kept at {Path(backup).absolute()} "
+        "(delete it when satisfied)"
+    )
+
+
+__all__ = ["guarded_bootstrap_write", "name_kept_copy"]

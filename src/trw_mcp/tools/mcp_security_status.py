@@ -3,8 +3,8 @@
 :func:`compute_security_status` directly, plus a ``trw-mcp doctor`` row that
 reports the same status.
 
-Reads the authoritative unified ``events-YYYY-MM-DD.jsonl`` stream and, when
-present, the legacy ``tool_call_events.jsonl`` projection for back-compat.
+Reads the authoritative unified ``events-YYYY-MM-DD.jsonl`` stream from the
+context directory and active run meta directories, plus legacy projections.
 """
 
 from __future__ import annotations
@@ -28,15 +28,49 @@ class MCPSecurityStatus(BaseModel):
     quarantined_servers: list[str] = Field(default_factory=list)
 
 
-def _iter_event_rows(events_dir: Path) -> list[dict[str, Any]]:
-    if not events_dir.exists():
-        return []
+def _iter_event_rows(events_dir: Path, *, run_files_since: float = 0.0) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen_event_ids: set[str] = set()
     candidates = sorted(events_dir.glob("events-*.jsonl"))
     legacy_projection = events_dir / "tool_call_events.jsonl"
     if legacy_projection.exists():
         candidates.append(legacy_projection)
+
+    # Tool calls with an active run are written under runs/<task>/<run>/meta,
+    # not context. Keep the context path for pinless sessions, but include the
+    # authoritative per-run stream so readers do not depend on the retired
+    # project-wide tool_call_events.jsonl location.
+    runs_root = events_dir.parent / "runs"
+    if runs_root.is_dir() and not runs_root.is_symlink():
+        try:
+            task_dirs = sorted(runs_root.iterdir())
+        except OSError:
+            task_dirs = []
+        for task_dir in task_dirs:
+            if task_dir.is_symlink() or not task_dir.is_dir():
+                continue
+            try:
+                run_dirs = sorted(task_dir.iterdir())
+            except (
+                OSError
+            ):  # trw-fail-silent-allow: an unreadable task dir has no events to report; the status stays advisory
+                continue
+            for run_dir in run_dirs:
+                if run_dir.is_symlink() or not run_dir.is_dir():
+                    continue
+                meta_dir = run_dir / "meta"
+                if meta_dir.is_symlink() or not meta_dir.is_dir():
+                    continue
+                # Only run files written inside the anomaly window: a project keeps
+                # every run's history, and reading all of it per status call grows
+                # without bound.
+                run_files = [*sorted(meta_dir.glob("events-*.jsonl")), meta_dir / "tool_call_events.jsonl"]
+                candidates.extend(
+                    path
+                    for path in run_files
+                    if path.is_file() and not path.is_symlink() and path.stat().st_mtime >= run_files_since
+                )
+
     for path in candidates:
         try:
             text = path.read_text()
@@ -102,11 +136,12 @@ def compute_security_status(
     quarantined_servers: list[str] | None = None,
     now: datetime | None = None,
 ) -> MCPSecurityStatus:
-    rows = _iter_event_rows(events_dir)
+    resolved_now = now or datetime.now(tz=timezone.utc)
+    rows = _iter_event_rows(events_dir, run_files_since=(resolved_now - timedelta(hours=48)).timestamp())
     return MCPSecurityStatus(
         registered_servers=list(registered_servers or []),
         allowlist_hash=allowlist_hash,
-        recent_anomalies=_recent_anomalies(rows, now=now),
+        recent_anomalies=_recent_anomalies(rows, now=resolved_now),
         quarantined_servers=list(quarantined_servers or []),
     )
 

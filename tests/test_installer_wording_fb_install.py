@@ -109,6 +109,27 @@ class TestHealthCheckLineMatchesTheDoctorVerdict:
         assert any("passed" in line for line in ui.ok)
         assert not ui.warn
 
+    def test_a_warn_row_that_carries_its_own_fix_has_that_fix_printed(
+        self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FB-INSTALL-05(a): the summary line named the row but not the command that repairs 2,600 vectors dense recall skips."""
+        fix = "2600 stored vector(s) outside the active space; only 40% of stored vectors are in the active space; fix: trw-mcp memory reembed"
+        ui = _doctor_says(
+            installer,
+            monkeypatch,
+            [
+                {"name": "retrieval", "status": "WARN", "message": fix},
+                {"name": "mcp_security", "status": "WARN", "message": "1 recent anomaly"},
+            ],
+        )
+
+        summary, remedy = ui.warn
+        assert "2 warnings" in summary
+        assert "retrieval" in remedy and "fix: trw-mcp memory reembed" in remedy
+        assert not any("1 recent anomaly" in line for line in ui.warn), (
+            "a row with no remedy stays a name in the summary"
+        )
+
     def test_a_warn_only_run_is_still_healthy(self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
         """The return value keeps its contract: True means no FAIL row, WARN included."""
         payload = json.dumps({"checks": [{"name": "x", "status": "WARN", "message": "m"}]})

@@ -51,10 +51,14 @@ class RecallResultDict(TypedDict, total=False):
     ids_note: str
     # Present when a query ran without semantic ranking (INC-119 c).
     retrieval_note: str
-    remote_recall: dict[str, object]  # remote failure/incompleteness or unevaluated temporal coverage
     store_unavailable: str  # the memory store could not be opened; empty results are not "nothing learned"
     # Non-empty only when a requested topic filter was a no-op; explains why.
     topic_filter_warning: str
+    fresh_pull: dict[str, object]  # the pre-recall team pull timed out or failed
+    # PRD-SEC-023 FR03: how many rows the user's confidentiality labels withheld from this call; absent when none.
+    withheld_by_label: int
+    # PRD-SEC-023 FR04: this session's mark when it is above team (it read something personal or sensitive); absent otherwise.
+    session_label: str
 
 
 class RunStatusDict(TypedDict, total=False):
@@ -87,6 +91,9 @@ class RunStatusDict(TypedDict, total=False):
 
 class SessionStartResultDict(TypedDict, total=False):
     """Return shape of ``trw_session_start`` MCP tool."""
+
+    #: PRD-SEC-023 FR01: present only when labels.yaml is invalid or unsafe (the strict, fail-closed policy); absent otherwise.
+    labels_policy: str
 
     timestamp: str
     # INC-006: this session's own pin key, the value ``trw-mcp run adopt --session`` expects.
@@ -122,6 +129,8 @@ class SessionStartResultDict(TypedDict, total=False):
     # Sync-push health advisory (PRD-FIX-COMPOUNDING-1) — degraded when the
     # backend push has stalled (consecutive_failures >= threshold or stale push)
     sync_health: dict[str, object]
+    # SHARED-RECALL-LOCAL: the pre-recall team pull, present only when one was attempted
+    fresh_pull: dict[str, object]
     # Assertion health summary (PRD-CORE-086 FR07) — omitted when no assertions
     assertion_health: dict[str, int]
     # Knowledge-graph health advisory (PRD-FIX-COMPOUNDING-2 FR04) — present
@@ -302,6 +311,9 @@ class LearnResultDict(TypedDict, total=False):
     Incomplete or skipped retirement: ``consolidation_warning``.
     Present on rejection (noise filter): ``reason``, ``message``.
     """
+
+    #: PRD-SEC-023 FR04: this session's mark when it is above team (the row was stamped with it); absent otherwise.
+    session_label: str
 
     learning_id: str
     status: str  # "recorded" | "skipped" | "rejected"

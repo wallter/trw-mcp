@@ -65,31 +65,45 @@ def _trw_agent_memory_dirs(target_dir: Path) -> tuple[str, ...]:
 _RETIRED_SKILL_WHY = (
     "TRW retired this skill and removes only unchanged copies it wrote, so this one, edited or unrecorded, stayed"
 )
+_CURATED_OUT_SKILL_WHY = (
+    "TRW no longer ships this skill to this client and removes only unchanged copies it wrote, so this one,"
+    " edited or unrecorded, stayed"
+)
 
 
 def _retired_skill_mirrors(target_dir: Path) -> list[tuple[str, str]]:
-    """Retired ``trw-`` skills still present in a client skills directory.
+    """``trw-`` skills a client skills directory holds that TRW no longer ships to that client.
 
-    A ``trw-*`` entry whose name is not in the full bundled skill set (REMOVE-S8a). The sweep judges a client
-    mirror by what that client ships, so a curated-out copy it kept as unproven is not reported here yet
-    (DOCTOR-PER-CLIENT-SKILL-PREDICATE). A live ``.claude/skills/<name>`` directory is the project's own skill (a retired name it kept),
-    and its mirrors follow it (PRD-FIX-139-FR03, the same ``is_dir`` test the sweep uses, so a dangling link
-    does not count); only a mirror whose source is gone is a leftover.
+    Judged as the stale sweep judges it (DOCTOR-PER-CLIENT-SKILL-PREDICATE): against that client's own list
+    (``client_skill_lists``), so a copy the sweep kept as unproven is always named here. A flag-gated skill is
+    ``retire_disabled_skills``' on every surface and never named; a client whose list is unknown is not judged.
+    A name TRW ships elsewhere is curated out of this client. A name TRW does not ship at all is retired, unless a
+    live ``.claude/skills/<name>`` keeps it as the project's own skill: its mirrors follow it (PRD-FIX-139-FR03,
+    the same ``is_dir`` test the sweep uses, so a dangling link does not count).
     """
+    from ._optional_skills import CONDITIONAL_SKILLS
     from ._utils import _DATA_DIR
+    from ._version_migration_clients import client_skill_lists
 
     bundled = {entry.name for entry in (_DATA_DIR / "skills").iterdir() if entry.is_dir()}
+    shipped = client_skill_lists()
     found: list[tuple[str, str]] = []
     for root in CLIENT_SKILL_ROOTS:
+        listed = shipped.get(root)
+        if listed is None:
+            continue
         try:
             entries = sorted((target_dir / root).iterdir())
         except OSError:  # trw-fail-silent-allow: an absent or unreadable mirror holds nothing to report; advice only
             continue
         for entry in entries:
             name = entry.name
-            if not name.startswith("trw-") or name in bundled or (target_dir / ".claude" / "skills" / name).is_dir():
+            if not name.startswith("trw-") or name in listed or name in CONDITIONAL_SKILLS:
                 continue
-            found.append((f"{root}/{name}", _RETIRED_SKILL_WHY))
+            if name in bundled:
+                found.append((f"{root}/{name}", _CURATED_OUT_SKILL_WHY))
+            elif not (target_dir / ".claude" / "skills" / name).is_dir():
+                found.append((f"{root}/{name}", _RETIRED_SKILL_WHY))
     return found
 
 

@@ -1,7 +1,7 @@
 ---
 name: trw-prd-groom
 description: >-
-  Refine Product Requirement Documents (PRDs) to sprint-ready quality by researching the codebase, drafting missing sections, and iterating until validation passes. This skill is triggered exclusively by the /trw-prd-ready or /trw-prd-new commands. Do not invoke directly by users.
+  Refine Product Requirement Documents (PRDs) to sprint-ready quality by researching the codebase, drafting missing sections, and iterating until validation passes. This skill is triggered exclusively by the /trw-prd-ready or /trw-prd-ready commands. Do not invoke directly by users.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 ---

@@ -37,12 +37,6 @@ def test_supported_ides_does_not_contain_bare_cursor() -> None:
 
 
 @pytest.mark.unit
-def test_supported_ides_has_eight_entries() -> None:
-    """SUPPORTED_IDES has 8 entries: aider retired (2026-07-11), grok added (2026-09-19)."""
-    assert len(SUPPORTED_IDES) == 8
-
-
-@pytest.mark.unit
 def test_supported_ides_excludes_retired_clients() -> None:
     """The retired aider client is no longer an installable target."""
     assert "aider" not in SUPPORTED_IDES

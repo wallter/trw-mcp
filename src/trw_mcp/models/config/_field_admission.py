@@ -229,17 +229,10 @@ llm_usage_log_file
 logs_dir
 max_auto_lines
 max_consolidated_tags
-memory_cold_threshold_days
 memory_consolidation_enabled
 memory_consolidation_max_per_cycle
 memory_consolidation_min_cluster
 memory_consolidation_similarity_threshold
-memory_hot_max_entries
-memory_hot_ttl_days
-memory_retention_days
-memory_score_w1
-memory_score_w2
-memory_score_w3
 meta_tune
 meta_tune_enabled
 migration_gate_enabled
@@ -301,7 +294,6 @@ runs_root
 scoring_default_days_unused
 scripts_dir
 security
-self_review_blocking
 semantic_checks_enabled
 session_start_recall_enabled
 skills_enabled

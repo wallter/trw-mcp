@@ -34,6 +34,7 @@ class TestToolSummaries:
             if summary in seen:
                 pytest.fail(f"{tool} and {seen[summary]} share summary: {summary!r}")
             seen[summary] = tool
+        assert len(seen) == len(TOOL_SUMMARIES) > 0
 
 
 async def _served_descriptions() -> dict[str, str]:

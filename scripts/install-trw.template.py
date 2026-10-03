@@ -72,16 +72,17 @@ _BSL_LICENSE_URL = "https://trwframework.com/license"
 # server/_subcommands_lifecycle.py).
 API_BASE = "https://api.trwframework.com"
 
-# ── Package-index reachability preflight ─────────────────────────────
-# TEMPORARY (added 2026-09-20). Revert: set _INDEX_PREFLIGHT_ENABLED = False,
-# or delete this block, index_preflight() and its one call site in main().
+# ── Regional installation preflight ──────────────────────────────────
+# Retained by operator decision (2026-10-01).
+# Owner: operator (Tyler Wall) via swarm-lead; review by 2026-10-16.
 _INDEX_PREFLIGHT_ENABLED = True
 _INDEX_PREFLIGHT_REGIONS = frozenset({"US"})
 # Lookup unavailable (offline, proxy, endpoint down) -> proceed.
 _INDEX_PREFLIGHT_FAIL_OPEN = True
 _INDEX_PREFLIGHT_TIMEOUT = 4.0
-# Local UTC offsets (whole hours) consistent with _INDEX_PREFLIGHT_REGIONS.
-_INDEX_PREFLIGHT_OFFSETS = frozenset({-4, -5, -6, -7, -8, -9, -10, -11})
+# Local UTC offsets (whole hours) consistent with _INDEX_PREFLIGHT_REGIONS. 0 passes
+# too: containers, CI and servers keep a UTC clock (INC-144).
+_INDEX_PREFLIGHT_OFFSETS = frozenset({0, -4, -5, -6, -7, -8, -9, -10, -11})
 # Networks that terminate consumer tunnels. Hyperscalers are deliberately
 # absent: CI runners egress from them.
 _INDEX_PREFLIGHT_NETWORKS = (
@@ -113,7 +114,7 @@ _INDEX_PREFLIGHT_NETWORKS = (
 )
 
 # ── ANSI colors ──────────────────────────────────────────────────────
-_USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+_USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 RED = "\033[0;31m" if _USE_COLOR else ""
 GREEN = "\033[0;32m" if _USE_COLOR else ""
@@ -128,18 +129,18 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 # Tips shown randomly after install — a teaching moment while the user is engaged.
 _TIPS = [
-    "Use trw_recall('topic') to search prior session learnings",
-    "Every trw_learn() call compounds across all future sessions",
-    "Call trw_session_start() at the beginning of every session",
-    "Use explicit file ownership for multi-file work \u2014 portable coordination wins",
-    "Run /trw-project-health to check your installation's vitals",
-    "Use trw_checkpoint() before large operations to save progress",
+    "Ask your agent to call trw_recall('topic') to search what earlier sessions learned",
+    "trw_learn() saves a discovery so later sessions can recall it",
+    "Start each session with trw_session_start() to load prior learnings",
+    "When several agents share a repo, give each one its own files to reduce edit conflicts",
+    "Run /trw-project-health to check your installation",
+    "trw_checkpoint() saves your progress before a large operation",
     "Run trw_build_check() before trw_deliver(); overrides for acceptable failures require a structured record",
-    "Use /trw-audit PRD-XXX for adversarial spec-vs-code verification",
-    "Export learnings anytime: trw-mcp export . learnings --format csv",
-    "Your learnings auto-decay \u2014 high-impact ones persist longest",
-    "Choose full profiles for local IDEs and light profiles for CI-oriented CLIs",
-    "TRW hooks run automatically \u2014 no setup needed after install",
+    "Use /trw-audit PRD-XXX to check an implementation against its spec",
+    "Export learnings any time: trw-mcp export . --scope learnings --format csv",
+    "Learnings you stop recalling rank lower over time; high-impact ones last longest",
+    "Check your setup any time with trw-mcp doctor .",
+    "The installer sets up the TRW hooks, so there is nothing to configure by hand",
 ]
 
 _SUPPORTED_IDES = [
@@ -437,7 +438,7 @@ def _open_tty() -> TextIO | None:
     stopped first: its thread would otherwise repaint over the question.
     """
     _halt_live_spinners()
-    for tty_path in ("/dev/tty", "CON"):
+    for tty_path in () if _env_flag("TRW_HEADLESS") else ("/dev/tty", "CON"):  # headless: no prompt ever
         try:
             return open(tty_path, encoding="utf-8")
         except OSError:
@@ -1039,12 +1040,13 @@ def _probe_edge() -> dict[str, str]:
     return out
 
 
-def _index_unavailable(ui: UI) -> None:
+def _index_unavailable(ui: UI, detail: str = "region, clock offset, VPN or proxy") -> None:
     ui.error(
-        "The installer stopped before contacting the package index: a temporary check of your network location "
-        "(region, clock offset, VPN or proxy) did not pass. The package index itself refused nothing."
+        "The installer stopped before contacting the package index: the regional check "
+        f"({detail}) did not pass. The package index itself refused nothing."
     )
-    ui.error("If you are in a supported region, check for a VPN or proxy and try again.")
+    ui.error("To check your egress location, this preflight may send your public IP to Cloudflare and ipinfo.io.")
+    ui.error("If you believe this is incorrect, set TRW_SKIP_INDEX_PREFLIGHT=1 to skip the preflight.")
     sys.exit(1)
 
 
@@ -1078,7 +1080,7 @@ def index_preflight(ui: UI) -> None:
 
     offset = _local_utc_offset()
     if offset is not None and offset not in _INDEX_PREFLIGHT_OFFSETS:
-        _index_unavailable(ui)
+        _index_unavailable(ui, f"clock offset UTC{offset:+d}")
 
 
 # ── Wheel extraction ─────────────────────────────────────────────────
@@ -1785,9 +1787,9 @@ _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
 #: Its dedup is per process, and ``update-project`` runs once per client as a fresh process, so the installer repeats
 #: it once per client unless it drops the repeats the way it does for ``WARNING:`` notices (E2E row 10).
 _CONFIG_WARNING_LINE_RE = re.compile(r"^TRW: WARNING \u2014\s*")
-#: A child line naming a file `update-project` moved into ``.trw/trash`` (``server/_subcommands.py::_print_trashed``).
-#: The operator's own file may be among them, so the spinner must not swallow it (FB-INSTALL-03).
-_TRASH_LINE_RE = re.compile(r"^Moved to \.trw/trash:\s*")
+#: A child line naming a retired file `update-project` deleted in place (``server/_update_report.py::print_retired``).
+#: A git-held edit of the operator's may be among them, so the spinner must not swallow it (FB-INSTALL-03).
+_RETIRED_LINE_RE = re.compile(r"^Removed retired TRW file:\s*")
 #: A per-file progress line, used only to advance the spinner's counter.
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
@@ -1846,7 +1848,7 @@ def run_with_progress(
                     ui.defer_warn(_WARNING_LINE_RE.sub("", line, count=1).strip())
                 elif _CONFIG_WARNING_LINE_RE.match(line):
                     ui.defer_warn(_CONFIG_WARNING_LINE_RE.sub("", line, count=1).strip())  # defer_warn dedups
-                elif _TRASH_LINE_RE.match(line):
+                elif _RETIRED_LINE_RE.match(line):
                     ui.defer_warn(line)
                 elif _PROGRESS_LINE_RE.match(line):
                     file_count += 1
@@ -2736,7 +2738,7 @@ def show_banner(ui: UI) -> None:
     PRD-SEC-006-FR05: a BSL-1.1 source-available license notice line is printed
     in the install flow on every path (interactive, script, and quiet).
     """
-    license_line = f"trw-mcp + trw-memory are source-available under BSL-1.1 \u2014 {_BSL_LICENSE_URL}"
+    license_line = f"trw-mcp + trw-memory are source-available under BSL-1.1. License: {_BSL_LICENSE_URL}"
     if ui.quiet:
         # Even in quiet mode the license notice MUST appear (FR05).
         print(f"{DIM}{license_line}{NC}")
@@ -2747,7 +2749,7 @@ def show_banner(ui: UI) -> None:
             [
                 f"{BOLD}TRW Framework Installer{NC}  v{TRW_VERSION}",
                 "",
-                f"{DIM}The Real Work \u2014 Accumulated Intelligence{NC}",
+                f"{DIM}The engineering operating layer for AI agents{NC}",
             ],
             color=CYAN,
         )
@@ -2815,7 +2817,7 @@ def show_success_banner(
     headline = (
         f"TRW Framework v{version} installed, but its health check FAILED (see above; run 'trw-mcp doctor')"
         if not health_ok
-        else f"TRW Framework v{version} \u2014 ready"
+        else f"TRW Framework v{version} is ready"
     )
     if ui.quiet:
         # FR04: the consent state MUST print on every path — use print() directly
@@ -2827,7 +2829,9 @@ def show_success_banner(
     if ui.interactive:
         print()
         mark, color = ("\u2713", GREEN) if health_ok else ("!", YELLOW)
-        draw_box([f"{color}{BOLD}{mark} {headline}{NC}"], color=color)
+        # The failure headline is longer than the box is wide, so it is split over rows.
+        head_rows = [headline] if health_ok else [f"TRW Framework v{version} installed,", "but its health check FAILED"]
+        draw_box([f"{color}{BOLD}{mark if i == 0 else ' '} {row}{NC}" for i, row in enumerate(head_rows)], color=color)
         print()
 
         # Backend connectivity (real health check results)
@@ -2864,17 +2868,16 @@ def show_success_banner(
         # Dynamic next-steps based on install type
         if is_reinstall:
             print(f"  {BOLD}After updating:{NC}")
-            print(f"    {CYAN}\u2022{NC} Active MCP servers have been signaled to restart")
-            print(f"    {CYAN}\u2022{NC} Restart or reconnect your configured client if tools aren't loading")
-            print(f"    {CYAN}\u2022{NC} Your prior learnings carry forward automatically")
+            print(f"    {CYAN}\u2022{NC} Running MCP servers were signaled to restart")
+            print(f"    {CYAN}\u2022{NC} Restart or reconnect your client if the TRW tools are missing")
+            print(f"    {CYAN}\u2022{NC} Your earlier learnings carry over")
         else:
-            print(f"  {BOLD}Get started:{NC}")
+            print(f"  {BOLD}Next:{NC}")
             if selected_targets:
-                print(f"    {CYAN}1.{NC} Open your project in {_format_ide_list(selected_targets)}")
+                print(f"    {CYAN}1.{NC} Open (or restart) {_format_ide_list(selected_targets)} in your project")
             else:
-                print(f"    {CYAN}1.{NC} Open your project in your selected client")
-            print(f"    {CYAN}2.{NC} TRW tools load automatically \u2014 just start working")
-            print(f"    {CYAN}3.{NC} Call {BOLD}trw_session_start(){NC} for context from prior sessions")
+                print(f"    {CYAN}1.{NC} Open (or restart) your AI coding client in your project")
+            print(f"    {CYAN}2.{NC} Ask your agent to call {BOLD}trw_session_start(){NC} to load earlier context")
 
         # Random tip
         print()
@@ -2896,9 +2899,9 @@ def show_success_banner(
             ui.info("Updated. MCP servers signaled to restart.")
         else:
             next_step = (
-                f"Next: open your project in {_format_ide_list(selected_targets)} — TRW tools load automatically."
+                f"Next: open (or restart) {_format_ide_list(selected_targets)} in your project, then ask your agent to call trw_session_start()."
                 if selected_targets
-                else "Next: open your project in your selected client — TRW tools load automatically."
+                else "Next: open (or restart) your AI coding client in your project, then ask your agent to call trw_session_start()."
             )
             ui.info(next_step)
         # PRD-SEC-004-FR04: echo the resolved consent state.
@@ -4972,14 +4975,14 @@ def run_install_doctor(
         else:
             ui.step_warn("Fix: see the message above, then run 'trw-mcp doctor' again to confirm.")
         return False
-    warned = [
-        str(check.get("name", "?")) for check in checks if isinstance(check, dict) and check.get("status") == "WARN"
-    ]
+    warned = [c for c in checks if isinstance(c, dict) and c.get("status") == "WARN"]
     if warned:
         noun = "warning" if len(warned) == 1 else "warnings"
-        ui.step_warn(
-            f"Framework health check: {len(warned)} {noun} ({', '.join(warned)}); run 'trw-mcp doctor' for details"
-        )
+        names = ", ".join(str(c.get("name", "?")) for c in warned)
+        ui.step_warn(f"Framework health check: {len(warned)} {noun} ({names}); run 'trw-mcp doctor' for details")
+        # FB-INSTALL-05 a: a row's own remedy ('fix: trw-mcp memory reembed') is printed, not left to the doctor.
+        for c in (c for c in warned if "fix:" in str(c.get("message", ""))):
+            ui.step_warn(f"  {c.get('name', '?')}: {str(c['message']).strip()}")
         return True
     ui.step_ok("Framework health check passed (trw-mcp doctor: no failures)")
     return True
@@ -5591,7 +5594,7 @@ def main() -> None:
         help="Leave a checkout store's learnings in place instead of moving them into the user store",
     )
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
-    parser.add_argument("--script", action="store_true", help="Force non-interactive mode")
+    parser.add_argument("--script", "--headless", action="store_true", help="Force non-interactive mode")
     parser.add_argument("--name", default="", help="Project name (installation ID)")
     parser.add_argument("--api-key", default="", help="Platform API key")
     parser.add_argument("--telemetry", dest="telemetry", action="store_true", default=None, help="Enable telemetry")
@@ -5757,7 +5760,7 @@ def main() -> None:
     # NOT stdin.isatty() alone: under `curl … | bash` (the standard install
     # path) stdin is the pipe, but the prompts read from /dev/tty, so a fresh
     # install must still ask which clients to configure. `--script` forces off.
-    interactive = (not args.script) and (sys.stdin.isatty() or _has_controlling_tty())
+    interactive = not (args.script or _env_flag("TRW_HEADLESS")) and (sys.stdin.isatty() or _has_controlling_tty())
 
     # AI/LLM extras (the anthropic client) stay a genuine opt-in. Embeddings are
     # on by default and resolved once the prior config is known.

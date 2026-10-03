@@ -74,12 +74,19 @@ def foreign_client_paths_row(target: Path, home: Path | None = None) -> Row:
     )
 
 
+#: PRD-FIX-153 FR05: a server that never pinned a run is not recorded, so it is not checked.
+_STRAY_SCOPE = "Only servers recorded in pins.json are checked."
+
+
 def stray_servers_row(target: Path) -> Row:
     """sprint-mcp7 W12: trw-mcp servers still holding this checkout that no client will use again."""
     lines = stray_servers(target / ".trw")
     if not lines:
-        return "PASS", "no stray trw-mcp server recorded for this checkout."
-    return "WARN", f"{len(lines)} stray trw-mcp server(s) hold this checkout's store: {'; '.join(lines[:5])}"
+        return "PASS", f"no stray trw-mcp server recorded for this checkout. {_STRAY_SCOPE}"
+    return (
+        "WARN",
+        f"{len(lines)} stray trw-mcp server(s) hold this checkout's store: {'; '.join(lines[:5])}. {_STRAY_SCOPE}",
+    )
 
 
 #: PRD-CORE-289 FR07: Claude Code 2.1.280 is the first release that runs Claude Opus 5.5,

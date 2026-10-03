@@ -249,12 +249,23 @@ def add_operational_subcommands(
         help="Emit the sweep summary as JSON instead of a human-readable line.",
     )
 
-    # sync pull --full (PRD-CORE-280 FR02): resumable replay of every team learning
-    sync_parser = subparsers.add_parser("sync", help="Team-sync operations run on demand")
-    sync_pull = sync_parser.add_subparsers(dest="sync_command").add_parser(
-        "pull", help="Replay every team learning from sequence 0; exits 1 if the run stopped early"
+    # sync push | pull | status (INC-145): the server loop's cycle, on demand;
+    # pull --full (PRD-CORE-280 FR02) is the resumable replay of every team learning
+    sync_parser = subparsers.add_parser(
+        "sync", help="Push, pull or inspect team sync on demand (the MCP server loop's cycle, without the server)"
     )
-    sync_pull.add_argument("--full", action="store_true", required=True, help="Replay from the first page")
+    sync_verbs = sync_parser.add_subparsers(dest="sync_command")
+    sync_push = sync_verbs.add_parser(
+        "push", help="Push this host's unsynced learnings now; exits 1 with the server's reason if the push fails"
+    )
+    sync_push.add_argument(
+        "--retry-rejected", action="store_true", help="Re-offer learnings the backend rejected earlier"
+    )
+    sync_verbs.add_parser("status", help="Last push and pull, failures, pending and rejected counts (no network)")
+    sync_pull = sync_verbs.add_parser(
+        "pull", help="Pull and merge new team learnings now; --full replays every one from sequence 0"
+    )
+    sync_pull.add_argument("--full", action="store_true", help="Replay from the first page (resumable)")
     sync_pull.add_argument("--resume", action="store_true", help="Continue an unfinished replay")
     sync_pull.add_argument("--max-pages", type=int, default=1000, help="Pages to pull in this run (default: 1000)")
     sync_pull.add_argument(

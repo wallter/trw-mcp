@@ -166,7 +166,15 @@ def test_a_path_under_no_trw_dir_is_not_this_rules_business(tmp_path: Path) -> N
 
     link = tmp_path / "linked"
     os.symlink(tmp_path, link)
-    assert_trw_write_contained(link / "anything.txt")  # no raise
+    assert assert_trw_write_contained(link / "anything.txt") is None  # outside any .trw: not its business
+    # Contrast: the identical symlink shape under a .trw directory IS refused.
+    from trw_mcp.state._containment import ContainmentError
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    os.symlink(tmp_path, project / ".trw")
+    with pytest.raises(ContainmentError):
+        assert_trw_write_contained(project / ".trw" / "anything.txt")
 
 
 def test_the_tool_call_emitter_never_attributes_to_an_outside_run_path(

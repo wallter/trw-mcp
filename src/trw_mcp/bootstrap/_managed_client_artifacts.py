@@ -96,7 +96,28 @@ def artifact_user_edited_against(
     """
     from ._version_manifest import _is_user_modified
 
-    return _is_user_modified(dest, key, manifest_hashes, framework_hashes=framework_hashes)
+    if not _is_user_modified(dest, key, manifest_hashes, framework_hashes=framework_hashes):
+        return False
+    return not _legacy_crlf_copy(dest, framework_hashes | _recorded(key, manifest_hashes))
+
+
+def _recorded(key: str, manifest_hashes: dict[str, str] | None) -> set[str]:
+    value = (manifest_hashes or {}).get(key)
+    return {value} if isinstance(value, str) else set()
+
+
+def _legacy_crlf_copy(dest: Path, owned: set[str]) -> bool:
+    """True for a copy an older TRW wrote on Windows: every line ending is CRLF, and with them made LF the bytes
+    are TRW's (the bundle or the recorded hash). A mixed-ending or otherwise changed file stays a user edit
+    (UF-BOOT-07-KI1-LEGACY-CRLF)."""
+    try:
+        data = dest.read_bytes()
+    except OSError:  # trw-fail-silent-allow: unreadable means unproven, so it stays a user edit
+        return False
+    crlf = data.count(b"\r\n")
+    if not crlf or crlf != data.count(b"\n"):
+        return False
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest() in owned
 
 
 def artifact_user_edited(

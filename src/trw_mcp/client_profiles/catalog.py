@@ -246,9 +246,10 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # server map is the user's client config), emptied at most. Only
         # claude-code reads project-root ``.mcp.json``.
         UninstallSurface(".mcp.json", merged_config=True, config_shape="mcp-server-map"),
-        # Legacy: TRW before 8.0 wrote a root CLAUDE.md (now AGENTS.md). Update
-        # deletes a TRW-only one; uninstall does too, and takes only TRW's block
-        # out of one with user content (``strip_legacy_claude_md``).
+        # A root CLAUDE.md is the project's: init/update never create, move or
+        # delete one, and keep only TRW's marked block in one that exists
+        # (``link_claude_md``). Uninstall takes only that block out and never
+        # deletes the file, even one left empty (``strip_legacy_claude_md``).
         UninstallSurface("CLAUDE.md", merged_config=True, config_shape="legacy-claude-md"),
         UninstallSurface(".claude/skills"),
         UninstallSurface(".claude/agents"),

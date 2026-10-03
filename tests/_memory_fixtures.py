@@ -25,16 +25,15 @@ All set ``TRW_PROJECT_ROOT`` to the checkout. A test that builds its own
 from __future__ import annotations
 
 import asyncio
-import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from trw_memory.daemon import DaemonPaths, mint_grant, write_checkout_grant
+from trw_memory.daemon import DaemonPaths
 from trw_memory.daemon.client import DaemonClient
 
-from tests._memory_daemon import running_daemon
+from tests._memory_daemon import MemoryDaemon, attach_checkout, running_daemon
 from tests._memory_store_fake import FakeMemoryStore
 from tests._path_isolation import set_current_root
 from trw_mcp.models.config import reload_config
@@ -44,31 +43,11 @@ from trw_mcp.state._tier_routing import USER_NAMESPACE
 FAKE_NAMESPACE = "project:test"
 
 
-@dataclass(frozen=True)
-class MemoryDaemon:
-    """The session daemon: its paths and the ``TRW_USER_DIR`` it runs under."""
-
-    paths: DaemonPaths
-    user_dir: Path
-
-
 @pytest.fixture(scope="session")
 def memory_daemon(tmp_path_factory: pytest.TempPathFactory) -> Iterator[MemoryDaemon]:
     user_dir = tmp_path_factory.mktemp("memory-daemon")
     with running_daemon(user_dir) as paths:
         yield MemoryDaemon(paths, user_dir)
-
-
-def attach_checkout(trw_dir: Path, daemon: MemoryDaemon) -> tuple[str, DaemonClient]:
-    """Pin *trw_dir* to a fresh namespace and grant it plus ``user:local``; returns (namespace, client)."""
-    namespace = f"project:t{uuid.uuid4().hex[:12]}"
-    trw_dir.mkdir(parents=True, exist_ok=True)
-    config = trw_dir / "config.yaml"
-    existing = config.read_text(encoding="utf-8") if config.exists() else ""
-    config.write_text(f"{existing}project_namespace: {namespace}\n", encoding="utf-8")
-    token = mint_grant(daemon.paths, [namespace, USER_NAMESPACE], root=trw_dir.parent)
-    write_checkout_grant(trw_dir, token)
-    return namespace, DaemonClient(token, paths=daemon.paths)
 
 
 def _empty_user_namespace(client: DaemonClient) -> None:

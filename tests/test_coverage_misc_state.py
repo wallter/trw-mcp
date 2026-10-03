@@ -161,7 +161,20 @@ class TestPathsCoverage:
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
                 result = _paths.detect_current_phase()
 
-        assert result is None
+                assert result is None
+                # Contrast: pin the run; complete -> None, flipped to active -> its phase.
+                from trw_mcp.state import _pin_store
+
+                _pin_store.invalidate_pin_store_cache()
+                _paths._reset_session_id()
+                _paths.pin_active_run(run_dir)
+                try:
+                    assert _paths.detect_current_phase() is None
+                    run_yaml.write_text("run_id: xyz1\nphase: deliver\nstatus: active\n", encoding="utf-8")
+                    assert _paths.detect_current_phase() == "deliver"
+                finally:
+                    _paths.unpin_active_run()
+                    _pin_store.invalidate_pin_store_cache()
 
     def test_detect_current_phase_inactive_run_returns_none(
         self,
@@ -186,7 +199,20 @@ class TestPathsCoverage:
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
                 result = _paths.detect_current_phase()
 
-        assert result is None
+                assert result is None
+                # Contrast: pin the run; complete -> None, flipped to active -> its phase.
+                from trw_mcp.state import _pin_store
+
+                _pin_store.invalidate_pin_store_cache()
+                _paths._reset_session_id()
+                _paths.pin_active_run(run_dir)
+                try:
+                    assert _paths.detect_current_phase() is None
+                    run_yaml.write_text("run_id: xyz1\nphase: deliver\nstatus: active\n", encoding="utf-8")
+                    assert _paths.detect_current_phase() == "deliver"
+                finally:
+                    _paths.unpin_active_run()
+                    _pin_store.invalidate_pin_store_cache()
 
     def test_detect_current_phase_active_run_returns_phase(
         self,

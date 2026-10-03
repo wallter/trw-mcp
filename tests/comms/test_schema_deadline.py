@@ -60,7 +60,14 @@ def test_healthy_store_still_verifies_with_no_behavior_change(tmp_path: Path) ->
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
-        _schema.verify(conn)  # raises on any regression; a passing return is the assertion
+        assert _schema.verify(conn) is None  # raises on any regression
+        # No behavior change: verify reads, it never rewrites the store.
+        assert conn.execute("SELECT COUNT(*) FROM groups").fetchone()[0] == 2
+        assert _schema.stored_version(conn) == str(_schema.SCHEMA_VERSION)
+        # Control: the minimally different store (an unsupported recorded version) is refused.
+        conn.execute("UPDATE schema_meta SET value='999'")
+        with pytest.raises(_schema.SchemaVersionError, match="unsupported schema version"):
+            _schema.verify(conn)
     finally:
         conn.close()
 

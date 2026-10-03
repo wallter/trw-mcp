@@ -240,8 +240,12 @@ def test_deeply_nested_substitutions_never_crash() -> None:
 
     deep = 'x="' + '$(echo "' * 600 + "y" + '")' * 600 + '"\n'
     text = "#!/bin/sh\n. ./lib-a.sh\n" + deep + "old_helper\n"
-    defined_functions(text)
-    calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD)
+    assert defined_functions(text) == set()
+    # No crash, and no false miss either: the over-deep construct is reported as unverifiable.
+    assert calls_missing(text, ["lib-a.sh"], have=_HAVE, had=_HAD) == set()
+    # Contrast: the same call without the nested construct is a definite miss.
+    plain = "#!/bin/sh\n. ./lib-a.sh\nold_helper\n"
+    assert calls_missing(plain, ["lib-a.sh"], have=_HAVE, had=_HAD) == {"old_helper"}
 
 
 _DEEP = 'x="' + '$(echo "' * 600 + "y" + '")' * 600 + '"\n'

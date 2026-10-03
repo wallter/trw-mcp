@@ -22,15 +22,16 @@ def _crash_log(exc: BaseException) -> None:
     sys.stderr.write(msg)
     sys.stderr.flush()
 
-    # Best-effort write to a log file for debugging
+    # Best-effort write to a log file for debugging. Any failure, a planted-symlink refusal included, is
+    # reported on stderr and never raised: the crash above is already there and must stay the story.
     try:
+        from trw_mcp._checkout_write import append_checkout_file
+
         log_dir = Path.cwd() / ".trw" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        crash_file = log_dir / "crash.log"
-        with open(crash_file, "a", encoding="utf-8") as f:
-            f.write(msg)
-    except OSError:
-        pass  # can't write log — stderr output is enough
+        append_checkout_file(Path.cwd(), log_dir / "crash.log", msg)
+    except Exception as exc:  # justified: a crash handler must not raise
+        sys.stderr.write(f"(crash.log not written: {type(exc).__name__}: {exc})\n")
 
 
 if __name__ == "__main__":

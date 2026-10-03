@@ -2,10 +2,12 @@
 
 Belongs to the ``_subcommands_doctor.py`` facade (kept out of that file for its
 module-size gate). Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md``
-exists, so in a claude-code project any other root ``CLAUDE.md`` masks the TRW
-protocol TRW writes to ``AGENTS.md``. TRW never edits or removes that file; this
-row says how to fix it. A ``CLAUDE.md`` that imports ``AGENTS.md`` (or links to
-it) is the fix itself, so it passes (FB-INSTALL-02).
+exists, so in a claude-code project a root ``CLAUDE.md`` masks the TRW block in
+``AGENTS.md`` unless it reaches TRW's context itself. ``update-project`` keeps a
+small marked TRW block in an existing ``CLAUDE.md`` that imports
+``.trw/INSTRUCTIONS.md`` (operator P0, 2026-10-01), so the row passes when that
+block is there, or when the file imports (or links to) ``AGENTS.md``; otherwise
+it says to run ``update-project``. It never advises deleting the file.
 
 The row only ever reads ``CLAUDE.md`` itself: a symlink is judged by where it
 points, never followed for content, and a regular file is opened non-blocking,
@@ -114,22 +116,29 @@ def claude_md_masks_agents_md_row(target: Path) -> tuple[str, str]:
         # The read stopped mid-file: drop the partial last line so a cut token (``@AGENTS.md.evil``) never
         # reads as a whole one.
         text = text[: text.rfind("\n") + 1]
+    if _carries_trw_block(text):
+        return "PASS", "CLAUDE.md carries TRW's block, which imports .trw/INSTRUCTIONS.md"
     if _imports_agents_md(text):
         return "PASS", "CLAUDE.md imports AGENTS.md"
-    from trw_mcp.state.claude_md._orphan_strip import _is_trw_only, _strip_trw_section
-
-    if len(raw) <= _MAX_READ and _is_trw_only(_strip_trw_section(text)[1]):
-        return (
-            "WARN",
-            f"{path} holds only TRW content left by a pre-8.0 install, and {_MASKS}: "
-            "delete it (TRW 8.0 writes its protocol to AGENTS.md).",
-        )
     return (
         "WARN",
-        f"{path} has user content. TRW 8.0 writes its protocol to AGENTS.md; "
-        "Claude Code skips AGENTS.md while a CLAUDE.md exists, so add an `@AGENTS.md` line to it "
-        "(and delete any old TRW block between the trw:start/trw:end markers).",
+        f"{path} carries no current TRW block, and {_MASKS}, so Claude Code does not load TRW's instructions: "
+        "run `trw-mcp update-project` to add TRW's block (it imports .trw/INSTRUCTIONS.md; "
+        "nothing outside its markers changes).",
     )
+
+
+def _carries_trw_block(text: str) -> bool:
+    """True when *text* holds exactly one whole-line trw:start..trw:end block with the INSTRUCTIONS import inside."""
+    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH, fenced_line_indices
+    from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
+
+    fenced = fenced_line_indices(text)
+    lines = [line.strip() if i not in fenced else "" for i, line in enumerate(text.splitlines())]
+    if lines.count(TRW_MARKER_START) != 1 or lines.count(TRW_MARKER_END) != 1:
+        return False
+    start, end = lines.index(TRW_MARKER_START), lines.index(TRW_MARKER_END)
+    return start < end and f"@{INSTRUCTIONS_RELPATH}" in lines[start + 1 : end]
 
 
 def check_claude_md_masks_agents_md(target: Path, _config: TRWConfig) -> CheckResult:

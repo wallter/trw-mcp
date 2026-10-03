@@ -209,7 +209,7 @@ Route each approved opportunity to exactly one channel:
    Otherwise implement NOW, inline, and validate with the narrowest
    project-native check.
 2. **PRD** — anything structural (new tool/skill/agent, schema change,
-   cross-package behavior). Invoke `/trw-prd-new "<title>"`; if unavailable,
+   cross-package behavior). Invoke `/trw-prd-ready "<title>"`; if unavailable,
    follow the repository's discovered PRD instructions and search-scope contract. The change then follows
    RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER — never implement
    structural changes ad hoc from a reflection.

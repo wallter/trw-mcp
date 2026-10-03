@@ -295,11 +295,6 @@ def resolve_surface_registry(*, refresh: bool = False) -> SurfaceRegistry:
     return _cached_registry(cache_key, str(data_root) if data_root else None, str(repo_root) if repo_root else None)
 
 
-def resolve_surface_snapshot(*, refresh: bool = False) -> SurfaceSnapshot:
-    """Back-compat wrapper — resolve the registry and return its snapshot view."""
-    return resolve_surface_registry(refresh=refresh).to_snapshot()
-
-
 def clear_snapshot_cache() -> None:
     """Drop the per-process registry cache. Test-only."""
     _cached_registry.cache_clear()
@@ -312,5 +307,4 @@ __all__ = [
     "SurfaceSnapshot",
     "clear_snapshot_cache",
     "resolve_surface_registry",
-    "resolve_surface_snapshot",
 ]

@@ -186,7 +186,7 @@ class TestWriteInstructionFileWithMerge:
         assert "user preamble" in text
         assert "NEW" in text and "OLD" not in text
 
-    def test_force_rewrites_even_with_user_content(self, tmp_path: Path) -> None:
+    def test_force_refreshes_only_trws_block_and_keeps_user_content(self, tmp_path: Path) -> None:
         target = tmp_path / "FOO.md"
         target.write_text("user-authored content with no markers\n", encoding="utf-8")
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
@@ -201,9 +201,10 @@ class TestWriteInstructionFileWithMerge:
             result=result,
         )
 
-        # force=True overwrites entirely — user content is lost (documented behavior).
+        # force refreshes TRW's block and never replaces the user's text (FORCE-WHOLESALE-OTHER-CLIENTS).
         text = target.read_text(encoding="utf-8")
-        assert text == _section("trw")
+        assert text.startswith("user-authored content with no markers\n")
+        assert text.count(_START) == 1 and _section("trw") in text
         assert "FOO.md" in result["updated"]
 
     def test_idempotent_after_initial_create(self, tmp_path: Path) -> None:

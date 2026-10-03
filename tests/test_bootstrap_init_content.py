@@ -444,7 +444,6 @@ class TestSkills:
         "trw-memory-optimize",
         "trw-plan-review",
         "trw-prd-groom",
-        "trw-prd-new",
         "trw-prd-ready",
         "trw-prd-review",
         "trw-project-health",

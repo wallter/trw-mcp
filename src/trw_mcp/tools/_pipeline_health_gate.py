@@ -214,7 +214,9 @@ def _check_empty_graph(health: GateResult) -> str | None:
     return advisory or "knowledge graph dead: the graph_edges probe reported a degraded graph"
 
 
-def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> GateResult:
+def check_pipeline_health(
+    trw_dir: Path, config: TRWConfig | None = None, *, health: GateResult | None = None
+) -> GateResult:
     """Fail-closed pipeline-health gate (PRD-FIX-107 FR06).
 
     Returns a structured verdict:
@@ -240,6 +242,10 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
 
     FAILS CLOSED on detected breakage; FAILS OPEN on internal error OR an
     unmeasured probe.
+
+    ``health`` (PRD-FIX-131-FR05): an aggregate the caller already computed with
+    ``step_pipeline_health(trw_dir, config)``; when given, the gate judges it
+    instead of probing the store a second time. ``None`` probes, as before.
     """
     if config is not None and not bool(getattr(config, "pipeline_health_gate_enabled", True)):
         return {"healthy": True, "status": "disabled", "reasons": []}
@@ -248,7 +254,8 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
         # PRD-FIX-141-FR02: thread the gate's own config into the probes so the
         # thresholds this gate enforces and the thresholds the advisory surface
         # reports are the same numbers, resolved once.
-        health = step_pipeline_health(trw_dir, config)
+        if health is None:
+            health = step_pipeline_health(trw_dir, config)
     except Exception as exc:  # justified: fail-open on internal error, never wedge CI on a false negative
         logger.warning("pipeline_health_gate_probe_failed", error=str(exc))
         return {"healthy": True, "status": "probe_error", "reasons": []}

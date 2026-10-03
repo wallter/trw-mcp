@@ -34,6 +34,7 @@ from trw_mcp.models.typed_dicts import (
     SessionStartResultDict,
 )
 from trw_mcp.state._paths import TRWCallContext
+from trw_mcp.state._recall_admission import strict_policy_notice
 from trw_mcp.tools._ceremony_degradations import (
     DegradationCollector,
     SessionStartStepError,
@@ -172,6 +173,10 @@ def step_recall_learnings(
             raise StorageError(store_error)
         results["learnings"] = learnings
         results["learnings_count"] = len(learnings)
+        if notice := strict_policy_notice():
+            results["labels_policy"] = (
+                notice  # PRD-SEC-023 FR01: a broken labels.yaml fails closed, and the user must hear of it
+            )
         if "query" in extra:
             results["query"] = str(extra["query"])
         if "query_advisory" in extra:

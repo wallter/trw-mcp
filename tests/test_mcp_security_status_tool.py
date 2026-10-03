@@ -7,6 +7,7 @@ PRD-CORE-300 slice S3a moved the MCP tool this used to register to
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -105,6 +106,41 @@ def test_status_reads_legacy_tool_call_projection_for_recent_anomalies(tmp_path:
     ]
 
 
+def test_status_reads_run_scoped_unified_events_from_project_context(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    context_dir = trw_dir / "context"
+    run_events = trw_dir / "runs" / "task" / "run-1" / "meta" / "events-2026-09-26.jsonl"
+    context_dir.mkdir(parents=True)
+    run_events.parent.mkdir(parents=True)
+    now = datetime(2026, 9, 26, 12, tzinfo=timezone.utc)
+    row = {
+        "event_id": "evt_run_projection",
+        "session_id": "s",
+        "ts": now.isoformat(),
+        "emitter": "mcp_security",
+        "event_type": "mcp_security",
+        "payload": {
+            "decision": "shadow_anomaly",
+            "transport": "stdio",
+            "server": "filesystem",
+            "tool": "read_file",
+            "anomaly_type": "novel_arg_pattern",
+        },
+    }
+    run_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    status = compute_security_status(events_dir=context_dir, now=now)
+
+    assert status.recent_anomalies == [
+        {
+            "ts": now.isoformat(),
+            "server": "filesystem",
+            "tool": "read_file",
+            "type": "novel_arg_pattern",
+        }
+    ]
+
+
 def test_status_cli_command_produces_the_correct_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -130,3 +166,23 @@ def test_status_cli_command_produces_the_correct_shape(
         assert key in result
     validated = MCPSecurityStatus(**result)
     assert validated.quarantined_servers == []
+
+
+def test_status_skips_run_event_files_untouched_inside_the_window(tmp_path: Path) -> None:
+    trw_dir = tmp_path / ".trw"
+    context_dir = trw_dir / "context"
+    run_events = trw_dir / "runs" / "task" / "run-old" / "meta" / "events-2026-09-20.jsonl"
+    context_dir.mkdir(parents=True)
+    run_events.parent.mkdir(parents=True)
+    now = datetime.now(tz=timezone.utc)
+    row = {
+        "event_id": "evt_old_run",
+        "ts": now.isoformat(),
+        "event_type": "mcp_security",
+        "payload": {"decision": "shadow_anomaly", "server": "s", "tool": "t", "anomaly_type": "x"},
+    }
+    run_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    stale = (now - timedelta(hours=72)).timestamp()
+    os.utime(run_events, (stale, stale))
+
+    assert compute_security_status(events_dir=context_dir, now=now).recent_anomalies == []

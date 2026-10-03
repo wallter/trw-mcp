@@ -86,6 +86,7 @@ class TestCheckAndHandleDedup:
                 _CFG,
             )
             assert result is None
+        assert list(entries_dir.iterdir()) == [], "a store verdict writes nothing to the entries dir"
 
     def test_returns_skip_result_on_exact_duplicate(self, tmp_path: Path) -> None:
         """When dedup says skip, returns a skip result dict."""
@@ -574,7 +575,9 @@ class TestBoundedMergeResolution:
 
         with patch("trw_mcp.state.memory_adapter.find_entry_by_id", return_value=row):
             assert resolve_entry_path(entries_dir, "L-wantedid", FileStateReader(), trw_dir=trw_dir) is None
-            assert resolve_entry_path(entries_dir, "L-otherid", FileStateReader(), trw_dir=trw_dir) is not None
+            assert resolve_entry_path(entries_dir, "L-otherid", FileStateReader(), trw_dir=trw_dir) == (
+                entries_dir / "2026-01-01-colliding-slug.yaml"
+            )
 
 
 # ---------------------------------------------------------------------------

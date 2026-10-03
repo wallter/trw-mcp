@@ -40,8 +40,8 @@ def refresh_changed_only_trw_block(before: str, after: str, markers: tuple[str, 
     included, is not provably a block refresh and the caller keeps the user's bytes.
 
     The raw *before* is compared, not the writer's input: healing a dead legacy block
-    (``_migrate_legacy_marker_block``) re-joins the file with LF, so a refresh that healed one is not
-    byte-preserving and keeps the guard.
+    (``_migrate_legacy_marker_block``) removes text outside the live block, so a refresh that healed one is not
+    a block-only refresh and keeps the guard.
     """
     from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START, split_around_trw_block
 

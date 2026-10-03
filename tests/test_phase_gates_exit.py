@@ -57,6 +57,14 @@ class TestCheckImplementExit:
         )
         _check_implement_exit(run_dir, config, failures)
 
+        # The invalid value must behave exactly like the documented default, "approved".
+        expected: list[ValidationFailure] = []
+        approved = TRWConfig(build_check_enabled=False, prd_required_status_for_implement="approved")
+        _check_implement_exit(run_dir, approved, expected)
+        assert [f.model_dump() for f in failures] == [f.model_dump() for f in expected]
+        # Contrast: the shards dir without a manifest still reports its own warning on this path.
+        assert "manifest_exists" in [f.rule for f in failures]
+
 
 class TestCheckValidateExit:
     """Tests for validate phase exit checker."""

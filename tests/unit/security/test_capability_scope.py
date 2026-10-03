@@ -52,13 +52,26 @@ def test_apply_scope_happy_path_returns_none() -> None:
 
 
 def test_apply_scope_accepts_runtime_phase_case() -> None:
-    apply_scope(
-        server_name="trw",
-        tool_name="trw_recall",
-        scope=_make_scope(allowed_phases=("implement",)),
-        current_phase="IMPLEMENT",
-        requested_scope="read",
+    scope = _make_scope(allowed_phases=("implement",))
+    assert (
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="IMPLEMENT",
+            requested_scope="read",
+        )
+        is None
     )
+    # Control: case folding is not a wildcard; a different phase in any case is still refused.
+    with pytest.raises(CapabilityScopeError, match="not allowed during phase 'REVIEW'"):
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="REVIEW",
+            requested_scope="read",
+        )
 
 
 def test_apply_scope_rejects_server_name_mismatch() -> None:
@@ -116,25 +129,49 @@ def test_apply_scope_rejects_disallowed_requested_scope() -> None:
 def test_apply_scope_skips_phase_check_when_current_phase_is_none() -> None:
     """current_phase=None bypasses the phase gate (legacy callers)."""
     scope = _make_scope(allowed_phases=("research",))
-    apply_scope(
-        server_name="trw",
-        tool_name="trw_recall",
-        scope=scope,
-        current_phase=None,
-        requested_scope="read",
+    assert (
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase=None,
+            requested_scope="read",
+        )
+        is None
     )
+    # Control: the same scope with a named phase outside allowed_phases is refused.
+    with pytest.raises(CapabilityScopeError, match="not allowed during phase 'implement'"):
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="implement",
+            requested_scope="read",
+        )
 
 
 def test_apply_scope_skips_scope_check_when_requested_scope_is_none() -> None:
     """requested_scope=None bypasses the scope gate (legacy callers)."""
     scope = _make_scope(allowed_scopes=("read",))
-    apply_scope(
-        server_name="trw",
-        tool_name="trw_recall",
-        scope=scope,
-        current_phase="research",
-        requested_scope=None,
+    assert (
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="research",
+            requested_scope=None,
+        )
+        is None
     )
+    # Control: the same scope with a named scope outside allowed_scopes is refused.
+    with pytest.raises(CapabilityScopeError, match="not allowed for scope 'write'"):
+        apply_scope(
+            server_name="trw",
+            tool_name="trw_recall",
+            scope=scope,
+            current_phase="research",
+            requested_scope="write",
+        )
 
 
 def test_scope_from_allowed_tool_copies_phases_and_scopes() -> None:

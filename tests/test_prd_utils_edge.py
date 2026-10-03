@@ -466,13 +466,15 @@ class TestDeepMergeEdge:
 
     def test_int_target_value_is_noop(self) -> None:
         """If target is an int (not dict), _deep_merge returns silently."""
-        _deep_merge(42, {"key": "value"})
-        # No exception = success
+        source: dict[str, object] = {"key": "value"}
+        assert _deep_merge(42, source) is None
+        assert source == {"key": "value"}
 
     def test_list_target_value_is_noop(self) -> None:
         """If target is a list (not dict), _deep_merge returns silently."""
-        _deep_merge(["a", "b"], {"key": "value"})
-        # No exception = success
+        target = ["a", "b"]
+        assert _deep_merge(target, {"key": "value"}) is None
+        assert target == ["a", "b"]  # a list target is not mutated
 
 
 # =============================================================================

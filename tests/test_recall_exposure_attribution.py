@@ -29,7 +29,6 @@ def exposure_store(daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
     monkeypatch.setattr(_recall_impl, "build_recall_context", lambda *a, **kw: None)
-    monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda query, rows: (rows, None))
     monkeypatch.setattr("trw_mcp.state.recall_tracking.resolve_trw_dir", lambda: daemon_checkout.trw_dir)
     return daemon_checkout
 
@@ -145,24 +144,6 @@ def test_only_returned_entries_receive_exposure(exposure_store: DaemonCheckout, 
     if mode != "empty":
         assert returned
     _assert_exposure(exposure_store, returned)
-
-
-def test_remote_selection_not_local_prefetch_drives_tracking(
-    exposure_store: DaemonCheckout,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    entries = _candidates(exposure_store)
-    remote = {"id": "L-remote", "summary": "Database migration", "impact": 1.0}
-    monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda query, rows: ([remote], None))
-    result = _recall_impl.execute_recall(
-        "database",
-        exposure_store.trw_dir,
-        TRWConfig(embeddings_enabled=False),
-        max_results=1,
-        _adapter_recall=lambda *a, **kw: entries,
-    )
-    assert result["learnings"][0]["id"] == "L-remote"
-    _assert_exposure(exposure_store, result["learnings"])
 
 
 def test_real_acquisition_and_receipts_agree(exposure_store: DaemonCheckout) -> None:

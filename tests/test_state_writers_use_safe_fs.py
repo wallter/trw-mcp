@@ -103,6 +103,31 @@ def test_scheduling_ledger_anchor_keeps_the_pre_migration_bytes(tmp_path: Path) 
     assert anchor.read_bytes() == expected.encode("utf-8")
 
 
+# --- RegistryWriter._append_locked, the ledger append itself (CORE-337-D residual) ---------------------
+
+
+def test_scheduling_ledger_append_refuses_a_symlinked_ledger(tmp_path: Path) -> None:
+    writer, ledger = _writer(tmp_path / "project")
+    # The append READS the ledger first, so the link names an empty (valid, genesis) ledger outside the project.
+    victim = plant_symlink(ledger, tmp_path / "outside", b"")
+
+    with pytest.raises(UnsafeWriteError):
+        writer.advance_evaluation_epoch(authorization_receipt="receipt-1", actor="tester")
+
+    assert_untouched(ledger, victim, b"")
+
+
+def test_scheduling_ledger_append_keeps_the_pre_migration_bytes(tmp_path: Path) -> None:
+    writer, ledger = _writer(tmp_path / "project")
+
+    first = writer.advance_evaluation_epoch(authorization_receipt="receipt-1", actor="tester")
+    second = writer.advance_evaluation_epoch(authorization_receipt="receipt-2", actor="tester")
+
+    # The pre-migration writer: one sorted-key JSON line per action, appended.
+    lines = [json.dumps(a.model_dump(mode="json"), sort_keys=True) + "\n" for a in (first, second)]
+    assert ledger.read_bytes() == "".join(lines).encode("utf-8")
+
+
 # --- claude_md._sync_hash._write_stored_hash, via execute_claude_md_sync (R12 row 17) -----------------
 
 

@@ -11,6 +11,11 @@ recoverable; destroyed user content is not (PRD-FIX-123-NFR02).
 
 from __future__ import annotations
 
+import contextlib
+import errno
+import hashlib
+import os
+import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,10 +79,33 @@ def _regular_copies(backup_dir: Path, filename: str) -> list[Path]:
     return sorted(copies)
 
 
+#: ``<name>.<stamp>.<sha256 prefix>``: a backup that a write displaced carries its content hash in its name.
+_HASHED = re.compile(r"\.\d{8}T\d{12}Z\.([0-9a-f]{16})$")
+
+
+def _still_as_taken(copy: Path) -> bool:
+    """True when *copy* may be pruned: its bytes still match the content hash in its name.
+
+    A displaced backup is the user's former file, so a program that kept it open can still write to it; such a
+    copy is kept past retention instead of deleted (PUBLISH-RACE-HARDEN codex r1). A legacy copy without a hash
+    in its name cannot be proven unchanged, so it is kept too (CLAUDE-MD S1 red team).
+    """
+    match = _HASHED.search(copy.name)
+    if match is None:
+        return False
+    try:
+        return hashlib.sha256(copy.read_bytes()).hexdigest()[:16] == match.group(1)
+    except OSError:  # trw-fail-silent-allow: unreadable means unproven, so it is kept
+        return False
+
+
 def _prune_retention(backup_dir: Path, filename: str, retention: int) -> None:
-    """Keep at most *retention* copies of *filename*, oldest pruned first."""
+    """Keep at most *retention* copies of *filename*, oldest pruned first, each only once re-proven unchanged."""
     copies = _regular_copies(backup_dir, filename)
     for stale in copies[: max(0, len(copies) - retention)]:
+        if not _still_as_taken(stale):
+            logger.warning("instruction_backup_changed_kept", path=str(stale))
+            continue
         try:
             # ``unlink`` never recurses: an entry swapped for a directory after the scan fails here, not deleted.
             stale.unlink()
@@ -94,38 +122,71 @@ def _newest_copy(backup_dir: Path, filename: str) -> Path | None:
     return copies[-1] if copies else None
 
 
-def backup_instruction_file(
-    target: Path,
-    current: str,
-    *,
-    project_root: Path,
-    backup_dir: str,
-    retention: int,
-) -> str:
-    """Copy *current* (the PRE-write bytes of *target*) into the backup directory.
+def _holds(path: Path, data: bytes) -> bool:
+    try:
+        return path.read_bytes() == data
+    except OSError:  # trw-fail-silent-allow: unreadable means unproven
+        return False
 
-    Returns the backup path. Raises :class:`BackupRefused` on any failure so the
-    caller refuses the write — never proceeds unprotected.
+
+def prepare_backup_dir(project_root: Path, backup_dir: str) -> Path:
+    """The backup directory, contained and created BEFORE any write (fail-closed: a write without one is refused).
+
+    Raises:
+        BackupRefused: when it escapes *project_root* or cannot be created.
     """
     directory = resolve_backup_dir(project_root, backup_dir)
-    newest = _newest_copy(directory, target.name)
-    if newest is not None:
-        try:
-            if newest.read_text(encoding="utf-8") == current:
-                # The newest copy already holds these exact bytes; a second one is disk churn, not protection.
-                return str(newest)
-        except (OSError, UnicodeDecodeError):  # trw-fail-silent-allow: unreadable newest copy -> take a fresh one
-            pass
-    stamp = datetime.now(timezone.utc).strftime(_BACKUP_STAMP_FORMAT)
-    copy_path = directory / f"{target.name}.{stamp}"
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        copy_path.write_text(current, encoding="utf-8")
     except OSError as exc:
-        raise BackupRefused("backup_failed", f"could not write backup {copy_path}: {exc}") from exc
-
-    _prune_retention(directory, target.name, retention)
-    return str(copy_path)
+        raise BackupRefused("backup_failed", f"could not create backup directory {directory}: {exc}") from exc
+    return directory
 
 
-__all__ = ["BackupRefused", "backup_instruction_file", "resolve_backup_dir"]
+def _place(displaced: Path, directory: Path, pattern: str) -> Path:
+    """Give *displaced* a new name in *directory* with a no-replace ``link``, then drop its capture-side name.
+
+    The inode keeps the new name, so dropping the old one loses nothing; a name already taken (by anything) is
+    never replaced, a fresh stamp is tried instead (codex r2). Raises ``OSError`` when no link can be made.
+    """
+    for _ in range(8):
+        dest = directory / (pattern % datetime.now(timezone.utc).strftime(_BACKUP_STAMP_FORMAT))
+        try:
+            os.link(displaced, dest, follow_symlinks=False)
+        except FileExistsError:  # trw-fail-silent-allow: taken; the next stamp is tried
+            continue
+        displaced.unlink()
+        return dest
+    raise FileExistsError(errno.EEXIST, "no free backup name", str(directory))
+
+
+def keep_displaced(displaced: Path, directory: Path, filename: str, judged: str, retention: int) -> Path:
+    """Make the file a write displaced the backup: move it into *directory* by rename, never copy it.
+
+    *displaced* holds exactly *judged* (the publish re-proved it). It gets a new name carrying its stamp and content
+    hash; no retained copy is ever replaced, because a program that kept the user's former file open can still write
+    to it (PUBLISH-RACE-HARDEN codex r1). When the newest copy already holds these bytes the duplicate is dropped
+    instead, once re-proven unchanged. Retention then prunes the oldest copies it can re-prove
+    unchanged. The capture folder it came from loses only its own ``meta.json`` and goes only when empty. Raises
+    ``OSError`` when the rename is refused (another filesystem): the caller reports the capture as the backup.
+    """
+    data = judged.encode("utf-8")
+    newest = _newest_copy(directory, filename)
+    folder = displaced.parent
+    if newest is not None and _holds(newest, data) and _holds(displaced, data):
+        # E2E-INC-015: those bytes are already retained, so the duplicate goes, and only once re-proven unchanged
+        # (a write landing between this read and the unlink is the documented residual). The retained copy itself
+        # is never touched.
+        displaced.unlink()
+        dest = newest
+    else:
+        dest = _place(displaced, directory, f"{filename}.%s.{hashlib.sha256(data).hexdigest()[:16]}")
+    with contextlib.suppress(OSError):  # TRW's own record of the capture
+        (folder / "meta.json").unlink()
+    with contextlib.suppress(OSError):  # only an EMPTY folder goes
+        folder.rmdir()
+    _prune_retention(directory, filename, retention)
+    return dest
+
+
+__all__ = ["BackupRefused", "keep_displaced", "prepare_backup_dir", "resolve_backup_dir"]

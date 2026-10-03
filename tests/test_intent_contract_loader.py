@@ -187,10 +187,7 @@ def test_duplicate_claim_ids_are_preserved_for_c1() -> None:
 def test_intent_config_defaults_and_no_ledger_path_knob() -> None:
     intent = TRWConfig().security.intent
     assert intent.enabled is True
-    assert intent.pre_write_hook_budget_seconds == 1.0
-    assert intent.post_edit_hook_budget_seconds == 5.0
     assert intent.falsifier_timeout_seconds == 3.0
-    assert intent.false_block_window_size == 30
     assert intent.falsifier_allowed_commands == ("pytest",)
     assert intent.retro_compensator_window_commits == 500
     # R13: no configurable ledger path may exist at all.

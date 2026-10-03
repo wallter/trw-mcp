@@ -145,10 +145,20 @@ class TestWrapToolEnqueuesToPipeline:
         # The wrapped call still returns normally despite the enqueue blowing up.
         assert wrapped() == "ok"
 
-    def test_pipeline_singleton_reset_after(self) -> None:
+    def test_pipeline_singleton_reset_after(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Defensive: ensure a fresh singleton for any later test in the session,
         # since these tests patched get_instance on the class.
+        stops: list[bool] = []
+
+        class _Stub:
+            def stop(self, drain: bool = True) -> None:
+                stops.append(drain)
+
+        monkeypatch.setattr(TelemetryPipeline, "_instance", _Stub())
         TelemetryPipeline.reset()
+        # The held instance was stopped without draining, and the class reference was cleared.
+        assert stops == [False]
+        assert TelemetryPipeline._instance is None
 
 
 class TestPipelineProjection:

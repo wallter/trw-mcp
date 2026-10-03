@@ -1,5 +1,6 @@
 """A real trw-memory daemon for the daemon-store tests (PRD-CORE-298 FR01).
 
+No pytest import: ``benchmarks/engmem_mcp.py`` (the canary memory-soak) imports this (running_daemon, MemoryDaemon, attach_checkout) under a venv that has none.
 The daemon runs in its own process under an isolated ``TRW_USER_DIR``; an
 existing empty local model directory keeps it keyword-only and off the network.
 """
@@ -10,13 +11,18 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
-import pytest
-from trw_memory.daemon import DaemonPaths
+from trw_memory.daemon import DaemonPaths, mint_grant, write_checkout_grant
 from trw_memory.daemon._discovery import DaemonInfo, read_discovery_result
+from trw_memory.daemon.client import DaemonClient
+
+from trw_mcp.state._tier_routing import USER_NAMESPACE
 
 _START_DEADLINE_SECONDS = 30.0
 
@@ -102,19 +108,38 @@ def running_daemon(user_dir: Path, *, keyword_only: bool = True, hash_embedder: 
             stderr=subprocess.STDOUT,
         )
     try:
-        with pytest.MonkeyPatch.context() as patch:
-            patch.setenv("TRW_USER_DIR", str(user_dir))
+        with mock.patch.dict(os.environ, {"TRW_USER_DIR": str(user_dir)}):
             paths = DaemonPaths.resolve()
         deadline = time.monotonic() + _START_DEADLINE_SECONDS
         while True:
             if proc.poll() is not None:
-                pytest.fail(f"daemon exited early: {log_path.read_text(encoding='utf-8', errors='replace')}")
+                raise RuntimeError(f"daemon exited early: {log_path.read_text(encoding='utf-8', errors='replace')}")
             if isinstance(read_discovery_result(paths), DaemonInfo):
                 break
             if time.monotonic() > deadline:
-                pytest.fail("daemon never published a discovery file")
+                raise RuntimeError("daemon never published a discovery file")
             time.sleep(0.05)
         yield paths
     finally:
         proc.kill()
         proc.wait(timeout=30)
+
+
+@dataclass(frozen=True)
+class MemoryDaemon:
+    """The session daemon: its paths and the ``TRW_USER_DIR`` it runs under."""
+
+    paths: DaemonPaths
+    user_dir: Path
+
+
+def attach_checkout(trw_dir: Path, daemon: MemoryDaemon) -> tuple[str, DaemonClient]:
+    """Pin *trw_dir* to a fresh namespace and grant it plus ``user:local``; returns (namespace, client)."""
+    namespace = f"project:t{uuid.uuid4().hex[:12]}"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    config = trw_dir / "config.yaml"
+    existing = config.read_text(encoding="utf-8") if config.exists() else ""
+    config.write_text(f"{existing}project_namespace: {namespace}\n", encoding="utf-8")
+    token = mint_grant(daemon.paths, [namespace, USER_NAMESPACE], root=trw_dir.parent)
+    write_checkout_grant(trw_dir, token)
+    return namespace, DaemonClient(token, paths=daemon.paths)

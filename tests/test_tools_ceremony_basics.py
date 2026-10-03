@@ -28,6 +28,7 @@ class TestFindActiveRun:
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
                 result = find_active_run()
         assert result is None
+        assert not (tmp_path / "nonexistent").exists()  # the lookup does not create the missing runs root
 
     def test_returns_the_pinned_run_and_never_discovers_one(self, tmp_path: Path, run_dir: Path) -> None:
         """PRD-FIX-085/132: a run on disk is not an answer; only a pin is.

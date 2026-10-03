@@ -1,31 +1,21 @@
-"""Tests for install_antigravity_distill_channels hooks.json registration.
+"""The bootstrap no longer writes the AG-03 hook to a path agy does not read (UF-BOOT-08).
 
-Mirrors the pattern of tests/channels/codex/test_hook_registration.py.
+History: AG-03 was written to ``.antigravitycli/hooks.json`` (flat
+``{"PreToolUse": [{"matcher", "command"}]}``) on the strength of agy v1.0.2 binary
+string analysis.  Re-verified 2026-10-02 against agy 1.2.14 in a scratch workspace:
 
-The Codex channel had a bug where the hook SCRIPT was dropped but hooks.json was
-never REGISTERED, so Codex never invoked the hook (only caught by live turn, 2026-05-28).
-These tests ensure the analogous gap cannot exist for AG-03.
+- ``<workspace>/.agents/hooks.json`` with the grouped, named-hook schema
+  ``{"<name>": {"PreToolUse": [{"matcher", "hooks": [{"type", "command"}]}]}}`` is
+  listed by ``agy -p /hooks --output-format json``.
+- The same flat file under ``.antigravitycli/`` or ``.agents/`` is NOT listed.
+- agy's embedded hooks guide says the hook payload is camelCase (``toolCall.name``) and a
+  PreToolUse hook answers ``{"decision": "allow|deny|ask|force_ask"}``; the installed
+  script answers ``{"continue": true}`` and reads snake_case keys, so it would be inert
+  even at the right path.
 
-Verifies:
-- install_antigravity_distill_channels writes .antigravitycli/hooks.json with a
-  PreToolUse entry referencing trw_before_edit_telemetry (the registration check).
-- hooks.json has the correct agy format: {"PreToolUse": [{"matcher": ..., "command": ...}]}
-- Running install twice is idempotent — no duplicate entries.
-- Existing entries in hooks.json (other clients, other events) are preserved.
-- The hook script is also installed (.antigravitycli/hooks/trw_before_edit_telemetry.py).
-
-Live verification results (2026-05-29 — agy v1.0.2 / v1.0.3):
-- hooks.json IS written with correct format (registration confirmed).
-- Hook SCRIPT IS installed and works when invoked directly.
-- PRODUCT LIMITATION: agy v1.0.2-1.0.3 uses Step_CodeAction (not PreToolUse jsonhook)
-  for file edits — PreToolUse hooks do not fire for write_file in --print mode.
-  This is a product limitation in agy's current internal execution path, not a
-  registration gap. The hooks.json format and content are correct.
-  Evidence: agy log "Auto-approving tool confirmation: 'Edit' (type=Step_CodeAction)"
-  — the file write path bypasses jsonhook entirely. The hook system (ParseHooksFile)
-  exists in the binary but is not invoked for the CodeAction tool path in v1.0.2-1.0.3.
-
-PRD-DIST-2404 FR07-FR10, AG-03.
+Rewriting the installer, its uninstall surfaces and the managed-artifact recorder is
+wider than this packet, so the bootstrap withholds the hook rather than guess
+(never write an unverified hook).  These tests pin that behaviour.
 """
 
 from __future__ import annotations
@@ -34,211 +24,73 @@ import json
 import subprocess
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+import pytest
+import structlog
+
+from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
+
+_LEGACY_HOOKS_JSON = ".antigravitycli/hooks.json"
+_LEGACY_SCRIPT = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
 
 
-def _read_hooks_json(project: Path) -> dict[str, object]:
-    """Read and parse .antigravitycli/hooks.json from a project root."""
-    hooks_path = project / ".antigravitycli" / "hooks.json"
-    assert hooks_path.exists(), f".antigravitycli/hooks.json not found at {hooks_path}"
-    result: dict[str, object] = json.loads(hooks_path.read_text(encoding="utf-8"))
-    assert isinstance(result, dict)
-    return result
-
-
-def _get_pre_tool_hooks(hooks_data: dict[str, object]) -> list[dict[str, str]]:
-    """Extract PreToolUse hooks list from hooks.json dict."""
-    raw = hooks_data.get("PreToolUse", [])
-    if not isinstance(raw, list):
-        return []
-    return [h for h in raw if isinstance(h, dict)]
-
-
-def _distill_hook_commands(hooks: list[dict[str, str]]) -> list[str]:
-    """Collect all command strings from PreToolUse hooks."""
-    return [h.get("command", "") for h in hooks]
-
-
-# ---------------------------------------------------------------------------
-# Core registration tests
-# ---------------------------------------------------------------------------
-
-
-def test_install_creates_hooks_json_with_distill_entry(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels writes .antigravitycli/hooks.json with trw_before_edit_telemetry."""
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
-
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
-
-    result = install_antigravity_distill_channels(tmp_path)
-
-    # hooks.json must exist
-    hooks_path = tmp_path / ".antigravitycli" / "hooks.json"
-    assert hooks_path.exists(), ".antigravitycli/hooks.json was not created by installer"
-
-    # Must contain a PreToolUse entry referencing trw_before_edit_telemetry
-    data = _read_hooks_json(tmp_path)
-    hooks = _get_pre_tool_hooks(data)
-    commands = _distill_hook_commands(hooks)
-    assert any("trw_before_edit_telemetry" in cmd for cmd in commands), (
-        f"No trw_before_edit_telemetry command found in PreToolUse hooks: {commands}"
-    )
-
-    # Result should list hooks.json as created (not in errors)
-    assert ".antigravitycli/hooks.json" in result["created"], f"hooks.json not in result['created']: {result}"
-    assert not result["errors"], f"Unexpected errors: {result['errors']}"
+    return tmp_path
 
 
-def test_install_creates_hook_script(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels creates the hook script file."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_install_writes_no_legacy_hook_files(repo: Path) -> None:
+    result = install_antigravity_distill_channels(repo)
 
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
-
-    install_antigravity_distill_channels(tmp_path)
-
-    hook_script = tmp_path / ".antigravitycli" / "hooks" / "trw_before_edit_telemetry.py"
-    assert hook_script.exists(), f"Hook script not found at {hook_script}"
-    assert hook_script.stat().st_size > 0, "Hook script is empty"
-
-    # Script should reference the channel ID
-    content = hook_script.read_text(encoding="utf-8")
-    assert "ag-03-before-edit-hook" in content or "ag-03" in content.lower(), (
-        "Hook script missing AG-03 channel ID reference"
-    )
+    assert not (repo / _LEGACY_HOOKS_JSON).exists()
+    assert not (repo / _LEGACY_SCRIPT).exists()
+    assert _LEGACY_HOOKS_JSON not in result["created"] + result["updated"] + result["preserved"]
+    assert _LEGACY_SCRIPT not in result["created"] + result["updated"] + result["preserved"]
+    assert not result["errors"], result["errors"]
 
 
-def test_install_idempotent_no_double_add(tmp_path: Path) -> None:
-    """Running install_antigravity_distill_channels twice does not duplicate the distill hook."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_install_writes_no_agents_hooks_json_either(repo: Path) -> None:
+    """No guessed schema at the new path: nothing is written until it is wired end to end."""
+    install_antigravity_distill_channels(repo, force=True)
 
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
-
-    install_antigravity_distill_channels(tmp_path)
-    install_antigravity_distill_channels(tmp_path)
-
-    data = _read_hooks_json(tmp_path)
-    hooks = _get_pre_tool_hooks(data)
-    commands = [cmd for cmd in _distill_hook_commands(hooks) if "trw_before_edit_telemetry" in cmd]
-    assert len(commands) == 1, (
-        f"Expected exactly 1 trw_before_edit_telemetry command after 2 installs, got {len(commands)}: {commands}"
-    )
+    assert not (repo / ".agents" / "hooks.json").exists()
 
 
-def test_install_preserves_existing_post_tool_use_entries(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels preserves pre-existing PostToolUse hooks.json entries."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_install_never_calls_the_legacy_installer(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import trw_mcp.channels.antigravity as ag
 
-    # Write a pre-existing hooks.json with a PostToolUse entry
-    antigravity_dir = tmp_path / ".antigravitycli"
-    antigravity_dir.mkdir(parents=True, exist_ok=True)
-    pre_existing = {
-        "PostToolUse": [{"matcher": "read_file", "command": "echo POST_HOOK_EXISTING"}],
-    }
-    (antigravity_dir / "hooks.json").write_text(json.dumps(pre_existing, indent=2) + "\n", encoding="utf-8")
+    def _boom(*_a: object, **_k: object) -> dict[str, object]:
+        raise AssertionError("legacy install_before_edit_hook was called by the bootstrap")
 
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
+    monkeypatch.setattr(ag, "install_before_edit_hook", _boom)
 
-    install_antigravity_distill_channels(tmp_path)
+    result = install_antigravity_distill_channels(repo, force=True)
 
-    data = _read_hooks_json(tmp_path)
-
-    # Original PostToolUse entry preserved
-    assert "PostToolUse" in data, "PostToolUse section was removed by installer"
-    raw_post = data["PostToolUse"]
-    post_hooks: list[dict[str, str]] = (
-        [h for h in raw_post if isinstance(h, dict)] if isinstance(raw_post, list) else []
-    )
-    post_commands = _distill_hook_commands(post_hooks)
-    assert any("echo POST_HOOK_EXISTING" in cmd for cmd in post_commands), (
-        f"Pre-existing PostToolUse hook was lost: {post_commands}"
-    )
-
-    # New PreToolUse entry added
-    assert "PreToolUse" in data, "PreToolUse section missing after install"
-    pre_commands = _distill_hook_commands(_get_pre_tool_hooks(data))
-    assert any("trw_before_edit_telemetry" in cmd for cmd in pre_commands), (
-        f"trw_before_edit_telemetry hook was not added: {pre_commands}"
-    )
+    assert not any("AG-03" in e for e in result["errors"]), result["errors"]
 
 
-def test_install_preserves_existing_pre_tool_use_non_distill_entries(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels preserves existing user PreToolUse entries."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_install_logs_why_the_hook_is_withheld(repo: Path) -> None:
+    with structlog.testing.capture_logs() as logs:
+        install_antigravity_distill_channels(repo)
 
-    antigravity_dir = tmp_path / ".antigravitycli"
-    antigravity_dir.mkdir(parents=True, exist_ok=True)
-    pre_existing = {
-        "PreToolUse": [{"matcher": "glob", "command": "echo USER_PRE_HOOK"}],
-    }
-    (antigravity_dir / "hooks.json").write_text(json.dumps(pre_existing, indent=2) + "\n", encoding="utf-8")
-
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
-
-    install_antigravity_distill_channels(tmp_path)
-
-    data = _read_hooks_json(tmp_path)
-    pre_hooks = _get_pre_tool_hooks(data)
-    commands = _distill_hook_commands(pre_hooks)
-
-    # User hook preserved
-    assert any("echo USER_PRE_HOOK" in cmd for cmd in commands), (
-        f"Pre-existing user PreToolUse hook was lost: {commands}"
-    )
-    # Distill hook added
-    assert any("trw_before_edit_telemetry" in cmd for cmd in commands), (
-        f"trw_before_edit_telemetry hook was not added alongside user hook: {commands}"
-    )
+    skipped = [e for e in logs if e.get("event") == "ag03_hook_skipped"]
+    assert len(skipped) == 1, logs
+    assert skipped[0]["reason"] == "unverified_path_and_schema"
+    assert ".agents/hooks.json" in skipped[0]["agy_reads"]
 
 
-def test_hooks_json_format_is_valid_agy_format(tmp_path: Path) -> None:
-    """hooks.json written by installer uses the correct agy format (not Codex format)."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_install_leaves_an_existing_legacy_hooks_json_byte_identical(repo: Path) -> None:
+    legacy = repo / _LEGACY_HOOKS_JSON
+    legacy.parent.mkdir(parents=True)
+    body = json.dumps({"PreToolUse": [{"matcher": "glob", "command": "echo USER_PRE_HOOK"}]}, indent=2) + "\n"
+    legacy.write_text(body, encoding="utf-8")
 
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
+    install_antigravity_distill_channels(repo, force=True)
 
-    install_antigravity_distill_channels(tmp_path)
-
-    data = _read_hooks_json(tmp_path)
-
-    # Agy format: top-level "PreToolUse" key (NOT nested under "hooks" like Codex)
-    assert "PreToolUse" in data, (
-        "hooks.json missing top-level 'PreToolUse' key — wrong format (Codex uses {'hooks': {'PreToolUse': ...}})"
-    )
-    assert "hooks" not in data, "hooks.json has 'hooks' wrapper key — this is Codex format, not agy format"
-
-    # Each entry must have matcher and command
-    pre_hooks = _get_pre_tool_hooks(data)
-    assert len(pre_hooks) >= 1, "No PreToolUse hooks registered"
-    for hook in pre_hooks:
-        assert "matcher" in hook, f"Hook entry missing 'matcher': {hook}"
-        assert "command" in hook, f"Hook entry missing 'command': {hook}"
+    assert legacy.read_text(encoding="utf-8") == body
 
 
-def test_install_hook_script_referenced_in_hooks_json(tmp_path: Path) -> None:
-    """The hook script path referenced in hooks.json matches the installed script location."""
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+def test_manifest_and_subagent_steps_still_run(repo: Path) -> None:
+    install_antigravity_distill_channels(repo)
 
-    from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
-
-    install_antigravity_distill_channels(tmp_path)
-
-    data = _read_hooks_json(tmp_path)
-    pre_hooks = _get_pre_tool_hooks(data)
-    commands = _distill_hook_commands(pre_hooks)
-
-    # The command must reference the installed script path
-    distill_cmd = next((cmd for cmd in commands if "trw_before_edit_telemetry" in cmd), None)
-    assert distill_cmd is not None, "trw_before_edit_telemetry command not found"
-
-    # The command must reference the installed script path (relative or absolute)
-    expected_rel = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
-    assert expected_rel in distill_cmd, (
-        f"Hook command does not reference expected script path '{expected_rel}': '{distill_cmd}'"
-    )
-
-    # The actual script file must exist
-    hook_script = tmp_path / ".antigravitycli" / "hooks" / "trw_before_edit_telemetry.py"
-    assert hook_script.exists(), f"Hook script referenced in hooks.json not found at {hook_script}"
+    assert (repo / ".trw" / "channels" / "manifest.yaml").exists()

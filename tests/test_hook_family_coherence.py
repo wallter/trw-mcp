@@ -1,8 +1,9 @@
 """FB-INSTALL-01: update-project keeps the hook family coherent when a shared lib was edited.
 
 It used to keep an edited ``lib-trw.sh`` (an older 588-line copy) while replacing every hook that sources
-it, so ~20 functions were undefined and each hook silently exited 0. Now the edited lib is backed up to
-``.trw/trash`` (named in the report) and refreshed together with its dependents; if it cannot be backed up,
+it, so ~20 functions were undefined and each hook silently exited 0. Now the edited lib is replaced in place
+when git holds it clean (the report names the restore command), or backed up to ``.trw/trash`` (named in the
+report) when it has uncommitted edits, and refreshed together with its dependents; if it cannot be backed up,
 the lib AND every hook that sources it are left as they were, so the old family stays whole.
 """
 
@@ -62,7 +63,7 @@ def test_an_edited_lib_is_backed_up_and_refreshed_with_its_hooks(initialized_rep
     assert backups, "the user's edited lib must survive, byte for byte, in .trw/trash"
     notes = " ".join(result.get("warnings", []))
     assert "lib-trw.sh" in notes and ".trw/trash" in notes
-    assert ".claude/hooks/lib-trw.sh" in result.get("trashed", []), "or the dirty-file restore puts the old lib back"
+    assert ".claude/hooks/lib-trw.sh" in result.get("retired", []), "or the dirty-file restore puts the old lib back"
 
     from trw_mcp.server._doctor_hook_family import hook_family_row
 
@@ -150,7 +151,7 @@ def test_one_refused_backup_holds_every_lib_a_held_hook_sources(
     hooks = initialized_repo / ".claude" / "hooks"
     after = {n: (hooks / n).read_bytes() if (hooks / n).is_file() else None for n in before}
     assert after == before, "a held hook's whole family (both libs it sources) stays exactly as it was"
-    assert not [t for t in result.get("trashed", []) if t.endswith(tuple(before))]
+    assert not [t for t in result.get("retired", []) if t.endswith(tuple(before))]
     assert "capture refused for the test" in " ".join(result.get("warnings", []))
 
 
@@ -176,6 +177,8 @@ def test_a_writer_racing_the_link_back_keeps_both_copies_and_never_errors(
     """Codex KI1-r1 P0: a FileExistsError at link-back went to result.errors, whose rollback deleted the new file."""
     import os as real_os
 
+    genuine_link = real_os.link  # read now: real_os IS os, so real_os.link later is the patched one
+
     from trw_mcp.bootstrap import _hook_family
 
     _refuse_trw_after_capturing_ig(monkeypatch)
@@ -190,7 +193,7 @@ def test_a_writer_racing_the_link_back_keeps_both_copies_and_never_errors(
     try:
         result = _update(initialized_repo, manifest)
     finally:
-        monkeypatch.setattr(_hook_family.os, "link", real_os.link)
+        monkeypatch.setattr(_hook_family.os, "link", genuine_link)
 
     lib = initialized_repo / ".claude" / "hooks" / "lib-intent-guard.sh"
     assert lib.read_bytes() == racer, "the concurrent writer's bytes are never deleted"
@@ -245,7 +248,7 @@ def test_an_edited_hook_calling_a_dropped_function_is_backed_up_and_refreshed(
     assert [p for p in trash.rglob("*") if p.is_file() and p.read_text(errors="replace") == _MY_HOOK]
     notes = " ".join(result.get("warnings", []))
     assert "session-start.sh" in notes and "old_helper" in notes
-    assert ".claude/hooks/session-start.sh" in result.get("trashed", [])
+    assert ".claude/hooks/session-start.sh" in result.get("retired", [])
 
     from trw_mcp.server._doctor_hook_family import hook_family_row
 
@@ -297,7 +300,7 @@ def test_an_edited_file_already_described_is_not_also_called_unchanged(
             "preserved": [],
             "errors": [],
             "warnings": [f"{edited}: your edited copy was moved to .trw/trash/x/data and the bundled lib installed"],
-            "trashed": [edited, ".claude/hooks/old.sh"],
+            "retired": [edited, ".claude/hooks/old.sh"],
         }
 
     monkeypatch.setattr(bootstrap, "update_project", fake_update)
@@ -307,7 +310,7 @@ def test_an_edited_file_already_described_is_not_also_called_unchanged(
     out = capsys.readouterr().out
     assert f"{edited} (unchanged TRW file" not in out, "an edited file must never be called unchanged"
     assert out.count(edited) == 1
-    assert "Moved to .trw/trash: .claude/hooks/old.sh (unchanged TRW file; see doctor)" in out
+    assert "Removed retired TRW file: .claude/hooks/old.sh" in out
 
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="no FIFOs on this platform")
@@ -466,4 +469,227 @@ def test_an_edited_hook_the_checker_cannot_verify_is_kept_with_a_warning(initial
     assert hook.read_text(encoding="utf-8") == mine
     notes = " ".join(w for w in result.get("warnings", []) if "session-start.sh" in w)
     assert "kept" in notes and "could not be verified" in notes
-    assert ".claude/hooks/session-start.sh" not in result.get("trashed", [])
+    assert ".claude/hooks/session-start.sh" not in result.get("retired", [])
+
+
+def _real_git(repo: Path) -> None:
+    """Swap the fixture's fake ``.git`` for a real repo with everything committed."""
+    import shutil
+    import subprocess
+
+    shutil.rmtree(repo / ".git")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def test_a_git_clean_edited_lib_is_replaced_in_place_without_trash(initialized_repo: Path) -> None:
+    lib, hook, manifest = _old_family(initialized_repo)
+    _real_git(initialized_repo)
+
+    result = _update(initialized_repo, manifest)
+
+    assert lib.read_text(encoding="utf-8") == _bundled("lib-trw.sh")
+    assert hook.read_text(encoding="utf-8") == _bundled("session-start.sh")
+    assert not (initialized_repo / ".trw" / "trash").exists()
+    rel = ".claude/hooks/lib-trw.sh"
+    assert (
+        f"{rel}: removed; your version differs from TRW's but is committed in git (restore: git restore -- {rel})"
+        in result["warnings"]
+    )
+    assert rel in result["retired"]
+
+
+def test_a_git_clean_edited_hook_calling_a_dropped_function_is_replaced_in_place(initialized_repo: Path) -> None:
+    hook, manifest = _edited_hook_family(initialized_repo, _OLD_LIB)
+    _real_git(initialized_repo)
+
+    result = _update(initialized_repo, manifest)
+
+    assert hook.read_text(encoding="utf-8") == _bundled("session-start.sh")
+    assert not (initialized_repo / ".trw" / "trash").exists()
+    rel = ".claude/hooks/session-start.sh"
+    assert (
+        f"{rel}: removed; your version differs from TRW's but is committed in git (restore: git restore -- {rel})"
+        in result["warnings"]
+    )
+
+
+def test_the_dirty_file_restore_never_deletes_a_writer_that_raced_the_link_back(
+    initialized_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """FB-01-KI1-RACE (codex KI1-r2, HB-2): after the link-back kept a concurrent writer's file, the uncommitted-
+    changes restore put the pre-run snapshot back over it, unlinking the writer's bytes. The user's edit is
+    already in .trw/trash, so the restore must leave that path alone."""
+    import os as real_os
+
+    genuine_link = real_os.link  # read now: real_os IS os, so real_os.link later is the patched one
+    import shutil
+
+    from trw_mcp.bootstrap import _hook_family
+    from trw_mcp.bootstrap._version_manifest import preserve_uncommitted_changes
+
+    _refuse_trw_after_capturing_ig(monkeypatch)
+    before, manifest = _two_lib_family(initialized_repo)
+    snapshot = tmp_path_factory.mktemp("snapshot")
+    rel = ".claude/hooks/lib-intent-guard.sh"
+    (snapshot / rel).parent.mkdir(parents=True)
+    shutil.copy2(initialized_repo / rel, snapshot / rel)  # the pre-run tree holds the user's (uncommitted) edit
+    racer = b"#!/bin/sh\n# written by a concurrent writer\n"
+
+    def racing_link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        Path(str(dst)).write_bytes(racer)
+        raise FileExistsError(17, "File exists", str(dst))
+
+    monkeypatch.setattr(_hook_family.os, "link", racing_link)
+    try:
+        result = _update(initialized_repo, manifest)
+    finally:
+        monkeypatch.setattr(_hook_family.os, "link", genuine_link)
+    assert (initialized_repo / rel).read_bytes() == racer
+
+    preserve_uncommitted_changes(initialized_repo, snapshot, {rel}, manifest, result)
+
+    assert (initialized_repo / rel).read_bytes() == racer, "the writer's bytes were deleted by the restore"
+    trash = initialized_repo / ".trw" / "trash"
+    assert [p for p in trash.rglob("*") if p.is_file() and p.read_bytes() == before["lib-intent-guard.sh"]]
+
+
+def test_a_vanished_capture_never_costs_the_users_edit_or_the_writers_file(
+    initialized_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Codex FB01-KI1-RACE r1 P0: the path was marked trashed without proof its capture still existed, so the
+    restore skipped it and snapshot cleanup deleted the last copy of the user's edit. Unproven capture: the
+    writer's file is captured instead and the restore brings the user's edit back. Both survive."""
+    import os as real_os
+
+    genuine_link = real_os.link  # read now: real_os IS os, so real_os.link later is the patched one
+    import shutil
+
+    from trw_mcp.bootstrap import _hook_family
+    from trw_mcp.bootstrap._version_manifest import preserve_uncommitted_changes
+
+    _refuse_trw_after_capturing_ig(monkeypatch)
+    before, manifest = _two_lib_family(initialized_repo)
+    rel = ".claude/hooks/lib-intent-guard.sh"
+    snapshot = tmp_path_factory.mktemp("snapshot")
+    (snapshot / rel).parent.mkdir(parents=True)
+    shutil.copy2(initialized_repo / rel, snapshot / rel)
+    racer = b"#!/bin/sh\n# written by a concurrent writer\n"
+
+    def racing_link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        Path(str(src)).unlink()  # the capture vanished before the link-back
+        Path(str(dst)).write_bytes(racer)
+        raise FileExistsError(17, "File exists", str(dst))
+
+    monkeypatch.setattr(_hook_family.os, "link", racing_link)
+    try:
+        result = _update(initialized_repo, manifest)
+    finally:
+        monkeypatch.setattr(_hook_family.os, "link", genuine_link)
+
+    assert rel not in result.get("retired", []), "an unproven capture must never exempt the path from the restore"
+    preserve_uncommitted_changes(initialized_repo, snapshot, {rel}, manifest, result)
+
+    assert (initialized_repo / rel).read_bytes() == before["lib-intent-guard.sh"], "the user's edit is restored"
+    trash = initialized_repo / ".trw" / "trash"
+    assert [p for p in trash.rglob("*") if p.is_file() and p.read_bytes() == racer], "the writer's file survives"
+
+
+def test_an_unusable_trash_never_costs_the_writers_only_copy(
+    initialized_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Partial codex r2 lead (content-stopped review, verified here): ONE shared fault, an unusable .trw/trash, fails
+    both the capture proof and the writer's capture, and the restore then deleted the writer's only copy. The
+    writer's file is set aside beside the name instead, which needs no trash."""
+    import os as real_os
+
+    genuine_link = real_os.link  # read now: real_os IS os, so real_os.link later is the patched one
+    import shutil
+
+    from trw_mcp.bootstrap import _hook_family
+    from trw_mcp.bootstrap._trash import Removal
+    from trw_mcp.bootstrap._version_manifest import preserve_uncommitted_changes
+
+    real_remove = _hook_family.remove_if_hash
+    state = {"captured": False}
+
+    def trash_breaks_after_first_capture(path: Path, root: Path, sha: str, *, key: str | None = None) -> Removal:
+        if path.name == "lib-trw.sh":
+            return Removal(key, path, "kept", path, None, "capture refused for the test")
+        if state["captured"]:
+            return Removal(key, path, "kept", path, None, "trash not writable")
+        state["captured"] = True
+        return real_remove(path, root, sha, key=key)
+
+    monkeypatch.setattr(_hook_family, "remove_if_hash", trash_breaks_after_first_capture)
+    before, manifest = _two_lib_family(initialized_repo)
+    rel = ".claude/hooks/lib-intent-guard.sh"
+    snapshot = tmp_path_factory.mktemp("snapshot")
+    (snapshot / rel).parent.mkdir(parents=True)
+    shutil.copy2(initialized_repo / rel, snapshot / rel)
+    racer = b"#!/bin/sh\n# written by a concurrent writer\n"
+
+    def racing_link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        Path(str(src)).unlink()  # the trash became unusable: the capture cannot be proven
+        Path(str(dst)).write_bytes(racer)
+        raise FileExistsError(17, "File exists", str(dst))
+
+    monkeypatch.setattr(_hook_family.os, "link", racing_link)
+    try:
+        result = _update(initialized_repo, manifest)
+    finally:
+        monkeypatch.setattr(_hook_family.os, "link", genuine_link)
+    preserve_uncommitted_changes(initialized_repo, snapshot, {rel}, manifest, result)
+
+    assert (initialized_repo / rel).read_bytes() == before["lib-intent-guard.sh"], "the user's edit is restored"
+    # r4: the restore moved the writer's bytes into .trw/trash before putting the edit back (positive proof).
+    survivors = [p for p in initialized_repo.rglob("*") if p.is_file() and p.read_bytes() == racer]
+    assert survivors, "the writer's only copy was deleted"
+    assert any(rel in w and ".trw/trash" in w for w in result.get("warnings", [])), "the warning names where it went"
+
+
+@pytest.mark.skipif(
+    not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() == 0, reason="root ignores modes"
+)
+def test_a_mode_000_trash_never_costs_either_copy(
+    initialized_repo: Path, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Lead's case: a real trash directory made inaccessible (mode 000) mid-update, plus a concurrent writer."""
+    import os as real_os
+
+    genuine_link = real_os.link  # read now: real_os IS os, so real_os.link later is the patched one
+    import shutil
+
+    from trw_mcp.bootstrap import _hook_family
+    from trw_mcp.bootstrap._version_manifest import preserve_uncommitted_changes
+
+    _refuse_trw_after_capturing_ig(monkeypatch)
+    before, manifest = _two_lib_family(initialized_repo)
+    rel = ".claude/hooks/lib-intent-guard.sh"
+    snapshot = tmp_path_factory.mktemp("snapshot")
+    (snapshot / rel).parent.mkdir(parents=True)
+    shutil.copy2(initialized_repo / rel, snapshot / rel)
+    racer = b"#!/bin/sh\n# written by a concurrent writer\n"
+    trash = initialized_repo / ".trw" / "trash"
+
+    def racing_link(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        Path(str(dst)).write_bytes(racer)
+        trash.chmod(0)
+        raise FileExistsError(17, "File exists", str(dst))
+
+    monkeypatch.setattr(_hook_family.os, "link", racing_link)
+    try:
+        result = _update(initialized_repo, manifest)
+        # r5: with the trash unusable the restore can neither prove nor capture the writer's bytes, so it KEEPS
+        # them untouched and names the path (fail closed, without aborting anything else).
+        preserve_uncommitted_changes(initialized_repo, snapshot, {rel}, manifest, result)
+        assert any(rel in w and "left in place" in w for w in result.get("warnings", []))
+    finally:
+        monkeypatch.setattr(_hook_family.os, "link", genuine_link)
+        trash.chmod(0o755)
+
+    hooks = initialized_repo / ".claude" / "hooks"
+    assert [p for p in hooks.iterdir() if p.is_file() and p.read_bytes() == racer], "the writer's copy survives"
+    edit = before["lib-intent-guard.sh"]
+    copies = [f for d in (trash, snapshot) for f in d.rglob("*") if f.is_file() and f.read_bytes() == edit]
+    assert copies, "the user's edit survives (trash capture or the kept snapshot)"

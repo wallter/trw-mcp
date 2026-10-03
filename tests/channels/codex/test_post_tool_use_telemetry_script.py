@@ -54,9 +54,18 @@ def test_hook_script_is_valid_python() -> None:
     from trw_mcp.channels.codex._post_tool_use_telemetry import HOOK_SCRIPT_CONTENT
 
     try:
-        ast.parse(HOOK_SCRIPT_CONTENT)
+        tree = ast.parse(HOOK_SCRIPT_CONTENT)
     except SyntaxError as exc:
         pytest.fail(f"Hook script has syntax error: {exc}")
+
+    # Parsing alone proves little: the script must define its entrypoint and run it as __main__.
+    assert any(isinstance(n, ast.FunctionDef) and n.name == "main" for n in tree.body)
+    guards = [n for n in tree.body if isinstance(n, ast.If) and "__main__" in ast.dump(n.test)]
+    assert len(guards) == 1
+    assert [ast.unparse(stmt) for stmt in guards[0].body] == ["main()"]
+    # Control: the parse step does reject a broken script.
+    with pytest.raises(SyntaxError):
+        ast.parse(HOOK_SCRIPT_CONTENT + "\ndef broken(:\n")
 
 
 # ---------------------------------------------------------------------------

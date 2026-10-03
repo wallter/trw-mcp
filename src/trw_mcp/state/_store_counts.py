@@ -21,6 +21,9 @@ defect FR04 removes.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +47,29 @@ class StoreCounts:
     synced: int
 
 
+#: Readings shared inside :func:`one_health_reading`, keyed by ``trw_dir``; ``None`` outside one.
+_HEALTH_READINGS: ContextVar[dict[str, NamespaceHealth] | None] = ContextVar("_store_health_readings", default=None)
+
+
+@contextmanager
+def one_health_reading(readings: dict[str, NamespaceHealth] | None = None) -> Iterator[None]:
+    """Inside the block, every :func:`store_health` call for one ``trw_dir`` shares one store reading.
+
+    PRD-FIX-131: session start asked the daemon for the same namespace health
+    once per probe (four round trips for one fact). A failed reading is not
+    kept, so a probe after a failure still asks the store itself. Nested blocks
+    reuse the outer one; ``readings`` lets two adjacent blocks share one reading.
+    """
+    if _HEALTH_READINGS.get() is not None:
+        yield
+        return
+    token = _HEALTH_READINGS.set({} if readings is None else readings)
+    try:
+        yield
+    finally:
+        _HEALTH_READINGS.reset(token)
+
+
 def store_health(trw_dir: Path) -> NamespaceHealth:
     """This checkout's namespace health, measured by its store. Raises when the store cannot be reached.
 
@@ -52,9 +78,16 @@ def store_health(trw_dir: Path) -> NamespaceHealth:
     """
     from trw_mcp.state import _store_selection
 
+    readings = _HEALTH_READINGS.get()
+    key = str(trw_dir)
+    if readings is not None and key in readings:
+        return readings[key]
     with _store_selection.measuring_only():
         store, namespace = _store_selection.selected_store(trw_dir)
-    return store.health(namespace)
+    health = store.health(namespace)
+    if readings is not None:
+        readings[key] = health
+    return health
 
 
 def store_vectors_outside_active_space(trw_dir: Path) -> int | None:
@@ -98,4 +131,4 @@ def store_entry_count(trw_dir: Path) -> int | None:
     return None if counts is None else counts.total
 
 
-__all__ = ["StoreCounts", "read_store_counts", "store_entry_count", "store_health"]
+__all__ = ["StoreCounts", "one_health_reading", "read_store_counts", "store_entry_count", "store_health"]

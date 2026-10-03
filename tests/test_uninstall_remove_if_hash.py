@@ -152,7 +152,7 @@ def test_uninstall_summarises_removed_files_and_keeps_no_trash(
     assert list((tmp_path / ".trw" / "trash").glob("*/data")) == []
 
 
-def test_update_project_names_each_file_moved_to_trash(
+def test_update_project_names_each_retired_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from trw_mcp import bootstrap
@@ -165,14 +165,14 @@ def test_update_project_names_each_file_moved_to_trash(
             "preserved": [],
             "errors": [],
             "warnings": [],
-            "trashed": [".claude/hooks/old.sh"],
+            "retired": [".claude/hooks/old.sh"],
         }
 
     monkeypatch.setattr(bootstrap, "update_project", fake_update)
     args = argparse.Namespace(target_dir=str(tmp_path), pip_install=False, dry_run=False, ide=None)
     with pytest.raises(SystemExit):
         _subcommands._run_update_project(args)
-    assert "Moved to .trw/trash: .claude/hooks/old.sh (unchanged TRW file; see doctor)" in capsys.readouterr().out
+    assert "Removed retired TRW file: .claude/hooks/old.sh" in capsys.readouterr().out
 
 
 def test_folder_moved_mid_removal_reports_where_the_copy_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

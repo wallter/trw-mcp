@@ -160,7 +160,7 @@ def install_git_post_commit_hook(
             result["updated" if existing else "created"].append(str(hook_path))
             return result
         hooks_dir.mkdir(parents=True, exist_ok=True)
-        write_checkout_file(hooks_dir, hook_path, rendered)
+        write_checkout_file(hooks_dir, hook_path, rendered.encode("utf-8"))  # bytes: a CRLF shim breaks under sh
         _make_executable(hook_path)
         result["updated" if existing else "created"].append(str(hook_path))
         logger.info("git_post_commit_hook_installed", path=str(hook_path), chained=bool(existing))

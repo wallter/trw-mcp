@@ -34,7 +34,6 @@ def test_rank_fn_receives_context_in_execute_recall(tmp_path: Path) -> None:
         patch("trw_mcp.tools._recall_impl.build_recall_context") as mock_ctx_builder,
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry()]),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
         expected_ctx = RecallContext(current_phase="IMPLEMENT", active_domains=["auth"])
         mock_ctx_builder.return_value = expected_ctx
@@ -78,7 +77,6 @@ def test_execute_recall_builds_no_context_from_a_cached_bandit_payload(tmp_path:
         patch("subprocess.run") as mock_run,
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry("L-boosted")]),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry("L-boosted")], None)),
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         execute_recall(
@@ -116,7 +114,6 @@ def test_recall_no_context_regression(tmp_path: Path) -> None:
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry()]),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
         result = execute_recall(
             query="auth",

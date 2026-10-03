@@ -412,7 +412,6 @@ def _recall(
     trw_dir.mkdir(exist_ok=True)
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: (list(m), None)),
         patch("trw_mcp.tools._recall_impl._track_recall"),
     ):
         result = execute_recall(
@@ -501,7 +500,6 @@ class TestExplicitRecallAttribution:
         from trw_mcp.tools import _recall_impl
 
         monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
-        monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda _q, rows: (rows, None))
         monkeypatch.setattr(_recall_impl, "build_recall_context", lambda *_a, **_k: None)
         trw_dir = daemon_checkout.trw_dir
         # PRD-CORE-280 slice e1: see the identical note in `_merge` above.

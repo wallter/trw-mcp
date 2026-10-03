@@ -29,6 +29,10 @@ class _SyncFields:
     # -- Feature gates --
     meta_tune_enabled: bool = False
     team_sync_enabled: bool = False
+    #: SHARED-RECALL-LOCAL: catch the team pull up before recall when the last one is older (0: never).
+    team_sync_fresh_after_seconds: int = Field(default=300, ge=0)
+    #: SYNC-PROJECT-IDENTITY: rank other projects' team learnings like unrecorded ones in recall (default: lower).
+    team_sync_all_projects: bool = False
 
     # -- Sync health surface (PRD-FIX-COMPOUNDING-1) --
     # Env-overridable via TRW_SYNC_HEALTH_FAILURE_THRESHOLD / TRW_SYNC_HEALTH_STALE_HOURS.

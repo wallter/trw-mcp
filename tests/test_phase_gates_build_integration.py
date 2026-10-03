@@ -53,9 +53,17 @@ class TestBestEffortIntegrationCheck:
     def test_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no root")
+
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", _boom)
         failures: list[ValidationFailure] = []
         _best_effort_integration_check(failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure
 
 
 class TestBestEffortOrphanCheck:
@@ -99,6 +107,14 @@ class TestBestEffortOrphanCheck:
     def test_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_project_root", lambda: (_ for _ in ()).throw(OSError("no root")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no root")
+
+        monkeypatch.setattr(_paths_mod, "resolve_project_root", _boom)
         failures: list[ValidationFailure] = []
         _best_effort_orphan_check(failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure

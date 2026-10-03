@@ -53,6 +53,9 @@ _SYNCED_SOURCES: frozenset[str] = frozenset({"team_sync", "company_sync"})
 #: keeping the id it was merged under.
 _SYNCED_ID_PREFIX = "team-sync-"
 
+#: Only a ``git:`` project id means the same project on every machine (see ``_project_identity``).
+_PORTABLE_ID_PREFIX = "git:"
+
 _Row = TypeVar("_Row", bound=Mapping[str, Any])
 
 
@@ -81,6 +84,43 @@ def _is_synced(row: Mapping[str, Any]) -> bool:
     return str(row.get("id", "")).startswith(_SYNCED_ID_PREFIX)
 
 
+def _own_ids(row: Mapping[str, Any]) -> frozenset[str] | None:
+    """Every id that means this checkout's project (one per root commit), ``None`` when they cannot be computed."""
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state._project_identity import own_project_ids
+
+        return own_project_ids(resolve_trw_dir().parent, namespace=str(row.get("namespace", "")))
+    except (
+        Exception
+    ):  # trw-fail-silent-allow: debug-logged; no ids means no proof either way, the row keeps its ranking
+        logger.debug("origin_project_identity_failed", exc_info=True)
+        return None
+
+
+def _is_this_project(origin: str, row: Mapping[str, Any]) -> bool:
+    """Whether a synced row's recorded *origin* is this checkout's project id (SYNC-PROJECT-IDENTITY).
+
+    The id is the same in every clone, so a row the operator's other machine pushed for this repository is this
+    project's own knowledge. ``unknown`` is never this project, and neither is anything we cannot prove.
+    """
+    own = _own_ids(row)
+    return origin != UNKNOWN_ORIGIN_PROJECT and own is not None and origin in own
+
+
+def is_other_project(row: Mapping[str, Any]) -> bool:
+    """Whether *row* was provably written in a DIFFERENT project: a portable ``git:`` id that is none of ours.
+
+    Never true for ``unknown``, for an ``ns:`` id (stable on one machine only), or on a host whose own id is not
+    portable: those prove nothing. Ranking only; no surface drops a row on this (a stamp is peer-written).
+    """
+    own = _own_ids(row)
+    if own is None or not any(i.startswith(_PORTABLE_ID_PREFIX) for i in own):
+        return False
+    origin = origin_project(row)
+    return origin.startswith(_PORTABLE_ID_PREFIX) and origin not in own
+
+
 def is_attributable_to_this_project(row: Mapping[str, Any]) -> bool:
     """Return whether *row* is this project's own knowledge.
 
@@ -88,7 +128,8 @@ def is_attributable_to_this_project(row: Mapping[str, Any]) -> bool:
     attributable, so a provenance bug can never empty a session-start payload.
     """
     try:
-        return origin_project(row) == ""
+        origin = origin_project(row)
+        return origin == "" or _is_this_project(origin, row)
     except Exception:  # justified: fail-open, provenance must never break a surface
         logger.debug("origin_project_classification_failed", exc_info=True)
         return True
@@ -148,6 +189,7 @@ __all__ = [
     "UNKNOWN_ORIGIN_PROJECT",
     "demote_unattributable",
     "is_attributable_to_this_project",
+    "is_other_project",
     "is_verified",
     "nudge_eligible_pool",
     "origin_project",

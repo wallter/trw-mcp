@@ -19,6 +19,7 @@ import structlog
 
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.state import _memory_lookups, _memory_transforms
+from trw_mcp.state._session_mark import session_mark
 from trw_mcp.state._store_arguments import build_store_arguments
 
 # Re-export: transforms. trw-mcp encodes nothing; the daemon owns the model (PRD-CORE-302 FR05).
@@ -75,6 +76,26 @@ def _learning_status_for(store_status: object) -> str:
     an orphaned sidecar the dedup check can never suppress.
     """
     return _STORE_STATUS_TO_LEARNING_STATUS.get(str(store_status), "error")
+
+
+def _stamped_metadata(
+    metadata: dict[str, str], namespace: str, summary: str, tags: list[str]
+) -> tuple[dict[str, str], bool]:
+    """*metadata* for the row about to be written, stamped with the session mark when the mark exceeds the row's own label (PRD-SEC-023 FR04),
+    and whether the stamped row may land in a tracked project file (FR05: only at or below ``team``).
+
+    A session that never rose returns *metadata* itself, untouched (no key added), because tests assert ``entry.metadata`` exactly.
+    """
+    from trw_memory.labels import LabelPolicy, Sink
+    from trw_memory.models.memory import MemoryEntry
+
+    policy = LabelPolicy.current()
+    candidate = MemoryEntry.model_construct(
+        id="", content=summary, namespace=namespace, tags=list(tags), metadata=dict(metadata)
+    )
+    stamped = policy.stamped(metadata, session_mark().level, policy.label_of(candidate))
+    in_files = bool(policy.admit([candidate.model_copy(update={"metadata": stamped})], Sink.PROJECT_FILES).admitted)
+    return (metadata if stamped == metadata else stamped), in_files
 
 
 def store_learning(
@@ -169,11 +190,14 @@ def store_learning(
 
     store, project_namespace = _store_selection.selected_store(trw_dir)
     is_user_write = args.tier == "user"
+    metadata_to_store, in_project_files = _stamped_metadata(
+        args.metadata, args.namespace if is_user_write else project_namespace, summary, enriched_tags
+    )
     request: _store_selection.StoreRequest = {
         "tags": enriched_tags,
         "importance": impact,
         "detail": detail,
-        "metadata": args.metadata,
+        "metadata": metadata_to_store,
         "source": args.source,
         "source_identity": source_identity,
         "session_id": session_id,
@@ -238,8 +262,12 @@ def store_learning(
         "status": "recorded",
         "distribution_warning": "",
     }
+    if not in_project_files:
+        recorded["withheld_from_project_files"] = True  # FR05: the caller writes no YAML sidecar for a row above team
     if is_user_write:
         recorded["tier"] = "user"  # the caller keeps a user row's sidecar out of the project (L-5ist)
+    if session_label := session_mark().reported():
+        recorded["session_label"] = session_label  # PRD-SEC-023 FR04: only once this session read something above team
     if inferred:
         recorded["auto_added_tags"] = list(inferred)  # INC-119 f: tags the caller did not ask for
     return recorded

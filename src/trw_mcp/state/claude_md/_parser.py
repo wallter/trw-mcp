@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.state.claude_md._marker_layout import marker_layout_problem
 
 if TYPE_CHECKING:
     from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict
@@ -139,11 +140,6 @@ def _marker_line_index(lines: list[str], marker: str, *, after: int | None = Non
     return None
 
 
-def _duplicate_marker_lines(lines: list[str], marker: str) -> int:
-    """Return how many WHOLE LINES equal *marker*."""
-    return sum(1 for line in lines if line.strip() == marker)
-
-
 def _block_cut_index(lines: list[str], start_idx: int) -> int:
     """Return where the TRW block really begins, including its auto-comment.
 
@@ -199,19 +195,14 @@ def merge_trw_section(
     Returns:
         The guard's verdict: written, refused, or a dry-run diff.
     """
-    # More than one well-formed block: we update the FIRST and the others go
-    # stale. Refusing here is not better — the caller's malformed path appends,
-    # which would add a third. But a silently frozen live block is exactly the
-    # failure this module exists to prevent, so it is logged rather than hidden.
-    # info, not debug: debug is dropped entirely under the shipped default level.
-    _existing_lines = target.read_text(encoding="utf-8").splitlines() if target.is_file() else []
-    if _duplicate_marker_lines(_existing_lines, markers[0]) > 1:
-        logger.info(
-            "trw_block_duplicate_markers",
-            path=str(target),
-            starts=_duplicate_marker_lines(_existing_lines, markers[0]),
-            note="only the first block is updated; the others will not track the framework",
-        )
+    # Duplicate, nested, unbalanced or fenced markers: refused before anything (the pointer heal included) touches
+    # the file, never guessed at (CLAUDE-MD S1 red team B5). The guard refuses the same layout for every writer.
+    from trw_mcp.state.claude_md._marker_layout import ambiguous_marker_refusal
+
+    if target.is_file() and (refusal := ambiguous_marker_refusal(target, target.read_text(encoding="utf-8"), markers)):
+        from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict as _Refused
+
+        return _Refused(written=False, refusal=refusal)
 
     if target.exists():
         # PRD-CORE-203 FR04: never clobber a single-source pointer file (e.g. a
@@ -260,34 +251,41 @@ def _migrate_legacy_marker_block(content: str) -> str:
     ``duplicate_block`` lint (``scripts/lint-instruction-surfaces.py``) still
     flags, same as it does for any other stray duplicate.
 
-    Byte-preserving for everything outside the legacy markers: the same
-    blank-line trimming applied to the live block below is applied here so the
-    two strips compose without leaving a stray blank run.
+    Byte-preserving for everything outside the legacy markers, line endings included (CLAUDE-MD S1 red team: the
+    old LF re-join rewrote a CRLF file's user lines). Only the blank lines touching the block go, and one blank
+    line in the file's own line ending separates what was above it from what was below. A legacy layout TRW
+    cannot read unambiguously (nested, unbalanced or fenced markers) is left as it is.
     """
+    from trw_mcp.state.claude_md._exact_text import file_eol
+
+    if marker_layout_problem(content, (LEGACY_TRW_MARKER_START, LEGACY_TRW_MARKER_END), repeats_allowed=True):
+        return content
     lines = content.splitlines()
     start_idx = _marker_line_index(lines, LEGACY_TRW_MARKER_START)
-    if start_idx is None:
+    end_idx = _marker_line_index(lines, LEGACY_TRW_MARKER_END, after=start_idx) if start_idx is not None else None
+    if start_idx is None or end_idx is None:
         return content
-    end_idx = _marker_line_index(lines, LEGACY_TRW_MARKER_END, after=start_idx)
-    if end_idx is None:
-        return content
-    cut = _block_cut_index(lines, start_idx)
-    before = "\n".join(lines[:cut]).rstrip()
-    after = "\n".join(lines[end_idx + 1 :]).lstrip("\n")
-    if before and after:
-        return before + "\n\n" + after
-    return before or after
+    kept = content.splitlines(keepends=True)
+    before, after = kept[: _block_cut_index(lines, start_idx)], kept[end_idx + 1 :]
+    while before and not before[-1].strip():
+        before.pop()
+    while after and not after[0].strip():
+        after.pop(0)
+    joint = file_eol(content) if before and after else ""
+    return "".join(before) + joint + "".join(after)
 
 
 def split_around_trw_block(
     content: str,
     markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
 ) -> tuple[str, str] | None:
-    """``(text above, text below)`` the first well-formed TRW block of *content*, byte for byte, else ``None``.
+    """``(text above, text below)`` TRW's one unambiguous block in *content*, byte for byte, else ``None``.
 
     The auto-comment directly above the start marker belongs to the block. Line-anchored matching only (see
     :func:`_marker_line_index`); *content* is the exact text, line endings untouched.
     """
+    if marker_layout_problem(content, markers):  # no unique block: no sides to keep (CLAUDE-MD S1 red team B5)
+        return None
     lines = content.splitlines()
     start_idx = _marker_line_index(lines, markers[0])
     end_idx = _marker_line_index(lines, markers[1], after=start_idx) if start_idx is not None else None

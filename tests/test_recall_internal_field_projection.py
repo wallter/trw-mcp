@@ -110,7 +110,6 @@ class TestRecallByIdsProjection:
         trw_dir = self._seed(fake_memory_store, tmp_path)
         with (
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: (m, None)),
         ):
             result = dict(execute_recall(query="auth", trw_dir=trw_dir, config=get_config()))
         assert "topic_filter_warning" not in result

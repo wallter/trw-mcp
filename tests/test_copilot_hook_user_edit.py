@@ -154,3 +154,25 @@ def test_reinit_refreshes_an_unedited_older_trw_copy_its_manifest_records(tmp_pa
 
     for rel, bundled in _scripts().items():
         assert (tmp_path / rel).read_bytes() == bundled, f"{rel}: TRW's own older copy was kept as if edited"
+
+
+def test_a_crlf_platform_writes_the_bundled_bytes_so_an_untouched_copy_still_refreshes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UF-BOOT-07-KI1: on Windows a str write turns LF into CRLF, so the written C5 script no longer matched the
+    recorded (raw bundled) hash and an untouched copy read as a user edit, never refreshed again."""
+    import os
+
+    monkeypatch.setattr(os, "linesep", "\r\n")  # what write_checkout_file's str path sees on Windows
+    _install(tmp_path)
+    scripts = _scripts()
+    for rel, bundled in scripts.items():
+        assert (tmp_path / rel).read_bytes() == bundled, f"{rel} was written with translated newlines"
+
+    stale = {rel: _sha(b"#!/bin/sh\n# an older TRW shipped this\n") for rel in scripts}
+    for rel in scripts:
+        (tmp_path / rel).write_bytes(b"#!/bin/sh\n# an older TRW shipped this\n")
+    result = _install(tmp_path, manifest=stale)
+    for rel, bundled in scripts.items():
+        assert (tmp_path / rel).read_bytes() == bundled, f"{rel}: an untouched older copy was not refreshed"
+        assert rel not in result.get("preserved", []), f"{rel} was misread as a user edit"

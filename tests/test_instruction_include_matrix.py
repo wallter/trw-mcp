@@ -485,27 +485,23 @@ class TestReviewerFoundReinjection:
         assert not (tmp_path / "CLAUDE.md").exists()
 
     def test_a_second_well_formed_block_is_reported_not_silently_frozen(self, tmp_path: Path) -> None:
-        """merge_trw_section binds the FIRST pair; the rest go stale without a word.
+        """Two blocks: TRW cannot tell which one is its own, so the write is refused, visibly.
 
-        Refusing here is not better — the caller's malformed path appends, which
-        would add a third block. But a silently frozen live block is the exact
-        failure this work exists to remove, so it must be visible.
+        It used to update the FIRST pair and log the rest as stale; with no evidence of which block is TRW's, any
+        pick can take the user's text with it (CLAUDE-MD S1 red team B5). The refusal names the reason, and the
+        file stays byte-identical, so nothing is frozen silently either.
         """
-        import structlog
-
         from trw_mcp.state.claude_md._parser import merge_trw_section
 
         target = tmp_path / "CLAUDE.md"
-        target.write_text(
-            f"# Doc\n\n{TRW_MARKER_START}\nONE\n{TRW_MARKER_END}\n\nUser text.\n\n{TRW_MARKER_START}\nTWO\n{TRW_MARKER_END}\n",
-            encoding="utf-8",
-        )
+        original = f"# Doc\n\n{TRW_MARKER_START}\nONE\n{TRW_MARKER_END}\n\nUser text.\n\n{TRW_MARKER_START}\nTWO\n{TRW_MARKER_END}\n"
+        target.write_text(original, encoding="utf-8")
 
-        with structlog.testing.capture_logs() as logs:
-            merge_trw_section(target, "FRESH", 500)
+        verdict = merge_trw_section(target, "FRESH", 500)
 
-        assert any(entry.get("event") == "trw_block_duplicate_markers" for entry in logs)
-        assert "User text." in target.read_text(encoding="utf-8")
+        assert verdict.refusal is not None and verdict.refusal["reason"] == "ambiguous_markers"
+        assert "2 TRW blocks" in verdict.refusal["detail"]
+        assert target.read_text(encoding="utf-8") == original
 
 
 class TestOrphanedAgentsMdBlockIsRemovedByUpdate:

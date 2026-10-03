@@ -49,8 +49,16 @@ def test_channel_lock_sequential_reacquire(tmp_path: Path) -> None:
     """Same lock file can be acquired sequentially multiple times."""
     lock_file = tmp_path / "ch.lock"
     for _ in range(3):
-        with ChannelLock(lock_file):
-            pass
+        # A short timeout: a lock leaked by the previous pass would skip instead of blocking for 4s.
+        lock = ChannelLock(lock_file, timeout_ms=200)
+        with lock:
+            assert lock._fd is not None
+            # While held, a second acquirer is refused (Windows advisory locking is a no-op: no contention there) ...
+            if sys.platform != "win32":
+                with pytest.raises(ChannelLockSkip), ChannelLock(lock_file, timeout_ms=50):
+                    pass
+        # ... and on exit the descriptor is released, so the next pass can take it.
+        assert lock._fd is None
 
 
 # ---------------------------------------------------------------------------

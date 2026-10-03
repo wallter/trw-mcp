@@ -844,3 +844,50 @@ def test_the_reembed_verb_reports_one_json_document_and_a_rerun_changes_nothing(
     first = run("--json")
     assert (first["status"], first["reembedded"], first["outside_active_space"]) == ("ok", 4, 0)
     assert run("--json")["reembedded"] == 0
+
+
+def _origin_of(checkout: Path, namespace: str, entry_id: str) -> str:
+    """The ``origin_project`` the daemon serves for one migrated row ('' when none)."""
+    reply = asyncio.run(_client(checkout).get(entry_id, namespace))
+    entry = reply.get("entry", reply) if isinstance(reply, dict) else reply
+    metadata = entry.get("metadata") if isinstance(entry, dict) else getattr(entry, "metadata", None)
+    return str((metadata or {}).get("origin_project", ""))
+
+
+def test_apply_stamps_origin_project_only_on_rows_that_have_no_remote_source(
+    checkout: Path, daemon: MemoryDaemon
+) -> None:
+    """PRD-CORE-280 FR03 (UF-PRD-22): a locally written row records the project it came from when it enters the user
+    store; a row with a remote_id, a team/company source, or an origin already recorded keeps what it has."""
+    _plant(
+        checkout,
+        MemoryEntry(id="R-1", content="synced from the server", namespace="default", remote_id="srv-1"),
+        MemoryEntry(id="T-1", content="a teammate's", namespace="default", source="team_sync"),
+        MemoryEntry(
+            id="O-1", content="already attributed", namespace="default", metadata={"origin_project": "elsewhere"}
+        ),
+    )
+    namespace = _namespace(checkout)
+
+    apply_migration(checkout / ".trw")
+
+    assert _origin_of(checkout, namespace, "L-a") == namespace
+    assert _origin_of(checkout, namespace, "R-1") == ""
+    assert _origin_of(checkout, namespace, "T-1") == ""
+    assert _origin_of(checkout, namespace, "O-1") == "elsewhere"
+
+
+def test_apply_migrates_a_row_whose_metadata_is_not_valid_json_without_stamping_it(
+    checkout: Path, daemon: MemoryDaemon
+) -> None:
+    """The origin stamp must not turn a tolerated damaged row into a failed migration."""
+    _plant(checkout, MemoryEntry(id="B-1", content="metadata damaged on disk", namespace="default"))
+    with contextlib.closing(sqlite3.connect(checkout / ".trw" / "memory" / "memory.db")) as conn:
+        conn.execute("UPDATE memories SET metadata = '{not json' WHERE id = 'B-1'")
+        conn.commit()
+    namespace = _namespace(checkout)
+
+    apply_migration(checkout / ".trw")
+
+    assert _served(checkout, namespace)[0] == 4
+    assert _origin_of(checkout, namespace, "L-a") == namespace

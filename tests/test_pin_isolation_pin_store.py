@@ -214,13 +214,13 @@ def test_save_pin_store_atomic_leaves_no_tmp_on_success(tmp_path: Path) -> None:
 
 
 def test_save_pin_store_atomic_cleans_up_tmp_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """If os.replace raises, the tmp file is cleaned up and no orphan remains."""
+    """If the publishing rename raises, the temp file is cleaned up and no orphan remains (any temp name)."""
     import trw_mcp.state._pin_store as ps_mod
     from trw_mcp.state._pin_store import pin_store_path
 
     real_replace = os.replace
 
-    def _boom(src: Any, dst: Any) -> None:
+    def _boom(*_args: Any, **_kwargs: Any) -> None:  # the safe writer renames with dir_fd keywords
         raise OSError("simulated rename failure")
 
     monkeypatch.setattr(ps_mod.os, "replace", _boom)
@@ -241,8 +241,12 @@ def test_save_pin_store_atomic_cleans_up_tmp_on_failure(tmp_path: Path, monkeypa
     monkeypatch.setattr(ps_mod.os, "replace", real_replace)
 
     pins_path = pin_store_path()
-    tmp_pins = pins_path.with_suffix(pins_path.suffix + ".tmp")
-    assert not tmp_pins.exists(), "Tmp file left behind after rename failure"
+    strays = [
+        p.name
+        for p in pins_path.parent.iterdir()
+        if p.name not in {pins_path.name, pins_path.name + ".lock"} and not p.name.endswith(".lock")
+    ]
+    assert strays == [], f"temp file left behind after rename failure: {strays}"
 
 
 def test_load_pin_store_evicts_stale_run_paths(tmp_path: Path) -> None:

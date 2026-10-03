@@ -42,7 +42,6 @@ if TYPE_CHECKING:
         MemoryType,
         ProtectionTier,
     )
-    from trw_memory.sync import AdmissionOutcome
 
     from trw_mcp.state._recall_admission import RecallAdmission
 
@@ -235,6 +234,10 @@ class MemoryStore(Protocol):
         """The row of *namespace* a pulled learning maps to: its ``remote_id`` or one of *ids*."""
         ...
 
+    def find_synced_many(self, namespace: str, remote_ids: list[str], ids: list[str]) -> list[MemoryEntry]:
+        """Every row of *namespace* a pulled page maps to: ``remote_id`` in *remote_ids* or id in *ids*, one call."""
+        ...
+
     def apply_synced(
         self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True
     ) -> tuple[str, str]:
@@ -248,19 +251,22 @@ class MemoryStore(Protocol):
         """
         ...
 
+    def apply_synced_many(
+        self, namespace: str, items: list[tuple[MemoryEntry, str | None, bool]]
+    ) -> list[tuple[str, str]]:
+        """:meth:`apply_synced` for a whole pulled page in one call: each item is ``(entry, if_revision, synced)``.
+
+        Returns one ``(status, reason)`` per item, in order; every row keeps its own revision check and write-gate
+        verdict. Raises when the store cannot do the batched call (a daemon from before it): the caller applies per row.
+        """
+        ...
+
     def recall(self, spec: RecallSpec) -> list[MemoryEntry]:
         """The admitted rows *spec* selects: the project namespace, then ``user:local``.
 
         A query returns search hits, the project's first. ``spec.ids`` returns the
         one row that represents each id, in request order; a missing id and a row
         admission refuses are both simply absent.
-        """
-        ...
-
-    def admit_shared(self, results: list[dict[str, object]]) -> AdmissionOutcome:
-        """Run shared results fetched from the platform through the project store's admission gate.
-
-        A refused result is quarantined there and counted, never returned.
         """
         ...
 

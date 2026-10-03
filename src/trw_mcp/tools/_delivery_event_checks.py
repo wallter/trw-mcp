@@ -12,6 +12,7 @@ import structlog
 
 from trw_mcp import PROCESS_STARTED_AT as _PROCESS_STARTED_AT
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._review_scope_attribution import _drop_provably_foreign
 from trw_mcp.tools._session_stream import session_stream_records
 
 logger = structlog.get_logger(__name__)
@@ -187,12 +188,12 @@ def _count_file_modified_current_session(
     """Count DISTINCT modified file paths in the current session only.
 
     Uses ``session_start`` as the session boundary marker. Events from
-    previous sessions (before the last ``session_start``) are excluded. Within
-    the window, distinct-path semantics (FR02a) apply — see
-    ``_count_file_modified``.
+    previous sessions (before the last ``session_start``) are excluded, as are
+    provably-foreign events (:func:`_drop_provably_foreign`). Within the
+    window, distinct-path semantics (FR02a) apply — see ``_count_file_modified``.
     """
     session_events = _events_since_last_session_start(events, session_id)
-    return _count_file_modified(session_events, repo_root)
+    return _count_file_modified(_drop_provably_foreign(session_events, session_id), repo_root)
 
 
 def _project_root_from_run(run_path: Path) -> Path | None:

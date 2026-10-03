@@ -61,7 +61,11 @@ def test_uninstall_after_a_clean_init_leaves_no_file_behind(tmp_path: Path, ide:
 
     _run_uninstall(_ns(project))
 
-    assert _left(project) == []
+    # CLAUDE-MD S2: a project's AGENTS.md is never deleted; the one init-project created is left empty.
+    left = _left(project)
+    assert [rel for rel in left if rel != "AGENTS.md"] == []
+    if "AGENTS.md" in left:
+        assert (project / "AGENTS.md").read_text(encoding="utf-8") == ""
 
 
 def _rewrite(path: Path, edit: object) -> None:

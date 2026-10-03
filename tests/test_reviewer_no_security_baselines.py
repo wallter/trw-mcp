@@ -18,6 +18,7 @@ def _detector(tmp_path: Path, *, persist_state: bool):  # type: ignore[no-untype
     from trw_mcp.security.anomaly_detector import AnomalyDetector, AnomalyDetectorConfig
 
     config = AnomalyDetectorConfig(
+        checkout_root=tmp_path,
         shadow_clock_path=tmp_path / "security" / "mcp_shadow_start.yaml",
         baseline_store_path=tmp_path / "security" / "mcp_arg_baseline.jsonl",
         persist_state=persist_state,

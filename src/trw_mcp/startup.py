@@ -105,6 +105,7 @@ def init_security(config: MCPSecurityConfig | None = None) -> MCPSecurityMiddlew
                 mode=resolved.anomaly.mode,
                 sigma_threshold=resolved.anomaly.sigma_threshold,
                 window_seconds=resolved.anomaly.window_seconds,
+                checkout_root=trw_dir.parent,
                 shadow_clock_path=trw_dir / "security" / "mcp_shadow_start.yaml",
                 baseline_store_path=trw_dir / "security" / "mcp_arg_baseline.jsonl",
                 # A reviewer is stateless: it must not seed the reviewed repo's security baselines.

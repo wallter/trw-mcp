@@ -85,11 +85,10 @@ def step_clear_score(resolved_run: Path, results: DeliverResultDict) -> None:
         clear_score = load_and_score_run(session_id, resolved_run)
         if clear_score is None:
             return
+        from trw_mcp._checkout_write import write_checkout_file
+
         clear_path = resolved_run / "meta" / "session_clear_score.json"
-        clear_path.write_text(
-            json.dumps(clear_score.model_dump(mode="json"), indent=2),
-            encoding="utf-8",
-        )
+        write_checkout_file(resolved_run, clear_path, json.dumps(clear_score.model_dump(mode="json"), indent=2))
         results["clear_score"] = cast("dict[str, object]", clear_score.model_dump(mode="json"))
         logger.info(
             "clear_score_persisted",
@@ -101,7 +100,8 @@ def step_clear_score(resolved_run: Path, results: DeliverResultDict) -> None:
             reliability=clear_score.reliability,
         )
     except Exception:  # justified: fail-open — CLEAR scoring must not block deliver
-        logger.debug("clear_score_step_failed", exc_info=True)
+        # warning, not debug: a default install drops debug events, which hid that no run was ever scored.
+        logger.warning("clear_score_step_failed", exc_info=True)
 
 
 def step_knowledge_sync(trw_dir: Path, results: DeliverResultDict) -> None:

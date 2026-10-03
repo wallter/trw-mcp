@@ -304,40 +304,27 @@ class TestEventLoggedLevel:
 class TestStaleCountError:
     """FR05: stale_count_error indicator when stale scan fails."""
 
-    def test_stale_count_error_set_on_exception(self) -> None:
+    def test_stale_count_error_set_on_exception(self, tmp_path: Path) -> None:
         """When count_stale_runs raises, result should include stale_count_error=True."""
-        from fastmcp import FastMCP
+        from trw_mcp.tools._orchestration_status_assembly import assemble_status_result
 
-        from trw_mcp.tools.orchestration import register_orchestration_tools
+        run_dir = tmp_path / ".trw" / "runs" / "t" / "r-1"
+        (run_dir / "meta").mkdir(parents=True)
+        state = {"run_id": "r-1", "task": "t", "phase": "implement", "status": "active"}
 
-        server = FastMCP("test")
-        register_orchestration_tools(server)
+        def assemble() -> dict[str, object]:
+            return dict(assemble_status_result(state, [], run_dir, FileStateReader(), run_dir / "meta"))
 
-        # We need to test the trw_status tool directly
-        # The stale count scan is near line 325 of orchestration.py
-        # We'll test by patching count_stale_runs to raise
-        with (
-            patch("trw_mcp.tools.orchestration.resolve_run_path") as mock_resolve,
-            patch("trw_mcp.tools.orchestration.count_stale_runs", side_effect=Exception("scan failed")),
-            patch("trw_mcp.tools.orchestration.logger") as mock_logger,
-        ):
-            mock_path = MagicMock()
-            mock_resolve.return_value = mock_path
+        with patch("trw_mcp.tools.orchestration.count_stale_runs", side_effect=Exception("scan failed")):
+            failed = assemble()
+        assert failed["stale_count_error"] is True
+        assert "stale_count" not in failed
 
-            mock_path.__truediv__ = MagicMock(return_value=mock_path)
-            mock_path.exists.return_value = False
-
-            # Import and call trw_status directly
-            # The function is registered on the server, we need the inner function
-            # Re-read to get the actual function reference
-            # We'll call the tool function directly through the module's registered tools
-
-            # Actually, the stale count logic is inside trw_status which is defined
-            # as a closure inside register_orchestration_tools. Let's test the behavior
-            # by inspecting the source pattern instead.
-
-        # Direct behavioral test: patch and check the error indicator
-        # is present in the except block of the orchestration module
+        # Contrast: a working scan reports the count and no error flag.
+        with patch("trw_mcp.tools.orchestration.count_stale_runs", return_value=0):
+            healthy = assemble()
+        assert healthy["stale_count"] == 0
+        assert "stale_count_error" not in healthy
 
     # The stale-count logic moved to _orchestration_status_assembly.py during
     # the status-assembly extraction (module-size gate); scan the new home.

@@ -15,7 +15,6 @@ from trw_mcp.telemetry.artifact_registry import (
     SurfaceSnapshot,
     clear_snapshot_cache,
     resolve_surface_registry,
-    resolve_surface_snapshot,
 )
 from trw_mcp.telemetry.boot_audit import (
     ResolutionFailure,
@@ -124,7 +123,6 @@ __all__ = [
     "redact_paths",
     "redact_secrets",
     "resolve_surface_registry",
-    "resolve_surface_snapshot",
     "resolve_unified_events_path",
     "run_boot_audit",
     "snapshot_to_yaml",

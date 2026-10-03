@@ -57,6 +57,8 @@ class BuildCheckOptions(BaseModel):
     run_path: str | None = None
     min_coverage: float | None = None
     command_results: list[dict[str, object]] | str | None = None
+    junit_xml: str | None = None
+    suite_root: str | None = None
 
 
 class ReviewOptions(BaseModel):

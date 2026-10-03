@@ -869,25 +869,6 @@ has_recent_session_tool_deliver() {
   '
 }
 
-# pin_run_path_for: Print the run_path pinned to a given session_id, or nothing.
-# Reads .trw/runtime/pins.json (a session_id -> {run_path,...} map written by the
-# MCP pin-isolation layer) so the Stop hook can attribute enforcement to THIS
-# session's own run instead of a parallel instance's newest run. Without a JSON
-# parser it returns non-zero so the caller falls back to legacy
-# behavior rather than guessing from a fragile multi-line grep. jq or python3,
-# via _json_get.
-# Args: $1=pins_json_path, $2=session_id.
-# Returns 0 and prints the path when resolved; 1 otherwise.
-pin_run_path_for() {
-  _prp_pins="$1"
-  _prp_sid="$2"
-  [ -f "$_prp_pins" ] || return 1
-  [ -n "$_prp_sid" ] || return 1
-  _prp_val=$(_json_get --file "$_prp_pins" --arg "$_prp_sid" '.$arg.run_path') || return 1
-  [ -n "$_prp_val" ] || return 1
-  printf '%s' "$_prp_val"
-}
-
 # phase_from_events: Evaluate the phase ladder against a GIVEN events log.
 # Prints one of: none, early, plan, implement, validate, deliver, done.
 #
@@ -996,42 +977,6 @@ log_hook_execution() {
   fi
 }
 
-# check_ceremony_status: Check if TRW ceremony steps are complete.
-# PRD-INFRA-004-FR03: Scans events.jsonl for required ceremony events.
-# Prints formatted checklist of missing steps, or empty if all complete.
-# Returns 0 if checked (output may be empty or contain missing steps).
-# Returns 1 if no active run or event count < 3 (caller should skip).
-check_ceremony_status() {
-  _cs_run_dir=$(find_active_run) || return 1
-  [ -n "$_cs_run_dir" ] || return 1
-
-  _cs_events="${_cs_run_dir}meta/events.jsonl"
-  [ -f "$_cs_events" ] || return 1
-
-  _cs_count=$(wc -l < "$_cs_events" 2>/dev/null | tr -d ' ') || _cs_count=0
-  [ "$_cs_count" -ge 3 ] 2>/dev/null || return 1
-
-  # FR02: trw_deliver_complete short-circuits — all ceremony done
-  if has_event "$_cs_events" "trw_deliver_complete"; then
-    return 0
-  fi
-
-  # Check individual ceremony events
-  _cs_missing=""
-  if ! has_event "$_cs_events" "reflection_complete" && ! has_event "$_cs_events" "trw_reflect_complete"; then
-    _cs_missing="${_cs_missing}, reflection"
-  fi
-  if ! has_event "$_cs_events" "checkpoint"; then
-    _cs_missing="${_cs_missing}, trw_checkpoint"
-  fi
-  if [ -n "$_cs_missing" ]; then
-    # Strip leading ", "
-    _cs_missing="${_cs_missing#, }"
-    printf 'TRW BLOCK: Missing ceremony: %s. Run trw_deliver() to complete all. (%s events logged)' "$_cs_missing" "$_cs_count"
-  fi
-  return 0
-}
-
 # cleanup_block_files: Remove stale per-helper block count files.
 # Called by session-end.sh as housekeeping.
 # Args: $1=context_dir
@@ -1053,28 +998,6 @@ cleanup_phase_cycle() {
   if find "$_cpc_state" -mmin "+240" 2>/dev/null | grep -q .; then
     _trw_safe_rm "$_cpc_state" || true
   fi
-}
-
-# read_build_failures: Extract the failures list from build-status.yaml.
-# Prints failures as newline-separated strings, or empty if none.
-# Args: $1=build_status_path (optional, defaults to .trw/context/build-status.yaml)
-read_build_failures() {
-  _rbf_path="${1:-}"
-  if [ -z "$_rbf_path" ]; then
-    _rbf_root="$(get_repo_root 2>/dev/null)" || return 0
-    _rbf_path="$_rbf_root/.trw/context/build-status.yaml"
-  fi
-  [ -f "$_rbf_path" ] || return 0
-  # Extract list items under the 'failures:' key
-  # Handles both inline '[]' and indented '- item' YAML list forms
-  awk '
-    /^failures:/ { in_list=1; next }
-    in_list && /^[^[:space:]]/ { exit }
-    in_list && /^[[:space:]]*-[[:space:]]+/ {
-      sub(/^[[:space:]]*-[[:space:]]+/, "")
-      print
-    }
-  ' "$_rbf_path" 2>/dev/null || true
 }
 
 # ===========================================================================

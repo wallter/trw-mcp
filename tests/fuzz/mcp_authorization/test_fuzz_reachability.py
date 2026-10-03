@@ -13,6 +13,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from trw_mcp.middleware._mcp_security_helpers import MCPSecurityDecision
 from trw_mcp.middleware.mcp_security import (
     CLAUDE_CODE_PREFIX,
     TRANSPORTS,
@@ -106,7 +107,12 @@ def test_fuzz_stdio_never_raises(tmp_path: Path, raw_name: str, prefix: str, ser
     """stdio transport: fuzz random tool names; middleware must never raise."""
     mw = _mw(tmp_path)
     tool = f"{prefix}{raw_name}" if raw_name else "placeholder"
-    mw.on_tool_call(transport="stdio", server=server, tool=tool, args={})
+    decision = mw.on_tool_call(transport="stdio", server=server, tool=tool, args={})
+    assert isinstance(decision, MCPSecurityDecision)
+    assert decision.transport == "stdio"
+    assert decision.layers_fired == ["registry", "capability_scope", "anomaly_detector"]
+    # A denial always says why; an allow carries no scope/registry reason.
+    assert bool(decision.reason) is (not decision.allowed)
 
 
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])

@@ -91,6 +91,19 @@ def test_write_checkout_file_rejects_a_path_outside_its_root(tmp_path: Path) -> 
     assert sentinel.read_bytes() == b"do not touch\n"
 
 
+@pytest.mark.parametrize("writer", [write_checkout_file, append_checkout_file])
+def test_a_write_to_the_root_itself_is_refused_not_an_index_error(tmp_path: Path, writer: object) -> None:
+    """``--output .`` names the root: there is no file to write there (CORE-337-D residual, was a bare IndexError)."""
+    project = tmp_path / "project"
+    project.mkdir()
+
+    with pytest.raises(UnsafeWriteError) as refused:
+        writer(project, project, "x")  # type: ignore[operator]
+
+    assert refused.value.reason == "escapes_root"
+    assert project.is_dir()
+
+
 def test_append_checkout_file_appends_and_creates(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

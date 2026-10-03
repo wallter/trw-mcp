@@ -24,7 +24,7 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
     "protection_tier_prune_discount": ConfigAdmission(
         field_name="protection_tier_prune_discount",
         owner="PRD-CORE-244-FR10 (protection_tier must protect on every destructive path)",
-        consumer="trw_memory.lifecycle.protection.prune_threshold_multiplier (via scoring._recall_prune, state.analytics.dedup, state._tier_sweep)",
+        consumer="trw_memory.lifecycle.protection.prune_threshold_multiplier (via scoring._recall_prune, state.analytics.dedup)",
         default_rationale=(
             "{critical: 0.25, high: 0.5, normal: 1.0, low: 1.5} makes 'normal' the identity, so an "
             "unmarked entry is pruned exactly as it is today and the table cannot be blamed for a change "

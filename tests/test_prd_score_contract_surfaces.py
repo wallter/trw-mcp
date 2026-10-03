@@ -10,6 +10,7 @@ import pytest
 from tests._layout import requires_monorepo
 
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
+REPO_ROOT = DATA.parents[3]
 
 READINESS_OWNERS = (
     DATA / "skills/trw-prd-ready/SKILL.md",
@@ -23,9 +24,15 @@ READINESS_ADAPTERS = (DATA / "opencode/commands/trw-prd-ready.md",)
 
 AUDIT_VARIANTS = (DATA / "skills/trw-audit/SKILL.md",)
 
-PRD_NEW_VARIANTS = (
+RETIRED_PRD_NEW_BUNDLE_SURFACES = (
     DATA / "skills/trw-prd-new/SKILL.md",
     DATA / "copilot/plugin/skills/trw-prd-new/SKILL.md",
+)
+
+RETIRED_PRD_NEW_REPO_MIRRORS = (
+    REPO_ROOT / ".agents/skills/trw-prd-new/SKILL.md",
+    REPO_ROOT / ".claude/skills/trw-prd-new/SKILL.md",
+    REPO_ROOT / ".github/skills/trw-prd-new/SKILL.md",
 )
 
 CURSOR_COMMAND = DATA / "cursor_ide/commands/trw-prd-ready.md"
@@ -45,7 +52,7 @@ def _read(path: Path) -> str:
 
 def test_prd_surfaces_do_not_hardcode_deprecated_readiness_gates() -> None:
     """No packaged consumer may substitute a fixed score for the risk-scaled result."""
-    for path in (*READINESS_OWNERS, *READINESS_ADAPTERS, *AUDIT_VARIANTS, *PRD_NEW_VARIANTS, CURSOR_COMMAND):
+    for path in (*READINESS_OWNERS, *READINESS_ADAPTERS, *AUDIT_VARIANTS, CURSOR_COMMAND):
         match = FORBIDDEN_NUMERIC_GATE.search(_read(path))
         assert match is None, f"{path} contains deprecated readiness gate: {match.group(0) if match else ''}"
 
@@ -68,20 +75,22 @@ def test_audit_records_weak_spec_quality_without_score_aborting() -> None:
         assert "Do not abort an adversarial audit solely" in content
 
 
-def test_prd_new_delegates_or_supplies_a_resolvable_readiness_flow() -> None:
-    """Shared and Copilot-plugin trw-prd-new both delegate to trw-prd-ready.
+def test_retired_prd_new_alias_is_not_shipped_or_installed() -> None:
+    """The one PRD workflow is trw-prd-ready; no compatibility skill remains."""
+    for path in RETIRED_PRD_NEW_BUNDLE_SURFACES:
+        assert not path.exists(), f"retired compatibility skill still exists: {path}"
 
-    Copilot's plugin bundle does not ship a packaged ``trw-prd-ready`` skill
-    (see ``data/copilot/plugin/skills``), but the canonical alias text already
-    covers that case generically -- "If skill invocation is unavailable but
-    the installed contract is readable, execute that contract inline" -- so
-    Copilot no longer needs a separate, hand-authored inline pipeline
-    (PRD-CORE-291-FR04: the two remaining variants are input-preserving
-    aliases of one body, checked byte-for-byte in
-    test_shared_prd_new_is_an_input_preserving_alias).
-    """
-    assert "/trw-prd-ready`'s risk-scaled readiness contract" in _read(PRD_NEW_VARIANTS[0])
-    assert "/trw-prd-ready`'s risk-scaled readiness contract" in _read(PRD_NEW_VARIANTS[1])
+    from trw_mcp.bootstrap._client_skills import skill_names
+
+    for client in ("codex", "copilot", "opencode"):
+        assert "trw-prd-new" not in skill_names(client)
+
+
+@requires_monorepo
+@pytest.mark.parametrize("path", RETIRED_PRD_NEW_REPO_MIRRORS, ids=lambda path: path.parts[-3])
+def test_retired_prd_new_alias_is_absent_from_repo_client_mirrors(path: Path) -> None:
+    """The unbundled client mirrors must not retain an alias-only entry point."""
+    assert not path.exists(), f"retired compatibility skill still exists: {path}"
 
 
 def test_client_mirrors_preserve_semantics_and_lifecycle_vocabulary() -> None:
@@ -95,36 +104,6 @@ def test_client_mirrors_preserve_semantics_and_lifecycle_vocabulary() -> None:
     cursor = _read(CURSOR_COMMAND)
     assert "Sets status to READY" not in cursor
     assert "lifecycle status" in cursor
-
-
-@pytest.mark.parametrize(
-    "paths",
-    [
-        pytest.param(PRD_NEW_VARIANTS[:2], id="bundled"),
-        pytest.param(
-            (
-                *PRD_NEW_VARIANTS[:2],
-                DATA.parents[3] / ".claude/skills/trw-prd-new/SKILL.md",
-                DATA.parents[3] / ".agents/skills/trw-prd-new/SKILL.md",
-            ),
-            id="mirrors",
-            marks=requires_monorepo,
-        ),
-    ],
-)
-def test_shared_prd_new_is_an_input_preserving_alias(paths: tuple[Path, ...]) -> None:
-    """Static routing contract, not execution/adherence proof."""
-    bodies = []
-    for path in paths:
-        content = _read(path)
-        bodies.append(content.split("\n# ", 1)[1])
-        assert "original `$ARGUMENTS`" in content
-        assert "any explicit `--embedded-plan` option" in content
-        assert "do not\ncreate a PRD first and substitute its ID" in content
-        assert "contract is unavailable" in content
-        assert "trw_prd_create(" not in content
-        assert "## Phase 1: Create" not in content
-    assert len(set(bodies)) == 1
 
 
 def test_opencode_adapters_forward_to_installed_gate_owner() -> None:

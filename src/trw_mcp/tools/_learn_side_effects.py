@@ -312,7 +312,10 @@ def _writes_project_yaml(scope: str, store_result: Mapping[str, object]) -> bool
     routed to the user tier with ``tier="user"``; a store that does not say fails closed for a row
     that asked for ``scope="user"``.
     """
-    return store_result.get("tier") != "user" and scope != "user"
+    # PRD-SEC-023 FR05: a row labelled above team never lands in a tracked file either (the store marks it).
+    return (
+        store_result.get("tier") != "user" and scope != "user" and not store_result.get("withheld_from_project_files")
+    )
 
 
 def _save_yaml_backup(

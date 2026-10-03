@@ -156,17 +156,54 @@ def _run_memory_reembed(args: argparse.Namespace) -> None:
     sys.exit(1 if answer.get("status") == "invalid" else 0)
 
 
+def _run_memory_repair_anchors(args: argparse.Namespace) -> None:
+    """Exit 0 when the repair completed, 4 when a row was held or the store failed, 2 for a missing ``.trw``."""
+    import json
+
+    from trw_mcp.state._anchor_repair import repair_until_settled
+
+    trw_dir = Path(args.target_dir).resolve() / ".trw"
+    if not trw_dir.is_dir():
+        print(f"memory repair-anchors: {trw_dir.parent} has no .trw directory", file=sys.stderr)
+        sys.exit(2)
+    try:
+        outcome = repair_until_settled(trw_dir, trw_dir.parent)
+    except Exception as exc:  # trw-fail-silent-allow: reported on stderr with exit 4; the cursor keeps the progress
+        print(f"memory repair-anchors: the store could not be repaired ({type(exc).__name__}: {exc})", file=sys.stderr)
+        sys.exit(4)
+    counts = {
+        "rewritten": outcome.changed,
+        "dropped_absolute": outcome.dropped_absolute,
+        "dropped_temp": outcome.dropped_temp,
+        "ambiguous": outcome.ambiguous,
+        "held": outcome.held,
+        "validity_refreshed": outcome.validity_refreshed,
+        "complete": outcome.complete,
+    }
+    if args.as_json:
+        print(json.dumps(counts))
+    else:
+        print("memory repair-anchors: " + ", ".join(f"{k} {int(v)}" for k, v in counts.items() if k != "complete"))
+    sys.exit(0 if outcome.complete else 4)
+
+
 def run_memory(args: argparse.Namespace) -> None:
     """Dispatch ``memory <subcommand>``."""
     command = getattr(args, "memory_command", None)
-    handlers = {"token": _run_memory_token, "migrate": _run_memory_migrate, "reembed": _run_memory_reembed}
+    handlers = {
+        "token": _run_memory_token,
+        "migrate": _run_memory_migrate,
+        "reembed": _run_memory_reembed,
+        "repair-anchors": _run_memory_repair_anchors,
+    }
     if command in handlers:
         handlers[command](args)
         return
     print(
         "Usage: trw-mcp memory token [--namespace PINNED] [--grant NAMESPACE]... [--migrate]\n"
         "       trw-mcp memory migrate --to user [--apply | --rollback MANIFEST]\n"
-        "       trw-mcp memory reembed [--json]",
+        "       trw-mcp memory reembed [--json]\n"
+        "       trw-mcp memory repair-anchors [--json]",
         file=sys.stderr,
     )
     sys.exit(2)

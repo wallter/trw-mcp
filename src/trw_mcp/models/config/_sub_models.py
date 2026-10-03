@@ -81,10 +81,6 @@ class MemoryConfig(BaseModel):
     dedup_merge_threshold: float = 0.85
     memory_consolidation_enabled: bool = True
     memory_consolidation_max_per_cycle: int = 50
-    memory_hot_max_entries: int = 50
-    memory_score_w1: float = 0.4
-    memory_score_w2: float = 0.3
-    memory_score_w3: float = 0.3
 
 
 class TelemetryConfig(BaseModel):
@@ -356,29 +352,6 @@ class IntentContractConfig(BaseModel):
         gt=0.0,
         le=5.0,
         description="Per-falsifier subprocess timeout; strictly below the FR07 hook budget.",
-    )
-    pre_write_hook_budget_seconds: float = Field(
-        default=1.0,
-        gt=0.0,
-        le=2.0,
-        description="FR05 pre-write hook total wall-clock budget (metadata-only, no falsifier).",
-    )
-    post_edit_hook_budget_seconds: float = Field(
-        default=5.0,
-        gt=0.0,
-        le=5.0,
-        description="FR07 post-edit hook total wall-clock budget (includes falsifier execution).",
-    )
-    false_block_window_size: int = Field(
-        default=30,
-        ge=1,
-        description="FR06 rolling window size over BLOCK-CLASS outcomes only (never allow-outcomes).",
-    )
-    false_block_rate_max: float = Field(
-        default=0.05,
-        gt=0.0,
-        le=1.0,
-        description="Track T gate threshold for the blocks-only false-block rate.",
     )
     falsifier_allowed_commands: tuple[str, ...] = Field(
         default=("pytest",),

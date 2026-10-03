@@ -4,7 +4,8 @@ Belongs to ``_template_updater._update_hooks``.
 
 Every hook used to be decided on its own: an edited ``lib-trw.sh`` was kept while the hooks that source it
 were replaced, so the new hooks called ~20 functions the old lib lacked and each one silently exited 0.
-A shared ``lib-*.sh`` and its dependents now move together. An edited lib is captured into ``.trw/trash``
+A shared ``lib-*.sh`` and its dependents now move together. An edited lib that git holds clean is replaced in
+place (the report names the restore command); one with uncommitted edits is captured into ``.trw/trash``
 (the path is named in the report) and then refreshed WITH its dependents: the user's bytes survive, the
 family is current, and a stale lib no longer pins old behaviour such as ignoring ``hooks_enabled``. When the
 capture is refused, the lib and every hook that sources it are left exactly as they are, so the old
@@ -24,6 +25,7 @@ from pathlib import Path
 
 from trw_mcp.server._doctor_hook_family import defined_functions, sourced_libs, verify_calls
 
+from ._retire import as_retirement, record_retirement, retire_file
 from ._safe_remove import remove_if_hash
 from ._version_manifest import _framework_content_hashes, _is_user_modified
 
@@ -96,6 +98,41 @@ def _link_back(captured_at: Path | None, dest: Path) -> str | None:
     return f"was replaced by a concurrent writer while being put back; your edit is at {captured_at}"
 
 
+def _occupied(path: Path) -> bool:
+    """True unless the name is provably free: a permission error is NOT "absent" (codex review R4)."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:  # trw-fail-silent-allow: not silent, absent is the answer this probe asks for
+        return False
+    except OSError:  # trw-fail-silent-allow: unknown means occupied, the safe direction
+        return True
+    return True
+
+
+def _settle_occupied_name(
+    target_dir: Path, rel: str, captured_at: Path | None, user_sha: str, result: dict[str, list[str]]
+) -> None:
+    """A concurrent writer holds *rel* after the link-back: its file stays at the name, never moved (HB-2).
+
+    When the capture provably still holds the user's edit, *rel* is marked retired so the dirty-file restore
+    leaves the writer's file alone (proof re-taken now, as remove_proven does at the act). Otherwise nothing
+    is marked: if the restore later puts the user's edit back, it first moves the writer's bytes into
+    .trw/trash, because a restore deletes only bytes this run wrote (_restore_proof, FB-01-KI1-RACE r4). The
+    name is never left empty, so the hooks that source the lib keep a lib (codex review F).
+    """
+    try:
+        proven = captured_at is not None and hashlib.sha256(captured_at.read_bytes()).hexdigest() == user_sha
+    except OSError:  # trw-fail-silent-allow: an unreadable capture is no proof; the restore's own proof then guards
+        proven = False
+    if proven:
+        result.setdefault("retired", []).append(rel)
+        return
+    result.setdefault("warnings", []).append(
+        f"{rel}: a concurrent writer's file was left here; your edit's backup in .trw/trash could not be"
+        " confirmed, so check that folder for it"
+    )
+
+
 def settle_edited_libs(
     target_dir: Path,
     hooks_source: Path,
@@ -130,7 +167,12 @@ def settle_edited_libs(
     for lib, current in edited.items():
         if lib in held:
             continue
-        # Captured by rename and re-verified, never unlinked: a racing edit keeps its bytes (HB-2).
+        # Committed and clean in git: git holds the edit, so it is replaced in place. Only uncommitted bytes need
+        # the capture below (by rename and re-verified, never unlinked: a racing edit keeps its bytes, HB-2).
+        gone = retire_file(hooks / lib, target_dir, (), managed=True)
+        if gone.status == "git":
+            record_retirement(result, as_retirement(f".claude/hooks/{lib}", gone))
+            continue
         outcome = remove_if_hash(hooks / lib, target_dir, current, key=f".claude/hooks/{lib}")
         if outcome.status in ("removed", "retained", "absent"):
             captured[lib] = outcome.retained_at
@@ -148,8 +190,10 @@ def settle_edited_libs(
             if problem:
                 unrestored.add(lib)
                 warnings.append(f"{rel}: {problem}")
+                if _occupied(hooks / lib):
+                    _settle_occupied_name(target_dir, rel, at, edited[lib], result)
             continue
-        result.setdefault("trashed", []).append(rel)  # or the dirty-file restore puts the old lib back
+        result.setdefault("retired", []).append(rel)  # or the dirty-file restore puts the old lib back
         warnings.append(
             f"{rel}: your edited copy was moved to {at or '.trw/trash'} and"
             f" {'a file written there meanwhile was kept' if lib in retained else 'the bundled lib installed'}, because"
@@ -201,9 +245,13 @@ def _refresh_stranded_hooks(
         if not lost:
             continue
         calls = ", ".join(sorted(lost))
+        gone = retire_file(dest, target_dir, (), managed=True)
+        if gone.status == "git":
+            record_retirement(result, as_retirement(rel, gone))
+            continue
         outcome = remove_if_hash(dest, target_dir, hashlib.sha256(dest.read_bytes()).hexdigest(), key=rel)
         if outcome.status in ("removed", "retained", "absent"):
-            result.setdefault("trashed", []).append(rel)
+            result.setdefault("retired", []).append(rel)
             at = outcome.retained_at or ".trw/trash"
             # retained: a file written at the name during capture holds it now, and the update keeps it (KI2-r1 KI4).
             now = (

@@ -303,29 +303,35 @@ def load_and_score_run(
     import json as _json
 
     events: list[HPOTelemetryEvent] = []
+    read = 0
+    rejected = 0
+    first_error = ""
     for events_file in sorted(meta.glob("events-*.jsonl")):
         try:
             raw = events_file.read_text(encoding="utf-8")
         except OSError:
+            logger.warning("clear_events_file_unreadable", path=str(events_file), exc_info=True)
             continue
         for line in raw.splitlines():
             line = line.strip()
             if not line:
                 continue
+            read += 1
             try:
                 record = _json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(record, dict):
-                continue
-            et = str(record.get("event_type", ""))
-            cls = EVENT_TYPE_REGISTRY.get(et, ObserverEvent)
-            try:
-                ev = cls.model_validate(record)
-            except Exception:  # noqa: S112 — scan-resilience: drift between schema + persisted rows is expected
-                continue
-            events.append(ev)
+                event_type = record.get("event_type", "") if isinstance(record, dict) else ""
+                cls = EVENT_TYPE_REGISTRY.get(str(event_type), ObserverEvent)
+                # JSON mode, not model_validate(dict): the models are strict, and strict Python-mode
+                # validation rejects the ISO string a row stores for ``ts`` -- which refused every
+                # persisted row (UF-GATES-01). Strict JSON mode accepts it.
+                events.append(cls.model_validate_json(line))
+            except ValueError as exc:  # json.JSONDecodeError and pydantic.ValidationError both subclass it
+                rejected += 1
+                first_error = first_error or f"{events_file.name}: {str(exc).splitlines()[0]}"
 
+    if rejected:
+        # Counted and surfaced: a silent skip here once hid that no run had ever been scored.
+        logger.warning("clear_rows_rejected", session_id=session_id, read=read, rejected=rejected, first=first_error)
     if not events:
         return None
     return compute(session_id, events, ceremony_compliance_score=ceremony_compliance_score)

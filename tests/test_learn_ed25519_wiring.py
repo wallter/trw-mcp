@@ -126,3 +126,17 @@ def test_provenance_wrapper_is_fail_open(tmp_path: Path, monkeypatch: pytest.Mon
         detail="d",
         source_identity="agent",
     )
+    chain = trw_dir / "memory" / "security" / "provenance.jsonl"
+    assert not chain.exists(), "a failed signing step must not leave a half-written chain"
+
+    # Contrast: with the key helper working, the same call appends a record that verifies.
+    monkeypatch.undo()
+    _append_provenance_signed(
+        trw_dir=trw_dir,
+        learning_id="L-x",
+        summary="s",
+        detail="d",
+        source_identity="agent",
+    )
+    assert chain.exists()
+    assert '"L-x"' in chain.read_text(encoding="utf-8")

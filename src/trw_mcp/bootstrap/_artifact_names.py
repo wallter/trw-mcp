@@ -13,17 +13,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
+
 from ._utils import _DATA_DIR
+
+logger = structlog.get_logger(__name__)
 
 
 def _opencode_skill_names(opencode_root: Path, skills_source: Path) -> list[str] | None:
-    """Inventory skills opencode ships that exist in the canonical corpus; ``None`` when there is no inventory."""
+    """Inventory skills opencode ships that exist in the canonical corpus; ``None`` when no inventory can be read.
+
+    Unreadable (missing, or a permission error) means OpenCode's list is unknown, not empty: the sweep and the
+    doctor then judge nothing in ``.opencode/skills`` and every other client still gets judged.
+    """
     from ._opencode import load_opencode_skill_inventory
     from ._optional_skills import CONDITIONAL_SKILLS
 
     try:
         inventory = load_opencode_skill_inventory(opencode_root)
-    except FileNotFoundError:  # trw-fail-silent-allow: None is "no inventory"; the sweep then skips opencode
+    except OSError:  # trw-fail-silent-allow: None is "unknown list"; the sweep and doctor then skip opencode
+        logger.info("opencode_inventory_unreadable", root=str(opencode_root), exc_info=True)
         return None
     return sorted(
         name

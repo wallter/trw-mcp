@@ -93,6 +93,7 @@ def step_pipeline_health_advisory(
     # avoid a load-time cycle with the parent, which re-exports this function.
     from trw_mcp.tools import _ceremony_session_start_steps as _parent
 
+    health: dict[str, object] | None = None
     try:
         # PRD-FIX-141-FR02: pass the SAME config the FR06 gate below evaluates,
         # so the compact advisory and the escalated warning cannot rest on two
@@ -140,10 +141,16 @@ def step_pipeline_health_advisory(
 
     # FR06 escalation: when the fail-closed gate trips, surface a prominent
     # structured warning. Fail-open: gate-eval errors never block session start.
+    # PRD-FIX-131-FR05: the gate judges the aggregate computed above instead of
+    # probing the store again. When that probe raised, the degradation is already
+    # recorded and a second probe could only return the gate's fail-open verdict,
+    # which injects nothing, so the gate is not run.
+    if health is None:
+        return
     try:
         from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
-        verdict = check_pipeline_health(trw_dir, config)
+        verdict = check_pipeline_health(trw_dir, config, health=health)
         if not bool(verdict.get("healthy")) and verdict.get("status") == "degraded":
             reasons = [str(r) for r in verdict.get("reasons", [])]
             primary_label, primary_last_success_at = _primary_target_identity(trw_dir)

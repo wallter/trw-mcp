@@ -45,6 +45,54 @@ def namespace_census(db_path: Path) -> dict[str, int] | None:
         return None
 
 
+_LABEL_BATCH = 1000
+
+
+def labelled_row_count(db_path: Path) -> int | None:
+    """Rows in the store labelled above ``team`` (PRD-SEC-023 FR05), a count only; ``None`` when the store cannot be read (refuse).
+
+    The archive is the whole store, so one such row refuses the upload. Each row is judged by the label policy on its namespace, tags and
+    stamp, read in batches so a large store is never held in memory at once.
+    """
+    import json
+
+    from trw_memory._live_stores import connect_registered
+    from trw_memory.labels import LabelPolicy, Sink
+    from trw_memory.models.entry_factory import new_entry
+
+    policy = LabelPolicy.current()
+    # Copied per row (model_construct resolves every default, ~1 ms a row); built by the entry factory, the one sanctioned
+    # constructor. A label-only probe, never stored: its id and node id are placeholders.
+    template = new_entry(entry_id="-", content="", namespace="default", local_node_id="label-probe")
+    labelled = 0
+    try:
+        conn = connect_registered(db_path, sqlite3, f"{db_path.as_uri()}?mode=ro", uri=True)
+        try:
+            cursor = conn.execute("SELECT namespace, tags, metadata FROM memories")
+            while batch := cursor.fetchmany(_LABEL_BATCH):
+                rows = [
+                    template.model_copy(
+                        update={
+                            "namespace": str(ns),
+                            "tags": json.loads(tags or "[]"),
+                            "metadata": json.loads(meta or "{}"),
+                        }
+                    )
+                    for ns, tags, meta in batch
+                ]
+                labelled += policy.admit(rows, Sink.PLATFORM).withheld
+        finally:
+            conn.close()
+    except (
+        sqlite3.Error,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ):  # trw-fail-silent-allow: None means unreadable, which refuses the upload (closed)
+        return None
+    return labelled
+
+
 def remote_upload_refusal(db_path: Path) -> str | None:
     """Why the store at *db_path* must not be uploaded, or ``None`` when it holds only the invoking project's rows."""
     census = namespace_census(db_path)

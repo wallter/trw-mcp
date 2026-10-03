@@ -245,7 +245,7 @@ def test_snapshot_failure_removes_partial_snapshot(tmp_path: Path) -> None:
     snapshot = tmp_path / "snapshot"
 
     with (
-        patch("trw_mcp.bootstrap._update_transaction.tempfile.mkdtemp", return_value=str(snapshot)),
+        patch("trw_mcp.bootstrap._update_transaction.new_snapshot_dir", return_value=snapshot),
         patch("trw_mcp.bootstrap._update_transaction.shutil.copytree", side_effect=OSError("copy failed")),
         pytest.raises(OSError, match="copy failed"),
     ):

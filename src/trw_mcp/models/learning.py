@@ -247,9 +247,6 @@ class LearningEntry(BaseModel):
     anchors: list[dict[str, object]] = Field(default_factory=list, description="Code symbol anchors")
     anchor_validity: float | None = Field(ge=0.0, le=1.0, default=None, description="Anchor validity score")
 
-    # PRD-FIX-052-FR02: Impact tier label (assigned during deliver tier sweep)
-    impact_tier: Literal["critical", "high", "medium", "low", "?"] = "?"
-
     # C5 FIX: Eval chain run attribution — identifies which run authored this
     # learning. Used by the eval/scoring consumer to distinguish self-authored
     # entries from tar-pipe-injected entries in chain evaluation runs.

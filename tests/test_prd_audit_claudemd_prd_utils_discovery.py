@@ -80,11 +80,18 @@ class TestDeepMergeEdgeCases:
 
     def test_non_dict_target_is_noop(self) -> None:
         # Calling _deep_merge on a non-dict target should not raise
-        _deep_merge("not a dict", {"key": "value"})
-        # No exception = success
+        source: dict[str, object] = {"key": "value"}
+        assert _deep_merge("not a dict", source) is None
+        assert source == {"key": "value"}  # the source is left untouched
+        # Contrast: the same source IS applied when the target is a dict.
+        target: dict[str, object] = {}
+        _deep_merge(target, source)
+        assert target == {"key": "value"}
 
     def test_non_dict_target_none_is_noop(self) -> None:
-        _deep_merge(None, {"key": "value"})
+        source: dict[str, object] = {"key": "value"}
+        assert _deep_merge(None, source) is None
+        assert source == {"key": "value"}
 
     def test_nested_dict_values_are_merged_recursively(self) -> None:
         target: dict[str, object] = {

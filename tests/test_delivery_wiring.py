@@ -203,7 +203,7 @@ def test_live_deferred_batch_finalizes_operation_failure(tmp_path, monkeypatch) 
     run_dir = _seed_run(tmp_path)
     did = make_uuid7()
 
-    with patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", side_effect=RuntimeError("boom")):
+    with patch("trw_mcp.tools._deferred_delivery._step_memory_decay", side_effect=RuntimeError("boom")):
         _deliver(tools, tmp_path, run_dir, delivery_id=did, capability_token=strong_capability())
         _join_deferred()
 

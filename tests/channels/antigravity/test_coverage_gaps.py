@@ -253,26 +253,21 @@ def test_install_ag02_exception_goes_to_errors(tmp_path: Path) -> None:
     assert any("AG-02" in e for e in result["errors"])
 
 
-def test_install_ag03_error_in_result(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels: AG-03 hook error in result dict (line 176-177)."""
+def test_install_ag03_is_withheld_not_errored(tmp_path: Path) -> None:
+    """UF-BOOT-08: the bootstrap does not call the legacy hook installer, so its failure
+    mode cannot reach the result dict; a failing legacy installer is never invoked."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
 
-    error_hook_result = {
-        "installed": False,
-        "skipped": False,
-        "error": "Permission denied on hooks.json",
-        "hook_script_path": ".antigravitycli/hooks/trw_before_edit_telemetry.py",
-        "hooks_json_path": ".antigravitycli/hooks.json",
-    }
+    error_hook_result = {"installed": False, "skipped": False, "error": "Permission denied on hooks.json"}
     with patch(
         "trw_mcp.channels.antigravity.install_before_edit_hook",
         return_value=error_hook_result,
-    ):
+    ) as legacy:
         result = install_antigravity_distill_channels(tmp_path)
 
-    # Hook error captured in errors list
-    assert any("AG-03" in e for e in result["errors"])
+    legacy.assert_not_called()
+    assert not any("AG-03" in e for e in result["errors"])
 
 
 def test_install_manifest_validation_error_captured(tmp_path: Path) -> None:

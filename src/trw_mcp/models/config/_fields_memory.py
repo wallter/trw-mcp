@@ -65,16 +65,6 @@ class _MemoryFields:
     memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)
     max_consolidated_tags: int = Field(default=20, ge=5)
 
-    # -- Tiered memory (CORE-043) --
-
-    memory_hot_max_entries: int = 50
-    memory_hot_ttl_days: int = 7
-    memory_cold_threshold_days: int = 90
-    memory_retention_days: int = 365
-    memory_score_w1: float = 0.4
-    memory_score_w2: float = 0.3
-    memory_score_w3: float = 0.3
-
     # -- Learning recall control (S7, PRD-CORE-125) --
 
     learning_recall_enabled: bool = True

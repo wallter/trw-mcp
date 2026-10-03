@@ -472,8 +472,6 @@ def served_recall(monkeypatch: pytest.MonkeyPatch) -> Callable[..., list[dict[st
     """
     from trw_mcp.tools import _recall_impl
 
-    monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda _query, rows: (rows, None))
-
     def serve(rows: list[dict[str, object]], *, inline: bool | None = None) -> list[dict[str, object]]:
         update: dict[str, object] = {"project_namespace": "project:home"}
         if inline is not None:

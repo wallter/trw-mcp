@@ -52,6 +52,15 @@ class TestDeliveryGateR08Wiring:
             result = _check_instruction_tool_parity_gate(run_path)
             assert result is None
 
+        # Contrast: with a mismatching AGENTS.md, a non-"all" mode does warn for the same run layout.
+        (tmp_path / "AGENTS.md").write_text("Use trw_dispatch() for diagnostics.\n")
+        mock_config.tool_resolution_mode = "standard"
+        with patch("trw_mcp.models.config.get_config", return_value=mock_config):
+            from trw_mcp.tools._delivery_helpers import _check_instruction_tool_parity_gate as gate
+
+            warned = gate(run_path)
+        assert warned is not None and "trw_dispatch" in warned
+
 
 class TestDeliveryGateFullIntegration:
     """Test R-08 gate through check_delivery_gates."""

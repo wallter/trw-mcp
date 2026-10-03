@@ -239,7 +239,15 @@ class TestBestEffortBuildCheck:
     def test_exception_in_resolve_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import trw_mcp.state._paths as _paths_mod
 
-        monkeypatch.setattr(_paths_mod, "resolve_trw_dir", lambda: (_ for _ in ()).throw(OSError("no dir")))
+        calls: list[int] = []
+
+        def _boom() -> Path:
+            calls.append(1)
+            raise OSError("no dir")
+
+        monkeypatch.setattr(_paths_mod, "resolve_trw_dir", _boom)
         failures: list[ValidationFailure] = []
         config = TRWConfig(build_check_enabled=True, build_gate_enforcement="strict")
         _best_effort_build_check(config, "validate", failures)
+        assert calls == [1]  # the failing resolver really ran
+        assert failures == []  # and the error was swallowed, not surfaced as a gate failure

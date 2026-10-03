@@ -108,7 +108,14 @@ def test_update_wrapper_preserves_update_project_patch_seam(tmp_path: Path) -> N
     with patch("trw_mcp.bootstrap._update_project._update_opencode_artifacts") as updater:
         integrations_mod._update_opencode(tmp_path, result, "opencode", {"a": "b"})
 
-    updater.assert_called_once_with(tmp_path, result, ide_override="opencode", manifest_hashes={"a": "b"})
+    assert updater.call_count == 1
+    assert updater.call_args.args == (tmp_path, result)
+    assert updater.call_args.kwargs == {"ide_override": "opencode", "manifest_hashes": {"a": "b"}}
+
+    # Contrast: different arguments are forwarded as given, not hard-coded.
+    with patch("trw_mcp.bootstrap._update_project._update_opencode_artifacts") as updater2:
+        integrations_mod._update_opencode(tmp_path, result, None, {})
+    assert updater2.call_args.kwargs == {"ide_override": None, "manifest_hashes": {}}
 
 
 def test_init_project_routes_client_artifacts_through_registry(monkeypatch, tmp_path: Path) -> None:
@@ -132,7 +139,7 @@ def test_init_project_routes_client_artifacts_through_registry(monkeypatch, tmp_
         init_mod.init_project(tmp_path, ide="copilot", force=True)
 
     assert calls == [(["copilot"], True)]
-    direct_installer.assert_not_called()
+    assert direct_installer.call_count == 0
 
 
 def test_update_post_phases_dispatches_registry_before_distill_channels(tmp_path: Path) -> None:

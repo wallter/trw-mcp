@@ -37,8 +37,9 @@ from trw_mcp.models.typed_dicts._ceremony import (
     InstructionWriteRefusalDict,
     InstructionWriteTrigger,
 )
+from trw_mcp.state.claude_md._marker_layout import ambiguous_marker_refusal
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
-from trw_mcp.state.claude_md._write_backup import BackupRefused, backup_instruction_file
+from trw_mcp.state.claude_md._write_backup import BackupRefused
 from trw_mcp.state.claude_md._write_measure import (
     build_diff,
     build_refusal,
@@ -46,7 +47,6 @@ from trw_mcp.state.claude_md._write_measure import (
     non_generated_bytes,
     warn_prior_truncation,
 )
-from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
@@ -151,6 +151,7 @@ def guarded_instruction_write(
     enforce_shrink_floor: bool = True,
     config: TRWConfig | None = None,
     project_root: Path | None = None,
+    expected_current: str | None = None,
 ) -> InstructionWriteVerdict:
     """Write *candidate* to *target* only if it destroys no user-authored content.
 
@@ -170,6 +171,10 @@ def guarded_instruction_write(
         config: Active configuration; resolved from ``get_config()`` when absent.
         project_root: Root used to contain the backup directory; resolved from
             ``state._paths`` when absent.
+        expected_current: The text the caller built *candidate* from. A file that no longer holds it changed
+            after the caller read it, and is left as found (CLAUDE-MD S1 codex r1: a stale candidate must never
+            overwrite a concurrent save). Independently, the file is re-read right before the publish, which
+            itself never replaces a save made at any later point.
 
     Returns:
         A :class:`InstructionWriteVerdict`. On refusal the target is
@@ -188,6 +193,26 @@ def guarded_instruction_write(
             written=False,
             refusal=build_refusal(target, "unreadable_target", exc.detail, lines=0, limit=0, counts=(0, 0, 0, 0)),
         )
+
+    if expected_current is not None and current != expected_current:
+        return InstructionWriteVerdict(
+            written=False,
+            refusal=build_refusal(
+                target,
+                "changed_since_read",
+                "the file changed after TRW read it; left as found, run the command again",
+                lines=0,
+                limit=0,
+                counts=(0, 0, 0, 0),
+            ),
+        )
+
+    if (
+        current is not None
+        and enforce_shrink_floor
+        and (ambiguous := ambiguous_marker_refusal(target, current, markers))
+    ):
+        return InstructionWriteVerdict(written=False, refusal=ambiguous)
 
     if current is not None:
         warn_prior_truncation(target, current)
@@ -220,36 +245,64 @@ def guarded_instruction_write(
         return InstructionWriteVerdict(written=False, total_lines=candidate_lines, diff=diff)
 
     backup_path: str | None = None
-    if current is not None and current != candidate:
-        # No backup for a byte-identical rewrite: a repeated sync must not grow
-        # the retention set (NFR02 idempotence).
+    if current != candidate:  # a byte-identical rewrite writes nothing and takes no backup (NFR02 idempotence)
+        from trw_mcp.state.claude_md._publish import publish
+        from trw_mcp.state.claude_md._write_backup import prepare_backup_dir
+
+        directory: Path | None = None
+        if current is not None:
+            try:  # fail-closed: no write without a contained, existing backup directory
+                directory = prepare_backup_dir(project_root, cfg.instruction_backup_dir)
+            except BackupRefused as exc:
+                logger.warning(
+                    "instruction_write_backup_refused", path=str(target), reason=exc.reason, detail=exc.detail
+                )
+                return InstructionWriteVerdict(
+                    written=False,
+                    refusal=build_refusal(
+                        target, exc.reason, exc.detail, lines=candidate_lines, limit=max_lines or 0, counts=counts
+                    ),
+                )
         try:
-            backup_path = backup_instruction_file(
-                target,
-                current,
-                project_root=project_root,
-                backup_dir=cfg.instruction_backup_dir,
-                retention=cfg.instruction_backup_retention,
-            )
+            still = _read_current(target)
         except BackupRefused as exc:
-            logger.warning("instruction_write_backup_refused", path=str(target), reason=exc.reason, detail=exc.detail)
+            still = exc.detail  # unreadable now: never equal to *current*, so the write is refused below
+        if still != current:
             return InstructionWriteVerdict(
                 written=False,
                 refusal=build_refusal(
-                    target, exc.reason, exc.detail, lines=candidate_lines, limit=max_lines or 0, counts=counts
+                    target,
+                    "changed_during_write",
+                    "the file changed while TRW was writing it; left as found, run the command again",
+                    lines=candidate_lines,
+                    limit=max_lines or 0,
+                    counts=counts,
                 ),
             )
-
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        FileStateWriter().write_text(target, candidate)
-    except (StateError, OSError) as exc:
-        return InstructionWriteVerdict(
-            written=False,
-            refusal=build_refusal(
-                target, "write_failed", str(exc), lines=candidate_lines, limit=max_lines or 0, counts=counts
-            ),
-        )
+        try:
+            # Never a compare-then-replace: the file is captured and re-proven, the new bytes are linked in, and the
+            # displaced file becomes the backup by rename (PUBLISH-RACE-HARDEN; see _publish).
+            published = publish(target, project_root, candidate, current, directory, cfg.instruction_backup_retention)
+        except (StateError, OSError) as exc:
+            return InstructionWriteVerdict(
+                written=False,
+                refusal=build_refusal(
+                    target, "write_failed", str(exc), lines=candidate_lines, limit=max_lines or 0, counts=counts
+                ),
+            )
+        if published.blocked is not None:
+            return InstructionWriteVerdict(
+                written=False,
+                refusal=build_refusal(
+                    target,
+                    "write_failed" if published.failed else "changed_during_write",
+                    published.blocked,
+                    lines=candidate_lines,
+                    limit=max_lines or 0,
+                    counts=counts,
+                ),
+            )
+        backup_path = str(published.backup) if published.backup is not None else None
 
     trigger, caller_tool = _TRIGGER.get()
     # info, not debug: debug is dropped entirely under the shipped default level,

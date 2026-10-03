@@ -39,18 +39,16 @@ def test_update_project_retires_a_disabled_optional_skill_in_a_real_repo(
     skill_md = root / ".claude" / "skills" / name / "SKILL.md"
     assert skill_md.is_file(), "enabled optional skill is installed"
     monkeypatch.setattr(_optional_skills, "skill_enabled", lambda n, *_a, **_k: n != name)
-    counts = []
-    for _ in range(2):  # a second update must neither re-deploy it nor grow the trash
+    for _ in range(2):  # a second update must not re-deploy it, and nothing is captured into trash
         update_project(root, ide="claude-code")
         assert not skill_md.exists()
-        counts.append(len(list((root / ".trw" / "trash").glob("*/data"))))
-    assert counts[0] >= 1 and counts[1] == counts[0]
+        assert not (root / ".trw" / "trash").exists()
 
 
-def test_retire_reports_each_trashed_file_for_the_uncommitted_changes_guard(
+def test_retire_reports_each_retired_file_for_the_uncommitted_changes_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """codex r1: without a trashed entry the guard can restore a just-retired skill in a real repo."""
+    """codex r1: without a retired entry the guard can restore a just-retired skill in a real repo."""
     from trw_mcp.bootstrap import _optional_skills
 
     root = tmp_path / "proj"
@@ -63,4 +61,4 @@ def test_retire_reports_each_trashed_file_for_the_uncommitted_changes_guard(
     monkeypatch.setattr("trw_mcp.bootstrap._client_skills.skill_files", lambda *_a, **_k: [("SKILL.md", b"shipped\n")])
     result: dict[str, list[str]] = {}
     _optional_skills.retire_disabled_skills(dest_root, tmp_path, result, ".claude/skills", project_root=root)
-    assert result["trashed"] == [f".claude/skills/{name}/SKILL.md"]
+    assert result["retired"] == [f".claude/skills/{name}/SKILL.md"]

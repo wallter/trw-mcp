@@ -102,7 +102,14 @@ class TestLogSurfaceEvent:
         blocker.write_text("not a dir")
         bad_trw_dir = blocker / "nested"
         # Should not raise
-        log_surface_event(bad_trw_dir, learning_id="L-err", surface_type="recall")
+        assert log_surface_event(bad_trw_dir, learning_id="L-err", surface_type="recall") is None
+        assert blocker.read_text() == "not a dir"  # the blocking file is untouched
+        assert not bad_trw_dir.exists()
+        # Contrast: a usable directory does record the event.
+        good = tmp_path / ".trw"
+        good.mkdir()
+        log_surface_event(good, learning_id="L-ok", surface_type="recall")
+        assert (good / "logs" / "surface_tracking.jsonl").exists()
 
     def test_surfaced_at_is_iso_format(self, tmp_path: Path) -> None:
         """surfaced_at field is a valid ISO 8601 timestamp."""
@@ -240,7 +247,8 @@ class TestRotation:
     def test_rotation_missing_file(self, tmp_path: Path) -> None:
         """Rotation on non-existent file is a no-op."""
         log_path = tmp_path / "nonexistent.jsonl"
-        _rotate_jsonl(log_path)  # Should not raise
+        assert _rotate_jsonl(log_path) is None
+        assert list(tmp_path.iterdir()) == []  # nothing was created, in particular no .1 backup
 
     def test_rotation_exactly_at_limit(self, tmp_path: Path) -> None:
         """File exactly at max_bytes is NOT rotated (only exceeding)."""

@@ -74,6 +74,8 @@ def print_done(target: Path, removed: int, remove_ide: str | None, delete_memory
 
     prune_scaffold_dirs(target, remove_ide)
     print(f"\n  Done. Removed {removed} item(s).")
+    for f, kept in previous_versions(target):
+        print(f"  Previous {display(f, target)} kept at {display(kept, target)}; delete it when satisfied.")
     if remove_ide:
         print(f"  {remove_ide} surfaces removed. Other clients and framework-core files are untouched.")
     else:
@@ -102,6 +104,31 @@ def report_custom_format_kept(path: Path, target: Path) -> int:
     return 1
 
 
+def stripped_note(path: Path, fallback: str) -> str:
+    """The parenthetical for a file uninstall took TRW's text out of: says when it is now empty (CLAUDE-MD S2);
+    otherwise *fallback*. Where its previous version is kept is said once, in the summary (print_done)."""
+    try:
+        if path.is_file() and not path.read_bytes().strip():
+            return "removed TRW's block; nothing else was in it, so it is kept, now empty"
+    except OSError:  # trw-fail-silent-allow: the plain note is still true; only the emptiness detail is lost
+        pass
+    return fallback
+
+
+def previous_versions(target: Path) -> list[tuple[Path, Path]]:
+    """Each (file, previous version kept in ``.trw/trash``) pair of this run in *target*, taken once.
+
+    A rewrite of CLAUDE.md or AGENTS.md moves the file it replaced into ``.trw/trash`` and never deletes it
+    (CLAUDE-MD S2); the summary names each one so the user can delete it when satisfied.
+    """
+    from trw_mcp.server._subcommands_uninstall_config import PREVIOUS_VERSIONS
+
+    mine = [(f, kept) for f, kept in PREVIOUS_VERSIONS.items() if f.is_relative_to(target) and os.path.lexists(kept)]
+    for f, _kept in mine:
+        PREVIOUS_VERSIONS.pop(f, None)
+    return mine
+
+
 def report_stripped(path: Path, target: Path) -> int:
     """The line for a config uninstall rewrote; return the error count (1 when edited TRW hooks remain).
 
@@ -112,7 +139,7 @@ def report_stripped(path: Path, target: Path) -> int:
 
     left = KEPT_EDITED.get(path)
     if not left:
-        print(f"  Cleaned: {display(path, target)} (removed TRW entries)")
+        print(f"  Cleaned: {display(path, target)} ({stripped_note(path, 'removed TRW entries')})")
         return 0
     print(
         f"  Kept: {display(path, target)} (removed TRW entries, but kept {len(left)} TRW hook(s) you edited, "

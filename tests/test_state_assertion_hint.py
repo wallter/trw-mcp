@@ -118,11 +118,6 @@ class TestDefectRecordsAreNotStateAssertions:
             id="L-Rikf-health-contradiction",
         ),
         pytest.param(
-            "Shipped Claude Code hook set: self-review.sh has a bash syntax error (line 51)",
-            "10 of 26 .claude/hooks/*.sh are referenced by no settings.json matcher",
-            id="L-1cHv-dead-hooks",
-        ),
-        pytest.param(
             "skill discovery strict mode rejects frontmatter fields Claude Code itself defines",
             "on 12 of 31 bundled skills, and its ranking counts stopwords as query matches",
             id="L-ODuU-skill-frontmatter",

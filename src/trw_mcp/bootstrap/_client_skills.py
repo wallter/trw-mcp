@@ -46,7 +46,6 @@ _COPILOT_SKILLS = frozenset(
         "trw-dry-check",
         "trw-feedback",
         "trw-learn",
-        "trw-prd-new",
         "trw-project-health",
         "trw-reflect",
         "trw-security-check",

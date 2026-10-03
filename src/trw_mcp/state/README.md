@@ -35,9 +35,6 @@
 ### Tier Lifecycle
 | Module | Lines | Owner | Purpose |
 |--------|-------|-------|---------|
-| `tiers.py` | 582 | **Primary** | Hot/Warm/Cold tier manager (TierManager class) |
-| `_tier_sweep.py` | 299 | Internal | Promotion/demotion algorithms |
-| `_tier_scoring.py` | — | Internal | Importance score computation |
 | `trust.py` | — | Primary | Progressive trust model |
 
 ### Ceremony & Nudges

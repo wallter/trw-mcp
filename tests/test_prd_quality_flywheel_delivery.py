@@ -112,7 +112,6 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
     noop = {"status": "skipped"}
     with (
         patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value=noop),
-        patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
         patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
         patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
         patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),

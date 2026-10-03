@@ -22,9 +22,6 @@ def _enter_standard_patches(stack: ExitStack, trw_dir: Path, entries: list[dict[
     stack.enter_context(patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None))
     stack.enter_context(patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)))
     stack.enter_context(patch("trw_mcp.tools._recall_impl._track_recall"))
-    stack.enter_context(
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda q, m: (list(m), None))
-    )
 
 
 # ---------------------------------------------------------------------------

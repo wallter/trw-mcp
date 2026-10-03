@@ -353,15 +353,15 @@ def _generate_root_files(
 
     if writes_surface(".mcp.json", ide_targets or [], explicit=ide_explicit):
         _merge_mcp_json(target_dir, result, on_progress)
-    # TRW 8.0: claude-code's carrier is AGENTS.md (Claude Code reads it
-    # natively); TRW writes no CLAUDE.md and never touches one (doctor's
-    # claude_md_masks_agents_md row reports one that hides AGENTS.md). A detected
-    # list is never authoritative here, because `detect_ide` reports cursor-ide
+    # claude-code's carrier is AGENTS.md (Claude Code reads it natively); TRW never creates a CLAUDE.md, and keeps
+    # only its marked block in one the project already has, because Claude Code skips AGENTS.md while a CLAUDE.md
+    # exists (link_claude_md). A detected list is never authoritative here, because `detect_ide` reports cursor-ide
     # from `shutil.which("cursor")`.
-    from ._template_claude_md import claude_code_is_claimed, write_claude_code_agents_md
+    from ._template_claude_md import claude_code_is_claimed, link_claude_md, write_claude_code_agents_md
 
     if claude_code_is_claimed(target_dir, ide_targets if ide_explicit else None):
         write_claude_code_agents_md(target_dir, result)
+        link_claude_md(target_dir, result)
     _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress, root=target_dir)
 
 
@@ -571,7 +571,7 @@ def _run_init_phases(
             result["created"].extend(cc_dc.get("created", []))
             result.setdefault("skipped", []).extend(cc_dc.get("preserved", []))
             result["errors"].extend(cc_dc.get("errors", []))
-            for _key in ("removed", "warnings", "trashed"):  # CC-03 withdrawal outcomes
+            for _key in ("removed", "warnings", "retired"):  # CC-03 withdrawal outcomes
                 result.setdefault(_key, []).extend(cc_dc.get(_key, []))
         except Exception as _exc:  # justified: fail-open, distill channels are additive
             result.setdefault("warnings", []).append(f"claude-code distill channels skipped: {_exc}")

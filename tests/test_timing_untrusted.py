@@ -56,8 +56,11 @@ def test_at_least_miss_above_limit_is_untrusted_in_gate_mode(monkeypatch: pytest
 
 def test_met_budget_passes_at_any_load(monkeypatch: pytest.MonkeyPatch) -> None:
     _load(monkeypatch, 99.0)
+    before = len(_timing.RECORDS)
     _call("op", 100.0, 250.0, "ms")
     _call("rate", 20.0, 10.0, "ops/s", at_least=True)
+    # Both met measurements are recorded as ok, however loaded the host.
+    assert [r["ok"] for r in _timing.RECORDS[before:]] == [True, True]
 
 
 @pytest.mark.parametrize(("env", "load", "untrusted"), [("1000", 25.0, False), ("5", 6.0, True), ("junk", 15.0, True)])

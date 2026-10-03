@@ -6,15 +6,16 @@ and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
   - .agents/agents/trw-distill-explorer.md                       (AG-02 T1 stub; PRD-CORE-252 destination)
-  - .antigravitycli/hooks.json                                   (AG-03 PreToolUse hook entry)
-  - .antigravitycli/hooks/trw_before_edit_telemetry.py           (AG-03 hook script)
   - .trw/channels/manifest.yaml                                  (three AG channel entries merged)
 
 AG-01 ANTIGRAVITY.md segment is a runtime channel managed by
 ``render_antigravity_distill_segment()`` — no stub file is written at install.
-AG-03 before-edit hook empirically confirmed 2026-05-28 (agy v1.0.2):
-  hooks file is .antigravitycli/hooks.json (separate from settings.json),
-  event key "PreToolUse", format {"PreToolUse": [{"matcher": "...", "command": "..."}]}.
+AG-03 before-edit hook is NOT written (UF-BOOT-08, 2026-10-02). It was confirmed only on
+agy v1.0.2 (.antigravitycli/hooks.json, flat schema); agy 1.2.14 lists hooks from
+<workspace>/.agents/hooks.json in a grouped named-hook schema
+({"<name>": {"PreToolUse": [{"matcher", "hooks": [{"type", "command"}]}]}}) and does not
+list the legacy file. The step logs ``ag03_hook_skipped``; ``trw-mcp doctor``'s
+``antigravity_hook`` row reports installs left by earlier versions.
 AG-04 is a telemetry pull channel — no file written.
 
 PRD-DIST-2404 FR41-FR43.
@@ -80,6 +81,7 @@ def install_antigravity_distill_channels(
     """Install all Antigravity CLI distill channel artifacts.
 
     Installs the AG-02 explorer subagent file and merges channel manifest entries.
+    The AG-03 hook is withheld (see the module docstring).
 
     Args:
         target_dir: Repository root directory.
@@ -132,26 +134,21 @@ def install_antigravity_distill_channels(
         log.warning("ag02_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"AG-02 subagent install failed: {exc}")
 
-    # 2. Install AG-03 before-edit hook
-    #    Empirically confirmed 2026-05-28: hooks.json is separate from settings.json,
-    #    event key "PreToolUse", format {"PreToolUse": [{"matcher": "...", "command": "..."}]}
-    try:
-        from trw_mcp.channels.antigravity import install_before_edit_hook
-
-        hook_result = install_before_edit_hook(target_dir, overwrite=force)
-        hook_script_rel = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
-        hooks_json_rel = ".antigravitycli/hooks.json"
-        if hook_result.get("skipped"):
-            result["preserved"].append(hook_script_rel)
-            result["preserved"].append(hooks_json_rel)
-        elif hook_result.get("installed"):
-            result["created"].append(hook_script_rel)
-            result["created"].append(hooks_json_rel)
-        elif hook_result.get("error"):
-            result["errors"].append(f"AG-03 hook install failed: {hook_result['error']}")
-    except Exception as exc:  # justified: fail-open, hook is best-effort
-        log.warning("ag03_hook_install_failed", error=str(exc), outcome="warning")
-        result["errors"].append(f"AG-03 hook install failed: {exc}")
+    # 2. AG-03 before-edit hook: WITHHELD (UF-BOOT-08). The installer wrote the hook to
+    #    .antigravitycli/hooks.json in a flat schema confirmed only on agy v1.0.2. agy 1.2.14
+    #    (checked 2026-10-02 with `agy -p /hooks` in a scratch workspace) lists hooks from
+    #    <workspace>/.agents/hooks.json in a grouped, named-hook schema and does not list the
+    #    legacy file, and the hook script's camelCase/decision contract differs too. Writing a
+    #    registration agy never reads is worse than none, and a guessed schema is not allowed,
+    #    so nothing is written until the installer, uninstall surfaces and managed-artifact
+    #    recorder are moved together. `trw-mcp doctor` (antigravity_hook) flags old installs.
+    log.info(
+        "ag03_hook_skipped",
+        reason="unverified_path_and_schema",
+        agy_reads=".agents/hooks.json (grouped named-hook schema, agy 1.2.14)",
+        legacy_path=".antigravitycli/hooks.json",
+        outcome="skipped",
+    )
 
     # 3. Bootstrap channel manifest (four antigravity channel entries)
     try:

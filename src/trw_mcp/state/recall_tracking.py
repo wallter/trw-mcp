@@ -20,7 +20,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp._locking import _lock_ex, _lock_un
+from trw_mcp._checkout_write import append_checkout_file
 from trw_mcp.state._helpers import rotate_jsonl
 from trw_mcp.state._paths import resolve_trw_dir
 
@@ -59,13 +59,7 @@ def _append_rows(trw_dir: Path, rows: list[dict[str, object]]) -> None:
     # PRD-FIX-085 FR04: rotate before append.
     rotate_jsonl(tracking_path, max_bytes=_ROTATION_THRESHOLD_BYTES)
     payload = "".join(json.dumps(row) + "\n" for row in rows)
-    with tracking_path.open("a", encoding="utf-8") as fh:
-        _lock_ex(fh.fileno())
-        try:
-            fh.write(payload)
-            fh.flush()
-        finally:
-            _lock_un(fh.fileno())
+    append_checkout_file(trw_dir, tracking_path, payload, lock=True)  # a planted link is refused (AIKIDO 2a)
 
 
 def append_receipts(

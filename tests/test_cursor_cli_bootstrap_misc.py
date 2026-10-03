@@ -111,10 +111,17 @@ class TestTypeAnnotations:
         assert len(_CLI_HOOK_EVENTS) == 5
 
     def test_cursor_cli_permissions_typeddict_importable(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import CursorCliPermissions  # noqa: F401
+        from trw_mcp.bootstrap._cursor_cli import CursorCliPermissions
+
+        assert set(CursorCliPermissions.__annotations__) == {"allow", "deny"}
+        assert CursorCliPermissions.__required_keys__ == {"allow", "deny"}
 
     def test_cursor_cli_config_typeddict_importable(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import CursorCliConfig  # noqa: F401
+        from trw_mcp.bootstrap._cursor_cli import CursorCliConfig
+
+        # Only "permissions" is emitted (cursor-agent rejects unknown top-level keys), all optional.
+        assert set(CursorCliConfig.__annotations__) == {"permissions"}
+        assert CursorCliConfig.__required_keys__ == frozenset()
 
 
 class TestCursorCliDetectionNegative:

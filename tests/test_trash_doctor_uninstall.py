@@ -183,11 +183,12 @@ def test_empty_trash_and_trw_are_rmdired(tmp_path: Path, capsys: pytest.CaptureF
 
 
 @pytest.mark.usefixtures("no_memory_daemon")
-def test_empty_trash_in_keep_memory_mode_is_rmdired_and_corpus_kept(tmp_path: Path) -> None:
+def test_a_preexisting_empty_trash_in_keep_memory_mode_is_kept_with_the_corpus(tmp_path: Path) -> None:
+    """``--keep-memory`` keeps ``.trw``, so a trash that was there before uninstall is not its to remove (S1 red team)."""
     _project(tmp_path, corpus=True)
     (tmp_path / ".trw" / "trash").mkdir()
     _run_uninstall(_ns(tmp_path, keep_memory=True))
-    assert not (tmp_path / ".trw" / "trash").exists()
+    assert (tmp_path / ".trw" / "trash").is_dir()
     assert (tmp_path / ".trw" / "memory" / "memory.db").read_bytes() == b"db"
 
 

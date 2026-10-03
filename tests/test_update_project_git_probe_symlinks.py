@@ -580,9 +580,9 @@ def test_only_a_clear_submodule_of_this_project_counts_as_a_submodule(tmp_path: 
 
 @pytest.mark.parametrize("nested", [".claude/agents/locked", ".claude/team-notes/locked"], ids=["owned", "unmanaged"])
 def test_rollback_restore_preserves_an_unreadable_nested_dir_in_a_managed_root(tmp_path: Path, nested: str) -> None:
-    """Production restore (``_restore_transaction_snapshot``) over a managed root holding an unreadable
+    """Production rollback (``_update_project._rollback``) over a managed root holding an unreadable
     user dir: TRW's own files are restored from the snapshot, the unreadable dir is kept, nothing raises."""
-    from trw_mcp.bootstrap._update_transaction import _restore_transaction_snapshot
+    from trw_mcp.bootstrap._update_project import _rollback
 
     target, snapshot = tmp_path / "project", tmp_path / "snapshot"
     for root in (target, snapshot):
@@ -594,7 +594,7 @@ def test_rollback_restore_preserves_an_unreadable_nested_dir_in_a_managed_root(t
     (locked / "user.txt").write_text("user bytes\n", encoding="utf-8")
 
     with unreadable(locked):
-        _restore_transaction_snapshot(target, snapshot)
+        _rollback(target, snapshot, {"warnings": [], "errors": []})
 
     assert (target / ".claude" / "agents" / "trw-lead.md").read_text(encoding="utf-8") == "snapshotted\n"
     assert (locked / "user.txt").read_text(encoding="utf-8") == "user bytes\n"

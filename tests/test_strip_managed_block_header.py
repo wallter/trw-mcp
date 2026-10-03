@@ -130,13 +130,14 @@ class TestUninstallRemovesHeader:
         assert sibling.read_text() == "untouched"
         assert_user_bytes_preserved({d: n for d, n in before.items() if "keep.txt" in n}, tmp_path)
 
-    def test_header_only_file_after_strip_is_removed_not_left_as_header(self, tmp_path: Path) -> None:
+    def test_header_only_agents_md_after_strip_is_kept_empty_not_left_as_header(self, tmp_path: Path) -> None:
+        """CLAUDE-MD S2: a project's AGENTS.md is never deleted; emptied, it stays, without TRW's header."""
         from trw_mcp.server._subcommands_uninstall_config import _remove_managed_block_file
 
         target = tmp_path / "AGENTS.md"
         target.write_text(f"{_header()}\n{START}\nmanaged\n{END}\n")
-        assert _remove_managed_block_file(target, tmp_path, dry_run=False) == "removed"
-        assert not target.exists()
+        assert _remove_managed_block_file(target, tmp_path, dry_run=False) == "stripped"
+        assert target.read_text() == ""
 
     def test_dry_run_does_not_modify(self, tmp_path: Path) -> None:
         from trw_mcp.server._subcommands_uninstall_config import _remove_managed_block_file

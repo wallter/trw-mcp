@@ -264,6 +264,8 @@ def _apply_sync_push_field(result: TrwStatusDict) -> None:
         "last_push_at": health.get("last_push_at"),
         "advisory": str(health.get("advisory") or ""),
     }
+    if health.get("rejected"):
+        result["sync_push"]["rejected"] = health["rejected"]
 
 
 def _apply_nudge_pool_weights(result: TrwStatusDict, state_data: dict[str, object]) -> None:

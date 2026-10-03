@@ -184,7 +184,7 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
-        return_value=[SimpleNamespace(id="L-1", sync_seq=5)],
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=5)],
     )
     client._mark_synced = MagicMock()
 
@@ -203,8 +203,9 @@ async def test_per_target_failure_isolation(tmp_path) -> None:
     # secondary was the broken one).
     client._mark_synced.assert_not_called()
     assert client._coordinator.record_sync_failure.call_args_list == [
-        call("primary target api.trwframework.com push error"),
-        call("primary target api.trwframework.com push error"),
+        # INC-147: the failure also names the server's reason.
+        call("primary target api.trwframework.com push error (ConnectionError: refused)"),
+        call("primary target api.trwframework.com push error (ConnectionError: refused)"),
     ]
     client._coordinator.record_outcome_push_success.assert_not_called()
 
@@ -226,7 +227,7 @@ async def test_fanout_reports_partial_error_for_payload_failures() -> None:
         pusher_map={"localhost": pusher},
         batch_size=100,
         timeout=5.0,
-        dirty=[SimpleNamespace(id="L-1", sync_seq=1)],
+        dirty=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=1)],
         outcomes=[],
     )
 
@@ -282,16 +283,22 @@ async def test_429_on_one_target_does_not_stop_others(tmp_path) -> None:
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
-        return_value=[SimpleNamespace(id="L-1", sync_seq=5)],
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=5)],
     )
     client._mark_synced = MagicMock()
 
-    await client._run_one_cycle()
+    outcome = await client._run_one_cycle()
 
-    secondary.push_learnings.assert_called_once()
-    client._mark_synced.assert_not_called()
+    assert outcome == "push_failed"
+    # The secondary was still offered exactly the dirty batch the primary failed on.
+    assert secondary.push_learnings.call_count == 1
+    assert [e.id for e in secondary.push_learnings.call_args.args[0]] == ["L-1"]
+    assert client._mark_synced.call_count == 0
+    assert client._coordinator.record_sync_success.call_count == 0
     # PRD-FIX-125-FR01: primary-keyed failure message (was "1 of 2 targets failed").
-    client._coordinator.record_sync_failure.assert_called_once_with("primary target api.trwframework.com push error")
+    client._coordinator.record_sync_failure.assert_called_once_with(
+        "primary target api.trwframework.com push error (HTTPStatusError: 429)"
+    )
 
 
 def _fanout_client(tmp_path):
@@ -338,7 +345,7 @@ async def test_secondary_failure_does_not_fail_the_cycle(tmp_path) -> None:
     client = _fanout_client(tmp_path)
     client._pusher = _pusher(PushResult(pushed=8, failed=0, skipped=0), PushResult())
     client._pushers["localhost"] = _pusher(PushResult(pushed=0, failed=8, skipped=0), PushResult())
-    dirty = [SimpleNamespace(id=f"L-{i}", sync_seq=i) for i in range(1, 9)]
+    dirty = [SimpleNamespace(namespace="default", tags=[], metadata={}, id=f"L-{i}", sync_seq=i) for i in range(1, 9)]
     client._get_dirty_entries = MagicMock(return_value=dirty)
 
     with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[]):
@@ -371,7 +378,7 @@ async def test_ack_slice_uses_primary_push_result(tmp_path) -> None:
     client = _fanout_client(tmp_path)
     client._pusher = _pusher(PushResult(pushed=0, failed=0, skipped=0), PushResult())
     client._pushers["localhost"] = _pusher(PushResult(pushed=8, failed=0, skipped=0), PushResult())
-    dirty = [SimpleNamespace(id=f"L-{i}", sync_seq=i) for i in range(1, 9)]
+    dirty = [SimpleNamespace(namespace="default", tags=[], metadata={}, id=f"L-{i}", sync_seq=i) for i in range(1, 9)]
     client._get_dirty_entries = MagicMock(return_value=dirty)
 
     with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[]):
@@ -389,7 +396,9 @@ async def test_primary_failure_message_names_the_primary(tmp_path) -> None:
     client = _fanout_client(tmp_path)
     client._pusher = _pusher(PushResult(pushed=0, failed=3, skipped=0), PushResult())
     client._pushers["localhost"] = _pusher(PushResult(pushed=3, failed=0, skipped=0), PushResult())
-    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=1)])
+    client._get_dirty_entries = MagicMock(
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=1)]
+    )
 
     with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[]):
         await client._run_one_cycle()
@@ -407,7 +416,9 @@ async def test_empty_report_is_not_success(tmp_path) -> None:
     from trw_mcp.sync._client_push import TargetPushOutcome
 
     client = _fanout_client(tmp_path)
-    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=1)])
+    client._get_dirty_entries = MagicMock(
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=1)]
+    )
     client._fanout_push = AsyncMock(return_value=({}, TargetPushOutcome()))
 
     with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[]):
@@ -438,7 +449,7 @@ async def test_ack_slice_does_not_count_outcome_inserts_toward_learnings(tmp_pat
         PushResult(pushed=8, failed=0, skipped=0),
     )
     client._pushers["localhost"] = _pusher(PushResult(), PushResult())
-    dirty = [SimpleNamespace(id=f"L-{i}", sync_seq=i) for i in range(1, 6)]
+    dirty = [SimpleNamespace(namespace="default", tags=[], metadata={}, id=f"L-{i}", sync_seq=i) for i in range(1, 6)]
     client._get_dirty_entries = MagicMock(return_value=dirty)
     outcomes = [PendingOutcome(payload={"session_id": f"s{i}"}, line_no=i) for i in range(1, 9)]
 
@@ -446,7 +457,10 @@ async def test_ack_slice_does_not_count_outcome_inserts_toward_learnings(tmp_pat
         await client._run_one_cycle()
 
     # Exactly the 2 the primary accepted — not 2 + the 8 outcome inserts.
-    client._mark_synced.assert_called_once_with(dirty[:2])
+    assert client._mark_synced.call_args_list == [call(dirty[:2])]
+    assert [e.id for e in client._mark_synced.call_args.args[0]] == ["L-1", "L-2"]
+    # The outcome path acknowledges its own list, up to its highest line.
+    assert client._coordinator.record_outcome_push_success.call_args_list == [call(8)]
 
 
 @pytest.mark.asyncio
@@ -469,10 +483,17 @@ async def test_outcomes_are_not_acked_when_the_primary_never_sent_them(tmp_path)
     client._get_dirty_entries = MagicMock(return_value=[])
     outcomes = [PendingOutcome(payload={"session_id": "s1"}, line_no=7)]
 
-    with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=outcomes):
-        await client._run_one_cycle()
+    with (
+        patch("trw_mcp.sync.client.load_pending_outcomes", return_value=outcomes),
+        patch("trw_mcp.sync.client._write_synced_markers") as write_markers,
+    ):
+        outcome = await client._run_one_cycle()
 
-    client._coordinator.record_outcome_push_success.assert_not_called()
+    assert outcome == "ok"
+    assert client._coordinator.record_outcome_push_success.call_count == 0
+    assert write_markers.call_count == 0
+    # With consent off no outcome payload was loaded, so none was offered to the primary.
+    assert client._pusher.push_outcomes.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -498,10 +519,17 @@ async def test_deduplicated_outcomes_still_advance_the_watermark(tmp_path) -> No
     client._get_dirty_entries = MagicMock(return_value=[])
     outcomes = [PendingOutcome(payload={"session_id": f"s{i}"}, line_no=i) for i in range(30, 38)]
 
-    with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=outcomes):
-        await client._run_one_cycle()
+    with (
+        patch("trw_mcp.sync.client.load_pending_outcomes", return_value=outcomes),
+        patch("trw_mcp.sync.client._write_synced_markers") as write_markers,
+    ):
+        outcome = await client._run_one_cycle()
 
-    client._coordinator.record_outcome_push_success.assert_called_once_with(37)
+    assert outcome == "ok"
+    assert client._coordinator.record_outcome_push_success.call_args_list == [call(37)]
+    # All eight offered outcomes are marked synced against the primary, not just those "inserted".
+    assert write_markers.call_args.args[0] == outcomes
+    assert write_markers.call_args.args[1] == "api.trwframework.com"
 
 
 @pytest.mark.asyncio

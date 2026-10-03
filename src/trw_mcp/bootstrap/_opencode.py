@@ -415,7 +415,7 @@ def generate_agents_md(
 
         if agents_md_path.exists() and pointer_skip_guard(agents_md_path, dry_run=True) is not None:
             result["preserved"].append("AGENTS.md")
-        elif agents_md_path.exists() and not force:
+        elif agents_md_path.exists():  # ``force`` too: it refreshes TRW's block, never the user's text (S1 B1)
             content = read_exact(agents_md_path)
             # Shared line-anchored replacer — never a raw substring scan.
             markers = ((_TRW_START_MARKER, "start"), (_TRW_END_MARKER, "end"))
@@ -432,12 +432,13 @@ def generate_agents_md(
                 content = append_block(content, new_block)
                 _guarded_agents_write(agents_md_path, content, target_dir, result)
             else:
-                result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
+                result["errors"].append(
+                    "AGENTS.md left untouched: its TRW markers are duplicated or unbalanced, so TRW cannot tell its "
+                    "own block from your text. Remove the stray trw:start/trw:end lines and re-run."
+                )
         else:
-            # Create-or-replace. Under ``force`` this replaces a hand-written file
-            # wholesale, so it goes through the guard like every other write:
-            # the pre-write bytes are backed up first, and without ``force`` the
-            # shrink floor refuses the replacement outright (PRD-FIX-123-FR06).
+            # Create only: no file is at the name. ``force`` never replaces an existing AGENTS.md wholesale (operator
+            # rule, CLAUDE-MD S1 red team B1); the guard still backs up whatever it finds and refuses a shrink.
             _guarded_agents_write(agents_md_path, new_block, target_dir, result, force=force)
     finally:
         try:

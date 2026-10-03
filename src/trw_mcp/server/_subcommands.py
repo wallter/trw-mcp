@@ -72,7 +72,7 @@ from trw_mcp.server._subcommands_release import (
 from trw_mcp.server._subcommands_release import (
     _run_version_status as _run_version_status,
 )
-from trw_mcp.server._update_report import print_trashed as _print_trashed
+from trw_mcp.server._update_report import print_retired as _print_retired
 from trw_mcp.server._update_report import report_kept
 
 logger = structlog.get_logger(__name__)
@@ -226,7 +226,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         # had NO errors — so the runs most likely to carry a warning were
         # exactly the runs that swallowed it.
         _print_warning_block(result.get("warnings", []))
-        _print_trashed(result.get("trashed", []), result.get("warnings", []), captures=result.get("trash_captures", []))
+        _print_retired(result.get("retired", []), result.get("warnings", []))
     report_kept(result, target, detailed=detailed, quiet=quiet)
     for e in result["errors"]:
         if detailed:

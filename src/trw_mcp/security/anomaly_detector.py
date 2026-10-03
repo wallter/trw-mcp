@@ -39,8 +39,14 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp._checkout_write import UnsafeWriteError, append_checkout_file, write_checkout_file
 from trw_mcp.security._anomaly_state import SHADOW_WINDOW_DAYS as SHADOW_WINDOW_DAYS
-from trw_mcp.security._anomaly_state import _ensure_shadow_clock, _state_unwritable
+from trw_mcp.security._anomaly_state import (
+    _ensure_shadow_clock,
+    _state_unwritable,
+    read_state_file,
+    state_persistable,
+)
 from trw_mcp.telemetry.event_base import MCPSecurityEvent
 from trw_mcp.telemetry.unified_events import emit as emit_unified_event
 
@@ -95,6 +101,9 @@ class AnomalyDetectorConfig(BaseModel):
     mode: Literal["shadow", "enforce"] = "shadow"
     sigma_threshold: float = Field(default=DEFAULT_SIGMA_THRESHOLD, gt=0.0)
     window_seconds: int = Field(default=DEFAULT_WINDOW_SECONDS, gt=0)
+    #: The project root every state read and write stays beneath (CORE-337-D): a symlinked component under it is
+    #: refused. ``None`` keeps the state in memory only.
+    checkout_root: Path | None = None
     shadow_clock_path: Path
     baseline_store_path: Path | None = None
     #: False for a stateless reviewer session (CODEX-P0-B-REVIEWER-WRITES): the shadow clock and the
@@ -183,6 +192,10 @@ class AnomalyDetector:
         # ``.trw/security/mcp_shadow_start.yaml`` in the caller's cwd); building
         # an app is still not a tool call.
         self._shadow_clock_ensured = False
+        # CORE-337-D: state is read and written only beneath a project root, descriptor-anchored and no-follow.
+        self._persist = state_persistable(config.checkout_root, config.persist_state)
+        if config.persist_state and not self._persist:
+            logger.warning("mcp_anomaly_state_in_memory", reason="no checkout root or no no-follow file support")
         self._load_arg_hash_baseline()
 
     def _remember_arg_hash(self, key: tuple[str, str], args_hash: str) -> None:
@@ -205,13 +218,19 @@ class AnomalyDetector:
 
     def _load_arg_hash_baseline(self) -> None:
         path = self._config.baseline_store_path
-        if path is None or not path.exists():
+        root = self._config.checkout_root
+        if path is None or root is None or not self._persist:
             return
         try:
-            lines = path.read_text().splitlines()
-        except OSError:
+            text = read_state_file(root, path)
+        except (
+            OSError,
+            ValueError,
+            UnsafeWriteError,
+        ):  # justified: boundary, a linked or unreadable store is skipped, never followed
             logger.warning("mcp_arg_baseline_load_failed", path=str(path), outcome="skipped")
             return
+        lines = (text or "").splitlines()
         for line in lines:
             try:
                 row = json.loads(line)
@@ -229,7 +248,7 @@ class AnomalyDetector:
 
     def _persist_arg_hash_baseline(self, obs: AnomalyObservation) -> None:
         path = self._config.baseline_store_path
-        if path is None or not obs.args_hash or not self._config.persist_state:
+        if path is None or not obs.args_hash or not self._persist:
             return
         payload = {
             "type": "arg_baseline",
@@ -241,13 +260,23 @@ class AnomalyDetector:
             "session_id": obs.session_id,
         }
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, sort_keys=True) + "\n")
-        except OSError as exc:  # trw-fail-silent-allow: a read-only sandbox must not fail the tool call; logged, baseline stays in memory
+            # Through the checkout adapter (CORE-337-D): a planted symlink at the store or any directory above it is
+            # refused, never appended through; the adapter creates missing directories without following a link.
+            append_checkout_file(self._state_root(), path, json.dumps(payload, sort_keys=True) + "\n")
+        except (
+            OSError,
+            UnsafeWriteError,
+        ) as exc:  # trw-fail-silent-allow: a read-only sandbox or a planted symlink must not fail the tool call; logged, baseline stays in memory
             _state_unwritable(path, exc)
             return
         self._roll_baseline_store(path)
+
+    def _state_root(self) -> Path:
+        """The project root; set whenever ``self._persist`` is (``state_persistable``)."""
+        root = self._config.checkout_root
+        if root is None:  # unreachable while self._persist holds; a None here would write beside the file instead
+            raise RuntimeError("anomaly detector state has no checkout root")
+        return root
 
     def _roll_baseline_store(self, path: Path) -> None:
         """Truncate the append-only baseline store to its most recent tail.
@@ -257,17 +286,21 @@ class AnomalyDetector:
         """
         cap = self._config.max_baseline_store_lines
         try:
-            lines = path.read_text().splitlines()
-        except OSError:  # justified: boundary, skip roll rather than crash the observe path
-            return
+            lines = (read_state_file(self._state_root(), path) or "").splitlines()
+        except (
+            OSError,
+            ValueError,
+            UnsafeWriteError,
+        ):
+            return  # trw-fail-silent-allow: skip the roll rather than fail the tool call; a linked store is never read
         if len(lines) <= cap:
             return
         tail = lines[-cap:]
-        tmp = path.with_suffix(path.suffix + ".tmp")
         try:
-            tmp.write_text("\n".join(tail) + "\n")
-            tmp.replace(path)
-        except OSError:  # justified: boundary, leave original file intact on roll failure
+            # An atomic replace beneath the root with an unpredictable temp name (CORE-337-D: a fixed <name>.tmp could
+            # be planted as a symlink and written through).
+            write_checkout_file(self._state_root(), path, "\n".join(tail) + "\n")
+        except (OSError, UnsafeWriteError):  # justified: boundary, leave original file intact on roll failure
             logger.warning("mcp_arg_baseline_roll_failed", path=str(path), outcome="skipped")
             return
         logger.info(
@@ -365,9 +398,9 @@ class AnomalyDetector:
 
     def observe(self, obs: AnomalyObservation) -> list[str]:
         """Process a single observation; return list of anomaly types emitted."""
-        if not self._shadow_clock_ensured and self._config.persist_state:
+        if not self._shadow_clock_ensured and self._persist:
             try:
-                _ensure_shadow_clock(self._config.shadow_clock_path, now=self._now_fn())
+                _ensure_shadow_clock(self._config.shadow_clock_path, root=self._state_root(), now=self._now_fn())
                 self._shadow_clock_ensured = True
             except OSError as exc:  # trw-fail-silent-allow: a read-only sandbox must not fail the tool call; logged, retried next call
                 _state_unwritable(self._config.shadow_clock_path, exc)

@@ -388,10 +388,11 @@ def test_antigravity_subagent_withheld_without_a_licence(tmp_path: Path) -> None
 
     assert not (tmp_path / ".agents" / "agents" / "trw-distill-explorer.md").exists()
     assert not (tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md").exists()
-    # ...while the distill-FREE before-edit hook still installs. The manifest
-    # calls ag-03 "aspirational / no implementation"; it is neither.
-    assert (tmp_path / ".antigravitycli" / "hooks" / "trw_before_edit_telemetry.py").exists(), (
-        "the AG-03 PreToolUse hook is distill-free and must NOT be gated"
+    # ...while the licence-free steps still run. UF-BOOT-08: the AG-03 hook itself is
+    # withheld for every project (agy 1.2.14 does not read its legacy path), licensed or not.
+    assert not (tmp_path / ".antigravitycli" / "hooks" / "trw_before_edit_telemetry.py").exists()
+    assert (tmp_path / ".trw" / "channels" / "manifest.yaml").exists(), (
+        "the licence-free manifest step must not be gated"
     )
 
 

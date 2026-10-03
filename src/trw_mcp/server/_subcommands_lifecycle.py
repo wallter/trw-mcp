@@ -23,6 +23,7 @@ from trw_mcp.server._subcommands_uninstall_config import (
 from trw_mcp.server._uninstall_corpus import (
     keep_memory_in_dir as _keep_memory_in_dir,
 )
+from trw_mcp.server._uninstall_corpus import note_preexisting_trash as _note_preexisting_trash
 from trw_mcp.server._uninstall_corpus import (
     print_corpus_warning as _print_corpus_warning,
 )
@@ -44,6 +45,7 @@ from trw_mcp.server._uninstall_report import (
     report_custom_format_kept,
     report_kept_trw,
     report_stripped,
+    stripped_note,
 )
 from trw_mcp.server._uninstall_trash_report import _move_matched_captures_to_os_trash
 
@@ -335,6 +337,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     removed = 0
     errors = 0
     refused: list[Path] = []
+    _note_preexisting_trash(target / ".trw")  # before anything is captured: a trash already there is kept
     if memory:
         try:
             deleted = _uninstall_memory.delete_checkout_memory(memory, target / ".trw")
@@ -407,7 +410,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             print(f"  Removed: {display(p, target)} (TRW-only file)")
         elif status == "stripped":
             removed += 1
-            print(f"  Cleaned: {display(p, target)} (removed TRW section)")
+            print(f"  Cleaned: {display(p, target)} ({stripped_note(p, 'removed TRW section')})")
         elif status == "refused":
             errors += 1
             refused.append(p)

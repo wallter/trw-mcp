@@ -59,8 +59,8 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[
-            SimpleNamespace(id="L-1", sync_seq=2),
-            SimpleNamespace(id="L-2", sync_seq=5),
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=2),
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-2", sync_seq=5),
         ]
     )
     client._mark_synced = MagicMock()
@@ -71,6 +71,28 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
         pushed=2,
         pulled=0,
         push_seq=5,
+        pull_seq=3,
+        pull_completed=True,
+    )
+    # Both accepted entries are marked synced, in dirty order.
+    client._mark_synced.assert_called_once()
+    assert [e.id for e in client._mark_synced.call_args.args[0]] == ["L-1", "L-2"]
+
+    # Control: with the highest seq first in the dirty page the recorded value is still the maximum
+    # (5 here is not just "the last entry" and 9 is not just "the first").
+    client._coordinator.record_sync_success.reset_mock()
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._get_dirty_entries = MagicMock(
+        return_value=[
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-3", sync_seq=9),
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-4", sync_seq=4),
+        ]
+    )
+    await client._run_one_cycle()
+    client._coordinator.record_sync_success.assert_called_once_with(
+        pushed=2,
+        pulled=0,
+        push_seq=9,
         pull_seq=3,
         pull_completed=True,
     )
@@ -111,7 +133,9 @@ async def test_run_one_cycle_pushes_pending_outcomes_after_learning_sync(tmp_pat
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
-    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=5)])
+    client._get_dirty_entries = MagicMock(
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=5)]
+    )
     client._mark_synced = MagicMock()
 
     await client._run_one_cycle()
@@ -142,8 +166,8 @@ async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(
         return_value=[
-            SimpleNamespace(id="L-1", sync_seq=2),
-            SimpleNamespace(id="L-2", sync_seq=5),
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=2),
+            SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-2", sync_seq=5),
         ]
     )
     client._mark_synced = MagicMock()
@@ -154,6 +178,21 @@ async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_
     client._coordinator.record_sync_failure.assert_called_once_with("push failed: 1 entries")
     client._coordinator.record_pull_success.assert_called_once_with(pull_seq=3)
     client._coordinator.record_sync_success.assert_not_called()
+    # Nothing the primary refused or accepted is recorded either.
+    client._coordinator.update_rejected.assert_not_called()
+
+    # Control: when the same push reports no failures, both entries are marked synced (so the
+    # dirty state above was held back by the failure count) and the max seq is recorded.
+    client._coordinator.reset_mock()
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=2, failed=0, skipped=0))
+    await client._run_one_cycle()
+    client._mark_synced.assert_called_once()
+    assert [e.id for e in client._mark_synced.call_args.args[0]] == ["L-1", "L-2"]
+    client._coordinator.record_sync_success.assert_called_once_with(
+        pushed=2, pulled=0, push_seq=5, pull_seq=3, pull_completed=True
+    )
+    client._coordinator.record_sync_failure.assert_not_called()
 
 
 @pytest.mark.asyncio

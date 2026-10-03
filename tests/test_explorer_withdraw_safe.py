@@ -1,8 +1,7 @@
-"""FS-LINT row 2: the CC-05 explorer-agent withdraw goes through ``remove_if_hash`` (HB-2).
+"""FS-LINT row 2: the CC-05 explorer-agent withdraw deletes in place, never into ``.trw/trash`` (HB-2).
 
-``withdraw_cc05_subagent_if_unedited`` used to hash the agent and then ``unlink`` it, so an edit saved in between
-(or a write through a held fd) was destroyed. It now shares ``cc05_explorer_user_edited`` with the installer for
-the edited verdict, captures the file into ``.trw/trash``, and re-verifies it there.
+A TRW-rendered (or recorded) agent is deleted; one git holds clean is deleted and named with its restore
+command; an uncommitted edit is kept and named with the command that removes it.
 """
 
 from __future__ import annotations
@@ -10,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
-from tests._fs_hazards import open_fd_writer
 
 
 def _agent(tmp_path: Path) -> tuple[Path, Path, bytes]:
@@ -25,18 +22,13 @@ def _agent(tmp_path: Path) -> tuple[Path, Path, bytes]:
     return root, agent, body
 
 
-def _trash(root: Path) -> list[bytes]:
-    trash = root / ".trw" / "trash"
-    return sorted(p.read_bytes() for p in trash.glob("*/data")) if trash.is_dir() else []
-
-
-def test_an_unedited_agent_moves_to_trash(tmp_path: Path) -> None:
+def test_an_unedited_agent_is_deleted_in_place(tmp_path: Path) -> None:
     from trw_mcp.channels.claude_code._explorer_subagent import withdraw_cc05_subagent_if_unedited
 
-    root, agent, body = _agent(tmp_path)
+    root, agent, _body = _agent(tmp_path)
     assert withdraw_cc05_subagent_if_unedited(root, None) is True
     assert not agent.exists()
-    assert _trash(root) == [body]
+    assert not (root / ".trw" / "trash").exists()
 
 
 def test_a_user_edited_agent_is_kept_and_nothing_is_trashed(tmp_path: Path) -> None:
@@ -46,38 +38,34 @@ def test_a_user_edited_agent_is_kept_and_nothing_is_trashed(tmp_path: Path) -> N
     agent.write_bytes(body + b"\nmy note\n")
     assert withdraw_cc05_subagent_if_unedited(root, None) is False
     assert agent.read_bytes() == body + b"\nmy note\n"
-    assert _trash(root) == []
+    assert not (root / ".trw" / "trash").exists()
 
 
-def test_an_edit_after_the_verdict_is_put_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Red on the old withdraw: it hashed, then unlinked whatever the name held at the act."""
-    from trw_mcp.bootstrap import _safe_remove
-    from trw_mcp.channels.claude_code._explorer_subagent import withdraw_cc05_subagent_if_unedited
+def test_a_git_clean_edited_agent_is_deleted_and_names_the_restore(tmp_path: Path) -> None:
+    import subprocess
+
+    from trw_mcp.channels.claude_code._explorer_subagent import (
+        EXPLORER_AGENT_RELPATH,
+        withdraw_cc05_subagent_if_unedited,
+    )
 
     root, agent, body = _agent(tmp_path)
-    real = _safe_remove.remove_if_hash
-
-    def edit_then_remove(path: Path, root_: Path, expected: str, **kw: object):  # type: ignore[no-untyped-def]
-        path.write_bytes(body + b"\nedited at the act\n")
-        return real(path, root_, expected, **kw)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(_safe_remove, "remove_if_hash", edit_then_remove)
-    assert withdraw_cc05_subagent_if_unedited(root, None) is False
-    assert agent.read_bytes() == body + b"\nedited at the act\n"
-
-
-def test_a_late_write_through_a_held_fd_lands_in_trash(tmp_path: Path) -> None:
-    from trw_mcp.channels.claude_code._explorer_subagent import withdraw_cc05_subagent_if_unedited
-
-    root, agent, _body = _agent(tmp_path)
-    with open_fd_writer(agent) as writer:
-        assert withdraw_cc05_subagent_if_unedited(root, None) is True
-        writer.write(b"late write\n")
-    assert _trash(root) == [b"late write\n"]
+    agent.write_bytes(body + b"\ncommitted note\n")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+    result: dict[str, list[str]] = {}
+    assert withdraw_cc05_subagent_if_unedited(root, None, result) is True
+    assert not agent.exists()
+    rel = EXPLORER_AGENT_RELPATH
+    assert (
+        f"{rel}: removed; your version differs from TRW's but is committed in git (restore: git restore -- {rel})"
+        in result["warnings"]
+    )
+    assert not (root / ".trw" / "trash").exists()
 
 
-def test_the_channel_installer_records_the_capture_as_trashed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The uncommitted-changes guard skips only paths reported as trashed; without it a real repo restores it."""
+def test_the_channel_installer_records_the_deletion_as_retired(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The uncommitted-changes guard skips only paths reported as retired; without it a real repo restores it."""
     from trw_mcp.bootstrap import _claude_code_distill_channels as channels
     from trw_mcp.channels.claude_code._explorer_subagent import EXPLORER_AGENT_RELPATH
 
@@ -85,7 +73,7 @@ def test_the_channel_installer_records_the_capture_as_trashed(tmp_path: Path, mo
     monkeypatch.setattr("trw_mcp.bootstrap._distill_entitlement.distill_artifacts_entitled", lambda **_k: False)
     result = channels.install_claude_code_distill_channels(root)
     assert not agent.exists()
-    assert EXPLORER_AGENT_RELPATH in result.get("trashed", [])
+    assert EXPLORER_AGENT_RELPATH in result.get("retired", [])
 
 
 def test_withdraw_uses_the_callers_pre_run_manifest_not_a_rewritten_one(
@@ -106,39 +94,5 @@ def test_withdraw_uses_the_callers_pre_run_manifest_not_a_rewritten_one(
     monkeypatch.setattr("trw_mcp.bootstrap._version_manifest._read_manifest", lambda _t: {"content_hashes": rewritten})
     result = channels.install_claude_code_distill_channels(root, manifest_hashes={})
     assert agent.read_bytes() == edited
-    assert "trashed" not in result
-
-
-def test_an_unreadable_agent_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from trw_mcp.channels.claude_code import _explorer_subagent as sub
-
-    root, agent, body = _agent(tmp_path)
-    monkeypatch.setattr(sub, "cc05_explorer_user_edited", lambda *_a: False)
-    real = Path.read_bytes
-
-    def denied(self: Path) -> bytes:
-        if self == agent:
-            raise PermissionError(13, "denied")
-        return real(self)
-
-    monkeypatch.setattr(Path, "read_bytes", denied)
-    assert sub.withdraw_cc05_subagent_if_unedited(root, None) is False
-    assert agent.exists()
-
-
-def test_an_edit_between_the_verdict_and_the_read_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """codex r1: the re-read hash must itself be proven, or an edit after the verdict would be withdrawn."""
-    from trw_mcp.channels.claude_code import _explorer_subagent as sub
-
-    root, agent, body = _agent(tmp_path)
-    real = sub.cc05_explorer_user_edited
-
-    def verdict_then_edit(repo_root: Path, hashes: dict[str, str] | None) -> bool:
-        verdict = real(repo_root, hashes)
-        agent.write_bytes(body + b"\nedited after the verdict\n")
-        return verdict
-
-    monkeypatch.setattr(sub, "cc05_explorer_user_edited", verdict_then_edit)
-    assert sub.withdraw_cc05_subagent_if_unedited(root, None) is False
-    assert agent.read_bytes() == body + b"\nedited after the verdict\n"
-    assert _trash(root) == []
+    assert "retired" not in result
+    assert any(w.endswith(f"rm {EXPLORER_AGENT_RELPATH}") for w in result["warnings"])

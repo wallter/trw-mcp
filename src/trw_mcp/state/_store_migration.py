@@ -237,6 +237,24 @@ def _source_rows(db: Path) -> tuple[dict[str, int], list[Any], int, int]:
         store.close()
 
 
+def _stamp_origin_project(work: Path, project: str, ids: list[str]) -> None:
+    """Record *project* as ``origin_project`` on the working copy's locally written rows (PRD-CORE-280 FR03).
+
+    Stamped only on a row with no ``remote_id``, no team or company source and no origin already recorded: a synced row
+    keeps what the server said, and an attributed one keeps its attribution; a row whose metadata is not valid JSON is left as it is (it migrated before this stamp existed). Only the rows being migrated (*ids*) are touched:
+    a system canary stays byte-identical, because its metadata is part of how it is recognised. The copy is private.
+    """
+    with contextlib.closing(sqlite3.connect(work)) as conn:
+        conn.executemany(
+            "UPDATE memories SET metadata = json_set(COALESCE(NULLIF(metadata, ''), '{}'), '$.origin_project', ?) "
+            "WHERE namespace = ? AND id = ? AND json_valid(COALESCE(NULLIF(metadata, ''), '{}')) "
+            "AND COALESCE(remote_id, '') = '' AND source NOT IN ('team_sync', 'company_sync') "
+            "AND COALESCE(json_extract(COALESCE(NULLIF(metadata, ''), '{}'), '$.origin_project'), '') = ''",
+            [(project, _SOURCE, entry_id) for entry_id in ids],
+        )
+        conn.commit()
+
+
 def _client(trw_dir: Path, namespace: str, paths: Any, *, mint: bool) -> Any:
     from trw_memory.daemon import mint_grant, read_checkout_grant, write_checkout_grant
     from trw_memory.daemon._grants import granted_namespaces
@@ -306,6 +324,7 @@ def apply_migration(trw_dir: Path) -> Path:
                 "rows": [_manifest_row(entry, namespace) for entry in rows],
             }
             _write_manifest(manifest_path, manifest)
+            _stamp_origin_project(work, namespace, [entry.id for entry in rows])
             client = _client(trw_dir, namespace, paths, mint=not pinned)
             reply = _call(client.import_checkout(namespace, str(work), [entry.id for entry in rows]))
             found, not_carried = reply["held"], sorted(reply.get("vectors_not_carried", []))

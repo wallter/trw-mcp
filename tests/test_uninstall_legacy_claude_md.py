@@ -1,9 +1,8 @@
-"""``trw-mcp uninstall`` and a legacy root ``CLAUDE.md`` (8.0 writes ``AGENTS.md`` instead).
+"""``trw-mcp uninstall`` and a root ``CLAUDE.md``.
 
-``update-project`` deletes a CLAUDE.md that holds only TRW content; uninstall
-must not leave that file behind, and must take TRW's marker block out of a
-CLAUDE.md the user also wrote in. User content is never deleted. Driven through
-the uninstall subcommand handler, whole-project and ``--ide claude-code`` alike.
+Uninstall takes TRW's marker block out of a ``CLAUDE.md`` and never deletes the file (CLAUDE-MD S2, operator P0
+2026-10-01): one that held only TRW's block is left empty, a pointer or scaffold line stays. Driven through the
+uninstall subcommand handler, whole-project and ``--ide claude-code`` alike.
 """
 
 from __future__ import annotations
@@ -46,13 +45,15 @@ def _uninstall(root: Path, *, ide: str | None, dry_run: bool = False) -> None:
         pytest.param("@AGENTS.md\n", id="pointer-only"),
     ],
 )
-def test_a_trw_only_legacy_claude_md_is_removed(project: Path, ide: str | None, content: str) -> None:
+def test_a_trw_only_legacy_claude_md_is_kept_without_trws_block(project: Path, ide: str | None, content: str) -> None:
     claude_md = project / "CLAUDE.md"
     claude_md.write_text(content, encoding="utf-8")
 
     _uninstall(project, ide=ide)
 
-    assert not claude_md.exists()
+    text = claude_md.read_text(encoding="utf-8")
+    assert "trw:start" not in text and "TRW protocol text" not in text
+    assert text.strip() == content.replace(_BLOCK, "").strip()
 
 
 @pytest.mark.parametrize("ide", _SCOPES)

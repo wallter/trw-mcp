@@ -730,7 +730,7 @@ class TestExposureRecording:
         self._learn(DEFAULT_TOP_N)
         watched = {"recall_tracking.jsonl", "surface_tracking.jsonl", "session_outcomes.jsonl"}
         opens: list[tuple[str, str]] = []
-        real_path_open, real_open = Path.open, builtins.open
+        real_path_open, real_open, real_os_open = Path.open, builtins.open, os.open
 
         def _note(target: object, mode: str) -> None:
             name = Path(str(target)).name
@@ -746,7 +746,15 @@ class TestExposureRecording:
                 _note(file, mode)
             return real_open(file, mode, *args, **kwargs)
 
+        def os_open(file: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            # the checkout writer appends through os.open(..., dir_fd=) (AIKIDO 2a): O_APPEND counts as an append
+            fd = real_os_open(file, flags, *args, **kwargs)  # a failed create-probe open is no append
+            if isinstance(file, (str, Path)):
+                _note(file, "a" if flags & os.O_APPEND else ("w" if flags & (os.O_WRONLY | os.O_RDWR) else "r"))
+            return fd
+
         monkeypatch.setattr(Path, "open", path_open)
+        monkeypatch.setattr(os, "open", os_open)
         monkeypatch.setattr(builtins, "open", plain_open)
         result = compute_before_edit_hint(file_path="app.py")
         monkeypatch.undo()

@@ -313,15 +313,15 @@ class TestUninstallRegistryProfiles:
         assert agents.exists()
         assert agents.read_text() == "# Pure user AGENTS.md\nno trw markers\n"
 
-    def test_managed_block_only_file_is_deleted(self, tmp_path: Path) -> None:
-        """If stripping the TRW block empties the file, the file is removed."""
+    def test_managed_block_only_agents_md_is_kept_empty(self, tmp_path: Path) -> None:
+        """CLAUDE-MD S2: stripping the TRW block empties AGENTS.md, and the file stays, empty."""
         agents = tmp_path / "AGENTS.md"
         agents.write_text("<!-- trw:start -->\nonly trw\n<!-- trw:end -->\n")
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        assert not agents.exists()
+        assert agents.read_text() == ""
 
     def test_dry_run_does_not_strip_managed_block(self, tmp_path: Path) -> None:
         """Dry run leaves managed-block files unchanged."""
@@ -529,6 +529,13 @@ class TestUninstallHookGroupAndMergedSurfaces:
         from trw_mcp.channels.antigravity._before_edit_hook import _AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH
 
         (tmp_path / ".git").mkdir()
+        from trw_mcp.channels.antigravity import install_before_edit_hook
+
+        result = init_project(tmp_path, ide="antigravity-cli")
+        assert not result["errors"], result["errors"]
+        # UF-BOOT-08: init no longer writes the hook; reproduce an install left by an older
+        # TRW, then let a second init record it in the manifest (as the old init did).
+        assert install_before_edit_hook(tmp_path)["installed"]
         result = init_project(tmp_path, ide="antigravity-cli")
         assert not result["errors"], result["errors"]
         hooks_json = tmp_path / AG03_HOOKS_PATH
@@ -1482,6 +1489,12 @@ _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER: tuple[tuple[str, str], ...] = (
         "PRD-CORE-252 moved antigravity's subagents to `.agents/agents`, the "
         "directory that client's own reference documents; the surface is "
         "retained to clean up installs that predate the move",
+    ),
+    (
+        ".antigravitycli/hooks",
+        "UF-BOOT-08: agy 1.2.14 reads hooks from `.agents/hooks.json`, so the bootstrap "
+        "no longer writes the AG-03 script here; the surface is retained to clean up "
+        "installs that predate the change",
     ),
 )
 

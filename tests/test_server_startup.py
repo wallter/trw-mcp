@@ -322,6 +322,11 @@ class TestCrashWrapper:
         with patch("pathlib.Path.cwd", return_value=tmp_path):
             _crash_log(err)
 
+        # Best-effort log write still happened: the directory and file were created.
+        crash_file = tmp_path / ".trw" / "logs" / "crash.log"
+        assert crash_file.is_file()
+        assert "RuntimeError: no dir" in crash_file.read_text()
+
 
 # ── Argument parser ──────────────────────────────────────────────────
 
@@ -474,11 +479,29 @@ class TestCliSubcommandOutput:
 class TestLoggingConfig:
     """Verify logging can be configured without errors."""
 
+    @staticmethod
+    def _clear_level_env(monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    @staticmethod
+    def _renderer_type() -> type:
+        import structlog
+
+        return type(structlog.get_config()["processors"][-1])
+
     def test_configure_logging_normal(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
+        self._clear_level_env(monkeypatch)
+        monkeypatch.delenv("TRW_DEBUG", raising=False)
         configure_logging(debug=False)
+        assert logging.getLogger().level == logging.INFO
+        # No file sink and no log directory without debug/log_dir.
+        assert not (tmp_path / ".trw" / "logs").exists()
 
     def test_configure_logging_debug(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp._logging import configure_logging
@@ -489,37 +512,54 @@ class TestLoggingConfig:
         assert log_dir.is_dir(), "Debug logging should create .trw/logs/"
 
     def test_configure_logging_verbosity(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
+        self._clear_level_env(monkeypatch)
         # verbosity=1 → DEBUG level
         configure_logging(verbosity=1)
+        assert logging.getLogger().level == logging.DEBUG
 
     def test_configure_logging_quiet(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
+        self._clear_level_env(monkeypatch)
         # verbosity=-1 → WARNING level (quiet mode)
         configure_logging(verbosity=-1)
+        assert logging.getLogger().level == logging.WARNING
 
     def test_configure_logging_env_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import logging
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("TRW_LOG_LEVEL", "ERROR")
         configure_logging()
+        assert logging.getLogger().level == logging.ERROR
 
     def test_configure_logging_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import structlog
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=True)
+        assert self._renderer_type() is structlog.processors.JSONRenderer
 
     def test_configure_logging_console_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import structlog
+
         from trw_mcp._logging import configure_logging
 
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=False)
+        assert self._renderer_type() is structlog.dev.ConsoleRenderer
 
 
 # ── Middleware ────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,13 +47,21 @@ class TestUtilityBasedPruneCandidatesTier3:
         from trw_mcp.scoring import utility_based_prune_candidates
 
         test_config = TRWConfig()
+        # Pin the thresholds so the entry sits between delete and prune levels (tier 3, not tier 2).
+        object.__setattr__(test_config, "learning_utility_delete_threshold", 0.0)
+        object.__setattr__(test_config, "learning_utility_prune_threshold", 0.99)
 
         with patch("trw_mcp.scoring._recall_prune.get_config", return_value=test_config):
-            entry = self._make_entry("L-t3b", "2025-12-15", impact=0.45)
-            utility_based_prune_candidates([entry])
             old_entry = self._make_entry("L-t3c", "2025-09-01", impact=0.35)
             result = utility_based_prune_candidates([old_entry])
-            assert isinstance(result, list)
+            # Contrast: an entry created today is inside the 14-day grace window and is not nominated.
+            fresh = self._make_entry("L-t3-fresh", datetime.now(tz=timezone.utc).date().isoformat(), impact=0.35)
+            fresh_result = utility_based_prune_candidates([fresh])
+
+        assert [r["id"] for r in result] == ["L-t3c"]
+        assert result[0]["suggested_status"] == "obsolete"
+        assert "prune threshold" in result[0]["reason"]
+        assert fresh_result == []
 
     def test_tier3_reason_contains_prune_threshold(self) -> None:
         """Tier 3 candidate reason mentions 'prune threshold'."""

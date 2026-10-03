@@ -75,11 +75,14 @@ class TestRetiredNameNeedsAuthorshipProof:
         assert result["preserved"]
 
     def test_extra_unrecorded_file_inside_the_dir_blocks_removal(self, tmp_path: Path) -> None:
-        """FR01: every regular file under the artifact must be proven, not just SKILL.md."""
+        """FR01 (PRD-CORE-352 file-granular retirement): each file is judged on its own proof. The proven SKILL.md
+        goes, the unrecorded file stays untouched with its directory, and the artifact is reported as preserved."""
         skill = _project_with_retired_skill(tmp_path)
-        (skill.parent / "notes.md").write_text("mine\n", encoding="utf-8")
+        notes = skill.parent / "notes.md"
+        notes.write_text("mine\n", encoding="utf-8")
         result = _run(tmp_path, {f"{RETIRED}/SKILL.md": _sha(skill)})
-        assert skill.exists()
+        assert notes.read_text(encoding="utf-8") == "mine\n"
+        assert not skill.exists()
         assert result["preserved"]
 
     def test_a_manifest_without_hashes_proves_nothing_so_the_artifact_is_kept(self, tmp_path: Path) -> None:

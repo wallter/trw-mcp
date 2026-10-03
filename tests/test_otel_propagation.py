@@ -290,6 +290,9 @@ def test_default_config_installs_nothing_and_writes_nothing(tmp_path: Path) -> N
 def test_opt_in_writes_one_otlp_json_line_for_the_cli_span(tmp_path: Path) -> None:
     import json
 
+    # The OTLP JSON encoder lives in trw-memory's optional [otel] extra (protobuf); trw-mcp's own [dev] has only the SDK.
+    pytest.importorskip("opentelemetry.exporter.otlp.proto.common.trace_encoder")
+
     out = _cli(tmp_path, {"TRW_OTEL_ENABLED": "true"})
     assert out.returncode == 0, out.stderr[-2000:]
     assert out.stdout.strip().splitlines()[-2] == "installed"

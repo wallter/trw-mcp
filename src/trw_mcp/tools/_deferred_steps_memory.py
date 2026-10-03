@@ -1,7 +1,7 @@
 """Memory-related deferred delivery steps.
 
-Sub-module of ``_deferred_delivery`` — contains steps for auto-pruning,
-tier lifecycle sweeps, and the daemon's maintenance (decay and consolidation).
+Sub-module of ``_deferred_delivery`` — contains steps for auto-pruning
+and the daemon's maintenance (decay and consolidation).
 
 Test patches should still target the parent facade:
 ``patch("trw_mcp.tools._deferred_delivery._step_auto_prune")``.
@@ -16,9 +16,7 @@ import structlog
 
 from trw_mcp.models.typed_dicts import (
     MemoryDecayStepResult,
-    TierSweepStepResult,
 )
-from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools import _deferred_state as _ds
 
 logger = structlog.get_logger(__name__)
@@ -122,26 +120,3 @@ def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
         "consolidation": consolidated,
     }
     return result
-
-
-def _step_tier_sweep(trw_dir: Path) -> TierSweepStepResult:
-    """Step 2.7: Tier lifecycle sweep (PRD-CORE-043) + impact tier assignment (PRD-FIX-052-FR07)."""
-    from trw_mcp.state.persistence import FileStateWriter
-    from trw_mcp.state.tiers import TierManager
-
-    reader = FileStateReader()
-    writer = FileStateWriter()
-    tier_mgr = TierManager(trw_dir, reader, writer)
-    sweep_result = tier_mgr.sweep()
-
-    # PRD-FIX-052-FR07: assign impact_tier labels to all active entries post-sweep
-    tier_distribution = tier_mgr.assign_impact_tiers(trw_dir)
-
-    return {
-        "status": "success",
-        "promoted": sweep_result.promoted,
-        "demoted": sweep_result.demoted,
-        "purged": sweep_result.purged,
-        "errors": sweep_result.errors,
-        "impact_tier_distribution": tier_distribution,
-    }

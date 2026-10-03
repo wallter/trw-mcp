@@ -420,3 +420,97 @@ def test_formation_hook_mode_vocabulary_excludes_block(hook_dir: Path) -> None:
     assert "formation_hook_ownership_mode: block" not in body
     advisory = body[body.index("_trw_formation_advisory() {") : body.index("# _trw_guard_main")]
     assert "exit 2" not in advisory, "the advisory body must contain no blocking exit"
+
+
+# --- FORMATION-ADVISORY-COST (2026-10-02): ~0.75 s per spawn, twice per Write/Edit, in every swarm session ---
+
+
+def _log_python_modules(root: Path) -> Path:
+    """Make the fixture's venv python log each ``-m`` module it runs, so a test can see what was spawned."""
+    log = root / "python-modules.log"
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.write_text(
+        f'#!/bin/sh\n[ "$1" = "-m" ] && printf "%s\\n" "$2" >> "{log}"\nexec "{sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    return log
+
+
+def test_the_post_edit_hook_never_spawns_the_formation_advisory(tmp_path: Path) -> None:
+    """An ownership warning after the write has landed cannot change anything; the pre-write hook already gave it."""
+    root = _formation_project(tmp_path)
+    log = _log_python_modules(root)
+
+    result = run_hook(BUNDLED_HOOKS / "post-tool-intent-check.sh", root, payload=_WRITE_PAYLOAD)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "TRW formation advisory" not in result.stderr
+    spawned = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    assert "trw_mcp.tools._formation_hook_advisory" not in spawned, spawned
+
+
+def _advisory_imports_formation(root: Path, target: str) -> tuple[bool, str]:
+    """Run the advisory in a fresh interpreter; report whether it loaded ``trw_mcp.formation`` and its stderr."""
+    import subprocess
+
+    import trw_mcp
+
+    src = str(Path(trw_mcp.__file__).resolve().parents[1])  # the tree under test, never an installed copy
+    probe = (
+        "import io, json, sys\n"
+        "from contextlib import redirect_stderr\n"
+        "from trw_mcp.tools import _formation_hook_advisory as advisory\n"
+        "err = io.StringIO()\n"
+        "with redirect_stderr(err):\n"
+        f"    advisory.main(json.dumps({{'tool_name': 'Edit', 'tool_input': {{'file_path': {target!r}}}}}))\n"
+        "print(json.dumps(['trw_mcp.formation' in sys.modules, err.getvalue()]))\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=60,
+        env={"TRW_PROJECT_ROOT": str(root), "PATH": "/usr/bin:/bin", "HOME": str(root), "PYTHONPATH": src},
+    )
+    loaded, stderr = json.loads(out.stdout.strip().splitlines()[-1])
+    return bool(loaded), str(stderr)
+
+
+def test_a_path_no_owned_glob_can_cover_skips_the_heavy_formation_import(tmp_path: Path) -> None:
+    root = _formation_project(tmp_path)
+    assert _advisory_imports_formation(root, "docs/readme.md") == (False, "")
+
+
+@pytest.mark.parametrize("index_text", ["{not json", '["a list"]', '{"fr10": 7}'])
+def test_an_unreadable_or_unknown_formation_index_takes_the_full_advisory(tmp_path: Path, index_text: str) -> None:
+    """Fail open: a parse doubt never silently skips the advisory."""
+    root = _formation_project(tmp_path)
+    (root / ".trw" / "runtime" / "formations.json").write_text(index_text, encoding="utf-8")
+    loaded, _stderr = _advisory_imports_formation(root, "docs/readme.md")
+    assert loaded is True
+
+
+@pytest.mark.parametrize(
+    ("glob", "rel"),
+    [
+        ("src/beta", "src/beta"),
+        ("src/beta", "src/beta/x.py"),
+        ("src/beta/", "src/beta/x.py"),
+        ("*/CHANGELOG.md", "trw-mcp/CHANGELOG.md"),
+        ("*/CHANGELOG.md", "docs/x.md"),
+        ("src/**", "src/a/b.py"),
+        ("src/*.py", "src/a/b.py"),
+        ("docs/[ab].md", "docs/a.md"),
+        ("docs/[ab].md", "docs/c.md"),
+        ("", "x"),
+        ("src/beta", "src/betamax.py"),
+        ("a?c", "abc"),
+    ],
+)
+def test_the_advisory_pre_check_asks_the_ownership_predicate_itself(glob: str, rel: str) -> None:
+    """The cheap copy must never disagree with the one definition of ownership, or it would skip a real warning."""
+    from trw_mcp.formation._ownership import declaration_covers
+    from trw_mcp.tools._formation_hook_advisory import covers
+
+    assert covers(glob, rel) == declaration_covers(glob, rel)

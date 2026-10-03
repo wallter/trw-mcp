@@ -88,11 +88,13 @@ class TestTouchHeartbeat:
 
         assert second_mtime > first_mtime, "mtime should increase on subsequent touch"
 
-    def test_touch_heartbeat_no_active_run(self) -> None:
-        """No error is raised when no pinned run exists."""
+    def test_touch_heartbeat_no_active_run(self, tmp_path: Path) -> None:
+        """No error is raised when no pinned run exists, and no heartbeat is written anywhere."""
+        run_dir = _make_run_dir(tmp_path)
         with patch("trw_mcp.state._paths.get_pinned_run", return_value=None):
-            # Should not raise
             touch_heartbeat()
+        assert not (run_dir / "meta" / "heartbeat").exists()
+        assert [p.name for p in (run_dir / "meta").iterdir()] == ["run.yaml"]
 
     def test_touch_heartbeat_failopen(self, tmp_path: Path) -> None:
         """Exceptions from filesystem operations do not propagate."""
@@ -104,6 +106,12 @@ class TestTouchHeartbeat:
         ):
             # Should not raise -- fail-open
             touch_heartbeat()
+
+        assert not (run_dir / "meta" / "heartbeat").exists(), "the failed touch left nothing behind"
+        # Contrast: once the filesystem works again the same call does write the heartbeat.
+        with patch("trw_mcp.state._paths.get_pinned_run", return_value=run_dir):
+            touch_heartbeat()
+        assert (run_dir / "meta" / "heartbeat").exists()
 
     def test_touch_heartbeat_uses_pinned_run_first(self, tmp_path: Path) -> None:
         """touch_heartbeat respects get_pinned_run for fast path."""
@@ -137,6 +145,7 @@ class TestTouchHeartbeat:
             touch_heartbeat()
 
         mock_find.assert_not_called()
+        assert not list(tmp_path.rglob("heartbeat")), "no pin means no heartbeat is written to any run"
 
 
 # ---------------------------------------------------------------------------

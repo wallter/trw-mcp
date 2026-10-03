@@ -25,6 +25,30 @@ logger = structlog.get_logger(__name__)
 # PRD-CORE-001: Base MCP tool suite — optional LLM augmentation client
 
 _ASK_TIMEOUT_SECS = 120
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True when an OLLAMA_HOST value names this machine; anything unparseable counts as remote."""
+    from urllib.parse import urlsplit
+
+    try:
+        name = urlsplit(host if "://" in host else f"http://{host}").hostname
+    except ValueError:  # trw-fail-silent-allow: an unparseable host counts as remote, which the veto then checks
+        return False
+    return name in _LOOPBACK_HOSTS
+
+
+def _contact_allowed() -> bool:
+    """The platform contact switch of the current project, read now. No project means no contact."""
+    from trw_mcp.state._paths import resolve_trw_dir
+    from trw_mcp.state._platform_trust import platform_contact_enabled
+
+    try:
+        return platform_contact_enabled(resolve_trw_dir())
+    except Exception:  # justified: fail closed, a switch that cannot be read must not allow a remote send  # trw-fail-silent-allow: fails closed (remote send refused)
+        return False
+
 
 _SHARED_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -150,7 +174,8 @@ class LLMClient:
     ) -> str | None:
         """Send a prompt to Claude or local Ollama and return the text response.
 
-        Returns ``None`` if the SDK/Ollama is unavailable or the call fails.
+        Returns ``None`` if the SDK/Ollama is unavailable, the call fails, or platform contact is off for a
+        non-loopback host (logged as ``llm_call_vetoed`` / ``ollama_remote_host_vetoed``).
 
         Args:
             prompt: The user prompt to send.
@@ -170,6 +195,11 @@ class LLMClient:
             # Check if we have OLLAMA_HOST and can try falling back to Ollama
             if os.environ.get("OLLAMA_HOST"):
                 return await self._ask_ollama(prompt, system=system, model=resolved_model)
+            return None
+
+        if not _contact_allowed():
+            # The Anthropic API is a non-loopback host: the deny-all switch vetoes it, read live (fail closed).
+            logger.warning("llm_call_vetoed", outcome="platform_contact_off", backend="anthropic")
             return None
 
         resolved_model = _resolve_model(resolved_model)
@@ -262,6 +292,10 @@ class LLMClient:
         # one Ollama keeps evolving (structured ``format``, ``think``, tools) and the
         # one every other TRW package speaks, so behaviour and gotchas line up.
         url = f"{host.rstrip('/')}/api/chat"
+        if not _is_loopback_host(host) and not _contact_allowed():
+            # A remote Ollama is egress of the user's prompt: the deny-all switch vetoes it, read live.
+            logger.warning("ollama_remote_host_vetoed", outcome="platform_contact_off")
+            return None
         messages: list[dict[str, str]] = []
         effective_system = system or self._system_prompt
         if effective_system:

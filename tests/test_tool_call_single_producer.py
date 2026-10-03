@@ -58,6 +58,59 @@ def _session_rows(project: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
 
 
+@pytest.mark.asyncio
+async def test_mcp_dispatch_appends_exactly_one_canonical_tool_call_event(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dispatched MCP call reaches the production wrapper and the replacement event stream once."""
+    from fastmcp import Client, FastMCP
+
+    import trw_mcp.telemetry.pipeline as pipeline_mod
+    import trw_mcp.telemetry.tool_call_timing as timing
+    from trw_mcp.models.config import TRWConfig, reload_config
+    from trw_mcp.server import _tools
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
+    monkeypatch.chdir(tmp_project)
+    reload_config(TRWConfig(telemetry_enabled=True, platform_telemetry_enabled=False))
+
+    class _NoopPipeline:
+        def enqueue(self, _event: dict[str, object]) -> None:
+            pass
+
+    monkeypatch.setattr(pipeline_mod.TelemetryPipeline, "get_instance", classmethod(lambda cls: _NoopPipeline()))
+    run_dir = tmp_project / ".trw" / "runs" / "task" / "run-1"
+    (run_dir / "meta").mkdir(parents=True)
+    monkeypatch.setattr(timing, "_resolve_run_dir", lambda *_args, **_kwargs: run_dir)
+    server = FastMCP("dispatch-tool-call-event")
+
+    @server.tool()
+    def dispatch_tool(value: str) -> dict[str, str]:
+        """Return a test value through FastMCP dispatch."""
+        return {"value": value}
+
+    _tools._apply_security_consult_wrapping(server)
+    try:
+        async with Client(server) as client:
+            result = await client.call_tool("dispatch_tool", {"value": "ok"})
+        assert result.data == {"value": "ok"}
+
+        event_files = sorted((run_dir / "meta").glob("events-*.jsonl"))
+        rows = [json.loads(line) for path in event_files for line in path.read_text(encoding="utf-8").splitlines()]
+        tool_calls = [
+            row
+            for row in rows
+            if row.get("event_type") == "tool_call"
+            and isinstance(row.get("payload"), dict)
+            and row["payload"].get("tool") == "dispatch_tool"
+        ]
+
+        assert len(tool_calls) == 1
+        assert isinstance(tool_calls[0]["payload"].get("wall_ms"), (int, float))
+    finally:
+        reload_config(None)
+
+
 @pytest.mark.parametrize("tool", ["trw_learn", "plain_tool"])
 def test_one_pipeline_row_per_call(wrapped: tuple[dict[str, Any], list[dict[str, object]]], tool: str) -> None:
     tools, rows = wrapped

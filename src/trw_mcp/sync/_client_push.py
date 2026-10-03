@@ -222,7 +222,8 @@ async def fanout_push(
             "pushed": result.pushed,
             "skipped": result.skipped,
             "failed": result.failed,
-            "error": None,
+            # The server's own words for a failed request, so the cycle can record them.
+            "error": (result.learnings.last_error or result.outcomes.last_error) if result.failed else None,
             "status": status,
         }
         if target.label == primary_target_label and status == _TARGET_STATUS_SUCCESS:

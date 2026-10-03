@@ -287,7 +287,8 @@ def test_post_commit_receipt_on_a_plain_file(repo: Path) -> None:
 
 
 def _observe(clock: Path) -> list[str]:
-    detector = AnomalyDetector(config=AnomalyDetectorConfig(shadow_clock_path=clock), now_fn=lambda: _NOW)
+    config = AnomalyDetectorConfig(checkout_root=clock.parents[2], shadow_clock_path=clock)  # <root>/.trw/security
+    detector = AnomalyDetector(config=config, now_fn=lambda: _NOW)
     return detector.observe(AnomalyObservation(ts=_NOW, server="trw", tool="trw_status"))
 
 

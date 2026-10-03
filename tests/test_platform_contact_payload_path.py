@@ -397,16 +397,16 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "(state._store_selection.selected_store(trw_dir)); the selector and the policy are one value, and "
         "the store file itself lives in the user tier, not in any project"
     ),
-    ("server/_subcommands_sync.py", "run_sync"): (
-        "sync pull --full: the same rows-selected-by-trw_dir payload as the sync loop (inbound replay)"
+    ("server/_subcommands_sync.py", "_client"): (
+        "sync push/pull/status: the same rows-selected-by-trw_dir payload as the sync loop (INC-145)"
+    ),
+    ("clients/llm.py", "_contact_allowed"): (
+        "LLM prompt: the payload is agent-typed text with no source file, not a project's rows; the veto asks "
+        "the switch of the project the client runs in, and only for a non-loopback host (EGRESS-STRAGGLER-CENSUS)"
     ),
     ("tools/submit_feedback.py", "_send_recorded"): (
         "feedback: the payload is agent-typed text (a fresh submit, or its own project's outbox record on "
         "flush), not a file; the caller's project is resolved once"
-    ),
-    ("tools/_recall_impl.py", "_augment_with_remote"): (
-        "remote recall: the payload is the agent's query text, not a file; the caller's project is "
-        "resolved once and is also the store the answers are admitted into"
     ),
 }
 

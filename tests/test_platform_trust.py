@@ -156,6 +156,12 @@ class TestSwitchDisablesBothContacts:
         mock_client_cls.assert_not_called()
         assert result is None
 
+        # Contrast: with the switch on, the same puller does reach for the HTTP client.
+        _reset_config(TRWConfig(platform_contact_enabled=True))
+        with patch("httpx.AsyncClient", side_effect=RuntimeError("stop at the boundary")) as enabled_cls:
+            await puller.pull_intel_state()
+        assert enabled_cls.called
+
 
 # ---------------------------------------------------------------------------
 # The pull loop never sends the bearer to an untrusted host, http or https
@@ -263,6 +269,14 @@ async def test_sync_push_withholds_bearer_from_untrusted_backend() -> None:
 
     class _Entry:
         sync_seq = 1
+        namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+        tags: list[str] = []
+        metadata: dict[str, str] = {}
+        # PRD-CORE-333: the quarantine gate keys a row on its id, remote id and content, as on a MemoryEntry.
+        id = "L-1"
+        remote_id = None
+        content = "s"
+        detail = ""
 
         def to_dict(self) -> dict[str, object]:
             return {"summary": "s", "importance": 0.5, "tags": []}
@@ -434,12 +448,16 @@ def _flag_config_sourced_helper_call(node: ast.Call, source: str, rel: str, offe
             offenders.append(f"{rel}:{node.lineno} (helper called with a config-sourced argument: {arg_src})")
 
 
+#: 2026-10-02: phase-1 byte-identical mirror of the live untracked swarm tools (SWARM-TOOLS-IN-GIT); phase 2 brings them under the gates and removes this exclusion. A trailing slash on purpose: a sibling such as scripts/swarm_board.py is still judged.
+_SWARM_MIRROR_PREFIX = "scripts/swarm/"
+
+
 def _census_scan(root: Path, *, rel_prefix: str) -> list[str]:
     offenders: list[str] = []
     for path in sorted(root.rglob("*.py")):
         rel_path = path.relative_to(root)
         rel = f"{rel_prefix}/{rel_path.as_posix()}"
-        if rel in _CENSUS_EXEMPTIONS:
+        if rel in _CENSUS_EXEMPTIONS or rel.startswith(_SWARM_MIRROR_PREFIX):
             continue
         # Test files assert the SHAPE of a header against a fake server/curl,
         # they are not themselves a production request sink.
@@ -506,6 +524,20 @@ def _census_scan(root: Path, *, rel_prefix: str) -> list[str]:
     return offenders
 
 
+def test_the_census_skips_the_swarm_mirror_but_still_judges_its_siblings(tmp_path: Path) -> None:
+    """SWARM-TOOLS-IN-GIT phase 1: the mirror holds live swarm tools that build raw Bearer headers; nothing beside it is exempt."""
+    raw = 'headers = {"Authorization": "Bearer " + token}\n'
+    for rel in ("swarm/tools/x.py", "swarm_board.py", "other/y.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(raw, encoding="utf-8")
+
+    offenders = _census_scan(tmp_path, rel_prefix="scripts")
+
+    assert not any(o.startswith("scripts/swarm/") for o in offenders), offenders
+    assert any(o.startswith("scripts/swarm_board.py") for o in offenders), offenders
+    assert any(o.startswith("scripts/other/y.py") for o in offenders), offenders
+
+
 def test_no_other_module_builds_a_raw_bearer_header() -> None:
     """AST census across trw-mcp/src, trw-memory/src, and scripts/.
 
@@ -543,6 +575,14 @@ async def test_sync_push_learnings_makes_no_request_when_contact_disabled() -> N
 
     class _Entry:
         sync_seq = 1
+        namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+        tags: list[str] = []
+        metadata: dict[str, str] = {}
+        # PRD-CORE-333: the quarantine gate keys a row on its id, remote id and content, as on a MemoryEntry.
+        id = "L-1"
+        remote_id = None
+        content = "s"
+        detail = ""
 
         def to_dict(self) -> dict[str, object]:
             return {"summary": "s", "importance": 0.5, "tags": []}
@@ -622,48 +662,6 @@ def test_telemetry_pipeline_flush_makes_no_request_when_contact_disabled(pipelin
     assert result.get("skipped_reason") == "platform_contact_disabled"
 
 
-# ---------------------------------------------------------------------------
-# rc10 C12 P1: remote recall honours the contact switch (the query never leaves)
-# ---------------------------------------------------------------------------
-
-
-def _remote_recall_fetches(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Run recall's remote leg with sharing on and the platform fetch mocked; the mock records any request."""
-    from trw_mcp.tools._recall_impl import _augment_with_remote
-
-    fetch = MagicMock(return_value=MagicMock(status="ok", results=[], fetched=0, refused=0))
-    monkeypatch.setattr("trw_memory.sync.fetch_shared_memories", fetch)
-    monkeypatch.setattr(
-        "trw_mcp.state._store_selection.selected_store", lambda _trw_dir: (MagicMock(admit_shared=None), None)
-    )
-    rows, _status = _augment_with_remote("secret query text", [{"id": "L-local"}])
-    assert rows[0]["id"] == "L-local"
-    return fetch
-
-
-def test_remote_recall_sends_nothing_when_contact_disabled_in_yaml(monkeypatch: pytest.MonkeyPatch) -> None:
-    trw_dir = Path(os.environ["HOME"]) / ".trw"
-    trw_dir.mkdir(parents=True, exist_ok=True)
-    (trw_dir / "config.yaml").write_text("platform_contact_enabled: false\n", encoding="utf-8")
-    _reset_config()
-    assert platform_contact_enabled(payload_trw_dir()) is False
-    _remote_recall_fetches(monkeypatch).assert_not_called()
-
-
-def test_remote_recall_sends_nothing_when_contact_disabled_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TRW_PLATFORM_CONTACT_ENABLED", "false")
-    _reset_config()
-    assert platform_contact_enabled(payload_trw_dir()) is False
-    _remote_recall_fetches(monkeypatch).assert_not_called()
-
-
-def test_remote_recall_still_asks_the_platform_when_contact_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    _reset_config(TRWConfig(platform_contact_enabled=True))
-    fetch = _remote_recall_fetches(monkeypatch)
-    fetch.assert_called_once()
-    assert fetch.call_args.args[0] == "secret query text"
-
-
 def test_feedback_sends_nothing_when_contact_disabled() -> None:
     from trw_mcp.tools.submit_feedback import submit_feedback_via_http
 
@@ -692,7 +690,6 @@ _CONTACT_GATED = {
     "telemetry/pipeline.py",
     "telemetry/publisher.py",
     "telemetry/sender.py",
-    "tools/_recall_impl.py",
     "tools/submit_feedback.py",
 }
 #: Modules outside the switch, each with the reason.

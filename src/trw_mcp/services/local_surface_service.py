@@ -80,16 +80,27 @@ def run_local_recall(
             non-zero rather than printing an empty, falsely-successful result.
     """
     from trw_mcp.models.config import get_config
+    from trw_mcp.models.typed_dicts import RecallResultDict
+    from trw_mcp.sync import _fresh_pull
     from trw_mcp.tools._recall_impl import execute_recall
 
     resolved = trw_dir or (Path.cwd() / ".trw")
-    result = execute_recall(
-        query,
-        resolved,
-        get_config(),
-        tags=tags,
-        max_results=max_results if max_results is not None else LOCAL_RECALL_DEFAULT_MAX_RESULTS,
-    )
+    config = get_config()
+
+    def ask() -> RecallResultDict:
+        return execute_recall(
+            query,
+            resolved,
+            config,
+            tags=tags,
+            max_results=max_results if max_results is not None else LOCAL_RECALL_DEFAULT_MAX_RESULTS,
+        )
+
+    result = ask()
+    # A one-shot process cannot finish a team pull after it returns: wait for the one this recall started, and when it
+    # landed the first answer is stale, so ask once more (a host's first recall after install then sees the team).
+    if _fresh_pull.finish_inflight():
+        result = ask()
     _logger.info("local_recall_completed", query=query[:60], results=len(result.get("learnings", []) or []))
     return dict(result)
 

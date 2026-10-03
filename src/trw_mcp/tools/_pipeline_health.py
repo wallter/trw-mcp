@@ -27,7 +27,7 @@ from typing import Any
 
 import structlog
 
-from trw_mcp.state._store_counts import store_health
+from trw_mcp.state._store_counts import one_health_reading, store_health
 
 logger = structlog.get_logger(__name__)
 
@@ -337,10 +337,12 @@ def step_pipeline_health(trw_dir: Path, config: Any | None = None, *, self_hint:
             result = {k: v for k, v in result.items() if k != "advisory"}
         return result
 
-    sync_push = _run_probe("sync_push", probe_sync_push)
-    graph_edges = _run_probe("graph_edges", probe_graph_edges, takes_config=True)
-    embedding_coverage = _run_probe("embedding_coverage", probe_embedding_coverage, takes_config=True)
-    recall_feedback = _run_probe("recall_feedback", probe_recall_feedback)
+    # PRD-FIX-131: the three store-backed probes read one namespace-health snapshot.
+    with one_health_reading():
+        sync_push = _run_probe("sync_push", probe_sync_push)
+        graph_edges = _run_probe("graph_edges", probe_graph_edges, takes_config=True)
+        embedding_coverage = _run_probe("embedding_coverage", probe_embedding_coverage, takes_config=True)
+        recall_feedback = _run_probe("recall_feedback", probe_recall_feedback)
 
     named_signals = (
         ("sync_push", sync_push),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from trw_mcp.state import _store_selection
+from trw_mcp.sync._pulled import is_edited_here, is_pulled
 
 logger = structlog.get_logger(__name__)
 
@@ -17,6 +19,8 @@ _MAX_HINT_DELAY_SECONDS = 7200
 _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
 #: Dirty rows pushed per cycle; the rest go on the next cycle, oldest first.
 DIRTY_PAGE_SIZE = 500
+#: The memory daemon refuses a dirty page over this many rows (``MAX_SYNC_DIRTY_PAGE``).
+MAX_DIRTY_PAGE_REQUEST = 1000
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
@@ -96,11 +100,46 @@ def consume_next_cycle_force(next_cycle_force: bool) -> tuple[bool, bool]:
     return next_cycle_force, False
 
 
-def get_dirty_entries(*, client_id: str, trw_dir: Path) -> list[MemoryEntry]:
-    """The oldest page of this checkout's project rows not yet pushed (PRD-CORE-298 FR01)."""
+#: Most dirty pages one call looks through while pulled rows keep filling them (a safety cap, logged when reached).
+_PULLED_CLEAN_PASSES = 200
+
+
+def get_dirty_entries(
+    *,
+    client_id: str,
+    trw_dir: Path,
+    held: Mapping[str, Mapping[str, object]] | None = None,
+    page_size: int = DIRTY_PAGE_SIZE,
+) -> list[MemoryEntry]:
+    """The oldest page of this checkout's project rows not yet pushed (PRD-CORE-298 FR01).
+
+    *held* rows (the backend refused them at that ``sync_seq``, INC-147) are left
+    out until they are edited, and the page is widened by their count so a pile of
+    refused rows cannot fill it and stall every other push.
+    """
+    held = held or {}
     try:
         store, namespace = _store_selection.selected_store(trw_dir)
-        return store.page_dirty(namespace, DIRTY_PAGE_SIZE)
+        limit = page_size + len(held)
+        for _ in range(_PULLED_CLEAN_PASSES):
+            page = store.page_dirty(namespace, min(limit, MAX_DIRTY_PAGE_REQUEST))
+            pulled = [e for e in page if is_pulled(e)]
+            # A pulled row is another author's learning, not this host's to upload. One whose content still matches what
+            # was pulled is dirty only through the old counter bug: acknowledge it clean (conditional on the paged
+            # sync_seq, so an edit made meanwhile keeps its row dirty). One edited here stays dirty and unpushed, so the
+            # next teammate revision merges with the edit instead of replacing it.
+            unchanged = [e for e in pulled if not is_edited_here(e)]
+            if unchanged:
+                store.mark_synced(namespace, unchanged)
+            pushable = [e for e in page if not is_pulled(e) and (held.get(e.id) or {}).get("sync_seq") != e.sync_seq]
+            if pushable:
+                return pushable[:page_size]
+            if not unchanged:
+                if len(page) < min(limit, MAX_DIRTY_PAGE_REQUEST):
+                    return []  # every dirty row has been seen
+                limit *= 2  # a page of edited pulled rows: look further behind them
+        logger.warning("sync_dirty_page_pass_cap_reached", client_id=client_id, passes=_PULLED_CLEAN_PASSES)
+        return []
     except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
         # trw-fail-silent-allow: an unreadable page leaves every row dirty, so the next cycle pushes it; nothing is lost.
         logger.debug("sync_get_dirty_failed", client_id=client_id, exc_info=True)

@@ -57,8 +57,8 @@ _trw_timeout_subject="check"
 _trw_event_label="PreToolUse:intent-guard"
 _trw_matcher="pre-write"
 _trw_module="trw_mcp.security.intent_contract.check_write"
-# Outer wall-clock bound mirrors SecurityConfig.intent.pre_write_hook_budget_seconds
-# (typed config is the source of truth; this env knob only overrides the shell guard).
+# Outer wall-clock bound in seconds (1 by default); TRW_INTENT_PRE_WRITE_BUDGET_SECONDS overrides it. No typed config field
+# feeds it (UF-MCP-03 removed the unread one).
 _trw_budget="${TRW_INTENT_PRE_WRITE_BUDGET_SECONDS:-1}"
 
 # --- the shared library, and what happens when it is not there ----------------

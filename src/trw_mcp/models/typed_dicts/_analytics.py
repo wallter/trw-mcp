@@ -5,15 +5,6 @@ from __future__ import annotations
 from typing_extensions import TypedDict
 
 
-class TierDistribution(TypedDict):
-    """Counts per impact tier from ``assign_impact_tiers()``."""
-
-    critical: int
-    high: int
-    medium: int
-    low: int
-
-
 class RunAnalysisResult(TypedDict, total=False):
     """Return shape of ``_analyze_single_run()``.
 

@@ -156,6 +156,17 @@ def test_install_is_offline_but_keeps_the_uv_cache_for_third_party_deps(
     assert "--offline" in install and "--find-links" in install and "--no-index" not in install
 
 
+def test_install_compiles_bytecode_so_the_first_import_after_a_swap_is_not_a_compile(
+    paths: SharedPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 2026-10-02: a dev17 venv built without bytecode compiled ~5,100 .pyc files on first use;
+    # the daemon's first recall spent ~53 s compiling torch/scipy/sympy/transformers under load.
+    calls = _install_argv(monkeypatch)
+    _ops.build_version_venv(paths, "test", "8.0.0", _wheelhouse(tmp_path))
+    (install,) = [c for c in calls if c[:3] == ["uv", "pip", "install"]]
+    assert "--compile-bytecode" in install
+
+
 def test_failed_install_leaves_nothing_reusable(
     paths: SharedPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

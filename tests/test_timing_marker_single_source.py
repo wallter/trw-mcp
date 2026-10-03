@@ -64,6 +64,9 @@ CORRECTNESS_DEADLINES: dict[str, str] = {
     "test_heartbeat_and_adopt.py::test_heartbeat_returns_stale_after_ts": (
         "date arithmetic tolerance on a computed staleness, not a measured duration"
     ),
+    "test_sync_fresh_pull_exit.py::test_a_pull_that_outlasts_the_grace_cannot_hold_the_process": (
+        "an exiting process abandons a stuck pull after its grace instead of hanging; the 10 s bound is a hang detector"
+    ),
     "test_install_bounds_daemon_waits.py::test_a_stuck_daemon_does_not_hang_the_update": (
         "a stuck daemon exhausts the install's shared budget instead of hanging the update; budget + 5 s is a hang detector"
     ),

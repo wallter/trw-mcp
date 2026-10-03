@@ -369,6 +369,30 @@ def test_baseline_resolves_prd_core_191() -> None:
     assert resolution.status == "resolved" and resolution.repo_root is not None
 
 
+@pytest.mark.skipif(not _CORE_191.is_file(), reason="PRD-CORE-191 lives in the monorepo checkout")
+def test_drift_findings_on_prd_core_191_are_deterministic() -> None:
+    """Correctness half of the NFR01 timing test: the timed work is real and repeatable, not a no-op."""
+    from trw_mcp.state.validation.requirement_baseline import resolve_requirement_baseline
+    from trw_mcp.state.validation.requirement_drift import DriftFinding, detect_requirement_drift
+    from trw_mcp.tools._deliver_capability_integration import _source_root
+
+    runs: list[list[DriftFinding]] = []
+    for _attempt in range(2):
+        resolution = resolve_requirement_baseline("PRD-CORE-191", _CORE_191)
+        assert resolution.status == "resolved" and resolution.repo_root is not None
+        runs.append(
+            detect_requirement_drift(
+                resolution,
+                _CORE_191.read_text(encoding="utf-8"),
+                current_status=resolution.current_status,
+                repo_root=resolution.repo_root,
+                source_root=_source_root(),
+            )
+        )
+    assert all(isinstance(f, DriftFinding) for f in runs[0])
+    assert runs[0] == runs[1]
+
+
 @pytest.mark.requires_local_timing
 @pytest.mark.skipif(not _CORE_191.is_file(), reason="PRD-CORE-191 lives in the monorepo checkout")
 def test_baseline_plus_drift_on_prd_core_191_within_budget() -> None:

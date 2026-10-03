@@ -196,12 +196,10 @@ def test_a_checkout_with_no_grant_is_reported_by_recall_too(
     assert not (trw_dir / "memory" / "memory.db").exists()
 
 
-def test_the_recall_extras_read_and_gate_through_the_selected_store(
+def test_the_recall_dedup_reads_vectors_through_the_selected_store(
     trw_dir: Path, fake: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Near-duplicate vectors come from the store; shared results pass the store's gate (PRD-CORE-280 FR01)."""
-    from trw_memory.sync import SharedFetchResult
-
+    """Near-duplicate vectors come from the store (PRD-CORE-280 FR01)."""
     from trw_mcp.tools import _recall_impl
 
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: trw_dir)
@@ -215,12 +213,4 @@ def test_the_recall_extras_read_and_gate_through_the_selected_store(
     assert [row["id"] for row in deduped] == ["L-a"]  # identical vectors, different text
     assert ("vectors", ("L-a", "L-b")) in fake.calls
 
-    def _fetch(query: str, cfg: object, *, admit: object) -> SharedFetchResult:
-        outcome = admit([{"id": "R-1", "summary": "[shared] tip"}])  # type: ignore[operator]
-        return SharedFetchResult(outcome.admitted, "ok", 1, outcome.refused)
-
-    monkeypatch.setattr("trw_memory.sync.fetch_shared_memories", _fetch)
-    merged, _status = _recall_impl._augment_with_remote("q", rows)
-    assert [row["id"] for row in merged] == ["L-a", "L-b", "R-1"]
-    assert ("admit_shared", 1) in fake.calls
     assert not (trw_dir / "memory" / "memory.db").exists()

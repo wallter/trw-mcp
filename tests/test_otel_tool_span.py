@@ -151,6 +151,8 @@ def test_raised_exception_text_is_scrubbed_before_any_file(
     server: Any, otel_spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """End to end: FastMCP records the exception; the scrubbing file exporter writes none of it."""
+    # The OTLP JSON encoder lives in trw-memory's optional [otel] extra (protobuf); trw-mcp's own [dev] has only the SDK.
+    pytest.importorskip("opentelemetry.exporter.otlp.proto.common.trace_encoder")
     from trw_memory.otel_setup import OtlpJsonFileExporter, ScrubbingSpanExporter
 
     from trw_mcp.telemetry._tool_span_attrs import OPERATION_NAME, TOOL_CALL_ID
@@ -196,9 +198,16 @@ def test_enrichment_fault_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom() -> object:
         raise RuntimeError("x")
 
-    monkeypatch.setattr(attrs.trace, "get_current_span", boom)
+    reached: list[str] = []
+
+    def counting_boom() -> object:
+        reached.append("get_current_span")
+        return boom()
+
+    monkeypatch.setattr(attrs.trace, "get_current_span", counting_boom)
     attrs.enrich_tool_span("run-1", "abcd1234")
     attrs.set_dedup_action("skip")
+    assert reached == ["get_current_span", "get_current_span"], "both helpers hit the fault and swallowed it"
 
 
 def test_invalid_ids_and_actions_are_omitted(otel_spans: InMemorySpanExporter) -> None:

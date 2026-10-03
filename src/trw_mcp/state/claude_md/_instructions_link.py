@@ -15,6 +15,7 @@ which keeps the previous bytes under the backup directory first (FR02).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
@@ -37,6 +38,45 @@ LINK_BODY = (
 def agents_link_section() -> str:
     """The marker-delimited AGENTS.md section every writer merges (identical bytes, so writers never churn)."""
     return f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{LINK_BODY}\n{TRW_MARKER_END}\n"
+
+
+#: TRW's block in a user's own root CLAUDE.md (operator ruling 2026-10-01). Claude Code skips AGENTS.md while a
+#: CLAUDE.md exists, so the block imports TRW's context directly and names AGENTS.md in plain text only: the two
+#: files may differ, and importing one into the other would repeat or contradict the user's own instructions.
+CLAUDE_LINK_BODY = (
+    f"TRW workflow, tools and deliver gate: [{INSTRUCTIONS_RELPATH}]({INSTRUCTIONS_RELPATH}), imported below. "
+    "Claude Code does not load AGENTS.md while this CLAUDE.md exists; if this project also keeps instructions "
+    "in AGENTS.md, read that file too.\n"
+    f"@{INSTRUCTIONS_RELPATH}\n"
+)
+
+
+#: CommonMark: a fence is 3+ backticks or tildes indented at most 3 spaces; it closes on a run of the same
+#: character at least as long, with nothing after it but whitespace.
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def fenced_line_indices(text: str) -> set[int]:
+    """Indices of the lines of *text* inside a fenced code block, the fence lines themselves included."""
+    fenced: set[int] = set()
+    fence: str | None = None
+    for index, line in enumerate(text.splitlines()):
+        match = _FENCE.match(line)
+        if fence is None:
+            # A backtick opener whose info string holds a backtick is inline code, not a fence (CommonMark 4.5).
+            if match and not (match.group(1)[0] == "`" and "`" in match.group(2)):
+                fence = match.group(1)
+                fenced.add(index)
+            continue
+        fenced.add(index)
+        if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence) and not match.group(2).strip():
+            fence = None
+    return fenced
+
+
+def claude_md_link_section() -> str:
+    """The marker-delimited section TRW keeps in an existing root CLAUDE.md (never AGENTS.md imported)."""
+    return f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{CLAUDE_LINK_BODY}\n{TRW_MARKER_END}\n"
 
 
 def render_instructions_file(body: str) -> str:

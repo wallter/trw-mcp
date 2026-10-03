@@ -175,36 +175,41 @@ class TestBootstrapDryRunBranches:
     def test_update_project_agents_md_write_failure(self, tmp_path: Path) -> None:
         """An unwritable AGENTS.md is reported, never silently swallowed.
 
-        PRD-FIX-123-FR06 moved this write onto the atomic
-        ``FileStateWriter.write_text`` path (temp file + rename), which never
-        calls ``Path.write_text`` on a file named ``AGENTS.md`` — patching only
-        the latter would leave the write succeeding and assert nothing.
+        PUBLISH-RACE-HARDEN: the instruction-file guard stages the new bytes through
+        ``_proven_replace._write_new`` and links them at the name, so a failure there
+        is what an unwritable AGENTS.md looks like; it must be reported as a write
+        failure, never as a concurrent save.
         """
         from trw_mcp import bootstrap as bs
+        from trw_mcp.bootstrap import _proven_replace
 
         target = self._make_trw_target(tmp_path)
-        original_write_text = Path.write_text
-        call_count = 0
+        agents = target / "AGENTS.md"
+        before = agents.read_bytes() if agents.exists() else None
+        staged: list[str] = []
+        real_create, real_replace = _proven_replace.create_exclusive, _proven_replace.replace_proven
 
-        def patched_write_text(self: Path, content: str, encoding: str = "utf-8", **kw: Any) -> None:
-            nonlocal call_count
-            if self.name == "AGENTS.md":
-                call_count += 1
-                raise OSError("permission denied")
-            return original_write_text(self, content, encoding=encoding, **kw)
+        def failing_write_new(sfd: int, new: bytes, mode: int | None) -> None:
+            raise OSError(13, "permission denied")
 
-        def patched_atomic_write(self: object, path: Path, content: str) -> None:
-            nonlocal call_count
-            if path.name == "AGENTS.md":
-                call_count += 1
-                raise OSError("permission denied")
-            original_write_text(path, content, encoding="utf-8")
+        def only_agents_md(real: Any) -> Any:
+            def call(path: Path, *args: Any) -> Any:
+                if path.name != "AGENTS.md":
+                    return real(path, *args)
+                staged.append(path.name)
+                with patch.object(_proven_replace, "_write_new", failing_write_new):
+                    return real(path, *args)
+
+            return call
 
         with (
-            patch.object(Path, "write_text", patched_write_text),
-            patch("trw_mcp.state.persistence.FileStateWriter.write_text", patched_atomic_write),
+            patch.object(_proven_replace, "create_exclusive", only_agents_md(real_create)),
+            patch.object(_proven_replace, "replace_proven", only_agents_md(real_replace)),
         ):
             result = bs.update_project(target, dry_run=False)
 
-        assert any("AGENTS.md" in e for e in result["errors"])
-        assert call_count >= 1
+        agents_errors = [e for e in result["errors"] if "AGENTS.md" in e]
+        assert agents_errors, result["errors"]
+        assert any("write_failed" in e and "permission denied" in e for e in agents_errors), agents_errors
+        assert staged
+        assert (agents.read_bytes() if agents.exists() else None) == before

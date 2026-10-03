@@ -129,8 +129,15 @@ def _run_backup_create(args: argparse.Namespace) -> None:
             "The local archive above was written with its .sha256 sidecar."
         )
         return
-    from trw_mcp.server._backup_remote_scope import remote_upload_refusal
+    from trw_mcp.server._backup_remote_scope import labelled_row_count, remote_upload_refusal
 
+    labelled = labelled_row_count(db_path)  # PRD-SEC-023 FR05: before the presign request; the count only, never a row
+    if labelled != 0:
+        what = "its rows' labels could not be read" if labelled is None else f"{labelled} rows labelled above team"
+        print(
+            f"Remote upload refused: the store holds {what}, which never leave this machine; the local archive above was still written."
+        )
+        return
     refusal = remote_upload_refusal(db_path)  # the archive is the WHOLE store: fail closed on anything but this project
     if refusal is not None:
         print(

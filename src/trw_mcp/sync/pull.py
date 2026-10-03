@@ -12,8 +12,11 @@ from pydantic import BaseModel
 
 from trw_mcp.state._origin_project import ORIGIN_PROJECT_KEY, UNKNOWN_ORIGIN_PROJECT
 from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
+from trw_mcp.sync._pulled import finish_pulled_merge
+from trw_mcp.sync._team_apply import merge_page
 from trw_mcp.sync._team_entry import _local_node_id, team_learning_to_entry
 from trw_mcp.sync._team_merge_result import TeamMergeResult
+from trw_mcp.sync._team_prefetch import prefetch_existing
 from trw_mcp.sync.identity import resolve_sync_client_id
 from trw_mcp.sync.push import http_status_from_exception
 
@@ -248,8 +251,6 @@ class SyncPuller:
             return TeamMergeResult()
 
         try:
-            from trw_memory.lifecycle.correction import CONFLICT_ATTEMPTS, revision_of
-
             from trw_mcp.state._store_selection import selected_store
 
             store, project_namespace = selected_store(self._trw_dir)
@@ -261,71 +262,15 @@ class SyncPuller:
 
         target = namespace or project_namespace
         started_at = perf_counter()
-        counts = dict.fromkeys(
-            ("inserted", "merged", "unchanged", "skipped_no_id", "invalid", "quarantined", "blocked", "failed"), 0
+        prefetched = prefetch_existing(store, target, team_learnings, self._local_team_learning_id)
+        counts = merge_page(
+            store,
+            target,
+            team_learnings,
+            local_id_of=self._local_team_learning_id,
+            merge_pulled=self._merge_pulled,
+            prefetched=prefetched,
         )
-        for raw_learning in team_learnings:
-            source_learning_id = str(raw_learning.get("source_learning_id", "")).strip()
-            if not source_learning_id:
-                counts["skipped_no_id"] += 1
-                continue
-            local_id = self._local_team_learning_id(source_learning_id)
-            try:
-                # B71-90 (PRD-CORE-308): the apply is conditional on the revision the merge read, so a
-                # local edit landing between the two answers ``conflict``; re-read and re-merge.
-                for _attempt in range(CONFLICT_ATTEMPTS):
-                    # Every candidate is namespace-qualified: without that predicate a
-                    # second peer emitting the same ``source_learning_id`` into a second
-                    # namespace matched the first namespace's row (PRD-CORE-245 P1).
-                    existing = store.find_synced(target, source_learning_id, [local_id, source_learning_id])
-                    plan = self._merge_pulled(existing, raw_learning, local_id, target, source_learning_id)
-                    if isinstance(plan, str):  # nothing to write (after a conflict too): counted here
-                        counts[plan] += 1
-                        status, reason = "", ""
-                        break
-                    resolved, remote_won = plan
-                    status, reason = store.apply_synced(
-                        target, resolved, if_revision=revision_of(existing), synced=remote_won
-                    )
-                    if status != "conflict":
-                        break
-            except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
-                counts["failed"] += 1
-                logger.warning(
-                    "sync_team_merge_entry_error",
-                    event_type="sync_team_merge",
-                    outcome="error",
-                    source_learning_id=source_learning_id,
-                    exc_info=True,
-                )
-                continue
-            if not status:
-                continue
-            if status == "stored":
-                counts["inserted" if existing is None else "merged"] += 1
-            elif status in ("quarantined", "blocked"):
-                # PRD-FIX-138-FR01: a write-time security REFUSAL is a judged
-                # decision, not a store failure. Booking it as ``failed`` held
-                # the pull cursor on this item forever (see _client_cycle), and
-                # one poisoned team learning then stalled sync for the install.
-                counts[status] += 1
-                if status == "blocked":
-                    logger.warning(
-                        "sync_team_merge_entry_blocked",
-                        event_type="sync_team_merge",
-                        outcome="blocked",
-                        source_learning_id=source_learning_id,
-                        reason=reason,
-                    )
-            else:
-                counts["failed"] += 1
-                logger.warning(
-                    "sync_team_merge_entry_error",
-                    event_type="sync_team_merge",
-                    outcome=status,
-                    source_learning_id=source_learning_id,
-                    reason=reason,
-                )
 
         result = TeamMergeResult(
             attempted=len(team_learnings),
@@ -386,6 +331,7 @@ class SyncPuller:
             remote_metadata=raw_learning.get("metadata"),
             pull_seq=raw_learning.get("sync_seq"),
         )
+        resolved = finish_pulled_merge(resolved, existing, remote_won)
         return resolved, remote_won
 
     def _normalize_team_sync_entry(

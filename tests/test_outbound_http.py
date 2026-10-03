@@ -25,6 +25,13 @@ from trw_mcp._outbound_http import outbound_http_client, require_https_or_loopba
 )
 def test_require_https_or_loopback_permits(url: str) -> None:
     require_https_or_loopback(url)  # must not raise
+    if url.startswith("https://api.example.test"):
+        # Contrast: the permit is the https scheme, not the host: the same host over http is refused.
+        with pytest.raises(ValueError, match="non-https"):
+            require_https_or_loopback(url.replace("https://", "http://"))
+    else:
+        # Loopback is permitted over either scheme.
+        require_https_or_loopback(url.replace("http://", "https://"))
 
 
 @pytest.mark.parametrize(

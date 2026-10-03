@@ -27,5 +27,7 @@ def test_api_import_no_side_effects() -> None:
         "trw_mcp.models.config._main.TRWConfig.__init__",
         return_value=None,
     ) as mock_init:
-        importlib.import_module("trw_mcp.api.scoring")
-        mock_init.assert_not_called()
+        module = importlib.import_module("trw_mcp.api.scoring")
+        assert mock_init.call_count == 0
+        assert module.__name__ == "trw_mcp.api.scoring"
+        assert "trw_mcp.api.scoring" in sys.modules

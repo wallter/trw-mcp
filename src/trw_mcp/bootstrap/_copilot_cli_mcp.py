@@ -19,6 +19,8 @@ from pathlib import Path
 import structlog
 from trw_memory.safe_fs import write_beneath
 
+from trw_mcp._checkout_write import record_run_write
+
 from ._utils import _PROJECT_VENV_LAUNCHERS, resolve_trw_mcp_launcher
 
 log = structlog.get_logger(__name__)
@@ -76,6 +78,7 @@ def generate_copilot_cli_mcp_config(target_dir: Path, *, force: bool = False) ->
     servers["trw"] = wanted
     rendered = json.dumps({**data, "mcpServers": servers}, indent=2, sort_keys=True) + "\n"
     write_beneath(target_dir, COPILOT_CLI_MCP_PATH, rendered.encode("utf-8"), mode=0o644)
+    record_run_write(target_dir / COPILOT_CLI_MCP_PATH, rendered.encode("utf-8"))
     result["created" if current is None else "updated"].append(label)
     log.info("copilot_cli_mcp_written", path=str(path), outcome="created" if current is None else "updated")
     return result

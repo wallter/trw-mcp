@@ -44,14 +44,14 @@ def test_the_comms_endpoint_conforms_on_its_own_clock() -> None:
 def test_a_conforming_fence_passes_every_rule() -> None:
     from trw_mcp.comms.temporal_fence import check_temporal_fence
 
-    check_temporal_fence(
-        _Fence,
-        before=1.0,
-        expiry=2.0,
-        after=3.0,
-        release=lambda f: _Fence(f.expires_at, released=True),  # type: ignore[attr-defined]
-        open_ended=True,
-    )
+    def release(f: _Fence) -> _Fence:
+        return _Fence(f.expires_at, released=True)
+
+    kwargs = {"before": 1.0, "expiry": 2.0, "after": 3.0, "release": release, "open_ended": True}
+    assert check_temporal_fence(_Fence, **kwargs) is None  # type: ignore[arg-type]
+    # Control: the one-rule difference (the expiry instant is live) is rejected, by name.
+    with pytest.raises(AssertionError, match=r"TemporalFence contract broken: not live AT its expiry"):
+        check_temporal_fence(lambda e: _Fence(e, inclusive=True), **kwargs)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

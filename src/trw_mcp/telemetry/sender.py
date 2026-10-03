@@ -232,6 +232,8 @@ class BatchSender:
                 self._source_trw_dir
             ):  # every request asks: the switch may flip mid-flush (B71-106)
                 return False  # the batch stays queued
+            if not send_policy(self._source_trw_dir).platform_telemetry:
+                return False  # consent withdrawn mid-flush (CONSENT-FLAGS-READ-LIVE): the batch stays queued
             try:
                 success = self._http_post(url, batch)
                 if success:

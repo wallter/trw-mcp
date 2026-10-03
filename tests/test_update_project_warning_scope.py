@@ -31,11 +31,13 @@ def test_pointer_claude_md_is_not_reported_as_missing_markers(fake_git_repo: Pat
     result = update_project(fake_git_repo, ide="claude-code")
 
     assert not [w for w in result.get("warnings", []) if "missing TRW auto-generated markers" in w]
-    # FB-INSTALL-02: a pointer-only CLAUDE.md imports AGENTS.md and is the user's adapter; it is kept, unwarned.
-    # (REMOVE-S2: update-project no longer touches or reports a root CLAUDE.md; doctor's claude_md_masks_agents_md
-    # row passes this one.)
-    assert (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
-    assert not [w for w in result.get("warnings", []) if "CLAUDE.md" in w]
+    # FB-INSTALL-02: a pointer-only CLAUDE.md imports AGENTS.md and is the user's adapter; it is kept, unwarned,
+    # and gains only TRW's marked block (operator P0 2026-10-01: never deleted, the TRW context imported directly).
+    text = (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.startswith("@AGENTS.md\n") and "@.trw/INSTRUCTIONS.md" in text
+    notes = [w for w in result.get("warnings", []) if "CLAUDE.md" in w]
+    # The one CLAUDE.md line is the named copy of the user's previous version (CANARY-ACCEPT dev22 P0); no complaint.
+    assert len(notes) == 1 and "your previous version is kept at" in notes[0], notes
 
 
 def test_an_agents_md_without_markers_that_is_not_a_pointer_still_warns(fake_git_repo: Path) -> None:

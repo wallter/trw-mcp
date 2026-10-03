@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,9 +44,14 @@ class TestSlowStoreTimesOutAndStillReturnsTheSidecarHint:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A recall that never finishes inside the deadline yields no learnings, but the T2 hint still renders."""
-        self._run(tmp_path, monkeypatch, deadline_ms=100, sleep_s=2.0)
+        result = self._run(tmp_path, monkeypatch, deadline_ms=100, sleep_s=2.0)
 
-    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, deadline_ms: int, sleep_s: float) -> None:
+        assert result.learnings == []
+        assert result.learnings_status == "recall_timeout"
+        assert result.distill_status == "hint_available"
+        assert result.distill_hint is not None and result.distill_hint.target_path == "foo.py"
+
+    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, deadline_ms: int, sleep_s: float) -> Any:
         _pro_repo(tmp_path)
         reload_config(TRWConfig(hint_recall_deadline_ms=deadline_ms))
 
@@ -67,6 +73,7 @@ class TestSlowStoreTimesOutAndStillReturnsTheSidecarHint:
         assert result.distill_status == "hint_available"
         assert result.distill_hint is not None
         assert result.distill_hint.target_path == "foo.py"
+        return result
 
 
 class TestFastStoreStillReturnsLearningsWithinTheDeadline:

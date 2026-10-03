@@ -46,7 +46,7 @@ class _CeremonyFields:
     ceremony_mode: Literal["full", "light"] = "full"
     response_format: Literal["yaml", "json"] = "yaml"
 
-    framework_version: str = "v27.5_TRW"
+    framework_version: str = "v27.6_TRW"
     aaref_version: str = "v3.3.0"
 
     ambiguity_rate_max: float = 0.05
@@ -140,12 +140,6 @@ class _CeremonyFields:
     # the same reason: no production reader, only a test pinning a default.
     compliance_review_retention_days: int = 365
 
-    # self_review_blocking KEPT under PRD-CORE-291 (slice 2) despite scanning
-    # unread: `.claude/hooks/self-review.sh:21-22,133` reads this key straight
-    # out of `.trw/config.yaml` (not an env-var twin), a real consumer outside
-    # the scanner's corpus (trw-mcp/src/trw_mcp/data/hooks only) -- class E,
-    # `.trw/compliance/config-field-consumers-baseline.json`.
-    self_review_blocking: bool = False
     compact_instructions_template: str = ""
 
     ceremony_feedback_min_samples: int = 10

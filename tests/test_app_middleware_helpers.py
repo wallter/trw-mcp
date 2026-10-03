@@ -22,14 +22,20 @@ class TestMiddlewareHelpers:
         assert result is not None
 
     def test_try_init_ceremony_returns_none_on_error(self) -> None:
+        from structlog.testing import capture_logs
+
         from trw_mcp.server._app import _try_init_ceremony
 
-        with patch(
-            "trw_mcp.server._app.CeremonyMiddleware",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("trw_mcp.server._app.CeremonyMiddleware", side_effect=RuntimeError("boom")) as ctor,
+            capture_logs() as logs,
         ):
             result = _try_init_ceremony()
-            assert result is None
+        assert result is None
+        assert ctor.call_count == 1
+        assert [(e["event"], e["log_level"], e["component"]) for e in logs] == [
+            ("middleware_init_failed", "warning", "CeremonyMiddleware")
+        ]
 
     def test_try_load_config_returns_config(self) -> None:
         from trw_mcp.server._app import _try_load_config
@@ -38,14 +44,20 @@ class TestMiddlewareHelpers:
         assert result is not None
 
     def test_try_load_config_returns_none_on_error(self) -> None:
+        from structlog.testing import capture_logs
+
         from trw_mcp.server._app import _try_load_config
 
-        with patch(
-            "trw_mcp.models.config.get_config",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("boom")) as getter,
+            capture_logs() as logs,
         ):
             result = _try_load_config()
-            assert result is None
+        assert result is None
+        assert getter.call_count == 1
+        assert [(e["event"], e["log_level"], e["component"]) for e in logs] == [
+            ("middleware_config_load_failed", "warning", "get_config")
+        ]
 
     def test_no_downstream_masking_middleware_is_built(self) -> None:
         """Nothing after the tools cuts or elides a response (C9 frozen-workload finding)."""
@@ -60,29 +72,48 @@ class TestMiddlewareHelpers:
         assert result is not None
 
     def test_try_init_response_optimizer_returns_none_on_error(self) -> None:
+        from structlog.testing import capture_logs
+
         from trw_mcp.server._app import _try_init_response_optimizer
 
-        with patch(
-            "trw_mcp.middleware.response_optimizer.ResponseOptimizerMiddleware",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "trw_mcp.middleware.response_optimizer.ResponseOptimizerMiddleware",
+                side_effect=RuntimeError("boom"),
+            ) as ctor,
+            capture_logs() as logs,
         ):
             result = _try_init_response_optimizer()
-            assert result is None
+        assert result is None
+        assert ctor.call_count == 1
+        assert [(e["event"], e["log_level"], e["component"]) for e in logs] == [
+            ("middleware_init_failed", "warning", "ResponseOptimizerMiddleware")
+        ]
 
     def test_try_init_surface_authority_returns_none_on_error_under_agent(self) -> None:
         """PRD-SEC-015 round-2 audit (Row 1): the pre-existing fail-open
         contract is UNCHANGED for an ordinary agent-role process."""
         import os
 
+        from structlog.testing import capture_logs
+
         from trw_mcp.server._app import _try_init_surface_authority
 
         assert os.environ.get("TRW_SURFACE_ROLE") is None
-        with patch(
-            "trw_mcp.middleware.surface_authority.SurfaceAuthorityMiddleware",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "trw_mcp.middleware.surface_authority.SurfaceAuthorityMiddleware",
+                side_effect=RuntimeError("boom"),
+            ) as ctor,
+            capture_logs() as logs,
         ):
             result = _try_init_surface_authority()
-            assert result is None
+        assert result is None
+        assert ctor.call_count == 1
+        # Fail-open warning, not the reviewer-abort exception event.
+        assert [(e["event"], e["log_level"], e["component"]) for e in logs] == [
+            ("middleware_init_failed", "warning", "SurfaceAuthorityMiddleware")
+        ]
 
     def test_try_init_surface_authority_aborts_startup_under_reviewer(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRD-SEC-015 round-2 audit (Row 1), RED-FIRST: reverting the
@@ -115,10 +146,24 @@ class TestMiddlewareHelpers:
 
         cfg = TRWConfig(meta_tune=MetaTuneConfig(enabled=True))
 
+        seen: list[object] = []
+        with patch("trw_mcp.server._app.validate_meta_tune_defaults", side_effect=seen.append):
+            _run_meta_tune_boot_validation(cfg)
+
+        assert seen == [cfg]
+        assert seen[0] is cfg
+
+    def test_meta_tune_boot_validation_skipped_when_disabled(self) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.models.config._sub_models import MetaTuneConfig
+        from trw_mcp.server._app import _run_meta_tune_boot_validation
+
+        cfg = TRWConfig(meta_tune=MetaTuneConfig(enabled=False))
+
         with patch("trw_mcp.server._app.validate_meta_tune_defaults") as validate:
             _run_meta_tune_boot_validation(cfg)
 
-        validate.assert_called_once()
+        assert validate.call_count == 0
 
 
 class TestParseVersion:

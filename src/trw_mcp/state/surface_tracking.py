@@ -183,8 +183,9 @@ def log_surface_event(
         if messenger:
             event["messenger"] = messenger
 
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, default=str) + "\n")
+        from trw_mcp._checkout_write import append_checkout_file
+
+        append_checkout_file(trw_dir, log_path, json.dumps(event, default=str) + "\n")  # refuses a planted link
 
     except Exception:  # justified: fail-open, surface logging must not block callers
         logger.debug("surface_event_log_failed", exc_info=True)

@@ -14,6 +14,7 @@ import structlog
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.outcomes import PendingOutcome, write_synced_marker
 from trw_mcp.sync.pull import _COMPANY_SYNC_SOURCE, PullResult
+from trw_mcp.sync.push import split_by_label
 
 if TYPE_CHECKING:
     from trw_mcp.sync._client_push import TargetPushOutcome
@@ -134,32 +135,44 @@ def _write_synced_markers(pending_outcomes: list[PendingOutcome], target_label: 
             )
 
 
-async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> None:
-    """Execute one push+pull sync cycle for ``client``."""
+async def run_one_cycle(client: BackendSyncClient, *, force: bool = False, push: bool = True, pull: bool = True) -> str:
+    """Execute one push+pull sync cycle for ``client``; returns how it ended.
+
+    The server loop runs both halves; ``trw-mcp sync push`` / ``sync pull``
+    (INC-145) run one half through this same function. Outcomes: ``ok``,
+    ``push_failed``, ``pull_failed``, or a skip: ``no_targets``, ``too_recent``,
+    ``locked``. A pull-only run never records a push.
+    """
     facade = sys.modules["trw_mcp.sync.client"]
     facade_logger = facade.logger
     if not client._targets:
         facade_logger.debug("sync_cycle_skipped", reason="no_targets", client_id=client._client_id)
-        return
+        return "no_targets"
     if not force and not client._coordinator.should_sync(sync_interval=client._scheduled_interval_seconds):
         facade_logger.debug("sync_cycle_skipped", reason="too_recent", client_id=client._client_id)
-        return
+        return "too_recent"
 
     with client._coordinator.acquire_sync_lock() as acquired:
         if not acquired:
-            return
-        if client._learning_sharing_enabled:
+            return "locked"
+        if client._learning_sharing_enabled and push:
             dirty = await facade._offload_sync_work("get_dirty_entries", client._get_dirty_entries)
             facade_logger.info(
                 "sync_push_started", dirty_count=len(dirty), client_id=client._client_id
             ) if dirty else facade_logger.debug(
                 "sync_push_skipped", reason="no_dirty_entries", client_id=client._client_id
             )
+            # PRD-SEC-023 FR05: a row labelled above team never leaves the host. It is marked synced here, so it never
+            # holds a place in the oldest-first dirty page, and counted; only the rest are pushed (and acknowledged by count).
+            dirty, labelled = split_by_label(dirty)
+            if labelled:
+                await facade._offload_sync_work("mark_synced", client._mark_synced, labelled)
+                facade_logger.info("sync_push_withheld_by_label", withheld=len(labelled), client_id=client._client_id)
         else:
             dirty = []
             facade_logger.debug("sync_push_skipped", reason="learning_sharing_disabled", client_id=client._client_id)
 
-        if client._platform_telemetry_enabled:
+        if client._platform_telemetry_enabled and push:
             pending_outcomes = await facade._offload_sync_work(
                 "load_pending_outcomes",
                 facade.load_pending_outcomes,
@@ -205,21 +218,51 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
         learnings_accepted = push_result.learnings.pushed + push_result.learnings.skipped
         if dirty and primary_succeeded and push_result.learnings.failed == 0:
             push_seq = max((entry.sync_seq for entry in dirty), default=0)
-            await facade._offload_sync_work("mark_synced", client._mark_synced, dirty[:learnings_accepted])
+            # INC-147: entries the primary refused are held back with its reason;
+            # the slice of accepted ones is taken over the rest.
+            rejected = dict(push_result.learnings.rejected)
+            accepted = [entry for entry in dirty if entry.id not in rejected][:learnings_accepted]
+            await facade._offload_sync_work("mark_synced", client._mark_synced, accepted)
+            client._coordinator.update_rejected(
+                add={e.id: (e.sync_seq, rejected[e.id]) for e in dirty if e.id in rejected},
+                drop=[entry.id for entry in accepted],
+            )
+            if rejected:
+                facade_logger.warning(
+                    "sync_push_entries_held", client_id=client._client_id, held=len(rejected), ids=sorted(rejected)
+                )
         if push_incomplete:
+            raw_error = primary_entry.get("error") if isinstance(primary_entry, dict) else None
+            why = f" ({raw_error})" if raw_error else ""
             if dirty and len(client._targets) == 1:
                 raw_failed = report.get(primary_label, {}).get("failed", len(dirty))
                 failed_count = int(raw_failed) if isinstance(raw_failed, (int, float)) else len(dirty)
-                client._coordinator.record_sync_failure(f"push failed: {failed_count or len(dirty)} entries")
+                client._coordinator.record_sync_failure(f"push failed: {failed_count or len(dirty)} entries{why}")
             else:
                 client._coordinator.record_sync_failure(
-                    f"primary target {primary_label} push {primary_status or 'missing'}"
+                    f"primary target {primary_label} push {primary_status or 'missing'}{why}"
                 )
         if pending_outcomes and primary_succeeded and _outcomes_were_accepted(client, push_result):
             client._coordinator.record_outcome_push_success(max(item.line_no for item in pending_outcomes))
             await facade._offload_sync_work(
                 "write_synced_markers", facade._write_synced_markers, pending_outcomes, primary_label
             )
+        if not pull:
+            if push_incomplete:
+                return "push_failed"
+            client._coordinator.record_sync_success(pushed=push_result.pushed, pulled=0, push_seq=push_seq)
+            return "ok"
+
+        def finish(pulled: int, next_seq: int) -> str:
+            if push_incomplete or not push:
+                client._coordinator.record_pull_success(pull_seq=next_seq)
+                if push_incomplete:
+                    client._apply_failure_backoff(reason="push failed")
+                return "push_failed" if push_incomplete else "ok"
+            client._coordinator.record_sync_success(
+                pushed=push_result.pushed, pulled=pulled, push_seq=push_seq, pull_seq=next_seq, pull_completed=True
+            )
+            return "ok"
 
         pull_seq = client._coordinator.get_last_pull_seq()
         raw_company_pull_seq = client._coordinator.get_last_company_pull_seq()
@@ -235,17 +278,10 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
             client._reset_poll_schedule()
             client._coordinator.record_sync_failure("pull failed")
             client._apply_failure_backoff(reason="pull failed")
-            return
+            return "pull_failed"
         if pull_result.not_modified:
             client._restore_poll_schedule()
-            if push_incomplete:
-                client._coordinator.record_pull_success(pull_seq=pull_seq)
-                client._apply_failure_backoff(reason="push failed")
-            else:
-                client._coordinator.record_sync_success(
-                    pushed=push_result.pushed, pulled=0, push_seq=push_seq, pull_seq=pull_seq, pull_completed=True
-                )
-            return
+            return finish(0, pull_seq)
         # A cycle that pulled 50 and applied 1 is not a completed cycle in the
         # sense the log used to claim. Carry the per-outcome counts into the
         # cycle record so the shortfall is countable at the surface an operator
@@ -271,7 +307,8 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
                     detail="cursor held; next pull is unconditional so the batch is re-offered",
                 )
             client._cache.update(pull_result.state, etag=etag_to_cache)
-        client._coordinator.record_company_pull_seq(max(company_pull_seq, pull_result.next_company_seq))
+        if cursor_may_advance:  # a held batch is offered again whole, company rows included
+            client._coordinator.record_company_pull_seq(max(company_pull_seq, pull_result.next_company_seq))
         client._apply_sync_hints(pull_result.sync_hints)
         cycle_emit = facade_logger.warning if merge_result.rejected else facade_logger.info
         cycle_emit(
@@ -291,17 +328,9 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
             next_delay_seconds=client._next_sleep_seconds,
             immediate_repoll=client._next_cycle_force,
         )
-        if push_incomplete:
-            client._coordinator.record_pull_success(pull_seq=next_pull_seq)
-            client._apply_failure_backoff(reason="push failed")
-        else:
-            client._coordinator.record_sync_success(
-                pushed=push_result.pushed,
-                pulled=pulled,
-                push_seq=push_seq,
-                pull_seq=next_pull_seq,
-                pull_completed=True,
-            )
+        if not push and pulled and not cursor_may_advance:
+            return "pull_failed"
+        return finish(pulled, next_pull_seq)
 
 
 @dataclass(frozen=True)

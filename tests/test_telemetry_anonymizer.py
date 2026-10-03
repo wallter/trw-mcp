@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.telemetry.anonymizer import (
     anonymize_installation_id,
     redact_metadata,
@@ -211,3 +213,61 @@ class TestRedactMetadata:
         result = redact_metadata({"sk-abc123def456ghi789jkl": "x"})
         assert result is not None
         assert "sk-abc123def456ghi789jkl" not in "".join(result.keys())
+
+
+# ---------------------------------------------------------------------------
+# TRW platform API keys (REDACT-TRW-PLATFORM-KEYS)
+# ---------------------------------------------------------------------------
+# Real shapes (as minted by the platform's key-issuing endpoints):
+#   ``trw_`` + secrets.token_urlsafe(32)      -> 43 chars of [A-Za-z0-9_-]
+#   ``trw_dk_`` + secrets.token_urlsafe(32)   -> device-flow key, same body
+# The body is URL-safe base64, so ``-`` and ``_`` occur inside it. Synthetic
+# values only; built from a fixed fragment, never a real key.
+_BODY = ("Ab3-Zk9_Qw2xYv7LmN4pRs8TuC1dEf" * 2)[:43]
+_KEY = "trw_" + _BODY
+_DEVICE_KEY = "trw_dk_" + _BODY
+_KEYS = pytest.mark.parametrize("key", [_KEY, _DEVICE_KEY], ids=["trw_", "trw_dk_"])
+
+
+class TestRedactSecretsTrwPlatformKeys:
+    @_KEYS
+    def test_free_text(self, key: str) -> None:
+        out = redact_secrets(f"my key is {key} and it failed")
+        assert _BODY not in out
+        assert out.startswith("my key is ") and out.endswith(" and it failed")
+
+    @_KEYS
+    def test_json(self, key: str) -> None:
+        out = redact_secrets('{"platform_api_key": "%s", "ok": true}' % key)
+        assert _BODY not in out
+        assert '"ok": true' in out
+
+    @_KEYS
+    def test_url(self, key: str) -> None:
+        out = redact_secrets(f"GET https://api.example.test/v1/x/{key}/y?z=1")
+        assert _BODY not in out
+        assert "api.example.test" in out
+
+    @_KEYS
+    def test_env_line(self, key: str) -> None:
+        out = redact_secrets(f"TRW_PLATFORM_API_KEY={key}\nOTHER=1")
+        assert _BODY not in out
+        assert "OTHER=1" in out
+
+    @_KEYS
+    def test_bare_in_prose_after_punctuation(self, key: str) -> None:
+        out = redact_secrets(f'("{key}"), then {key}.')
+        assert _BODY not in out
+
+    def test_idempotent(self) -> None:
+        once = redact_secrets(f"k={_KEY} d {_DEVICE_KEY}")
+        assert redact_secrets(once) == once
+
+    def test_tool_and_module_names_intact(self) -> None:
+        text = (
+            "trw_session_start trw_recall trw_learn trw_build_check trw_prd_validate "
+            "trw_mcp.telemetry.anonymizer trw_memory.security.credentials "
+            "trw_mcp_telemetry_anonymizer_redact_secrets_helper_function "
+            "trw_dk_ and trw_lic_ words; import trw_mcp; from trw_memory import x"
+        )
+        assert redact_secrets(text) == text

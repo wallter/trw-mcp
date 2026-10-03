@@ -11,12 +11,16 @@ directly.
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from trw_memory.graph import MAX_TRAVERSAL_DEPTH, VALID_EDGE_TYPES
+from trw_memory.labels import LabelPolicy, Surface
 from typing_extensions import TypedDict
 
 from trw_mcp.state import _store_selection
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._session_mark import session_mark
 from trw_mcp.state._store_selection import StoreUnavailableError
 
 logger = structlog.get_logger(__name__)
@@ -52,6 +56,10 @@ class GraphRelatedResult(TypedDict, total=False):
     truncated: bool
     lookup_status: str
     lookup_error: str
+    #: PRD-SEC-023 FR03: neighbours the confidentiality labels withheld (a count only); absent when none.
+    withheld_by_label: int
+    #: PRD-SEC-023 FR04: the session's mark when it is above team; absent otherwise.
+    session_label: str
 
 
 def graph_related(
@@ -97,7 +105,32 @@ def graph_related(
             "truncated": False,
         }
 
+    # PRD-SEC-023 FR03: graph mode is an agent surface (trw_recall asked for it), so it admits by label like any other recall. A withheld root
+    # is indistinguishable from an absent one, and a withheld neighbour is dropped and counted, never named.
+    policy = LabelPolicy.current()
+    if policy.admit([root], Surface.AGENT).withheld:
+        return {"learning_id": normalized_id, "related": [], "count": 0, "found": False, "truncated": False}
     rows, truncated = store.graph_related(root.namespace, normalized_id, depth, edge_types, limit)
+    withheld = 0
+    returned = [root]
+    if rows:
+        shown: list[dict[str, Any]] = []
+        for row in rows:
+            neighbour = store.get(str(row["id"]))
+            # Unlabellable means withheld: a bare-id lookup may return a twin from ANOTHER namespace, and the graph row is the root's.
+            if (
+                neighbour is None
+                or neighbour.namespace != root.namespace
+                or policy.admit([neighbour], Surface.AGENT).withheld
+            ):
+                withheld += 1
+            else:
+                shown.append(row)
+                returned.append(neighbour)
+        rows = shown
+    session_mark().raise_to(
+        policy.highest(returned)
+    )  # PRD-SEC-023 FR04: the root and the neighbours the caller is shown
     related: list[GraphRelatedItem] = [
         {
             "id": str(row["id"]),
@@ -110,7 +143,7 @@ def graph_related(
         }
         for row in rows
     ]
-    return {
+    found: GraphRelatedResult = {
         "learning_id": normalized_id,
         "namespace": root.namespace,
         "related": related,
@@ -118,6 +151,11 @@ def graph_related(
         "found": True,
         "truncated": truncated,
     }
+    if withheld:
+        found["withheld_by_label"] = withheld
+    if session_label := session_mark().reported():
+        found["session_label"] = session_label
+    return found
 
 
 __all__ = ["GraphRelatedItem", "GraphRelatedResult", "graph_related"]

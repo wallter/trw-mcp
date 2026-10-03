@@ -47,7 +47,7 @@ INSTRUCTION_WRITE_ADMISSIONS: dict[str, ConfigAdmission] = {
     "instruction_backup_retention": ConfigAdmission(
         field_name="instruction_backup_retention",
         owner="PRD-FIX-123-FR04",
-        consumer="trw_mcp.state.claude_md._write_backup.backup_instruction_file",
+        consumer="trw_mcp.state.claude_md._write_backup.keep_displaced",
         default_rationale=(
             "Defaults to 5 pre-write copies per instruction filename — enough history to recover "
             "from an unnoticed sync several sessions later, bounded so a chatty bootstrap loop "

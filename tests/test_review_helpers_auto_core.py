@@ -158,7 +158,15 @@ class TestHandleAutoMode:
         fake_analysis = {
             "reviewer_roles_run": ["correctness"],
             "reviewer_errors": [],
-            "findings": [],
+            "findings": [
+                {
+                    "reviewer_role": "correctness",
+                    "confidence": 90,
+                    "category": "logic",
+                    "severity": "warning",
+                    "description": "From analysis",
+                },
+            ],
         }
         with (
             patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
@@ -167,8 +175,11 @@ class TestHandleAutoMode:
                 return_value=fake_analysis,
             ) as mock_analysis,
         ):
-            handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
+            result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", None)
         mock_analysis.assert_called_once()
+        # The analysis findings are what the result reports (not an empty precollected list).
+        assert result["total_findings_count"] == 1
+        assert result["surfaced_findings_count"] == 1
 
     def test_confidence_threshold_in_result(self, run_dir: Path) -> None:
         config = _make_config(confidence_threshold=75)

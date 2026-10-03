@@ -1,9 +1,9 @@
-"""REMOVE-S2: doctor names a root CLAUDE.md that hides AGENTS.md from Claude Code.
+"""Doctor names a root CLAUDE.md that hides TRW's context from Claude Code (REMOVE-S2; operator P0 2026-10-01).
 
-Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md`` exists. update-project used to retire a
-TRW-only ``CLAUDE.md`` itself (the one-time 8.0 migration) and warn about one with user content. That
-migration is gone; this doctor row is now the one place the masking is reported. update-project no
-longer touches a root ``CLAUDE.md`` at all.
+Claude Code reads ``AGENTS.md`` only when no ``CLAUDE.md`` exists. Releases 8.0.0-8.1.5 retired a "TRW-only"
+``CLAUDE.md`` on update; that is gone, and init/update now keep every ``CLAUDE.md`` and add or refresh only TRW's
+marked block in it (an import of ``.trw/INSTRUCTIONS.md``). The row passes with that block (or an ``@AGENTS.md``
+import) and otherwise says to run update-project; it never advises deleting the file.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import yaml
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
-_WARNING_FIX = "add an `@AGENTS.md` line"
+_WARNING_FIX = "run `trw-mcp update-project` to add TRW's block"
 
 
 def _project(tmp_path: Path, targets: list[str]) -> Path:
@@ -44,6 +44,7 @@ def test_a_claude_md_with_user_content_warns_with_the_fix(tmp_path: Path) -> Non
     assert status == "WARN"
     assert "skips AGENTS.md" in message
     assert _WARNING_FIX in message
+    assert "delete" not in message.lower(), "the row never advises deleting a user's CLAUDE.md"
 
 
 @pytest.mark.parametrize("adapter", ["@AGENTS.md\n", "# notes\n@./AGENTS.md\nmore\n", "  @AGENTS.md  \n"])
@@ -99,8 +100,8 @@ def test_the_row_is_registered_in_doctor() -> None:
     ["<!-- trw:start -->\nold TRW block\n<!-- trw:end -->\n", "@AGENTS.md\n", "# mine\nUse tabs.\n"],
     ids=["trw-only", "adapter", "user-prose"],
 )
-def test_update_project_never_touches_a_root_claude_md(initialized_repo: Path, content: str) -> None:
-    """The one-time 8.0 retirement is gone: update-project neither trashes, edits nor warns; doctor reports.
+def test_update_project_keeps_a_root_claude_md_and_adds_only_trws_block(initialized_repo: Path, content: str) -> None:
+    """Never trashed, moved or warned about: TRW's marked block is added (or an old one replaced), nothing else.
 
     The adapter case is FB-INSTALL-02's guarantee: a lone ``@AGENTS.md`` CLAUDE.md is the user's and stays.
     """
@@ -113,9 +114,21 @@ def test_update_project_never_touches_a_root_claude_md(initialized_repo: Path, c
 
     assert not result["errors"], result["errors"]  # a failed or rolled-back update would prove nothing
     assert (initialized_repo / "AGENTS.md").is_file()
-    assert claude_md.read_text(encoding="utf-8") == content
-    assert "CLAUDE.md" not in result.get("trashed", [])
-    assert not [w for w in result.get("warnings", []) if "CLAUDE.md" in w]
+    _assert_kept_with_trw_block(claude_md, content)
+    assert "CLAUDE.md" not in result.get("retired", [])
+    notes = [w for w in result.get("warnings", []) if "CLAUDE.md" in w]
+    # The one CLAUDE.md lines are the named copy of the user's previous version (CANARY-ACCEPT dev22 P0); no complaint.
+    assert all("your previous version is kept at" in w for w in notes), notes  # none for a TRW-only previous file
+    assert _row(initialized_repo)[0] == "PASS"
+
+
+def _assert_kept_with_trw_block(claude_md: Path, content: str) -> None:
+    text = claude_md.read_text(encoding="utf-8")
+    assert "@.trw/INSTRUCTIONS.md" in text and text.count("<!-- trw:start -->") == 1
+    if "<!-- trw:start -->" in content:
+        assert "old TRW block" not in text, "an old TRW-marked block is TRW's to replace"
+    else:
+        assert text.startswith(content), "every byte the user wrote stays"
 
 
 @pytest.mark.parametrize(
@@ -123,7 +136,7 @@ def test_update_project_never_touches_a_root_claude_md(initialized_repo: Path, c
     ["<!-- trw:start -->\nold TRW block\n<!-- trw:end -->\n", "@AGENTS.md\n", "# mine\nUse tabs.\n"],
     ids=["trw-only", "adapter", "user-prose"],
 )
-def test_init_project_never_touches_a_root_claude_md(fake_git_repo: Path, content: str) -> None:
+def test_init_project_keeps_a_root_claude_md_and_adds_only_trws_block(fake_git_repo: Path, content: str) -> None:
     from trw_mcp.bootstrap import init_project
 
     claude_md = fake_git_repo / "CLAUDE.md"
@@ -133,20 +146,20 @@ def test_init_project_never_touches_a_root_claude_md(fake_git_repo: Path, conten
 
     assert not result["errors"], result["errors"]
     assert (fake_git_repo / "AGENTS.md").is_file()
-    assert claude_md.read_text(encoding="utf-8") == content
-    assert "CLAUDE.md" not in result.get("trashed", [])
+    _assert_kept_with_trw_block(claude_md, content)
+    assert "CLAUDE.md" not in result.get("retired", [])
 
 
-def test_a_trw_only_leftover_warns_to_delete_it(tmp_path: Path) -> None:
-    """A pre-8.0 TRW-only CLAUDE.md is not 'user content': the row says to delete it."""
+def test_a_pre_8_trw_leftover_warns_to_run_update_never_to_delete(tmp_path: Path) -> None:
+    """A pre-8.0 block without the import does not reach TRW's context; update-project replaces it."""
     project = _project(tmp_path, ["claude-code"])
     (project / "CLAUDE.md").write_text("<!-- trw:start -->\nold block\n<!-- trw:end -->\n", encoding="utf-8")
 
     status, message = _row(project)
 
     assert status == "WARN"
-    assert "only TRW content" in message
-    assert "delete it" in message
+    assert _WARNING_FIX in message
+    assert "delete" not in message.lower()
 
 
 # --- codex r1 KIs: Claude Code's import rule, confined and bounded reads, symlink edges ---------------------------
@@ -229,7 +242,7 @@ def test_a_huge_file_is_read_only_up_to_the_bound(tmp_path: Path, monkeypatch: p
     status, message = _row(project)
 
     assert status == "WARN"  # the import past the bound is never seen
-    assert "has user content" in message
+    assert "carries no current TRW block" in message
 
 
 # --- codex r2 KIs: CommonMark spans and fences, reader failures, truncation, portability ---------------------------

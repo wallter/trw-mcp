@@ -33,7 +33,7 @@ from pathlib import Path
 import structlog
 
 import trw_mcp.tools._deferred_state as _ds
-from trw_mcp._locking import _lock_ex, _lock_ex_nb, _lock_un
+from trw_mcp._locking import _lock_ex_nb
 from trw_mcp.models.config import get_config
 from trw_mcp.tools import _deferred_locking as _dl
 from trw_mcp.tools._deferred_locking import (
@@ -57,7 +57,6 @@ from trw_mcp.tools._deferred_steps_learning import (
 from trw_mcp.tools._deferred_steps_memory import (
     _step_auto_prune as _step_auto_prune,
     _step_memory_decay as _step_memory_decay,
-    _step_tier_sweep as _step_tier_sweep,
 )
 from trw_mcp.tools._deferred_steps_telemetry import (
     _step_batch_send as _step_batch_send,
@@ -86,7 +85,6 @@ logger = structlog.get_logger(__name__)
 # ``_run_deferred_steps``); the reported count follows automatically.
 DEFERRED_STEPS: tuple[str, ...] = (
     "auto_prune",
-    "tier_sweep",
     "memory_decay",
     "index_sync",
     "auto_progress",
@@ -120,7 +118,7 @@ def _try_acquire_deferred_lock(
 
 def _log_deferred_result(trw_dir: Path, results: dict[str, object], errors: list[str]) -> None:
     """Append deferred results while preserving the legacy lock patch seam."""
-    log_deferred_result(trw_dir, results, errors, _lock_ex, _lock_un)
+    log_deferred_result(trw_dir, results, errors)
 
 
 def _run_deferred_steps(
@@ -250,7 +248,6 @@ def _run_deferred_steps(
     # monkeypatches on ``_deferred_delivery._step_foo`` still bind at call time.
     step_map: dict[str, object] = {
         "auto_prune": lambda: _step_auto_prune(trw_dir),
-        "tier_sweep": lambda: _step_tier_sweep(trw_dir),
         "memory_decay": lambda: _step_memory_decay(trw_dir),
         "index_sync": lambda: _do_index_sync(),
         "auto_progress": lambda: _step_auto_progress(resolved_run),

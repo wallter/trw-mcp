@@ -61,7 +61,7 @@ def _make_middleware(tmp_path: Path) -> MCPSecurityMiddleware:
             ),
         ]
     )
-    cfg = AnomalyDetectorConfig(shadow_clock_path=tmp_path / "sec" / "clock.yaml")
+    cfg = AnomalyDetectorConfig(checkout_root=tmp_path, shadow_clock_path=tmp_path / "sec" / "clock.yaml")
     det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
     return MCPSecurityMiddleware(
         allowlist=allowlist,

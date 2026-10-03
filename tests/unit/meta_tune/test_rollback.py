@@ -198,6 +198,77 @@ def test_rollback_honors_max_attempts(tmp_path: Path) -> None:
     assert second.reason == "rollback_attempt_limit_exceeded"
 
 
+def test_rollback_refuses_a_symlink_planted_at_the_target(tmp_path: Path) -> None:
+    """The restore never writes through a link at the target (CORE-337-D residual; was shutil.copy2)."""
+    from tests._planted_symlink import assert_untouched, plant_symlink
+
+    cfg = _cfg(True, str(tmp_path / "audit.jsonl"))
+    state_dir = tmp_path / "state"
+    live_link = tmp_path / "project" / "CLAUDE.md"
+    victim = plant_symlink(live_link, tmp_path / "outside")
+    backup_file = tmp_path / "backup.md"
+    backup_file.write_text("original")
+    _write_snapshot(
+        state_dir=state_dir,
+        proposal_id="p1",
+        live_path=live_link,
+        backup_path=backup_file,
+        promoted_at=datetime.now(timezone.utc),
+    )
+
+    result = rollback_proposal("p1", state_dir=state_dir, _config=cfg)
+
+    assert result.status == "error"
+    assert "symlink" in result.reason
+    assert_untouched(live_link, victim)
+
+
+def test_rollback_attempt_counter_refuses_a_symlinked_snapshot(tmp_path: Path) -> None:
+    """A failed rollback bumps its counter without writing through a snapshot link (was write_text)."""
+    from tests._planted_symlink import assert_untouched, plant_symlink
+
+    cfg = _cfg(True, str(tmp_path / "audit.jsonl"), rollback_max_attempts=3)
+    live_file = tmp_path / "CLAUDE.md"
+    live_file.write_text("mutated")
+    snapshot = {
+        "target_path": str(live_file),
+        "backup_path": str(tmp_path / "missing-backup.md"),  # the restore fails, so the counter is written
+        "promotion_ts": datetime.now(timezone.utc).isoformat(),
+    }
+    content = json.dumps(snapshot).encode("utf-8")
+    state_dir = tmp_path / "state"
+    link = state_dir / "p1.json"
+    victim = plant_symlink(link, tmp_path / "outside", content)
+
+    result = rollback_proposal("p1", state_dir=state_dir, _config=cfg)
+
+    assert result.status == "error"
+    assert_untouched(link, victim, content)
+
+
+def test_rollback_restore_keeps_the_backups_permission_bits(tmp_path: Path) -> None:
+    """shutil.copy2 carried the backup's mode onto the target; the safe write must too."""
+    cfg = _cfg(True, str(tmp_path / "audit.jsonl"))
+    state_dir = tmp_path / "state"
+    live_file = tmp_path / "run.sh"
+    backup_file = tmp_path / "backup.sh"
+    live_file.write_text("mutated")
+    backup_file.write_text("original")
+    backup_file.chmod(0o750)
+    _write_snapshot(
+        state_dir=state_dir,
+        proposal_id="p1",
+        live_path=live_file,
+        backup_path=backup_file,
+        promoted_at=datetime.now(timezone.utc),
+    )
+
+    assert rollback_proposal("p1", state_dir=state_dir, _config=cfg).status == "rolled_back"
+
+    assert live_file.read_text() == "original"
+    assert live_file.stat().st_mode & 0o7777 == 0o750
+
+
 def test_rollback_default_max_attempts_is_at_least_three() -> None:
     """A single transient FS/OS error must not permanently brick rollback, so the
     default attempt budget must allow retries (>=3)."""

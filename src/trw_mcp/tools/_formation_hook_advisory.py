@@ -69,11 +69,96 @@ def _target_path(raw: str) -> str | None:
     return file_path.strip() if isinstance(file_path, str) and file_path.strip() else None
 
 
+def covers(glob: str, rel_path: str) -> bool:
+    """Byte-for-byte the predicate of ``trw_mcp.formation._ownership.declaration_covers`` (a test pins the two
+    equal): importing that module costs ~0.7 s, the whole price this pre-check exists to avoid."""
+    from fnmatch import fnmatchcase
+
+    return fnmatchcase(rel_path, glob) or rel_path.startswith(glob.rstrip("/") + "/")
+
+
+def _main_root(project: Path) -> Path | None:
+    """The main checkout when *project* is a linked worktree (its formation index may live there), else None."""
+    marker = project / ".git"
+    if not marker.is_file():
+        return None
+    text = marker.read_text(encoding="utf-8").strip()
+    gitdir = text[len("gitdir:") :].strip() if text.startswith("gitdir:") else ""
+    head, sep, _tail = gitdir.partition("/.git/worktrees/")
+    if not sep:
+        raise ValueError("unrecognised .git file")  # a doubt: the caller fails open
+    return Path(head)
+
+
+def _declared_globs(project: Path) -> list[str]:
+    """Every owned/test-owned glob any registered formation declares. Raises on ANY doubt (unreadable, unknown
+    shape), so the caller runs the full advisory instead of skipping it (fail open)."""
+    import yaml
+
+    globs: list[str] = []
+    roots = [project]
+    main = _main_root(project)
+    if main is not None:
+        roots.append(main)
+    for root in roots:
+        index_path = root / ".trw" / "runtime" / "formations.json"
+        if not index_path.exists():
+            continue
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(index, dict):
+            raise TypeError("formation index is not a mapping")
+        for run in index.values():
+            if not isinstance(run, str):
+                raise TypeError("formation index entry is not a path")
+            manifest = yaml.safe_load((Path(run) / "formation.yaml").read_text(encoding="utf-8"))
+            members = manifest.get("members") if isinstance(manifest, dict) else None
+            if not isinstance(members, list):
+                raise TypeError("formation manifest has no member list")
+            for member in members:
+                if not isinstance(member, dict):
+                    raise TypeError("formation member is not a mapping")
+                for key in ("owned_paths", "test_owned_paths"):
+                    values = member.get(key) or []
+                    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+                        raise TypeError("ownership globs are not a list of strings")
+                    globs.extend(values)
+    return globs
+
+
+def _no_glob_can_cover(target: str) -> bool:
+    """True ONLY when no declared glob covers *target* (FORMATION-ADVISORY-COST), by the ownership predicate itself
+    over every way the target can be made repo-relative. Anything uncertain (no project root, a target outside it, an
+    unreadable or unexpected index or manifest) answers False, so the full advisory runs: never a silent skip.
+    """
+    root = os.environ.get("TRW_PROJECT_ROOT", "").strip()
+    if not root:
+        return False
+    try:
+        project = Path(root)
+        rels = set()
+        for candidate in (Path(target), Path(os.path.realpath(target))):
+            absolute = candidate if candidate.is_absolute() else project / candidate
+            for base in (project, Path(os.path.realpath(project))):
+                try:
+                    rels.add(Path(os.path.normpath(absolute)).relative_to(base).as_posix())
+                except (
+                    ValueError
+                ):  # trw-fail-silent-allow: not under this base; another base or the full advisory decides
+                    continue
+        if not rels:
+            return False
+        return not any(covers(glob, rel) for glob in _declared_globs(project) for rel in rels)
+    except Exception:  # trw-fail-silent-allow: a doubt runs the full advisory (fail open), it never skips it
+        return False
+
+
 def main(payload_text: str) -> int:
     """Emit at most one advisory line. Returns 0 unconditionally."""
     target = _target_path(payload_text)
     if target is None:
         return 0
+    if _no_glob_can_cover(target):
+        return 0  # no declared ownership can cover it: skip the 0.7 s formation import
     try:
         from trw_mcp.formation import load, owner_of, settings
         from trw_mcp.state._paths import resolve_project_root

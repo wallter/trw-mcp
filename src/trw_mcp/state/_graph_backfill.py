@@ -15,7 +15,6 @@ stopped, beside the checkout, so a deadline-bounded deliver resumes it.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -98,11 +97,11 @@ def _save_state(trw_dir: Path, namespace: str, state: _SweepState | None) -> Non
     else:
         payload["namespaces"][namespace] = {**fresh, **(state.cursor or {}), "complete": state.complete}
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError:
+        from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
+
+        path.parent.mkdir(parents=True, exist_ok=True)  # the root itself must exist for the safe writer
+        write_checkout_file(trw_dir, path, json.dumps(payload, indent=2))  # no predictable .tmp (AIKIDO 2a)
+    except (OSError, UnsafeWriteError):
         # Fail-open: losing the resume point costs a repeated sweep, not
         # correctness, and must never break the deliver that triggered it.
         logger.debug("graph_backfill_state_write_failed", exc_info=True)

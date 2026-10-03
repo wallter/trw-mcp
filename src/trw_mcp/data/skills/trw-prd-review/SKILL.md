@@ -1,7 +1,7 @@
 ---
 name: trw-prd-review
 description: >-
-  Assess PRD quality and output a structured READY/NEEDS WORK/BLOCK verdict with per-dimension scores. The skill is read-only and never modifies files. Trigger only via automatic invocation from /trw-prd-ready or /trw-prd-new; do not invoke directly.
+  Assess PRD quality and output a structured READY/NEEDS WORK/BLOCK verdict with per-dimension scores. The skill is read-only and never modifies files. Trigger only via automatic invocation from /trw-prd-ready or /trw-prd-ready; do not invoke directly.
 user-invocable: false
 argument-hint: "[PRD-ID or file path]"
 context: fork
@@ -44,7 +44,7 @@ traceability over generic requests to add more prose.
 
 ## Input
 
-The internal `/trw-prd-ready` or `/trw-prd-new` caller provides a PRD ID or file path. Treat it as the
+The internal `/trw-prd-ready` or `/trw-prd-ready` caller provides a PRD ID or file path. Treat it as the
 review target; do not prompt for or advertise direct invocation.
 
 To resolve a PRD ID to a file path, read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`).

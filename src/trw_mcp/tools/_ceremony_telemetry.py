@@ -161,9 +161,11 @@ def step_first_session_marker() -> bool:
         # crash before this point re-emits next session (no silent data loss);
         # a crash after means at most one duplicate — acceptable, and the
         # backend de-dups by distinct installation_id anyway (FR04).
+        from trw_mcp._checkout_write import write_checkout_file
+
         flag_path.parent.mkdir(parents=True, exist_ok=True)
-        flag_path.write_text(_iso_now() + "\n", encoding="utf-8")
+        write_checkout_file(trw_dir, flag_path, _iso_now() + "\n")  # a dangling planted link is refused
         return True
-    except Exception:  # justified: fail-open, first-session marker must not block session start
+    except Exception:  # trw-fail-silent-allow: fail-open, the marker must not block session start; logged at warning
         logger.warning("first_session_marker_failed", exc_info=True)
         return False

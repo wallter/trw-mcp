@@ -12,8 +12,12 @@ from pathlib import Path
 
 import pytest
 
-_REPO = Path(__file__).resolve().parents[2]
-_FILES = [_REPO / "trw-mcp" / "src" / "trw_mcp" / "data" / "settings.json", _REPO / ".claude" / "settings.json"]
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+
+_BUNDLED = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "settings.json"
+# The repo's own .claude/settings.json exists only in the monorepo; the public package checks the bundled copy alone.
+_FILES = [_BUNDLED, *([MONOREPO_ROOT / ".claude" / "settings.json"] if MONOREPO_ROOT is not None else [])]
+_IDS = ["bundled", "repo"][: len(_FILES)]
 MAX_SECONDS = 60
 
 
@@ -28,7 +32,7 @@ def _hooks(path: Path) -> list[tuple[str, str, int]]:
     ]
 
 
-@pytest.mark.parametrize("path", _FILES, ids=["bundled", "repo"])
+@pytest.mark.parametrize("path", _FILES, ids=_IDS)
 def test_every_hook_timeout_is_seconds_within_a_sane_ceiling(path: Path) -> None:
     hooks = _hooks(path)
     assert hooks
@@ -36,7 +40,7 @@ def test_every_hook_timeout_is_seconds_within_a_sane_ceiling(path: Path) -> None
     assert bad == [], f"{path}: timeouts are seconds in [5, {MAX_SECONDS}]"
 
 
-@pytest.mark.parametrize("path", _FILES, ids=["bundled", "repo"])
+@pytest.mark.parametrize("path", _FILES, ids=_IDS)
 def test_pre_tool_guards_get_the_full_ceiling_so_load_never_fails_them_open(path: Path) -> None:
     guards = [(e, m, t) for e, m, t in _hooks(path) if e == "PreToolUse"]
     assert guards and all(t == MAX_SECONDS for _, _, t in guards), guards
@@ -92,7 +96,7 @@ def test_a_user_authored_hook_with_a_large_timeout_is_never_touched(tmp_path: Pa
 # Write/Edit), the bundled Claude Code plugin's hooks.json kept 3000/10000/5000/3000, and an upgraded install kept a
 # legacy 500 on `user-prompt-submit.sh` because the migration's 600 s floor treats 500 as a user's choice.
 
-_PLUGIN_HOOKS = _REPO / "trw-mcp" / "src" / "trw_mcp" / "data" / "plugin" / "hooks" / "hooks.json"
+_PLUGIN_HOOKS = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "plugin" / "hooks" / "hooks.json"
 
 
 def test_the_distill_hint_registration_timeout_is_seconds_within_the_ceiling() -> None:

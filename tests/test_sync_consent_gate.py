@@ -23,6 +23,7 @@ import pytest
 from tests._contact_support import payload_trw_dir
 from tests._test_sync_client_support import _acquired_lock, _make_config
 from trw_mcp.sync._team_merge_result import TeamMergeResult
+from trw_mcp.sync.push import PushResult
 
 # A real send needs a governing project: its switch is read from that project's .trw.
 pytestmark = pytest.mark.usefixtures("governing_project")
@@ -33,6 +34,9 @@ def _make_entry(entry_id: str, sync_seq: int = 1) -> Any:
     entry = MagicMock()
     entry.sync_seq = sync_seq
     entry.id = entry_id
+    entry.namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+    entry.tags = []
+    entry.metadata = {}
     entry.to_dict.return_value = {
         "id": entry_id,
         "summary": "PRIVATE learning summary that must not egress",
@@ -200,6 +204,17 @@ async def test_cycle_does_not_load_dirty_when_sharing_disabled(tmp_path) -> None
     # Pull path is unaffected by the content-egress gate.
     client._puller.pull_intel_state.assert_called_once()
 
+    # Control: the same client with sharing switched on loads the dirty entry and pushes it, so the
+    # skip above comes from the consent flag and not from an empty queue or a broken harness.
+    client._learning_sharing_enabled = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
+    await client._run_one_cycle()
+    client._get_dirty_entries.assert_called_once_with()
+    client._pusher.push_learnings.assert_called_once()
+    pushed_entries = client._pusher.push_learnings.call_args.args[0]
+    assert [e.id for e in pushed_entries] == ["L-1"]
+
 
 @pytest.mark.asyncio
 async def test_cycle_does_not_load_outcomes_when_telemetry_disabled(tmp_path) -> None:
@@ -229,6 +244,21 @@ async def test_cycle_does_not_load_outcomes_when_telemetry_disabled(tmp_path) ->
 
     load_mock.assert_not_called()
     client._pusher.push_outcomes.assert_not_called()
+
+    # Control: with telemetry switched on the same cycle loads the pending-outcome queue from the
+    # coordinator's last outcome line, so the skip above comes from the flag.
+    client._platform_telemetry_enabled = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_outcome_line.return_value = 7
+    pending = SimpleNamespace(
+        payload={"learning_ids": ["L-out"]}, line_no=9, run_dir=None, run_id="run-1", sync_hash=None, run_yaml_hash=None
+    )
+    client._pusher.push_outcomes = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
+    with patch("trw_mcp.sync.client.load_pending_outcomes", return_value=[pending]) as load_mock:
+        await client._run_one_cycle()
+    load_mock.assert_called_once_with(client._trw_dir, since_line=7)
+    assert client._pusher.push_outcomes.call_args.args[0] == [{"learning_ids": ["L-out"]}]
+    client._coordinator.record_outcome_push_success.assert_called_once_with(9)
 
 
 def test_client_resolves_consent_flags_fail_closed_when_absent(tmp_path) -> None:

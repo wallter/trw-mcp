@@ -190,6 +190,8 @@ def register_build_tools(server: FastMCP) -> None:
             resolve_run_path(run_path, context=_build_call_context(ctx)) if run_path else active_run
         )
         writes_project_state = not run_path or (active_run is not None and active_run.resolve() == resolved_run)
+        if opts.junit_xml:  # UF-GATES-02: per-test-file executed receipts for the acceptance manifest
+            _record_test_receipts(opts.junit_xml, opts.suite_root, resolved_run)
 
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
@@ -410,8 +412,9 @@ def _record_session_observation(trw_dir: Path, status: BuildStatus) -> None:
         path = trw_dir / _SESSION_OBSERVATION_LOG
         path.parent.mkdir(parents=True, exist_ok=True)
         rotate_jsonl(path)  # default 10 MB, the recall log's threshold
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row) + "\n")
+        from trw_mcp._checkout_write import append_checkout_file
+
+        append_checkout_file(trw_dir, path, json.dumps(row) + "\n")  # refuses a planted link (AIKIDO 2a)
     except Exception:  # justified: fail-open, a telemetry write must not change the build_check result
         logger.debug("session_observation_record_failed", exc_info=True)
 
@@ -478,3 +481,14 @@ def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> N
             "coverage_pct": str(getattr(status, "coverage_pct", 0)),
         },
     )
+
+
+def _record_test_receipts(junit_xml: str, suite_root: str | None, run: Path | None) -> None:
+    """Record per-test-file receipts from *junit_xml* into *run*; a request with no run is refused, not dropped."""
+    from trw_mcp.state._paths import resolve_project_root
+    from trw_mcp.state.test_receipts import record_junit_report
+
+    if run is None:
+        raise ValueError("options.junit_xml needs an active run (or options.run_path) to record receipts into")
+    root = resolve_project_root()
+    record_junit_report(Path(junit_xml), suite_root=root / (suite_root or "."), repo_root=root, run_path=run)

@@ -11,6 +11,8 @@ effects) stay in that module so those patches keep taking effect.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import structlog
@@ -128,9 +130,9 @@ def _refresh_distill_channels(
         from ._claude_code_distill_channels import install_claude_code_distill_channels
 
         cc_dc = install_claude_code_distill_channels(target_dir, manifest_hashes=manifest_hashes)
-        # warnings/trashed carry the CC-03 withdrawal outcomes (a refused symlink, a copy left in trash)
+        # warnings/retired carry the CC-03 withdrawal outcomes (a refused symlink, a file deleted in place)
         # and the CC-05 "kept because it was edited" report.
-        for _key in ("preserved", "removed", "errors", "warnings", "trashed"):
+        for _key in ("preserved", "removed", "errors", "warnings", "retired"):
             _items = cc_dc.get(_key)
             if isinstance(_items, list):
                 result.setdefault(_key, []).extend(_items)
@@ -151,6 +153,9 @@ def _restore_dirty_files(
     from ._client_adoption import rerecord
 
     preserve_uncommitted_changes(root, snapshot_root, dirty, manifest_hashes, result)
+    # The bytes the restore put back, before any later writer (pin retirement, re-record, CC-03 re-apply): the
+    # report compares the final bytes against these (E2E-INC-142; codex r2 KI1).
+    record_kept_digests(root, result)
     rerecord(root, adopted, result)
     # An uncommitted config.yaml comes back whole; the pins proven above are still retired.
     if retired_pins:
@@ -168,3 +173,62 @@ def _restore_dirty_files(
     from ._claude_code_distill_channels import apply_cc03_hook_registration
 
     apply_cc03_hook_registration(root)
+
+
+_KEPT = " (uncommitted_changes)"
+_KEPT_THEN_CHANGED = " (uncommitted_changed_after_keep)"
+
+
+def _kept_rel(root: Path, entry: str) -> str:
+    """The repo-relative posix path of a ``preserved`` entry, whatever spelling it was recorded in."""
+    path = Path(entry.removesuffix(_KEPT).removesuffix(_KEPT_THEN_CHANGED).rstrip())
+    if path.is_absolute():
+        try:
+            return path.relative_to(root).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
+
+
+def _digest(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:  # trw-fail-silent-allow: an unreadable or absent file compares as its own state, "none"
+        return "none"
+
+
+def record_kept_digests(root: Path, result: dict[str, list[str]]) -> None:
+    """Remember the bytes of every file kept for its uncommitted changes, right after it was put back."""
+    kept = {_kept_rel(root, e) for e in result.get("preserved", []) if str(e).endswith(_KEPT)}
+    result["_kept_digests"] = [json.dumps([rel, _digest(root / rel)]) for rel in sorted(kept)]  # structured
+
+
+def relabel_kept_files_that_changed(root: Path, result: dict[str, list[str]]) -> None:
+    """Called once the update is final (after tombstones and any rollback): a kept file whose bytes differ from
+    what was put back is reported as changed, never as untouched (E2E-INC-142). Every spelling of its entry is
+    relabelled, so the report cannot pick an old one."""
+    changed = set()
+    for line in result.pop("_kept_digests", []):
+        rel, recorded = json.loads(line)
+        if _digest(root / rel) != recorded:
+            changed.add(rel)
+    if changed:
+        result["preserved"] = [
+            f"{_kept_rel(root, e)}{_KEPT_THEN_CHANGED}"
+            if str(e).endswith(_KEPT) and _kept_rel(root, str(e)) in changed
+            else e
+            for e in result.get("preserved", [])
+        ]
+
+
+def _unrecorded_client_notes(detected: list[str], recorded: list[str]) -> list[str]:
+    """One line per client detected here but not recorded: update-project leaves it alone and says how to add it.
+
+    claude-code is skipped: detection reports it for any `.claude/`, which TRW creates for every client.
+    """
+    return [
+        f"{client} is detected here but not recorded for this project, so update-project left it alone; "
+        f"to add it, run: trw-mcp update-project --ide {client}"
+        for client in detected
+        if client not in recorded and client != "claude-code"
+    ]

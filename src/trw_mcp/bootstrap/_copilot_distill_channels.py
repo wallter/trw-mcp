@@ -103,16 +103,18 @@ def _install_c5_hook(
         log.debug("copilot_c5_hook_source_absent", hook=hook_name, outcome="skipped")
         return
 
-    content = src.read_text(encoding="utf-8")
+    # Bytes, never str: a str write gets CRLF on Windows, which no longer matches the recorded bundled hash,
+    # so an untouched copy would read as a user edit and never refresh again (UF-BOOT-07-KI1).
+    content = src.read_bytes()
     dest = repo_root / ".github" / "hooks" / hook_name
     rel = f".github/hooks/{hook_name}"
 
     try:
         existed = dest.exists()
-        if existed and dest.read_text(encoding="utf-8") == content:
+        if existed and dest.read_bytes() == content:
             result["preserved"].append(rel)
             return
-        if _keep_edited_hook(repo_root, rel, content.encode("utf-8"), result, force, manifest_hashes):
+        if _keep_edited_hook(repo_root, rel, content, result, force, manifest_hashes):
             return
         write_checkout_file(repo_root, dest, content)
         dest.chmod(dest.stat().st_mode | 0o111)

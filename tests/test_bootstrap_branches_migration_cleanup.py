@@ -106,7 +106,7 @@ class TestRetirementPredicate:
 
         assert (project / ".opencode" / "skills" / "trw-gone" / "SKILL.md").read_text(encoding="utf-8") == "old"
         assert audit.read_text(encoding="utf-8") == "old"
-        assert result.get("trashed") == [".claude/skills/trw-gone/SKILL.md"], "non-vacuous: .claude still sweeps"
+        assert result.get("retired") == [".claude/skills/trw-gone/SKILL.md"], "non-vacuous: .claude still sweeps"
 
     def test_an_inventory_that_appears_mid_update_never_reads_as_an_empty_list(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -425,12 +425,8 @@ class TestStaleCleanupOwnership:
         assert result["preserved"] == [".claude/skills/trw-ghost (not_installer_owned)"]
 
 
-def test_a_dry_run_names_no_capture_folder(initialized_repo: Path) -> None:
-    """codex S8a r1 KI3: a dry run sweeps a scratch copy whose capture folders are gone afterwards.
-
-    The preview may say a file would move to trash; it must not name a ``.trw/trash/<stamp>-<id>`` folder
-    that never exists in the target.
-    """
+def test_a_dry_run_leaves_the_retired_file_in_place(initialized_repo: Path) -> None:
+    """A dry run sweeps a scratch copy: the preview names the file it would retire and the target keeps it."""
     skill = initialized_repo / ".claude" / "skills" / "trw-gone" / "SKILL.md"
     skill.parent.mkdir(parents=True)
     skill.write_text("old", encoding="utf-8")
@@ -441,6 +437,5 @@ def test_a_dry_run_names_no_capture_folder(initialized_repo: Path) -> None:
 
     result = update_project(initialized_repo, dry_run=True)
 
-    assert ".claude/skills/trw-gone/SKILL.md" in result.get("trashed", []), "precondition: the preview sweeps it"
-    assert not result.get("trash_captures")
+    assert ".claude/skills/trw-gone/SKILL.md" in result.get("retired", []), "precondition: the preview sweeps it"
     assert skill.read_text(encoding="utf-8") == "old"

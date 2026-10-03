@@ -90,7 +90,7 @@ def telemetry(root: Path, outcome: Outcome, configured: str | None) -> None:
     """Record a firing; telemetry I/O must never change an allow/block decision."""
     try:
         record_firing(root, outcome, configured)
-    except OSError:
+    except (OSError, ValueError):  # trw-fail-silent-allow: telemetry never changes an allow/block decision (UF-MCP-03)
         return
 
 

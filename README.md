@@ -11,7 +11,7 @@ trw-mcp is a local [MCP](https://modelcontextprotocol.io/) server for the coding
 
 Local-first · MCP-native · source-available (BSL 1.1)
 
-**[Quick start](#quick-start)** · **[What's new in 8.x](#whats-new-in-8x)** · **[Upgrading](#upgrading)** · **[Tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Network and security](#network-and-security)** · **[Troubleshooting](#troubleshooting)**
+**[Quick start](#quick-start)** · **[What's new in 9.x](#whats-new-in-9x)** · **[Upgrading](#upgrading)** · **[Tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Network and security](#network-and-security)** · **[Troubleshooting](#troubleshooting)**
 
 ## Why TRW
 
@@ -64,20 +64,27 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
-## What's new in 8.x
-<!-- whats-new: 8.1.7 -->
+## What's new in 9.x
+<!-- whats-new: 9.0.0 -->
 
-- **Lighter instructions, every turn.** `AGENTS.md` links TRW's instructions in `.trw/INSTRUCTIONS.md` instead of embedding them, and lessons reach agents on demand instead of living in instruction files.
-- **Updates that keep your edits.** `update-project` leaves hand-edited files in place and adopts a client only when every file it would overwrite is provably TRW's own.
-- **Delivery that sees your edits.** Cursor and Codex now record file edits as Claude Code does, so `trw_deliver` can no longer succeed with no build after they changed code.
-- **Errors that keep your input private.** A refusal raised inside a tool no longer quotes back what you sent, and `trw_code` stays inside your project.
-- **A restore that checks first.** `backup restore` verifies the archive before it touches your store, and recall agrees with the restored store afterwards.
-- **Failures that name their fix.** A failed dispatch says why (capacity, quota, auth) and retries a transient failure once; `trw-mcp doctor` checks credential health and the memory daemon.
-- **You choose what reaches the network.** Telemetry, sharing, sync and backup stay off until enabled; a signed-in `install.sh` install checks team learnings every five minutes (`platform_contact_enabled: false` stops it).
+- **Share learnings from any host.** `trw-mcp sync push`, `pull` and `status` share team learnings from hosts with no MCP server running, such as CI, headless agents and containers.
+- **Faster, better-ranked team learnings.** Pulled pages are written about 3x faster, a stale session pulls the newest first, and another project's learnings rank below yours.
+- **Sensitive learnings stay home.** Confidentiality labels decide what each surface shows: nothing labelled above `team` is pushed, backed up remotely or written to a tracked file.
+- **Recall queries leave only when you opt in.** A recall query is sent to the platform only with platform contact and `team_sync_enabled` both on, and is redacted first.
+- **Updates that never drop your edits.** Retiring an old TRW file keeps an edit hidden by `--skip-worktree`, `--assume-unchanged` or a lossy clean filter, instead of deleting it.
+- **One command to repair anchors.** `trw-mcp memory repair-anchors` finishes the anchor repair for a checkout in a single run.
+- **Build evidence per test file.** `trw_build_check` can record which test files ran and passed, from a pytest JUnit report.
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.1.7. 8.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.0. 9.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
+
+From 8.x to 9.0.0:
+
+1. **Install trw-memory 5.2.0 first**, then trw-mcp 9.0.0: `pip install -U "trw-memory>=5.2,<6"` and `pip install -U "trw-mcp>=9,<10"`, then run `trw-mcp update-project` in each project and reconnect your MCP clients.
+2. **The `trw-prd-new` compatibility skill is gone:** use `/trw-prd-ready`, which takes a feature description or an existing PRD.
+3. **Remove `self_review_blocking`** from `.trw/config.yaml` if you set it; the key no longer exists.
+4. **Turn on `team_sync_enabled`** if you want recall to search your team's learnings on the platform: a recall query no longer leaves the machine without it. Team learnings you pull are still recalled locally either way.
 
 From 7.x to 8.0.0:
 
@@ -138,10 +145,10 @@ trw-mcp exposes <!-- inv:tools -->15<!-- /inv --> tools. The most used:
 
 The [tool reference](https://trwframework.com/docs/tools) covers the rest.
 
-**Skills (<!-- inv:skills -->23<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
+**Skills (<!-- inv:skills -->22<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
 
 - Delivery: `/trw-deliver`, `/trw-commit`, `/trw-reflect`
-- Requirements: `/trw-prd-new`, `/trw-prd-ready`
+- Requirements: `/trw-prd-ready`
 - Review and quality: `/trw-audit`, `/trw-self-review`, `/trw-security-check`, `/trw-test-strategy`, `/trw-dry-check`, `/trw-delegate`, `/trw-plan-review`
 - Memory: `/trw-learn`, `/trw-memory-audit`, `/trw-memory-optimize`
 - Framework: `/trw-ceremony-guide`, `/trw-framework-check`, `/trw-project-health`, `/trw-feedback`
@@ -163,6 +170,8 @@ trw-mcp memory token                  # mint this checkout's memory grant
 trw-mcp export --scope learnings      # export learnings as JSON (--format csv also works)
 trw-mcp uninstall .                   # remove TRW from a project; ~/.trw is kept
 ```
+
+Names starting with `trw-` inside client folders (`.claude`, `.cursor`, `.opencode`, `.github`, `.agents` and the rest) are TRW's: give your own skills, rules and agents another name, so TRW never treats them as its own files.
 
 ## Configuration
 

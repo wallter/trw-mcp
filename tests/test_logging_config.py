@@ -6,6 +6,7 @@ component extraction, JSON/console output modes.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -137,6 +138,7 @@ class TestAddComponent:
 @pytest.mark.unit
 class TestConfigureLogging:
     def test_version_bind_failure_logs_debug(self) -> None:
+        structlog.contextvars.clear_contextvars()
         mock_logger = MagicMock()
         with (
             patch("importlib.metadata.version", side_effect=RuntimeError("boom")),
@@ -148,19 +150,32 @@ class TestConfigureLogging:
             "logging_service_version_bind_failed",
             exc_info=True,
         )
+        # The failure is logged but never aborts configuration; the version just is not bound.
+        assert "service_version" not in structlog.contextvars.get_contextvars()
 
-    def test_json_output_forced(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_json_output_forced(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=True)
         log = structlog.get_logger("test")
-        # Should not raise
         log.info("test_event", key="value")
+        line = capsys.readouterr().err.strip().splitlines()[-1]
+        record = json.loads(line)  # forced JSON: every line parses
+        assert record["event"] == "test_event"
+        assert record["key"] == "value"
 
-    def test_console_output_forced(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_console_output_forced(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         configure_logging(json_output=False)
         log = structlog.get_logger("test")
         log.info("test_event", key="value")
+        line = capsys.readouterr().err.strip().splitlines()[-1]
+        assert "test_event" in line and "key=value" in line
+        with pytest.raises(json.JSONDecodeError):  # contrast: forced console output is not JSON
+            json.loads(line)
 
     def test_file_logging(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
@@ -322,3 +337,14 @@ def test_stderr_handler_follows_a_replaced_and_closed_stderr(monkeypatch: pytest
     written = second.getvalue()
     assert "after_stderr_swap_probe" in written
     assert "Logging error" not in written
+
+
+@pytest.mark.unit
+class TestRedactSecretsTrwPlatformKey:
+    """REDACT-TRW-PLATFORM-KEYS: the log processor scrubs a TRW platform key, and keeps tool names."""
+
+    def test_log_processor_redacts_trw_platform_key(self) -> None:
+        body = ("Ab3-Zk9_Qw2xYv7LmN4pRs8TuC1dEf" * 2)[:43]  # synthetic token_urlsafe(32) shape
+        result = _redact_secrets(MagicMock(), "info", {"error": f"rejected trw_dk_{body}", "tool": "trw_sync"})
+        assert body not in result["error"]
+        assert result["tool"] == "trw_sync"

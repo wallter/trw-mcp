@@ -269,7 +269,7 @@ def install_before_edit_hook(
         }
 
     try:
-        write_checkout_file(target_dir, hook_script_path, content)
+        write_checkout_file(target_dir, hook_script_path, content.encode("utf-8"))  # bytes: no CRLF on Windows
     except (OSError, UnsafeWriteError) as exc:
         log.warning(
             "ag03_hook_script_write_failed",

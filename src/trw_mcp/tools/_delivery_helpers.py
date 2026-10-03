@@ -261,8 +261,12 @@ def _check_review_file_count_gate(
         )
 
         if file_modified_count > REVIEW_SCOPE_FILE_THRESHOLD:
+            whole_log = _count_file_modified(
+                _events_since_last_session_start(events, session_id), _project_root_from_run(run_path)
+            )
             return (
-                f"Delivery blocked: {file_modified_count} files modified but no review was run. "
+                f"Delivery blocked: {file_modified_count} files modified ({file_modified_count} session-attributed, "
+                f"{whole_log} whole-run-log) but no review was run. "
                 f"Tasks modifying >{REVIEW_SCOPE_FILE_THRESHOLD} files require trw_review() before delivery. "
                 "Run trw_review() or /trw-audit before delivering."
             )

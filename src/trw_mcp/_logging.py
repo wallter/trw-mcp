@@ -236,6 +236,13 @@ def _config_debug_requested(
         return False
 
 
+def logging_opt_in(*, verbosity: int = 0, debug: bool = False) -> bool:
+    """Whether the operator asked for logs without a flag: ``TRW_LOG_LEVEL`` / ``LOG_LEVEL``, or ``debug`` from
+    ``TRW_DEBUG`` or ``.trw/config.yaml``. A caller that would otherwise pass its own default level checks this first,
+    because an explicit level beats every one of these switches."""
+    return bool(_env_log_level()) or _config_debug_requested(verbosity=verbosity, debug=debug, explicit_level=None)
+
+
 def configure_logging(
     *,
     debug: bool = False,

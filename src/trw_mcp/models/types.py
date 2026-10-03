@@ -58,9 +58,7 @@ from trw_mcp.models.typed_dicts import (
     StatusReversionMetricsDict,
     SyncIndexMdResult,
     TelemetryStepResult,
-    TierDistribution,
     TierMetrics,
-    TierSweepStepResult,
     TrustIncrementResult,
     TrwStatusDict,
 )
@@ -111,9 +109,7 @@ __all__ = [
     "StatusReversionMetricsDict",
     "SyncIndexMdResult",
     "TelemetryStepResult",
-    "TierDistribution",
     "TierMetrics",
-    "TierSweepStepResult",
     "TrustIncrementResult",
     "TrwStatusDict",
 ]

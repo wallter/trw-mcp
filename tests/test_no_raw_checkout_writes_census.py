@@ -52,6 +52,8 @@ _AUDITED_TREES = (
     "meta_tune",
     "formation",
     "server",
+    # CORE-337-D (2026-10-02): the anomaly detector's baseline append and roll wrote raw on every tool call, unseen.
+    "security",
 )
 
 
@@ -59,13 +61,20 @@ _AUDITED_TREES = (
 #: REPORTED residual at the class-before-site stage, not a verified-safe exception (tag legend:
 #: ``trw_memory._write_census.CLASS_TAGS``).
 _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
-    ("bootstrap/_update_transaction.py", "_restore_transaction_file", 1): (
-        "unscheduled-checkout-write",
-        "update rollback: shutil.copy2(follow_symlinks=False) of a snapshot entry back into the checkout after _reject_symlink_path and an unlink; restores links as links, so not a safe_fs write.",
+    ("bootstrap/_headless_report.py", "redact_file", 1): (
+        "own-state-stays",
+        "rewrites the installer's own 0600 run log under $TMPDIR with secrets scrubbed, not the checkout.",
     ),
-    ("bootstrap/_update_transaction.py", "_restore_transaction_snapshot", 1): (
+    ("bootstrap/_restore_proof.py", "copy_back_exclusive", 1): (
         "unscheduled-checkout-write",
-        "update rollback: same copy2(follow_symlinks=False) restore as _restore_transaction_file, for a whole snapshot.",
+        "update rollback / dirty restore: an O_CREAT|O_EXCL|O_NOFOLLOW create of a snapshot entry, written through "
+        "its fd, only if the name is absent (never replaces a concurrent writer's file, FB-01-KI1-RACE); restores "
+        "links as links, so not a safe_fs write.",
+    ),
+    ("bootstrap/_restore_proof.py", "_create_with", 1): (
+        "unscheduled-checkout-write",
+        "refused-restore retry: an O_CREAT|O_EXCL|O_NOFOLLOW create of bytes read by descriptor from the update "
+        "snapshot, into a fresh private folder in .trw/trash (never replaces anything, FB-01-KI1-RACE r8).",
     ),
     ("bootstrap/_update_transaction.py", "_snapshot_transaction_paths", 1): (
         "own-state-stays",
@@ -131,10 +140,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "unscheduled-checkout-write",
         "deterministic .json.tmp sibling of the prepared manifest in the checkout, then replace; not an R12 row.",
     ),
-    ("state/_graph_backfill.py", "_save_state", 1): (
-        "unscheduled-checkout-write",
-        "R12 row 14: .json.tmp then os.replace under .trw; leaf-atomic, parents unchecked.",
-    ),
     ("state/_hook_flags.py", "write_hook_flags", 1): (
         "migrates-in-FR10",
         "receiver is FileStateWriter (mkstemp+replace: leaf-atomic, parent-exposed), not pathlib; FR10 decides its delegation.",
@@ -147,10 +152,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "unscheduled-checkout-write",
         "sibling .lock file opened 'w' beside a .trw state file; follows a leaf symlink (truncates its target).",
     ),
-    ("state/_pin_store.py", "_atomic_write_json", 1): (
-        "unscheduled-checkout-write",
-        ".trw/runtime pins tmp opened 'w' then replaced; deterministic tmp name.",
-    ),
     ("state/_pin_store.py", "_pin_store_file_lock", 1): (
         "unscheduled-checkout-write",
         ".trw/runtime pins lock opened 'a+'; follows a leaf symlink.",
@@ -158,10 +159,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("state/_run_gc_io.py", "_append_event_best_effort", 1): (
         "unscheduled-checkout-write",
         "run events.jsonl append via Path.open('a') in the run dir; not an R12 row.",
-    ),
-    ("state/_session_changelog.py", "write_session_changelog", 1): (
-        "unscheduled-checkout-write",
-        "run reports/ session changelog plain write_text in the run dir; not an R12 row.",
     ),
     ("state/_store_migration.py", "_set_pin", 1): (
         "migrates-in-FR10",
@@ -174,10 +171,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("state/_tree_binding.py", "_tree_sha", 1): (
         "own-state-stays",
         "copies the git index into a private tempfile.TemporaryDirectory (refused if TMPDIR is inside the checkout), not the checkout.",
-    ),
-    ("state/_tier_sweep.py", "_sweep_cold_to_purge", 1): (
-        "unscheduled-checkout-write",
-        ".trw/memory/purge_audit.jsonl append via Path.open('a').",
     ),
     ("state/acceptance_manifest.py", "persist_manifest", 1): (
         "unscheduled-checkout-write",
@@ -198,14 +191,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("state/claude_md/_sync.py", "generate_review_md", 1): (
         "unscheduled-checkout-write",
         "os.fdopen on a mkstemp descriptor for REVIEW.md in the checkout.",
-    ),
-    ("state/claude_md/_write_backup.py", "backup_instruction_file", 1): (
-        "unscheduled-checkout-write",
-        "timestamped instruction-file backup under the project's backup dir; plain write_text.",
-    ),
-    ("state/claude_md/_write_guard.py", "guarded_instruction_write", 1): (
-        "migrates-in-FR10",
-        "FileStateWriter().write_text behind the instruction write guard; FR10 delegation.",
     ),
     ("state/doc_variants.py", "write_variant", 1): (
         "unscheduled-checkout-write",
@@ -255,39 +240,11 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "unscheduled-checkout-write",
         "pid-named tmp beside the pre-compact marker under .trw, then replaced.",
     ),
-    ("state/recall_tracking.py", "_append_rows", 1): (
-        "unscheduled-checkout-write",
-        ".trw recall-tracking JSONL append via Path.open('a').",
-    ),
-    ("state/requirements_registry.py", "RegistryWriter._append_locked", 1): (
-        "unscheduled-checkout-write",
-        "registry ledger append via Path.open('a'); the render (persist_registry) is R12 row 19, this append is not.",
-    ),
-    ("state/surface_tracking.py", "log_surface_event", 1): (
-        "unscheduled-checkout-write",
-        ".trw logs surface-event JSONL append via Path.open('a').",
-    ),
-    ("state/tiers.py", "TierManager._warm_sidecar_upsert", 1): (
-        "unscheduled-checkout-write",
-        ".trw/memory/warm.jsonl plain rewrite.",
-    ),
     ("state/_store_migration.py", "apply_migration", 1): (
         "unscheduled-checkout-write",
         ".trw/memory backup copied to a fresh migration-work dir with shutil.copyfile (counted since the matcher learned shutil copies).",
     ),
-    ("state/tiers.py", "TierManager.warm_remove", 1): (
-        "unscheduled-checkout-write",
-        ".trw/memory/warm.jsonl plain rewrite.",
-    ),
     # --- security slice 3A: tools/ sync/ telemetry/ meta_tune/ formation/ server/ (reported residuals) ---
-    ("tools/_ceremony_deliver_steps.py", "step_clear_score", 1): (
-        "unscheduled-checkout-write",
-        "deliver: plain write_text of the run's clear-score file under .trw; follows a leaf symlink (census MEDIUM).",
-    ),
-    ("tools/_ceremony_telemetry.py", "step_first_session_marker", 1): (
-        "unscheduled-checkout-write",
-        "first-session flag file under .trw written with plain write_text; follows a leaf symlink (census MEDIUM).",
-    ),
     ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 1): (
         "unscheduled-checkout-write",
         "deferred-deliver lock file under .trw opened 'a+'; appends through a leaf symlink but writes no bytes (lock only).",
@@ -295,10 +252,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 2): (
         "unscheduled-checkout-write",
         "second 'a+' open of the same deferred-deliver lock file; lock only, no bytes written.",
-    ),
-    ("tools/_deferred_persistence.py", "log_deferred_result", 1): (
-        "unscheduled-checkout-write",
-        "appends a deferred-deliver result line to a .trw log with open('a'); follows a leaf symlink (census MEDIUM).",
     ),
     ("tools/_deliver_gate_dispatch.py", "_persist_decision_set", 1): (
         "migrates-in-FR10",
@@ -339,10 +292,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("tools/_sidecar_ancestry.py", "_write_cache", 1): (
         "unscheduled-checkout-write",
         "os.fdopen on a mkstemp descriptor for the sidecar ancestry cache; parent re-resolved by name.",
-    ),
-    ("tools/build/_registration.py", "_record_session_observation", 1): (
-        "unscheduled-checkout-write",
-        "appends a build-check session observation with open('a'); follows a leaf symlink (census MEDIUM).",
     ),
     ("tools/requirements.py", "create_prd", 1): (
         "migrates-in-FR10",
@@ -404,14 +353,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "unscheduled-checkout-write",
         "per-target meta-tune lock file opened 'a' (lock only, no bytes); follows a leaf symlink.",
     ),
-    ("meta_tune/rollback.py", "rollback_proposal", 1): (
-        "unscheduled-checkout-write",
-        "rollback restores the promoted target with shutil.copy2 from its backup; follows a leaf symlink at the target (census MEDIUM).",
-    ),
-    ("meta_tune/rollback.py", "rollback_proposal", 2): (
-        "unscheduled-checkout-write",
-        "rollback snapshot json rewritten with plain write_text; follows a leaf symlink (census MEDIUM).",
-    ),
     ("formation/_stall.py", "start_call", 1): (
         "unscheduled-checkout-write",
         "stall marker created with open('x') at a temp name: O_EXCL refuses an existing file or link, parent resolved by name.",
@@ -423,10 +364,6 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("formation/_store.py", "_exclusive", 1): (
         "unscheduled-checkout-write",
         "formation index lock file opened 'a+' (lock only, no bytes); follows a leaf symlink.",
-    ),
-    ("server/__main__.py", "_crash_log", 1): (
-        "unscheduled-checkout-write",
-        "server crash log appended with open('a'); follows a leaf symlink (census LOW).",
     ),
     ("server/_cli.py", "_register_thread_dump_signal._dump", 1): (
         "unscheduled-checkout-write",
@@ -532,10 +469,10 @@ def test_the_bootstrap_tree_has_no_allowlisted_raw_write() -> None:
         for key, (tag, _reason) in _AUDITED_WRITES.items()
         if key[0].startswith("bootstrap/") and tag == "unscheduled-checkout-write"
     )
-    # Only the update rollback, which restores snapshot symlinks as symlinks, is left raw.
+    # Only the update rollback's exclusive creates (snapshot entries, links kept as links) are left raw.
     assert residual == [
-        ("bootstrap/_update_transaction.py", "_restore_transaction_file", 1),
-        ("bootstrap/_update_transaction.py", "_restore_transaction_snapshot", 1),
+        ("bootstrap/_restore_proof.py", "_create_with", 1),
+        ("bootstrap/_restore_proof.py", "copy_back_exclusive", 1),
     ]
 
 

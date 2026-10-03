@@ -164,7 +164,7 @@ def test_production_defaults_are_the_real_callables() -> None:
 # does not exist there, so calling it is an ``AttributeError`` on a missing name, not evidence the
 # harness actually raced. The test below instead drives ``run()`` -- the same public entry ``main()``
 # calls, present in both versions -- and patches only ``tests._memory_daemon.running_daemon``,
-# ``tests._memory_fixtures.attach_checkout`` and ``trw_memory.client.MemoryClient``: the THREE
+# ``tests._memory_daemon.attach_checkout`` and ``trw_memory.client.MemoryClient``: the THREE
 # source-module functions BOTH the pre-fix and the fixed ``engmem_mcp.py`` import (under whatever
 # local alias each version happens to use). A shared ``order`` list records "daemon_started" ->
 # "attach_checkout" -> ("daemon_store_migrated" only if something calls the fake daemon's
@@ -249,12 +249,11 @@ async def _drive_run_and_record_order(
     import trw_memory.client as _mc
 
     import tests._memory_daemon as _md
-    import tests._memory_fixtures as _mf
 
     order: list[str] = []
     running_daemon, attach_checkout, fake_client_cls = _make_run_level_fakes(order)
     monkeypatch.setattr(_md, "running_daemon", running_daemon)
-    monkeypatch.setattr(_mf, "attach_checkout", attach_checkout)
+    monkeypatch.setattr(_md, "attach_checkout", attach_checkout)
     monkeypatch.setattr(_mc, "MemoryClient", fake_client_cls)
 
     mod = _exec_module_at(path, module_name)
@@ -297,3 +296,91 @@ async def test_public_entry_orders_daemon_migration_before_direct_open(
     has confirmed -- via a real round trip -- that it opened and migrated the store."""
     order = await _drive_run_and_record_order(_MODULE_PATH, "engmem_mcp_runlevel_fixed", tmp_path, monkeypatch)
     _assert_daemon_migrates_before_direct_open(order)
+
+
+@pytest.mark.asyncio
+async def test_session_start_benchmark_uses_isolated_session_and_pin_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A benchmark launched from an agent shell must not resolve its live pin."""
+    from trw_mcp.client_profiles.session_identity import known_session_id_env_vars
+    from trw_mcp.models.config import _reset_config, get_config
+    from trw_mcp.state._paths import find_active_run, resolve_pin_key
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path, upsert_pin_entry
+
+    old_cwd = Path.cwd()
+    env_names = {"TRW_PROJECT_ROOT", "TRW_USER_DIR", "TRW_SESSION_ID", *known_session_id_env_vars()}
+    old_env = {name: os.environ.get(name) for name in env_names}
+    # The MCP test suite's permanent resolver stand-in makes tmp_path the
+    # parent project. Seed its pin store as an agent shell would have one.
+    parent = tmp_path
+    parent_user = tmp_path / "agent-user"
+    parent_user.mkdir()
+    live_run = parent / ".trw" / "runs" / "lead-task" / "20261002T000000Z-parent0001"
+    (live_run / "meta").mkdir(parents=True)
+    (live_run / "meta" / "run.yaml").write_text(
+        "run_id: parent0001\ntask: lead-task\nframework: test\nstatus: active\nphase: implement\n"
+    )
+    os.environ["TRW_PROJECT_ROOT"] = str(parent)
+    os.environ["TRW_USER_DIR"] = str(parent_user)
+    os.environ["TRW_SESSION_ID"] = "parent-agent-session"
+    for name in known_session_id_env_vars():
+        os.environ[name] = "parent-agent-session"
+    os.chdir(parent)
+    _reset_config()
+    get_config()  # prime the same process-global config a harness can inherit
+    invalidate_pin_store_cache()
+    upsert_pin_entry("parent-agent-session", live_run)
+    invalidate_pin_store_cache()
+    parent_pins_path = parent / ".trw" / "runtime" / "pins.json"
+    assert pin_store_path() == parent_pins_path
+    parent_pins = parent_pins_path.read_bytes()
+    assert find_active_run(session_id="parent-agent-session") == live_run
+
+    observed: dict[str, Any] = {}
+
+    @contextmanager
+    def fake_daemon(user_dir: Path, *, keyword_only: bool = True) -> Iterator[_RunLevelFakePaths]:
+        yield _RunLevelFakePaths(user_dir / "memory.db")
+
+    async def fake_open(project: Path, user_dir: Path, paths: Any) -> tuple[str, Path, object]:
+        return "project:isolated", Path(paths.store), object()
+
+    async def inspect_environment(*args: Any) -> dict[str, object]:
+        observed["project_root"] = os.environ.get("TRW_PROJECT_ROOT")
+        observed["user_dir"] = os.environ.get("TRW_USER_DIR")
+        observed["session_id_env"] = os.environ.get("TRW_SESSION_ID")
+        observed["session_id"] = resolve_pin_key(ctx=None)
+        observed["pin_path"] = pin_store_path()
+        observed["active_run"] = find_active_run()
+        observed["client_session_ids"] = {
+            name: os.environ.get(name) for name in known_session_id_env_vars() if os.environ.get(name)
+        }
+        observed["config_root"] = str(get_config().trw_dir)
+        return {}
+
+    monkeypatch.setattr(engmem_mcp.synth, "generate", lambda **kwargs: ([], [], {}))
+    monkeypatch.setattr(engmem_mcp, "_real_running_daemon", fake_daemon)
+    monkeypatch.setattr(engmem_mcp, "_open_single_writer", fake_open)
+    monkeypatch.setattr(engmem_mcp, "_run_against", inspect_environment)
+    args = argparse.Namespace(size=0, seed=1, limit=5, store=str(tmp_path / "benchmark"), entry="session-start")
+    try:
+        await engmem_mcp.run(0, args)
+    finally:
+        os.chdir(old_cwd)
+        for name, value in old_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        _reset_config()
+        invalidate_pin_store_cache()
+
+    project = Path(str(observed["project_root"]))
+    assert str(observed["session_id_env"]).startswith("engmem-bench-")
+    assert observed["session_id"] == observed["session_id_env"] != "parent-agent-session"
+    assert not observed["client_session_ids"], observed["client_session_ids"]
+    assert Path(str(observed["user_dir"])) == project.parent / "userhome"
+    assert observed["pin_path"] == project / ".trw" / "runtime" / "pins.json"
+    assert observed["active_run"] is None, f"benchmark inherited the parent pinned run: {observed['active_run']}"
+    assert parent_pins_path.read_bytes() == parent_pins

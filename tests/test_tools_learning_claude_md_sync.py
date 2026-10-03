@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import _get_tools, instructions_sync_fn, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.models.config import get_config
-from trw_mcp.state.persistence import FileStateWriter
 
 # Project-root / trw-dir isolation is provided by the autouse conftest
 # ``_isolate_trw_dir`` fixture, which patches the source module
@@ -213,10 +212,17 @@ class TestTrwClaudeMdSyncLLM:
 
 
 class TestClaudeMdSyncAtomicWrite:
-    """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""
+    """PRD-CORE-014: the sync never leaves a half-written instruction file.
+
+    PUBLISH-RACE-HARDEN replaced the guard's ``FileStateWriter`` temp+replace with
+    ``_publish.publish``: the new bytes are staged complete and linked at the name,
+    so the name only ever holds a whole file.
+    """
 
     def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
-        """instructions sync uses _writer.write_text for AGENTS.md."""
+        """instructions sync publishes AGENTS.md through the staged-link publish."""
+        from trw_mcp.state.claude_md import _publish
+
         tools = _get_tools()
 
         tools["trw_learn"].fn(
@@ -225,15 +231,11 @@ class TestClaudeMdSyncAtomicWrite:
             impact=0.9,
         )
 
-        real_writer = FileStateWriter()
-        with patch(
-            "trw_mcp.state.claude_md._write_guard.FileStateWriter",
-        ) as mock_cls:
-            mock_instance = mock_cls.return_value
-            mock_instance.write_text = MagicMock(wraps=real_writer.write_text)
+        with patch.object(_publish, "publish", wraps=_publish.publish) as spy:
             result = instructions_sync_fn(scope="root")
             assert result["status"] == "synced"
-            assert mock_instance.write_text.call_count >= 1
+            assert spy.call_count >= 1
+            assert any(call.args[0].name == "AGENTS.md" for call in spy.call_args_list)
 
 
 class TestClaudeMdSyncLateResolve:

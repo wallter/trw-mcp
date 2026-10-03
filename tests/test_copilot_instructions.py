@@ -139,17 +139,17 @@ class TestCopilotInstructions:
         assert _COPILOT_TRW_START_MARKER in content
         assert _COPILOT_TRW_END_MARKER in content
 
-    def test_instructions_force_overwrites(self, fake_git_repo: Path) -> None:
-        """force=True completely replaces the file with TRW content."""
+    def test_instructions_force_keeps_user_content(self, fake_git_repo: Path) -> None:
+        """force=True refreshes only TRW's block; the user's text stays (FORCE-WHOLESALE-OTHER-CLIENTS)."""
         instructions_path = fake_git_repo / _COPILOT_INSTRUCTIONS_PATH
         (fake_git_repo / ".github").mkdir(parents=True, exist_ok=True)
-        instructions_path.write_text("# I will be overwritten\nUser content here.\n")
+        instructions_path.write_text("# Mine\nUser content here.\n")
 
         result = generate_copilot_instructions(fake_git_repo, force=True)
         assert not result["errors"]
 
         content = instructions_path.read_text()
-        assert "I will be overwritten" not in content
+        assert content.startswith("# Mine\nUser content here.\n")
         assert _COPILOT_TRW_START_MARKER in content
         assert "TRW Framework Integration" in resolve_copilot_instructions(fake_git_repo)
 
@@ -199,7 +199,7 @@ class TestCopilotForceWriteAtomicity:
 
         assert not empty_writes_to_target, "target_path was truncated to empty mid-write"
         assert not result["errors"]
-        assert original not in instructions_path.read_text(encoding="utf-8")
+        assert instructions_path.read_text(encoding="utf-8").startswith(original)
 
 
 @pytest.mark.unit

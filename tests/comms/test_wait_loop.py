@@ -7,6 +7,7 @@ so every case here is deterministic and instant.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Callable
 from typing import Any
@@ -277,9 +278,21 @@ def test_cancellation_at_the_third_check_point_propagates_after_a_committed_atte
     assert calls[0] == 1
 
 
-def test_check_cancelled_cooperatively_swallows_only_no_event_loop_error() -> None:
+def test_check_cancelled_cooperatively_swallows_only_no_event_loop_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A direct synchronous caller (this test) has no AnyIO worker-thread token."""
-    check_cancelled_cooperatively()  # must not raise
+    import anyio.from_thread as from_thread
+
+    # The real hook does raise NoEventLoopError here; that is the condition swallowed.
+    with pytest.raises(anyio.NoEventLoopError):
+        from_thread.check_cancelled()
+    assert check_cancelled_cooperatively() is None
+
+    def other_error() -> None:
+        raise ValueError("a different failure")
+
+    monkeypatch.setattr(from_thread, "check_cancelled", other_error)
+    with pytest.raises(ValueError, match="a different failure"):
+        check_cancelled_cooperatively()
 
 
 def test_check_cancelled_cooperatively_propagates_a_plain_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,7 +322,14 @@ def test_check_cancelled_cooperatively_still_swallows_no_event_loop_error_when_m
         raise anyio.NoEventLoopError("no worker thread token")
 
     monkeypatch.setattr(from_thread, "check_cancelled", raise_no_event_loop)
-    check_cancelled_cooperatively()  # must not raise
+    assert check_cancelled_cooperatively() is None
+
+    def raise_cancelled() -> None:
+        raise asyncio.CancelledError("host task cancelled")
+
+    monkeypatch.setattr(from_thread, "check_cancelled", raise_cancelled)
+    with pytest.raises(asyncio.CancelledError, match="host task cancelled"):
+        check_cancelled_cooperatively()
 
 
 def test_run_bounded_wait_propagates_a_plain_runtime_error_from_check_cancelled() -> None:

@@ -194,13 +194,17 @@ class TestChannelDoctorScan:
         # Should mention the orphaned lock.
         assert "orphan" in out.lower() or "lock" in out.lower() or str(orphan_lock.name) in out
 
-    def test_scan_does_not_raise(self, tmp_path: Path) -> None:
+    def test_scan_does_not_raise(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         args = _make_namespace(
             project_dir=str(tmp_path),
             channel_doctor_command="scan",
             dry_run=True,
         )
-        run_channel_doctor(args)  # no exception
+        before = sorted(p.name for p in tmp_path.rglob("*"))
+        run_channel_doctor(args)
+        # A dry-run scan of an empty project reports something and changes nothing on disk.
+        assert capsys.readouterr().out.strip() != ""
+        assert sorted(p.name for p in tmp_path.rglob("*")) == before
 
 
 # ---------------------------------------------------------------------------
@@ -369,13 +373,16 @@ channels:
             "would pass with clean doing nothing at all"
         )
 
-    def test_clean_does_not_raise(self, tmp_path: Path) -> None:
+    def test_clean_does_not_raise(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         args = _make_namespace(
             project_dir=str(tmp_path),
             channel_doctor_command="clean",
             dry_run=True,
         )
-        run_channel_doctor(args)  # no exception
+        before = sorted(p.name for p in tmp_path.rglob("*"))
+        run_channel_doctor(args)
+        assert capsys.readouterr().out.strip() != ""
+        assert sorted(p.name for p in tmp_path.rglob("*")) == before
 
 
 # ---------------------------------------------------------------------------

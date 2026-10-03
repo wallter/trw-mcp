@@ -146,8 +146,14 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
 
     entry = MagicMock(spec=MemoryEntry)
     entry.id = "L-conc"
+    entry.namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+    entry.tags = []
+    entry.metadata = {}
     entry.sync_hash = "h"
     entry.sync_seq = 1
+    entry.remote_id = None  # PRD-CORE-333: the quarantine gate keys a row on its ids and content
+    entry.content = "c"
+    entry.detail = ""
     entry.to_dict.return_value = {
         "id": "L-conc",
         "sync_hash": "h",

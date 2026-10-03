@@ -99,6 +99,25 @@ def test_record_sync_success_writes_state(trw_dir: Path) -> None:
     assert state["pull_count"] == 0
 
 
+def test_content_push_stamp_only_when_entries_were_sent(trw_dir: Path) -> None:
+    """An empty cycle stamps last_push_at but is not content egress evidence."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    path = trw_dir / "sync-state.json"
+    coord.record_sync_success(pushed=0, pulled=0)
+    state = json.loads(path.read_text())
+    assert state["last_push_at"] and state["push_count"] == 1
+    assert state["last_content_push_at"] is None and state["content_pushed_total"] == 0
+    coord.record_sync_success(pushed=3, pulled=0)
+    stamped = json.loads(path.read_text())
+    assert stamped["last_content_push_at"] and stamped["content_pushed_total"] == 3
+    coord.record_sync_success(pushed=0, pulled=0)
+    again = json.loads(path.read_text())
+    assert again["last_content_push_at"] == stamped["last_content_push_at"]
+    assert again["content_pushed_total"] == 3 and again["push_count"] == 3
+
+
 def test_record_sync_failure_writes_error(trw_dir: Path) -> None:
     """record_sync_failure records error info."""
     from trw_mcp.sync.coordinator import SyncCoordinator

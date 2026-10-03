@@ -19,7 +19,6 @@ from trw_mcp.telemetry.artifact_registry import (
     _component_rollup,
     clear_snapshot_cache,
     resolve_surface_registry,
-    resolve_surface_snapshot,
 )
 
 
@@ -192,22 +191,22 @@ class TestComponentRollup:
         assert fp_a.file_count == 2
 
 
-class TestResolveSurfaceSnapshotBackCompat:
+class TestResolveSurfaceRegistrySnapshot:
     def test_returns_snapshot(self) -> None:
-        snap = resolve_surface_snapshot()
+        snap = resolve_surface_registry().to_snapshot()
         assert isinstance(snap, SurfaceSnapshot)
         assert snap.snapshot_id
         assert len(snap.snapshot_id) == 64
 
     def test_cache_is_hit_on_repeat_call(self) -> None:
-        snap1 = resolve_surface_snapshot()
-        snap2 = resolve_surface_snapshot()
+        snap1 = resolve_surface_registry().to_snapshot()
+        snap2 = resolve_surface_registry().to_snapshot()
         assert snap1.snapshot_id == snap2.snapshot_id
         assert snap1.generated_at == snap2.generated_at
 
     def test_refresh_forces_new_generation(self) -> None:
-        snap1 = resolve_surface_snapshot()
-        snap2 = resolve_surface_snapshot(refresh=True)
+        snap1 = resolve_surface_registry().to_snapshot()
+        snap2 = resolve_surface_registry(refresh=True).to_snapshot()
         assert snap1.snapshot_id == snap2.snapshot_id
         assert snap2.generated_at >= snap1.generated_at
 

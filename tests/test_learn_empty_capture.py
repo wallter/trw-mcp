@@ -48,4 +48,9 @@ def test_empty_capture_never_allocates_journals_or_stores(
 def test_short_or_single_field_content_keeps_existing_acceptance(summary, detail):
     from trw_mcp.tools._learn_preflight import run_accept_gates
 
-    assert run_accept_gates(summary, detail, Mock()) is None
+    log = Mock()
+    assert run_accept_gates(summary, detail, log) is None
+    assert log.mock_calls == [], "an accepted capture logs no rejection"
+    # Contrast: both fields blank is the one case that is rejected.
+    rejected = run_accept_gates("", " ", Mock())
+    assert rejected is not None and rejected["reason"] == "empty_content"

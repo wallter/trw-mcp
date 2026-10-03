@@ -14,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from structlog.testing import capture_logs
+
 from trw_mcp.tools._review_helpers import render_review_markdown
 
 # ---------------------------------------------------------------------------
@@ -513,9 +515,25 @@ class TestReviewMdIntegration:
                 },
             ) as mock_gen,
         ):
-            execute_claude_md_sync(**args)  # type: ignore[arg-type]
+            result = execute_claude_md_sync(**args)  # type: ignore[arg-type]
 
         mock_gen.assert_called_once_with(trw_dir, repo_root=tmp_path, allow_empty=False, force=False)
+        # The orchestrator's return value is surfaced verbatim under review_md.
+        assert result["review_md"] == {
+            "path": str(tmp_path / "REVIEW.md"),
+            "rules_count": 0,
+            "status": "generated",
+        }
+
+        # Control: a different generator answer is surfaced as-is, not a fixed shape (codex MOCK-DEPTH-5 r1).
+        skipped = {"path": None, "rules_count": 4, "status": "skipped"}
+        with (
+            patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+            patch("trw_mcp.state.analytics.update_analytics_sync"),
+            patch("trw_mcp.state.claude_md._sync.generate_review_md", return_value=skipped),
+        ):
+            assert execute_claude_md_sync(**args)["review_md"] == skipped  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +567,12 @@ class TestGetRepoRoot:
 
         assert result is None
 
+        # Control: the same call with returncode 0 yields the stdout path, so None comes from the guard.
+        mock_result.returncode = 0
+        mock_result.stdout = "/home/user/project\n"
+        with patch("trw_mcp.state.claude_md._sync.subprocess.run", return_value=mock_result):
+            assert _get_repo_root() == Path("/home/user/project")
+
     def test_returns_none_on_exception(self) -> None:
         from trw_mcp.state.claude_md._sync import _get_repo_root
 
@@ -556,6 +580,19 @@ class TestGetRepoRoot:
             "trw_mcp.state.claude_md._sync.subprocess.run",
             side_effect=FileNotFoundError("git not found"),
         ):
-            result = _get_repo_root()
+            with capture_logs() as logs:
+                result = _get_repo_root()
 
         assert result is None
+        skipped = [e for e in logs if e["event"] == "git_repo_root_detection_skipped"]
+        assert len(skipped) == 1
+        assert skipped[0]["log_level"] == "debug"
+
+        # Control: without the exception the same call returns the git toplevel and logs no skip.
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = "/home/user/project\n"
+        with patch("trw_mcp.state.claude_md._sync.subprocess.run", return_value=ok):
+            with capture_logs() as logs:
+                assert _get_repo_root() == Path("/home/user/project")
+        assert [e for e in logs if e["event"] == "git_repo_root_detection_skipped"] == []

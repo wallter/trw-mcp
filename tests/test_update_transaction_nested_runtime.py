@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap._update_transaction import _restore_transaction_snapshot, _snapshot_transaction_paths
+from trw_mcp.bootstrap._update_project import _rollback
+from trw_mcp.bootstrap._update_transaction import _snapshot_transaction_paths
 
 
 @pytest.mark.parametrize("runtime_name", ["node_modules", "worktrees", "nested-repo"])
@@ -32,7 +33,7 @@ def test_rollback_preserves_deep_runtime(tmp_path: Path, runtime_name: str, pres
         if not present_at_snapshot:
             populate()
         managed.write_text("failed-update", encoding="utf-8")
-        _restore_transaction_snapshot(root, snapshot)
+        _rollback(root, snapshot, {"warnings": [], "errors": []})
         assert (runtime / "valuable.txt").read_text(encoding="utf-8") == "user-owned"
         if present_at_snapshot:
             assert managed.read_text(encoding="utf-8") == "before"

@@ -65,7 +65,6 @@ def _run_execute_recall(
     patch_stack = [
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
         patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
     ]
     if extra_patches:
@@ -200,7 +199,6 @@ class TestSurfaceLoggingFailOpen:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
         ):
             result = execute_recall(
@@ -233,7 +231,6 @@ class TestSurfaceLoggingFailOpen:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
         ):
             result = execute_recall(
@@ -258,7 +255,6 @@ class TestSurfaceLoggingFailOpen:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch(
                 "trw_mcp.state.recall_context.build_recall_context",
                 side_effect=ImportError("context module missing"),
@@ -297,7 +293,6 @@ class TestSurfacePhaseDetection:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
             patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
         ):
@@ -325,7 +320,6 @@ class TestSurfacePhaseDetection:
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
             patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
         ):

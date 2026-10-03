@@ -1,46 +1,24 @@
-"""Proof that TRW wrote an artifact, and the guarded removal that re-proves it at the act.
+"""Proof that TRW wrote an artifact, and the in-place retirement that acts on it.
 
 Every retirement sweep (``_version_migration._remove_stale_artifacts`` and
-``_version_migration_clients._remove_stale_client_surface``) decides through these four functions: an artifact
-is removed only when every regular file under it hashes to its record in the PRE-run manifest's
-``content_hashes`` (PRD-FIX-139-FR01, PRD-INFRA-190-FR06), and the removal captures each file into
-``.trw/trash`` and re-verifies it there (``remove_tree_if_hash``). Anything unproven is kept and reported
-``not_installer_owned``.
+``_version_migration_clients._remove_stale_client_surface``) decides through these functions: a file is removed
+when it hashes to its record in the PRE-run manifest's ``content_hashes`` (PRD-FIX-139-FR01,
+PRD-INFRA-190-FR06) or is clean in git (``_retire``). Anything else is kept, reported ``not_installer_owned``
+and named with the command that removes it.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 
 import structlog
 
-from ._safe_remove import remove_tree_if_hash
+from ._retire import Retirement, record_retirement, retire_tree
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["_trw_authored", "preserve_unowned", "recorded_digests", "remove_proven"]
-
-
-def preserve_unowned(
-    artifact: Path,
-    manifest_hashes: dict[str, str] | None,
-    target_dir: Path,
-    result: dict[str, list[str]],
-    *,
-    exact: bool = False,
-) -> bool:
-    """Report and keep *artifact* when TRW cannot prove it wrote it (FR06); True means keep.
-
-    *exact* restricts the proof to the file's own repo-relative key (see :func:`recorded_digests`).
-    """
-    if _trw_authored(artifact, manifest_hashes or {}, target_dir, exact=exact):
-        return False
-    rel = artifact.relative_to(target_dir).as_posix()
-    result.setdefault("preserved", []).append(f"{rel} (not_installer_owned)")
-    logger.info("sweep_removal_preserved", path=rel, reason="not_installer_owned")
-    return True
+__all__ = ["_trw_authored", "recorded_digests", "remove_proven"]
 
 
 def _trw_authored(
@@ -99,25 +77,15 @@ def remove_proven(
     *,
     exact: bool = False,
 ) -> None:
-    """Remove a proven-stale *artifact* via :func:`remove_tree_if_hash`, re-proving every file at the act.
-
-    The proof ``preserve_unowned`` took earlier is not trusted at delete time: each file is re-hashed and
-    captured into ``.trw/trash``, so an edit saved in between (or a file added) keeps its bytes.
-    """
+    """Retire a stale *artifact* in place (see :func:`retire_tree`): each file hashing to its manifest record, or
+    clean in git, is deleted and the rest is kept, named with the command that removes it (FR06)."""
     hashes = manifest_hashes or {}
-    before = {f for f in artifact.rglob("*") if f.is_file() and not f.is_symlink()} if artifact.is_dir() else {artifact}
-    captured: dict[Path, Path] = {}
-    kept = remove_tree_if_hash(
-        artifact, root, lambda f: recorded_digests(f, hashes, root, exact=exact), captured=captured
-    )
-    # Every captured file is reported as trashed: the uncommitted-changes guard restores a dirty path it did not
-    # see captured (so a retired skill came back in the client mirrors the user had touched), and the CLI names
-    # only what is listed here (the nine silent skill files in feedback sub_i7UMmxUbTbsdW0eD, FB-INSTALL-03).
-    gone = [f for f in sorted(before) if not os.path.lexists(f)]
-    result.setdefault("trashed", []).extend(f.relative_to(root).as_posix() for f in gone)
-    # "<rel>\t<capture folder>": the CLI line names the folder that holds the bytes (S8a).
-    result.setdefault("trash_captures", []).extend(
-        f"{f.relative_to(root).as_posix()}\t{captured[f].relative_to(root).as_posix()}" for f in gone if f in captured
-    )
-    # Warnings are what the CLI prints (preserved is summarised as a count); a kept file must say why.
-    result.setdefault("warnings", []).extend(f"{why}: kept" for why in kept)
+    rel = artifact.relative_to(root).as_posix()
+    if artifact.is_dir() and not any(f.is_file() for f in artifact.rglob("*")):
+        outcome = Retirement([], [], [(rel, "nothing in it is recorded as TRW's")])  # an empty dir proves nothing
+    else:
+        outcome = retire_tree(artifact, root, lambda f: recorded_digests(f, hashes, root, exact=exact))
+        record_retirement(result, outcome)
+    if outcome.kept:
+        result.setdefault("preserved", []).append(f"{rel} (not_installer_owned)")
+        logger.info("sweep_removal_preserved", path=rel, reason="not_installer_owned")

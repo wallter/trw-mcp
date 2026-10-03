@@ -61,8 +61,9 @@ class TestClaudeMdNoModuleLevelCapture:
         PRD-FIX-123 moved every instruction-file write out of ``_parser`` into the
         guarded write seam, so ``_parser`` no longer imports ``FileStateWriter`` at
         all. The FR is "no module-level capture", so assert that directly: neither
-        module holds an instantiated reader/writer at import time, and the one
-        module that does write (the guard) imports the class rather than an instance.
+        module holds an instantiated reader/writer at import time. The guard no longer
+        writes through ``FileStateWriter`` at all: it publishes through ``_publish``
+        (capture, re-proof, no-replace link; PUBLISH-RACE-HARDEN), imported per call.
         """
         from trw_mcp.state.claude_md import _parser, _static_sections, _write_guard
         from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -73,7 +74,7 @@ class TestClaudeMdNoModuleLevelCapture:
             ]
             assert captured == [], f"{mod.__name__} captures a persistence instance at import: {captured}"
         assert hasattr(_static_sections, "FileStateReader")
-        assert hasattr(_write_guard, "FileStateWriter")
+        assert not hasattr(_write_guard, "FileStateWriter")
 
     def test_no_module_level_config_in_submodules(self) -> None:
         """FR: No submodule has _config at module scope."""

@@ -26,6 +26,8 @@ from trw_mcp.state._store_selection import RecallSpec, StoreUnavailableError
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from trw_memory.models.memory import MemoryEntry
+
 
 logger = structlog.get_logger(__name__)
 
@@ -147,11 +149,13 @@ def recall_learnings(
         return []
     filtered_entries = admission.order(admitted)
     results: list[LearningEntryDict] = []
+    returned: list[MemoryEntry] = []
     for entry in filtered_entries:
         if is_wildcard and not apply_entry_filters(entry, tags, mem_status, min_impact):
             continue
         if not is_wildcard and entry.importance < min_impact:
             continue
+        returned.append(entry)
         projected = _memory_to_learning_dict(entry, compact=compact)
         if include_superseded:
             from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD
@@ -168,6 +172,7 @@ def recall_learnings(
         eligible_ids = {entry.id for entry in filtered_entries if selection.eligible(entry)}
         ranked_results.sort(key=lambda row: str(row.get("id", "")) not in eligible_ids)
 
+    admission.note_returned(returned)  # PRD-SEC-023 FR04: what this session read raises its mark
     logger.info(
         "memory_search_ok",
         query=query[:50],

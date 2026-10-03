@@ -198,9 +198,9 @@ class BackendSyncClient:
                 self._reset_poll_schedule()
                 logger.warning("sync_loop_error", client_id=self._client_id, exc_info=True)
 
-    async def _run_one_cycle(self, force: bool = False) -> None:
-        """Execute one push+pull sync cycle, fanning out pushes to every target."""
-        await _run_one_cycle_impl(self, force=force)
+    async def _run_one_cycle(self, force: bool = False, *, push: bool = True, pull: bool = True) -> str:
+        """Execute one push+pull sync cycle, fanning out pushes to every target; returns how it ended."""
+        return await _run_one_cycle_impl(self, force=force, push=push, pull=pull)
 
     async def _fanout_push(
         self,
@@ -309,8 +309,14 @@ class BackendSyncClient:
     def _coerce_positive_number(raw: object) -> float | None:
         return _coerce_positive_number_impl(raw)
 
-    def _get_dirty_entries(self) -> list[MemoryEntry]:
-        return _get_dirty_entries_impl(client_id=self._client_id, trw_dir=self._trw_dir)
+    def _get_dirty_entries(self, page_size: int | None = None) -> list[MemoryEntry]:
+        held = self._coordinator.rejected_entries()
+        return _get_dirty_entries_impl(
+            client_id=self._client_id,
+            trw_dir=self._trw_dir,
+            held=held if isinstance(held, dict) else None,
+            **({"page_size": page_size} if page_size else {}),
+        )
 
     def _mark_synced(self, entries: list[MemoryEntry]) -> None:
         """Mark entries as synced in local storage."""

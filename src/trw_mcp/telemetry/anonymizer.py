@@ -24,8 +24,8 @@ import hashlib
 import os
 from pathlib import Path
 
-from trw_memory.security.credentials import mask_credentials
-from trw_memory.security.pii import strip_pii as _strip_generic_pii
+from trw_memory.security.credentials import mask_credentials_as_written, mask_with_invisible_splits
+from trw_memory.security.pii import strip_pii_as_written as _strip_generic_pii
 
 
 def anonymize_installation_id(raw_id: str) -> str:
@@ -78,9 +78,16 @@ def redact_secrets(text: str) -> str:
     ``redact_secrets(redact_secrets(x)) == redact_secrets(x)`` — every
     pattern refuses to re-consume a ``<REDACTED:...>`` placeholder.
     """
+    # PII-INVISIBLE-SPLIT: the as-written pipeline below, plus whatever it finds once invisible format
+    # characters are removed, applied ONCE here (an inner union would hide text from a later stage).
+    return mask_with_invisible_splits(text, _redact_secrets_as_written)
+
+
+def _redact_secrets_as_written(text: str) -> str:
+    """The redaction pipeline over *text* exactly as given."""
     if not text:
         return text
-    redacted = mask_credentials(text)
+    redacted = mask_credentials_as_written(text)
     home = os.path.expanduser("~")
     if home and home != "~":
         home_norm = home.rstrip("/")

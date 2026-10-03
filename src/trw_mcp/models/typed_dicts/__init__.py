@@ -41,7 +41,6 @@ from trw_mcp.models.typed_dicts._analytics import (
     AnalyticsReport,
     CeremonyTrendItem,
     RunAnalysisResult,
-    TierDistribution,
     TierMetrics,
 )
 
@@ -122,7 +121,6 @@ from trw_mcp.models.typed_dicts._delivery import (
     ReworkMetricsResult,
     StepResultBase,
     TelemetryStepResult,
-    TierSweepStepResult,
     TrustIncrementResult,
 )
 
@@ -296,10 +294,8 @@ __all__ = [
     "StepResultBase",
     "SyncIndexMdResult",
     "TelemetryStepResult",
-    "TierDistribution",
     "TierMetrics",
     "MemoryDecayStepResult",
-    "TierSweepStepResult",
     "TrustIncrementResult",
     "TrwAdoptRunResultDict",
     "TrwHeartbeatResultDict",

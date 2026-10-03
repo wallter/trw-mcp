@@ -76,19 +76,102 @@ def _urlopen_aliases(tree: ast.Module) -> set[str]:
     return aliases
 
 
-def _is_build_opener_expr(node: ast.AST) -> bool:
+def _build_opener_aliases(tree: ast.Module) -> dict[str, set[str]]:
+    """Names bound to ``build_opener`` imports, scoped to Python lexical blocks."""
+    by_scope: dict[str, set[str]] = {}
+
+    def scope_bindings(statements: list[ast.stmt]) -> tuple[set[str], set[str]]:
+        imported_openers: set[str] = set()
+        shadowed: set[str] = set()
+        pending: list[ast.AST] = list(statements)
+        while pending:
+            node = pending.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                shadowed.add(node.name)
+                continue
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "build_opener":
+                        if node.module in {"urllib.request", "request"}:
+                            imported_openers.add(alias.asname or alias.name)
+                        else:
+                            shadowed.add(alias.asname or alias.name)
+                    elif alias.name != "*":
+                        shadowed.add(alias.asname or alias.name)
+                continue
+            if isinstance(node, ast.Import):
+                shadowed.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+                continue
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                shadowed.add(node.id)
+            pending.extend(ast.iter_child_nodes(node))
+
+        return imported_openers, shadowed
+
+    def function_arguments(args: ast.arguments) -> set[str]:
+        all_args = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        if args.vararg:
+            all_args.append(args.vararg)
+        if args.kwarg:
+            all_args.append(args.kwarg)
+        return {arg.arg for arg in all_args}
+
+    def aliases_for_scope(
+        inherited: set[str], statements: list[ast.stmt], parameters: set[str] | None = None
+    ) -> set[str]:
+        imported_openers, shadowed = scope_bindings(statements)
+        shadowed.update(parameters or ())
+        return (inherited - shadowed) | imported_openers
+
+    def function_scope(
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        parent: str,
+        inherited: set[str],
+    ) -> None:
+        scope = f"{parent}.{node.name}" if parent != "<module>" else node.name
+        aliases = aliases_for_scope(inherited, node.body, function_arguments(node.args))
+        by_scope[scope] = aliases
+        child_parent = scope
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                function_scope(child, child_parent, aliases)
+            elif isinstance(child, ast.ClassDef):
+                class_scope(child, child_parent, aliases)
+
+    def class_scope(node: ast.ClassDef, parent: str, inherited: set[str]) -> None:
+        scope = f"{parent}.{node.name}" if parent != "<module>" else node.name
+        class_aliases = aliases_for_scope(inherited, node.body)
+        by_scope[scope] = class_aliases
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # Class-body bindings are not method locals; retain only enclosing/module bindings.
+                function_scope(child, scope, inherited)
+            elif isinstance(child, ast.ClassDef):
+                class_scope(child, scope, inherited)
+
+    module_aliases = aliases_for_scope(set(), tree.body)
+    by_scope["<module>"] = module_aliases
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function_scope(node, "<module>", module_aliases)
+        elif isinstance(node, ast.ClassDef):
+            class_scope(node, "<module>", module_aliases)
+    return by_scope
+
+
+def _is_build_opener_expr(node: ast.AST, aliases: set[str]) -> bool:
     """True if *node* is a call to something named (or ending in) ``build_opener``."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if isinstance(func, ast.Name):
-        return func.id == "build_opener"
+        return func.id in aliases
     if isinstance(func, ast.Attribute):
         return func.attr == "build_opener"
     return False
 
 
-def _is_urlopen_call(node: ast.AST, aliases: set[str]) -> bool:
+def _is_urlopen_call(node: ast.AST, aliases: set[str], build_opener_aliases: set[str]) -> bool:
     """True for a call to ``urlopen`` (by any resolved alias), or to ``.open()`` on a
     ``build_opener(...)`` result (``OpenerDirector.open``, the redirect-following
     equivalent of ``urlopen``).
@@ -107,7 +190,7 @@ def _is_urlopen_call(node: ast.AST, aliases: set[str]) -> bool:
     if isinstance(func, ast.Attribute):
         if func.attr == "urlopen":
             return True
-        if func.attr == "open" and _is_build_opener_expr(func.value):
+        if func.attr == "open" and _is_build_opener_expr(func.value, build_opener_aliases):
             return True
     return False
 
@@ -142,8 +225,12 @@ def _census_scan(root: Path, *, rel_prefix: str, allowlist: dict[str, str] | Non
             continue
         tree = ast.parse(text, filename=str(path))
         aliases = _urlopen_aliases(tree)
+        build_opener_aliases_by_scope = _build_opener_aliases(tree)
         for node, qualname in _iter_calls_with_qualname(tree):
-            if not _is_urlopen_call(node, aliases):
+            build_opener_aliases = build_opener_aliases_by_scope.get(
+                qualname, build_opener_aliases_by_scope["<module>"]
+            )
+            if not _is_urlopen_call(node, aliases, build_opener_aliases):
                 continue
             key = f"{rel}:{qualname}"
             if key in active_allowlist:
@@ -205,6 +292,10 @@ def _scan_source(tmp_path: Path, source: str) -> list[str]:
             "from urllib.request import build_opener\n\n\ndef f():\n    return build_opener().open('http://x')\n",
             id="build-opener-dot-open",
         ),
+        pytest.param(
+            "from urllib.request import build_opener as bo\n\n\ndef f():\n    return bo().open('http://x')\n",
+            id="build-opener-import-alias-dot-open",
+        ),
     ],
 )
 def test_census_detects_every_aliased_form(tmp_path: Path, source: str) -> None:
@@ -217,6 +308,21 @@ def test_census_ignores_unrelated_dot_open_call(tmp_path: Path) -> None:
     source = "def f():\n    fh = open('local.txt')\n    return fh.read()\n"
     offenders = _scan_source(tmp_path, source)
     assert offenders == []
+
+
+def test_build_opener_alias_is_scoped_to_its_lexical_function(tmp_path: Path) -> None:
+    source = (
+        "def outer():\n"
+        "    from urllib.request import build_opener as bo\n"
+        "    def imported_here():\n"
+        "        return bo().open('http://x')\n"
+        "    def shadowed(bo):\n"
+        "        return bo().open('http://y')\n"
+        "    return imported_here(), shadowed\n"
+    )
+    offenders = _scan_source(tmp_path, source)
+    assert len(offenders) == 1, offenders
+    assert ":outer.imported_here:" in offenders[0]
 
 
 # ---------------------------------------------------------------------------
@@ -364,13 +470,19 @@ def test_push_release_refuses_non_loopback_http(dns_tripwire: dict[str, bool]) -
 
 
 def test_push_release_permits_loopback_http(loopback_port: int) -> None:
-    from trw_mcp.server import _subcommands_release as release
-
     # Succeeds through to the local server; no SystemExit means the scheme/host guard
     # let the request through (the release-not-found 200 empty-JSON reply is enough to
     # prove the request was attempted and completed).
-    release._push_release(
-        {"version": "1.0.0", "path": "/tmp/x.whl", "checksum": "abc", "size_bytes": 1},
-        f"http://127.0.0.1:{loopback_port}",
-        "trw_dk_test",
-    )
+    import structlog.testing
+
+    from trw_mcp.server import _subcommands_release as release
+
+    with structlog.testing.capture_logs() as logs:
+        release._push_release(
+            {"version": "1.0.0", "path": "/tmp/x.whl", "checksum": "abc", "size_bytes": 1},
+            f"http://127.0.0.1:{loopback_port}",
+            "trw_dk_test",
+        )
+    events = [entry["event"] for entry in logs]
+    assert "release_published" in events
+    assert "release_publish_failed" not in events

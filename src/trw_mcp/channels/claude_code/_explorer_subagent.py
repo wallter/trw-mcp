@@ -25,6 +25,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import record_run_write
+
 log = structlog.get_logger(__name__)
 
 __all__ = [
@@ -253,51 +255,32 @@ def install_cc05_subagent(repo_root: Path, manifest_hashes: dict[str, str] | Non
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
+    record_run_write(target, content.encode("utf-8"))  # FB-01-KI1-RACE restore proof
     log.debug("cc05_subagent_written", path=str(target))
     return True
 
 
-def withdraw_cc05_subagent_if_unedited(repo_root: Path, manifest_hashes: dict[str, str] | None) -> bool:
-    """Remove ``.claude/agents/trw-distill-explorer.md`` when distill is no longer entitled.
+def withdraw_cc05_subagent_if_unedited(
+    repo_root: Path, manifest_hashes: dict[str, str] | None, result: dict[str, list[str]] | None = None
+) -> bool:
+    """Remove ``.claude/agents/trw-distill-explorer.md`` in place when distill is no longer entitled.
 
-    2026-09-27 audit (touchpoint #6): ``update-project`` on an unentitled
-    project never wrote this file, but never removed one either — a project
-    that lost its licence (or copied the checkout to a distill-free machine)
-    kept a "powered by trw-distill" agent describing tools it could no longer
-    answer for. Removes it only when it still matches a TRW-rendered baseline
-    (any allowlisted ``model:``, per :func:`_resolve_explorer_model`, since
-    both are legitimate framework renderings — mirrors
-    ``_managed_client_artifacts.artifact_user_edited_against``'s agent-file
-    contract) or the recorded manifest hash; a genuine user edit is preserved,
-    exactly like a normal update would preserve it.
+    2026-09-27 audit (touchpoint #6): a project that lost its licence (or copied the checkout to a distill-free
+    machine) kept a "powered by trw-distill" agent describing tools it could no longer answer for. The file goes
+    when it matches a TRW-rendered baseline (any allowlisted ``model:``, per :func:`_resolve_explorer_model`) or
+    the recorded manifest hash, or when git holds it clean; an uncommitted edit is kept and named with the
+    command that removes it. *result*, when given, receives the retirement report.
 
     Returns True when the file was removed.
     """
-    from trw_mcp.bootstrap._safe_remove import remove_if_hash
+    from trw_mcp.bootstrap._retire import as_retirement, record_retirement, retire_file
 
     target = repo_root / EXPLORER_AGENT_RELPATH
     if not target.is_file():
         return False
-    # One verdict for install and withdraw (W3's cc05_explorer_user_edited), so they can never disagree.
-    if cc05_explorer_user_edited(repo_root, manifest_hashes):
-        log.debug("cc05_subagent_withdraw_skipped_user_edited", path=str(target))
-        return False
-    try:
-        current_hash = hashlib.sha256(target.read_bytes()).hexdigest()
-    except OSError:
-        # trw-fail-silent-allow: an unreadable file is preserved, the safe side; the DEBUG line is the record
-        log.debug("cc05_subagent_withdraw_skipped_unreadable", path=str(target))
-        return False
-    # The hash handed to remove_if_hash must itself be a proven TRW render or the recorded hash: an edit landing
-    # between the verdict above and this read would otherwise be withdrawn as if it were TRW's.
-    if current_hash not in _framework_explorer_hashes() | {(manifest_hashes or {}).get(EXPLORER_AGENT_RELPATH)}:
-        log.debug("cc05_subagent_withdraw_skipped_changed", path=str(target))
-        return False
-    # remove_if_hash re-verifies the captured bytes against this hash and links them back on any change, so an
-    # edit saved after this check keeps its bytes (HB-2); the unedited file stays in .trw/trash.
-    outcome = remove_if_hash(target, repo_root, current_hash, key=EXPLORER_AGENT_RELPATH)
-    if outcome.status != "removed":
-        log.debug("cc05_subagent_withdraw_kept", path=str(target), reason=outcome.reason)
-        return False
-    log.debug("cc05_subagent_withdrawn", path=str(target))
-    return True
+    proven = _framework_explorer_hashes() | {(manifest_hashes or {}).get(EXPLORER_AGENT_RELPATH, "")}
+    outcome = retire_file(target, repo_root, proven)
+    if result is not None:
+        record_retirement(result, as_retirement(EXPLORER_AGENT_RELPATH, outcome))
+    log.debug("cc05_subagent_withdraw", path=str(target), status=outcome.status, reason=outcome.why)
+    return outcome.status in ("removed", "git")

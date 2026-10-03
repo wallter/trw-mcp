@@ -29,8 +29,8 @@ from trw_mcp.tools._delivery_effect_registry import (
 # outcome-correlation roster steps; D26 (the meta-tune rollout linkage event
 # append) was retired with the event in trw-mcp 6.1.0 -- the D-range below
 # excludes all three.
-# D02 (the consolidation step) retired by PRD-CORE-302 FR03; D09/D10 by PRD-CORE-293.
-_RETIRED_DEFERRED = (2, 9, 10)
+# D02 (the consolidation step) retired by PRD-CORE-302 FR03; D09/D10 by PRD-CORE-293; D03 (the YAML tier sweep) by UF-PRD-23.
+_RETIRED_DEFERRED = (2, 3, 9, 10)
 _EXPECTED_IDS = frozenset(
     [f"S{n:02d}" for n in range(1, 24)]
     + ["S23b"]  # PRD-CORE-345 FR01: the deliver outcome record
@@ -71,7 +71,6 @@ _OWNER_MODULES: dict[str, str] = {
     "log_deliver_complete": "trw_mcp.tools._ceremony_deliver_steps",
     "_try_acquire_deferred_lock": "trw_mcp.tools._deferred_delivery",
     "_step_auto_prune": "trw_mcp.tools._deferred_steps_memory",
-    "_step_tier_sweep": "trw_mcp.tools._deferred_steps_memory",
     "_do_index_sync": "trw_mcp.tools._deferred_steps_learning",
     "_step_auto_progress": "trw_mcp.tools._deferred_steps_learning",
     "_step_publish_learnings": "trw_mcp.tools._deferred_steps_learning",
@@ -125,7 +124,7 @@ def _resolve_owner_symbol(owner_call_point: str) -> object:
 def test_current_delivery_side_effect_inventory_is_exhaustive() -> None:
     """FR03: registry equals the approved §6.6 census with no gaps or duplicates."""
     assert all_effect_ids() == _EXPECTED_IDS
-    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 47
+    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 46
     # Every descriptor's own effect_id matches its dict key (no duplicate/orphan).
     for effect_id, descriptor in DELIVERY_EFFECT_REGISTRY.items():
         assert descriptor.effect_id == effect_id

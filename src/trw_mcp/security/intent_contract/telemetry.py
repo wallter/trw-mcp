@@ -1,9 +1,9 @@
-"""FR06: hook-firing telemetry with a BLOCKS-ONLY false-block denominator.
+"""FR06: hook-firing telemetry, bounded: counters per outcome plus the last outcome.
 
-``recent_outcomes`` is an append-only log, not a ring buffer: "the first 30" is
-implemented as a QUERY over block-class entries so allow-class volume can never
-evict a block, and can never dilute the rate. A block only becomes a false block
-when a human says so (``dispose_last_block``) — never auto-inferred.
+Every intent hook fire (each Write/Edit) rewrites this file under a lock, so its size must not grow with the
+number of fires. It used to append every outcome to ``recent_outcomes`` for a false-block rate that no production
+path read or could feed (UF-MCP-03: 15,023 fires, 0 blocks, a 360 KB file rewritten per fire); the rate and that
+list are gone, and a legacy list is folded into the counts on the next write.
 
 Belongs to the ``trw_mcp.security.intent_contract`` facade.
 """
@@ -17,27 +17,11 @@ from typing import Literal, cast
 
 from trw_mcp.security.intent_contract._atomic_json import atomic_write_json, locked
 
-__all__ = [
-    "BLOCK_CLASS_OUTCOMES",
-    "Outcome",
-    "dispose_last_block",
-    "false_block_rate",
-    "read_telemetry",
-    "record_firing",
-    "telemetry_path",
-]
+__all__ = ["Outcome", "read_telemetry", "record_firing", "telemetry_path"]
 
 Outcome = Literal["blocked", "false_block", "break_glass", "allowed_match", "allowed_no_match", "infra_error"]
 
-#: Only these outcomes enter the false-block denominator (R15). ``infra_error``
-#: is deliberately EXCLUDED: a falsifier that could not be evaluated (collection
-#: error, missing dependency, timeout) blocks, but it is an infrastructure defect,
-#: not a judgement that the edit was safe or unsafe — counting it either way would
-#: corrupt the rate the Track T gate is measured against.
-BLOCK_CLASS_OUTCOMES: frozenset[str] = frozenset({"blocked", "false_block"})
-
 _DEFAULT_RELATIVE_PATH = ".trw/context/intent-hook-telemetry.json"
-_COUNTER_KEYS = ("fires", "false_blocks", "break_glass")
 
 
 def telemetry_path(root: Path, configured: str | None = None) -> Path:
@@ -45,7 +29,7 @@ def telemetry_path(root: Path, configured: str | None = None) -> Path:
 
 
 def _empty() -> dict[str, object]:
-    return {"fires": 0, "false_blocks": 0, "break_glass": 0, "recent_outcomes": []}
+    return {"fires": 0, "break_glass": 0, "outcomes": {}, "last_outcome": ""}
 
 
 def _load(path: Path) -> dict[str, object]:
@@ -58,16 +42,21 @@ def _load(path: Path) -> dict[str, object]:
     if not isinstance(parsed, dict):
         return _empty()
     state = _empty()
-    for key in _COUNTER_KEYS:
+    for key in ("fires", "break_glass"):
         value = parsed.get(key)
         state[key] = value if isinstance(value, int) else 0
-    outcomes = parsed.get("recent_outcomes")
-    state["recent_outcomes"] = [str(item) for item in outcomes] if isinstance(outcomes, list) else []
+    counts = parsed.get("outcomes")
+    outcomes = {str(k): v for k, v in counts.items() if isinstance(v, int)} if isinstance(counts, dict) else {}
+    legacy = parsed.get("recent_outcomes")
+    if isinstance(legacy, list):  # a pre-UF-MCP-03 file: fold its log into the counts once; the log is not kept
+        for item in legacy:
+            outcomes[str(item)] = outcomes.get(str(item), 0) + 1
+        state["last_outcome"] = str(legacy[-1]) if legacy else ""
+    last = parsed.get("last_outcome")
+    if isinstance(last, str) and last:
+        state["last_outcome"] = last
+    state["outcomes"] = outcomes
     return state
-
-
-def _outcomes(state: dict[str, object]) -> list[str]:
-    return cast("list[str]", state.get("recent_outcomes", []))
 
 
 def _mutate(path: Path, mutate: Callable[[dict[str, object]], None]) -> dict[str, object]:
@@ -80,57 +69,18 @@ def _mutate(path: Path, mutate: Callable[[dict[str, object]], None]) -> dict[str
 
 
 def record_firing(root: Path, outcome: Outcome, configured: str | None = None) -> dict[str, object]:
-    """Append one firing outcome and increment its counter atomically."""
+    """Count one firing outcome atomically."""
 
     def _apply(state: dict[str, object]) -> None:
         state["fires"] = int(cast("int", state["fires"])) + 1
-        if outcome == "false_block":
-            state["false_blocks"] = int(cast("int", state["false_blocks"])) + 1
-        elif outcome == "break_glass":
+        if outcome == "break_glass":
             state["break_glass"] = int(cast("int", state["break_glass"])) + 1
-        _outcomes(state).append(outcome)
+        counts = cast("dict[str, int]", state["outcomes"])
+        counts[outcome] = counts.get(outcome, 0) + 1
+        state["last_outcome"] = outcome
 
     return _mutate(telemetry_path(root, configured), _apply)
 
 
-def dispose_last_block(root: Path, *, is_false_positive: bool, configured: str | None = None) -> bool:
-    """Human disposition step: convert the most recent ``blocked`` to a false block.
-
-    Returns True when a pending block was dispositioned. A block is NEVER
-    auto-classified as a false positive by any code path.
-    """
-    converted = False
-
-    def _apply(state: dict[str, object]) -> None:
-        nonlocal converted
-        if not is_false_positive:
-            return
-        outcomes = _outcomes(state)
-        for index in range(len(outcomes) - 1, -1, -1):
-            if outcomes[index] == "blocked":
-                outcomes[index] = "false_block"
-                state["false_blocks"] = int(cast("int", state["false_blocks"])) + 1
-                converted = True
-                return
-
-    _mutate(telemetry_path(root, configured), _apply)
-    return converted
-
-
 def read_telemetry(root: Path, configured: str | None = None) -> dict[str, object]:
     return _load(telemetry_path(root, configured))
-
-
-def false_block_rate(root: Path, window: int = 30, configured: str | None = None) -> float | None:
-    """Rate over the LAST *window* BLOCK-CLASS outcomes, or ``None`` when undefined.
-
-    Allow-class outcomes never enter the denominator, so a mechanism that mostly
-    allows cannot dilute its own false-block rate below the gate threshold.
-    """
-    if window < 1:
-        return None
-    blocks = [item for item in _outcomes(_load(telemetry_path(root, configured))) if item in BLOCK_CLASS_OUTCOMES]
-    if len(blocks) < window:
-        return None
-    sample = blocks[-window:]
-    return sum(1 for item in sample if item == "false_block") / float(window)

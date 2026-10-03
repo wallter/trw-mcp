@@ -372,7 +372,9 @@ def write_session_changelog(
     reports_dir = run_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / SESSION_CHANGELOG_FILENAME
-    report_path.write_text(result.markdown, encoding="utf-8")
+    from trw_mcp._checkout_write import write_checkout_file
+
+    write_checkout_file(run_path, report_path, result.markdown)  # refuses a planted link (AIKIDO 2a)
     logger.info(
         "session_changelog_written",
         path=str(report_path),

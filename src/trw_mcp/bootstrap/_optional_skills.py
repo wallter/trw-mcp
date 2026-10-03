@@ -9,13 +9,12 @@ reported. An opt-in feature fails closed: if the config cannot be read, the skil
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Callable
 from pathlib import Path
 
 import structlog
 
-from ._safe_remove import remove_tree_if_hash
+from ._retire import record_retirement, retire_tree
 
 logger = structlog.get_logger(__name__)
 
@@ -65,24 +64,18 @@ def retire_disabled_skills(
             continue
         shipped = dict(skill_files(client, name, root=bundled_root))
         digests = {rel: hashlib.sha256(data).hexdigest() for rel, data in shipped.items()}
-        # Each file is re-hashed and captured into .trw/trash at the act (never rmtree'd), so an edit saved
-        # after this check, or a file added to the skill, keeps its bytes and its directory.
         # Per file (the SKILL-DIR-ANCHOR ruling): every unmodified shipped file -- SKILL.md above all, which is
-        # what keeps a disabled skill live -- goes to .trw/trash; an edited or unlisted file keeps its bytes and
-        # its directory.
+        # what keeps a disabled skill live -- is deleted in place (as is one git holds clean); an edited or
+        # unlisted file keeps its bytes and its directory, and is named with the command that removes it.
         if project_root is None:
-            result.setdefault("preserved", []).append(f"{rel_root}/{name} (no project root to hold .trw/trash)")
+            result.setdefault("preserved", []).append(f"{rel_root}/{name} (no project root to check ownership against)")
             continue
-        before = {f for f in dest.rglob("*") if f.is_file() and not f.is_symlink()}
-        kept = remove_tree_if_hash(dest, project_root, _shipped_digest(dest, digests))
-        # Report every captured file as trashed, so the uncommitted-changes guard does not restore it.
-        result.setdefault("trashed", []).extend(
-            f.relative_to(project_root).as_posix() for f in sorted(before) if not os.path.lexists(f)
-        )
-        if kept:
+        outcome = retire_tree(dest, project_root, _shipped_digest(dest, digests))
+        record_retirement(result, outcome._replace(kept=[]))  # the kept files get the skill-specific warning below
+        if outcome.kept:
             result.setdefault("preserved", []).append(f"{rel_root}/{name}")
             # Warnings are what the CLI prints; the per-file reasons belong where the user sees them.
-            result.setdefault("warnings", []).extend(_kept_warning(name, why) for why in kept)
+            result.setdefault("warnings", []).extend(_kept_warning(name, f"{p} ({why})") for p, why in outcome.kept)
         else:
             result.setdefault("removed", []).append(f"{rel_root}/{name}")
 

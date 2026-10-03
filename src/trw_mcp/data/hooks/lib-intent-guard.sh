@@ -640,8 +640,9 @@ _trw_guard_main() {
   # warning -- intent-contract enrollment and formation membership are unrelated
   # facts, and gating one on the other would make the advisory dead in most
   # repositories. It cannot affect the decision: `|| true`, and the module it
-  # runs always exits 0.
-  _trw_formation_advisory || true
+  # runs always exits 0. Pre-write only (FORMATION-ADVISORY-COST): after the write has landed an ownership
+  # warning changes nothing, and each spawn cost ~0.75 s on every Write/Edit.
+  if [ "$_trw_matcher" = "pre-write" ]; then _trw_formation_advisory || true; fi
 
   # --- fail-open zone: never enrolled is a clean no-op (NFR01 row 2) ---------
   if [ "$_trw_enrolled" = "0" ]; then

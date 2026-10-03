@@ -17,7 +17,6 @@ import functools
 import json
 import os
 import threading
-import time
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -25,8 +24,8 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from pydantic_core import to_jsonable_python
 
+from trw_mcp.state._daemon_install_budget import wait_within_install_budget
 from trw_mcp.state._store_selection import (
-    DaemonBudgetExhaustedError,
     EmbedderStatus,
     NamespaceHealth,
     RecallSpec,
@@ -44,7 +43,6 @@ if TYPE_CHECKING:
     from trw_memory.lifecycle.dedup import DedupResult
     from trw_memory.lifecycle.verification_pass import MaintainVerifySummary, VerifySettings
     from trw_memory.models.memory import MemoryEntry
-    from trw_memory.sync import AdmissionOutcome
 
 logger = structlog.get_logger(__name__)
 
@@ -193,35 +191,9 @@ def _run(coro: Coroutine[Any, Any, Any]) -> Any:
     try:
         if shared is None:
             return asyncio.run_coroutine_threadsafe(coro, loop).result()
-        return _wait_within_install_budget(coro, loop, shared)
+        return wait_within_install_budget(coro, loop, shared, INSTALL_DAEMON_BUDGET_S)
     except (DaemonUnreachableError, DaemonAuthError, DaemonRecordInvalidError) as exc:
         raise StoreUnavailableError(f"{exc} Run trw-mcp doctor.") from exc
-
-
-def _wait_within_install_budget(
-    coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop, shared: dict[str, Any]
-) -> Any:
-    """Wait on *coro* for what is left of the install's daemon budget, then give up on it."""
-    waited = float(shared.get("daemon_waited_s", 0.0))
-    remaining = INSTALL_DAEMON_BUDGET_S - waited
-    exhausted = DaemonBudgetExhaustedError(
-        f"the memory daemon did not answer within the install's {INSTALL_DAEMON_BUDGET_S:g}s budget; "
-        "this install continues without recalled learnings. Run trw-mcp doctor."
-    )
-    if remaining <= 0:
-        coro.close()
-        raise exhausted
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    started = time.monotonic()
-    try:
-        return future.result(timeout=remaining)
-    except concurrent.futures.TimeoutError:
-        future.cancel()  # the request is abandoned on the daemon-call loop; nothing waits on it
-        shared["daemon_waited_s"] = INSTALL_DAEMON_BUDGET_S
-        logger.warning("install_daemon_budget_exhausted", budget_s=INSTALL_DAEMON_BUDGET_S)
-        raise exhausted from None
-    finally:
-        shared["daemon_waited_s"] = max(float(shared.get("daemon_waited_s", 0.0)), waited + time.monotonic() - started)
 
 
 class DaemonMemoryStore:
@@ -332,12 +304,31 @@ class DaemonMemoryStore:
         found = _run(self._client.sync_find(namespace, remote_id, ids))
         return _entry(found["entry"]) if found.get("status") == "ok" else None
 
+    def find_synced_many(self, namespace: str, remote_ids: list[str], ids: list[str]) -> list[MemoryEntry]:
+        found = _run(self._client.sync_find_many(namespace, remote_ids, ids))
+        if found.get("status") != "ok":
+            raise ValueError(f"memory_sync_find_many refused: {found.get('error') or found.get('status')}")
+        return [_entry(row) for row in found["entries"]]
+
     def apply_synced(
         self, namespace: str, entry: MemoryEntry, *, if_revision: str | None, synced: bool = True
     ) -> tuple[str, str]:
         row = entry.model_dump(mode="json")
         result = _run(self._client.sync_apply(namespace, row, if_revision=if_revision, synced=synced))
         return str(result["status"]), str(result.get("reason", ""))
+
+    def apply_synced_many(
+        self, namespace: str, items: list[tuple[MemoryEntry, str | None, bool]]
+    ) -> list[tuple[str, str]]:
+        wire = [
+            {"entry": entry.model_dump(mode="json"), "if_revision": if_revision, "synced": synced}
+            for entry, if_revision, synced in items
+        ]
+        answer = _run(self._client.sync_apply_many(namespace, wire))
+        results = answer.get("results")
+        if answer.get("status") != "ok" or not isinstance(results, list) or len(results) != len(items):
+            raise ValueError(f"memory_sync_apply_many refused: {answer.get('error') or answer.get('status')}")
+        return [(str(r["status"]), str(r.get("reason") or r.get("error") or "")) for r in results]
 
     def recall(self, spec: RecallSpec) -> list[MemoryEntry]:
         # Each daemon namespace is its own store, read as a checkout reads its project
@@ -346,14 +337,6 @@ class DaemonMemoryStore:
 
         namespaces = self._namespaces if spec.include_user else self._namespaces[:1]
         return recall_namespaces(spec, namespaces, page=functools.partial(self._page, spec), row=self._row)
-
-    def admit_shared(self, results: list[dict[str, object]]) -> AdmissionOutcome:
-        from trw_memory.sync import AdmissionOutcome
-
-        answer = _run(self._client.admit_shared(self._namespaces[0], results))
-        if answer.get("status") != "ok":
-            raise ValueError(f"memory_admit_shared refused: {answer.get('error')}")
-        return AdmissionOutcome(list(answer["admitted"]), int(answer["refused"]), int(answer["gate_errors"]))
 
     def vectors(self, ids: list[str]) -> VectorSet | None:
         answer = _run(self._client.vectors(self._namespaces[0], list(ids)))

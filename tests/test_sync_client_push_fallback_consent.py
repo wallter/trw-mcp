@@ -43,6 +43,14 @@ def _entry() -> Any:
 
     class _Entry(dict):  # type: ignore[type-arg]
         sync_seq = 1
+        namespace = "default"  # a team row: the label policy reads namespace, tags and metadata (PRD-SEC-023)
+        tags: list[str] = []
+        metadata: dict[str, str] = {}
+        # PRD-CORE-333: the quarantine gate keys a row on its id, remote id and content, as on a MemoryEntry.
+        id = "L-1"
+        remote_id = None
+        content = "hello"
+        detail = "world"
 
     return _Entry(id="L-1", summary="hello", detail="world", impact=0.5, tags=[])
 

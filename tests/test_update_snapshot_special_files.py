@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.bootstrap._update_transaction import _restore_transaction_snapshot, _snapshot_transaction_paths
+from trw_mcp.bootstrap._update_project import _rollback
+from trw_mcp.bootstrap._update_transaction import _snapshot_transaction_paths
 
 pytestmark = [
     pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo"),
@@ -41,7 +42,7 @@ def test_rollback_leaves_the_skipped_fifo_in_place(tmp_path: Path) -> None:
     snapshot = _snapshot_transaction_paths(project)
     try:
         (skill / "SKILL.md").write_text("changed\n", encoding="utf-8")
-        _restore_transaction_snapshot(project, snapshot)
+        _rollback(project, snapshot, {"warnings": [], "errors": []})
     finally:
         shutil.rmtree(snapshot)
     assert (skill / "SKILL.md").read_text(encoding="utf-8") == "skill\n"

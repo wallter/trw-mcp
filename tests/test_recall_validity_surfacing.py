@@ -283,22 +283,6 @@ def test_default_source_carries_no_source_key(row_extra: dict[str, object]) -> N
     assert served == {"id": "L-1", "claim": "widget rule"}
 
 
-def test_remote_row_carries_no_provenance_keys() -> None:
-    """FR01/Non-Goals: a shared row's peer-asserted fields are never presented as provenance."""
-    remote = {
-        "id": "R-1",
-        "summary": "[shared] widget rule",
-        "source": "shared",
-        "source_type": "human",
-        "namespace": "team:core",
-        "superseded": True,
-        "invalidated_by": "L-9f8e7d6c",
-    }
-    [served] = _served_stubs([remote])
-
-    assert served == {"id": "R-1", "claim": "[shared] widget rule"}
-
-
 def test_legacy_row_renders_without_provenance_keys() -> None:
     """NFR03: a row missing every read key renders, and carries none of the three keys."""
     [served] = _served_stubs([{"id": "L-1", "summary": "widget rule"}])

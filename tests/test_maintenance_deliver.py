@@ -43,7 +43,6 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
@@ -106,10 +105,13 @@ class TestDeliverAutoPrune:
             original = analytics_mod_state.auto_prune_excess_entries
             try:
                 analytics_mod_state.auto_prune_excess_entries = mock_prune
-                fn(skip_reflect=False, skip_index_sync=False)
+                deliver_result = fn(skip_reflect=False, skip_index_sync=False)
+                _join_and_reset_deferred()  # the prune would run on the deferred thread, so wait for it
             finally:
                 analytics_mod_state.auto_prune_excess_entries = original
 
+        assert deliver_result["success"] is True and deliver_result["errors"] == []
+        assert deliver_result["deferred"] == "launched"
         mock_prune.assert_not_called()
 
     def test_deliver_auto_prune_exception_is_fail_open(
@@ -134,7 +136,6 @@ class TestDeliverAutoPrune:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),

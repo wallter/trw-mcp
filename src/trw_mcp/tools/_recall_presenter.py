@@ -70,13 +70,10 @@ def _bounded(value: str) -> str:
 def _provenance(row: Mapping[str, object], home_namespace: str) -> dict[str, object]:
     """PRD-CORE-326: the stored provenance a row carries beyond the defaults, read verbatim.
 
-    A remote row (``source == "shared"``) is skipped: its fields are peer-asserted,
-    and its ``[shared]`` claim prefix is its only provenance marker. A row in
+    A row in
     ``default`` or in the caller's own *home_namespace* has no scope to report, and
     only a superseded row (returned under ``include_superseded``) names its closer.
     """
-    if row.get("source") == "shared":
-        return {}
     keys: dict[str, object] = {}
     source = row.get("source_type")
     if source and source != "agent":  # ``agent`` is the stored default on every write path

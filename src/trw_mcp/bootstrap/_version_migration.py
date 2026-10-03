@@ -155,7 +155,7 @@ def _write_manifest(
 
 # Per-client stale cleanup + codex content hashes (FIX A/B) extracted to
 # _version_migration_clients (350-eLOC gate). Re-exported for back-compat.
-from trw_mcp.bootstrap._ownership_proof import preserve_unowned, remove_proven
+from trw_mcp.bootstrap._ownership_proof import remove_proven
 from trw_mcp.bootstrap._version_migration_clients import (
     _codex_manifest_hashes as _codex_manifest_hashes,
 )
@@ -210,8 +210,6 @@ def _remove_stale_set(
         stale = target_dir / name
         exists = stale.is_dir() if is_dir_artifact else stale.is_file()
         if not exists:
-            continue
-        if preserve_unowned(stale, manifest_hashes, project_root, result):
             continue
         remove_proven(stale, manifest_hashes, project_root, result)
 

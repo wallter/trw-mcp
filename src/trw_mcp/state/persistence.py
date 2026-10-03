@@ -7,6 +7,8 @@ All state persistence goes through this module. Writes are atomic
 
 from __future__ import annotations
 
+from trw_mcp._checkout_write import record_run_write
+
 __all__ = [
     "FileEventLogger",
     "FileStateReader",
@@ -53,7 +55,9 @@ def _atomic_write_text_file(
             os.fsync(fh.fileno())
         if mode is not None:
             os.chmod(tmp_path, mode)
+        published = tmp_path.read_bytes()  # private temp file: exactly the bytes about to be published
         os.replace(tmp_path, path)
+        record_run_write(path, published)  # the update's restore proof (FB-01-KI1-RACE)
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from trw_memory.exceptions import DaemonError
-from trw_memory.security.credentials import credential_spans, mask_low_confidence
+from trw_memory.security.credentials import credential_spans_with_invisible_splits, mask_low_confidence
 
 from trw_mcp.state import learn_journal
 from trw_mcp.state._learn_journal_disposition import dead_letter
@@ -204,7 +204,7 @@ def store_bound_text(payload: dict[str, object]) -> LearnResultDict | None:
     one. Afterwards *payload* is exactly what the store receives, so a crash-replay stores what
     the original call would have; no field can bypass this because the walk covers all of them.
     """
-    blocked = any(credential_spans(text) for text in _leaves(payload))
+    blocked = any(credential_spans_with_invisible_splits(text) for text in _leaves(payload))
     masked = {key: _mask_leaves(value) for key, value in payload.items()}
     if blocked or any(masked[key] != payload[key] for key in payload if key not in _STORED_TEXT_KEYS):
         rejection: LearnResultDict = {
@@ -420,3 +420,5 @@ def attach_response_notes(result: dict[str, Any], masking_note: str | None, stor
         result["redaction_note"] = masking_note
     if store_result.get("auto_added_tags"):
         result["auto_added_tags"] = store_result["auto_added_tags"]
+    if store_result.get("session_label"):
+        result["session_label"] = store_result["session_label"]  # PRD-SEC-023 FR04: the row carries this session's mark

@@ -392,39 +392,6 @@ def test_remaining_recency_call_sites_are_the_documented_ones(hook_dir: Path) ->
     assert found <= expected, f"new un-migrated recency call sites: {sorted(found - expected)}"
 
 
-# The lib wrappers that resolve a run by recency INTERNALLY. Calling one
-# re-introduces the defect even in a hook that correctly resolved its own run a
-# few lines earlier -- the failure is invisible at the call site, which is exactly
-# why it is pinned by name rather than left to review. (infer_phase left this
-# list in R2-009, when it became ownership-only.)
-_RECENCY_BOUND_LIB_HELPERS = ("check_ceremony_status",)
-
-_MIGRATED_HOOKS = (
-    "pre-compact.sh",
-    "session-end.sh",
-    "subagent-start.sh",
-    "session-start.sh",
-    "post-tool-event.sh",
-    "stop-ceremony.sh",
-)
-
-
-@_HOOK_COPIES
-@pytest.mark.parametrize("hook_name", _MIGRATED_HOOKS)
-def test_migrated_hooks_do_not_call_recency_bound_lib_helpers(hook_dir: Path, hook_name: str) -> None:
-    """A migrated hook must not launder recency through check_ceremony_status."""
-    code = "\n".join(
-        line
-        for line in (hook_dir / hook_name).read_text(encoding="utf-8").splitlines()
-        if not line.lstrip().startswith("#")
-    )
-    # \b will not match inside a prefixed local override, so only the LIB symbol
-    # is caught. (The one such override, _pcs_infer_phase, went with
-    # phase-cycle-stop.sh in PRD-CORE-250-FR03.)
-    called = [helper for helper in _RECENCY_BOUND_LIB_HELPERS if re.search(rf"\b{helper}\b", code)]
-    assert called == [], f"{hook_name} calls recency-bound lib helper(s): {called}"
-
-
 @_HOOK_COPIES
 def test_post_tool_event_ignores_a_foreign_run(hook_dir: Path, tmp_path: Path) -> None:
     """FR03: an identified session never logs an edit into another session's run."""

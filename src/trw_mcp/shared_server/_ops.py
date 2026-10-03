@@ -120,10 +120,12 @@ def _pip_install(python: Path, wheelhouse: Path, specs: list[str | None]) -> Non
     """Offline install of *specs*: trw_* wheels from *wheelhouse*, third-party deps from uv's offline cache.
 
     Never ``--no-index``: the wheelhouse holds only trw_* wheels, so an index-free resolve cannot find e.g. anyio.
+    ``--compile-bytecode`` pays the .pyc compile here, before the swap: uv skips it by default, and a venv
+    without it made the swapped-in daemon's first recall compile torch/scipy/transformers (~53 s under load).
     """
     _run(
         [
-            *("uv", "pip", "install", "--quiet", "--offline", "--find-links", str(wheelhouse)),
+            *("uv", "pip", "install", "--quiet", "--offline", "--compile-bytecode", "--find-links", str(wheelhouse)),
             *("--python", str(python)),
             *[spec for spec in specs if spec],
         ],

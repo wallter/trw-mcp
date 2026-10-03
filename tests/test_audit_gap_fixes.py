@@ -152,45 +152,38 @@ class TestPhaseOriginWarning:
     """execute_learn logs WARNING when phase_origin detection finds no active run."""
 
     def test_phase_origin_warning_when_no_active_run(self) -> None:
-        """When detect_current_phase returns None, a warning is logged."""
+        """No active run -> warning logged; an active phase -> no such warning."""
+        from pathlib import Path
+
+        from trw_mcp.models.config import TRWConfig
         from trw_mcp.tools._learn_impl import execute_learn
 
-        with (
-            patch("trw_mcp.tools._learn_impl.logger") as mock_logger,
-            patch("trw_mcp.state._paths.detect_current_phase", return_value=None),
-        ):
-            mock_store = MagicMock(return_value=None)
-            mock_gen_id = MagicMock(return_value="L-test-123")
-            mock_save = MagicMock(return_value="/tmp/test.yaml")
-            mock_analytics = MagicMock()
-            mock_list = MagicMock(return_value=[])
-            mock_dedup = MagicMock(return_value=None)
+        def _run(phase: str | None) -> list[str]:
+            with (
+                patch("trw_mcp.tools._learn_impl.logger") as mock_logger,
+                patch("trw_mcp.state._paths.detect_current_phase", return_value=phase),
+            ):
+                try:
+                    execute_learn(
+                        summary="test summary",
+                        detail="test detail",
+                        trw_dir=Path("/tmp/fake-trw"),
+                        config=TRWConfig(),
+                        _adapter_store=MagicMock(return_value=None),
+                        _generate_learning_id=MagicMock(return_value="L-test-123"),
+                        _save_learning_entry=MagicMock(return_value="/tmp/test.yaml"),
+                        _update_analytics=MagicMock(),
+                        _list_active_learnings=MagicMock(return_value=[]),
+                        _check_and_handle_dedup=MagicMock(return_value=None),
+                    )
+                except (
+                    Exception
+                ):  # trw-fail-silent-allow: test only inspects the warning log, not execute_learn's outcome
+                    pass
+                return [c.args[0] for c in mock_logger.warning.call_args_list if c.args]
 
-            from pathlib import Path
-
-            from trw_mcp.models.config import TRWConfig
-
-            config = TRWConfig()
-            trw_dir = Path("/tmp/fake-trw")
-
-            try:
-                execute_learn(
-                    summary="test summary",
-                    detail="test detail",
-                    trw_dir=trw_dir,
-                    config=config,
-                    _adapter_store=mock_store,
-                    _generate_learning_id=mock_gen_id,
-                    _save_learning_entry=mock_save,
-                    _update_analytics=mock_analytics,
-                    _list_active_learnings=mock_list,
-                    _check_and_handle_dedup=mock_dedup,
-                )
-            except Exception:
-                pass  # We only care about the warning log
-
-            # Verify the warning was logged
-            mock_logger.warning.assert_any_call("phase_origin_no_active_run")
+        assert "phase_origin_no_active_run" in _run(None)
+        assert "phase_origin_no_active_run" not in _run("implement")
 
 
 # ---------------------------------------------------------------------------

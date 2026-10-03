@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -40,11 +40,13 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
-    await client._run_one_cycle()
+    outcome = await client._run_one_cycle()
 
+    assert outcome == "ok"
     client._pusher.push_learnings.assert_not_called()
-    client._puller.pull_intel_state.assert_called_once()
-    client._puller.merge_team_learnings.assert_called_once()
+    assert client._puller.pull_intel_state.call_count == 1
+    assert client._puller.pull_intel_state.call_args.kwargs["since_seq"] == 4
+    client._puller.merge_team_learnings.assert_called_once_with([{"source_learning_id": "remote-1", "sync_seq": 7}])
     client._coordinator.record_sync_success.assert_called_once_with(
         pushed=0,
         pulled=1,
@@ -158,7 +160,7 @@ async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pyte
     client._cache = MagicMock()
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
-    dirty_entry = SimpleNamespace(id="L-1", sync_seq=7)
+    dirty_entry = SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=7)
     client._get_dirty_entries = MagicMock(return_value=[dirty_entry])
     client._mark_synced = MagicMock()
     # PRD-FIX-125-FR01: the cycle verdict is keyed on the PRIMARY target's own
@@ -310,9 +312,12 @@ async def test_run_one_cycle_passes_scheduled_interval_to_coordinator(tmp_path) 
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
-    await client._run_one_cycle()
+    outcome = await client._run_one_cycle()
 
-    client._coordinator.should_sync.assert_called_once_with(sync_interval=120)
+    assert client._coordinator.should_sync.call_args_list == [call(sync_interval=120)]
+    # The gate passed, so the cycle went on to pull and record the result.
+    assert outcome == "ok"
+    assert client._puller.pull_intel_state.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -333,16 +338,15 @@ async def test_run_one_cycle_records_not_modified_pull_as_success(tmp_path) -> N
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
-    await client._run_one_cycle()
+    outcome = await client._run_one_cycle()
 
-    client._coordinator.record_sync_success.assert_called_once_with(
-        pushed=0,
-        pulled=0,
-        push_seq=0,
-        pull_seq=5,
-        pull_completed=True,
-    )
-    client._coordinator.record_sync_failure.assert_not_called()
+    assert outcome == "ok"
+    assert client._coordinator.record_sync_success.call_args_list == [
+        call(pushed=0, pulled=0, push_seq=0, pull_seq=5, pull_completed=True)
+    ]
+    assert client._coordinator.record_sync_failure.call_count == 0
+    # A 304 carries no batch: nothing is merged and the cursor is not moved.
+    assert client._puller.merge_team_learnings.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -389,10 +393,12 @@ async def test_run_one_cycle_records_pull_failures_as_failures(tmp_path) -> None
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
-    await client._run_one_cycle()
+    outcome = await client._run_one_cycle()
 
-    client._coordinator.record_sync_failure.assert_called_once_with("pull failed")
-    client._coordinator.record_sync_success.assert_not_called()
+    assert outcome == "pull_failed"
+    assert client._coordinator.record_sync_failure.call_args_list == [call("pull failed")]
+    assert client._coordinator.record_sync_success.call_count == 0
+    assert client._coordinator.record_pull_success.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -418,7 +424,9 @@ async def test_run_one_cycle_reports_partial_target_failures_truthfully(
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
-    client._get_dirty_entries = MagicMock(return_value=[SimpleNamespace(id="L-1", sync_seq=5)])
+    client._get_dirty_entries = MagicMock(
+        return_value=[SimpleNamespace(namespace="default", tags=[], metadata={}, id="L-1", sync_seq=5)]
+    )
     client._mark_synced = MagicMock()
     client._fanout_push = AsyncMock(
         return_value=(
@@ -575,6 +583,84 @@ class TestThePullCursorNeverPassesAnUnjudgedItem:
         the fix would have frozen every cursor in place."""
         coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, inserted=1))
         assert _recorded_pull_seq(coordinator) == 7
+
+    @pytest.mark.asyncio
+    async def test_a_pull_only_cycle_does_not_report_a_failed_merge_as_success(self, tmp_path) -> None:
+        """Fresh pull must be able to retry a batch the merge did not judge."""
+        from trw_mcp.sync._client_push import TargetPushOutcome
+        from trw_mcp.sync.client import BackendSyncClient
+        from trw_mcp.sync.pull import PullResult
+
+        with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+            client = BackendSyncClient(_make_config(), tmp_path)
+        client._coordinator = MagicMock()
+        client._coordinator.should_sync.return_value = True
+        client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+        client._coordinator.get_last_pull_seq.return_value = 4
+        client._coordinator.get_last_company_pull_seq.return_value = 0
+        client._fanout_push = AsyncMock(
+            return_value=(
+                {client._targets[0].label: {"status": "success", "failed": 0}},
+                TargetPushOutcome(),
+            )
+        )
+        client._puller = MagicMock()
+        client._puller.pull_intel_state = AsyncMock(
+            return_value=PullResult(
+                state={"etag": "etag-1"},
+                etag="etag-1",
+                team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
+                sync_hints={},
+                status_code=200,
+            )
+        )
+        client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=1, failed=1)
+        client._cache = MagicMock()
+        client._get_dirty_entries = MagicMock(return_value=[])
+
+        outcome = await client._run_one_cycle(force=True, push=False, pull=True)
+
+        assert outcome == "pull_failed"
+        client._coordinator.record_pull_success.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_held_cursor_holds_the_company_cursor_too(self, tmp_path) -> None:
+        """A batch the merge failed is offered again whole: its company rows must not be skipped past."""
+        from trw_mcp.sync._client_push import TargetPushOutcome
+        from trw_mcp.sync.client import BackendSyncClient
+        from trw_mcp.sync.pull import PullResult
+
+        with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+            client = BackendSyncClient(_make_config(), tmp_path)
+        client._coordinator = MagicMock()
+        client._coordinator.should_sync.return_value = True
+        client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+        client._coordinator.get_last_pull_seq.return_value = 4
+        client._coordinator.get_last_company_pull_seq.return_value = 2
+        client._fanout_push = AsyncMock(
+            return_value=({client._targets[0].label: {"status": "success", "failed": 0}}, TargetPushOutcome())
+        )
+        client._puller = MagicMock()
+        client._puller.pull_intel_state = AsyncMock(
+            return_value=PullResult(
+                state={"etag": "etag-1"},
+                etag="etag-1",
+                team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
+                sync_hints={},
+                status_code=200,
+                next_company_seq=9,
+            )
+        )
+        client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=1, failed=1)
+        client._cache = MagicMock()
+        client._get_dirty_entries = MagicMock(return_value=[])
+
+        outcome = await client._run_one_cycle(force=True, push=False, pull=True)
+
+        assert outcome == "pull_failed"
+        assert client._coordinator.record_company_pull_seq.call_args_list == []
+        # Neither cursor moved: the org cursor is held at 4 too, not advanced to 7.
+        assert client._coordinator.record_pull_success.call_args_list == []
 
 
 async def _client_after_cycle(tmp_path: Any, *, merge: TeamMergeResult) -> Any:

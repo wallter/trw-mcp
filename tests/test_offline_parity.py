@@ -116,7 +116,8 @@ class TestOfflineParity:
             config = TRWConfig(trw_dir=str(trw_dir))
             reader = FileStateReader()
             learnings, extras = perform_session_recalls(trw_dir, "*", config, reader, verbose=True)
-            assert isinstance(learnings, list)
+            assert [entry["id"] for entry in learnings] == ["L-1"]
+            assert learnings[0]["summary"] == "test"
 
     def test_deliver_empty_cache(self, tmp_path: Path) -> None:
         """trw_deliver succeeds offline without any backend-only intelligence."""

@@ -344,9 +344,10 @@ def test_guard_import_scan_catches_every_import_form(statement: str, tmp_path: P
 _PACKAGE_ROOT = _TESTS_DIR.parent
 
 #: FR05 keep decision, asserted rather than implied: an enrolled user project runs these from its
-#: own ``.pre-commit-config.yaml`` (``python3 -m trw_mcp.security.intent_contract.pre_commit_check``)
-#: and calls ``retro_compensator.scan_recent_history`` from its own test suite, so they are runtime
-#: surface of the shipped PRD-SEC-013 feature, not development-only gates.
+#: own ``.pre-commit-config.yaml`` (``python3 -m trw_mcp.security.intent_contract.pre_commit_check``),
+#: and ``retro_compensator.scan_recent_history`` is the public entry a project may call from its own
+#: test suite (this repository's standing test does; no shipped template wires it, UF-MCP-03), so they
+#: are runtime surface of the shipped PRD-SEC-013 feature, not development-only gates.
 _KEPT_INTENT_CONTRACT_MODULES = tuple(
     f"trw_mcp/security/intent_contract/{name}.py"
     for name in ("pre_commit_check", "pre_push_check", "weaken_edit_detector", "retro_compensator")

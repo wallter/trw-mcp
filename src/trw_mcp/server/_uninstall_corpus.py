@@ -29,14 +29,34 @@ from trw_mcp.bootstrap._utils import printable
 _MEMORY_SUBPATHS: tuple[str, ...] = ("memory", "memory.db", "learnings")
 
 
+#: ``.trw/trash`` directories that existed when this uninstall began (CLAUDE-MD S1 red team). Uninstall removes an
+#: empty trash only when it made it, or when the whole ``.trw`` goes; one that was already there is never its own
+#: to remove on a refused, partial or ``--keep-memory`` run.
+PREEXISTING_TRASH: set[Path] = set()
+
+
+def note_preexisting_trash(trw_dir: Path) -> None:
+    """Record, before uninstall changes anything, whether *trw_dir*'s ``trash`` already exists."""
+    trash = trw_dir / TRASH_DIR_NAME
+    PREEXISTING_TRASH.discard(trash)
+    if os.path.lexists(trash):
+        PREEXISTING_TRASH.add(trash)
+
+
 def _finish_trash(trw_dir: Path, *, remove_trw_dir: bool) -> bool:
     """``rmdir`` an empty ``.trw/trash`` then (optionally) an empty *trw_dir*; report a non-empty trash.
 
     Only ``rmdir`` is used, so a capture that landed after the caller's directory listing keeps both
-    directories (ENOTEMPTY). Returns True when *trw_dir* itself was removed.
+    directories (ENOTEMPTY). A trash that predates this uninstall is removed only along with *trw_dir*
+    (:data:`PREEXISTING_TRASH`). Returns True when *trw_dir* itself was removed.
     """
     trash = trw_dir / TRASH_DIR_NAME
     try:
+        if not remove_trw_dir and trash in PREEXISTING_TRASH:
+            with os.scandir(trash) as entries:
+                if next(entries, None) is None:
+                    return False  # empty, and not this run's to remove
+            raise OSError(errno.ENOTEMPTY, os.strerror(errno.ENOTEMPTY), str(trash))
         os.rmdir(trash)
     except FileNotFoundError:  # trw-fail-silent-allow: no trash directory means nothing to keep
         pass

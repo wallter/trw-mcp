@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,13 +67,7 @@ def _persist_deferred_results(
         logger.warning("deferred_results_persist_failed", exc_info=True)
 
 
-def log_deferred_result(
-    trw_dir: Path,
-    results: dict[str, object],
-    errors: list[str],
-    lock_ex: Callable[[int], object],
-    lock_un: Callable[[int], object],
-) -> None:
+def log_deferred_result(trw_dir: Path, results: dict[str, object], errors: list[str]) -> None:
     """Append deferred step results to an audit log."""
     log_path = trw_dir / "logs" / "deferred-deliver.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,11 +85,9 @@ def log_deferred_result(
         "success": len(errors) == 0,
     }
     try:
-        with log_path.open("a", encoding="utf-8") as f:
-            lock_ex(f.fileno())
-            f.write(json.dumps(entry, default=str) + "\n")
-            f.flush()
-            lock_un(f.fileno())
+        from trw_mcp._checkout_write import append_checkout_file
+
+        append_checkout_file(trw_dir, log_path, json.dumps(entry, default=str) + "\n", lock=True)
     except Exception:  # justified: fail-open, deferred log is diagnostic only
         logger.debug("deferred_log_write_failed", exc_info=True)
 

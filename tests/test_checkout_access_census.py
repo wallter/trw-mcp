@@ -74,13 +74,17 @@ _ALLOWLIST: dict[str, str] = {
         "own-state -- uninstall opens TRW's own .trw dir O_NOFOLLOW as the anchor for removing its "
         "children; a directory handle for unlink/rmtree, never a read of checkout-supplied content."
     ),
-    "bootstrap/_trash_tree.py": (
-        "own-state -- remove_tree_if_hash pre-hashes a stale TRW artifact through an O_NOFOLLOW|O_NONBLOCK fd "
-        "(size-capped) before remove_if_hash captures it; no checkout content is read into TRW state."
+    "bootstrap/_retire.py": (
+        "own-state -- retire_file hashes a stale TRW artifact through an O_NOFOLLOW|O_NONBLOCK fd "
+        "(size-capped) before deleting it in place; no checkout content is read into TRW state."
     ),
     "bootstrap/_trash.py": (
         "own-state -- remove_if_hash anchors dir fds for rename/link and reads/writes only TRW's own "
         "trash capture (meta.json, data); _checkout_access pinning would hold fds on captured user bytes."
+    ),
+    "bootstrap/_proven_replace.py": (
+        "own-state -- replace_proven writes the replacement bytes into TRW's own staging folder in .trw/trash "
+        "through an O_NOFOLLOW fd and links it at the name; it never reads checkout content (CLAUDE-MD S2)."
     ),
     "bootstrap/_trash_purge.py": (
         "own-state -- uninstall re-reads only TRW's own trash capture (meta.json, data) through O_NOFOLLOW fds to "

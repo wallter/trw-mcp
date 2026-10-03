@@ -15,7 +15,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp._logging import StderrHandler, configure_logging
+from trw_mcp._logging import StderrHandler, configure_logging, logging_opt_in
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.config._loader import set_config_override
 from trw_mcp.server._cli_replacements import enforce_state_changing_guard
@@ -233,9 +233,10 @@ def main() -> None:
     is_subcommand = bool(args.command and args.command != "serve")
     plain_subcommand_output = is_subcommand and not (debug or verbosity > 0 or getattr(args, "log_json", False))
     effective_log_level = getattr(args, "log_level", None)
-    if plain_subcommand_output and effective_log_level is None:
+    if plain_subcommand_output and effective_log_level is None and not logging_opt_in(verbosity=verbosity, debug=debug):
         # These commands print every failure themselves as plain text (the remedy included), so a library log line
-        # is the same failure again as JSON noise (E2E-INC-009/014/017). -v / --debug / --log-json still show logs.
+        # is the same failure again as JSON noise (E2E-INC-009/014/017). -v / --debug / --log-json, TRW_LOG_LEVEL and
+        # debug (TRW_DEBUG or config.yaml) still show logs: an explicit level here would override every one of them.
         effective_log_level = "CRITICAL" if cmd in _SELF_REPORTING_COMMANDS else "WARNING"
 
     subcommand_log_dir: Path | None = None

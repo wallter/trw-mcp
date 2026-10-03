@@ -22,6 +22,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._checkout_write import record_run_write
+
 log = structlog.get_logger(__name__)
 
 __all__ = [
@@ -155,6 +157,7 @@ def install_explorer_agent(
 
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+        record_run_write(target, content.encode("utf-8"))  # FB-01-KI1-RACE restore proof
 
         log.debug(
             "opencode_explorer_agent_installed",

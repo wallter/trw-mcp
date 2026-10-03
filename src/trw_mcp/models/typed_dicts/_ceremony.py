@@ -216,6 +216,11 @@ InstructionRefusalReason = Literal[
     "write_failed",
     # PRD-CORE-341-FR07: .trw/INSTRUCTIONS.md exists without TRW's header.
     "user_authored",
+    # CLAUDE-MD S1 codex r1: the file changed after the caller read it, or while the backup ran.
+    "changed_since_read",
+    "changed_during_write",
+    # CLAUDE-MD S1 red team B5: duplicate, nested, unbalanced or fenced TRW markers; TRW cannot find its own block.
+    "ambiguous_markers",
 ]
 
 

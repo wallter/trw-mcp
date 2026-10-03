@@ -90,7 +90,6 @@ PIN_STORE_CACHE_TTL_SECONDS: float = 1.0
 _RUNTIME_SUBDIR = "runtime"
 _PINS_FILENAME = "pins.json"
 _PINS_LOCK_FILENAME = "pins.json.lock"
-_PINS_TMP_SUFFIX = ".tmp"
 
 
 # --- Module state ------------------------------------------------------------
@@ -370,33 +369,13 @@ def prune_pin_store_orphans() -> int:
 def _atomic_write_json(pins_path: Path, payload: dict[str, dict[str, Any]]) -> None:
     """Write *payload* to *pins_path* atomically, with mode 0o600 (NFR03).
 
-    Sequence: tmp → fsync → os.replace.  Removes the tmp file if the
-    rename fails so no orphan ``pins.json.tmp`` survives a crash.
+    The checkout writer publishes it through a random temp name with fsync and a no-follow rename, created
+    at 0o600 (NFR03: pid and run_path are not world-readable), so a link planted at the old predictable
+    ``pins.json.tmp`` is never written through (AIKIDO 2a). Windows does not honor the mode bits.
     """
-    tmp_path = pins_path.with_suffix(pins_path.suffix + _PINS_TMP_SUFFIX)
-    try:
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, pins_path)
-        # NFR03 — pid and run_path must not be world-readable.  chmod 0o600.
-        try:
-            os.chmod(pins_path, 0o600)
-        except OSError as exc:
-            # Windows does not honor POSIX mode bits; log at DEBUG.
-            _runtime_logger().debug(
-                "pin_store_chmod_failed",
-                path=str(pins_path),
-                error=type(exc).__name__,
-            )
-    except Exception:
-        # Best-effort cleanup of the tmp file on any error so no orphan remains.
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
+    from trw_mcp._checkout_write import write_checkout_file
+
+    write_checkout_file(pins_path.parent, pins_path, json.dumps(payload, indent=2, sort_keys=True), mode=0o600)
 
 
 @contextmanager

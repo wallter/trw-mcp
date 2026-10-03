@@ -22,10 +22,14 @@ logger = structlog.get_logger(__name__)
 _KEPT_REASONS = {
     "(uncommitted_changes)": "it has uncommitted changes in git, so this update did not refresh it",
     "(not_installer_owned)": "TRW cannot show it wrote it (edited, or never recorded), so this update left it in place",
+    "(uncommitted_changed_after_keep)": (
+        "it has uncommitted changes in git, so this update kept your version, but later steps then changed TRW's "
+        "own entries in it; run git diff on it to see exactly what changed"
+    ),
 }
 _KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
 
-__all__ = ["kept_files", "print_kept", "print_trashed", "report_kept"]
+__all__ = ["kept_files", "print_kept", "print_retired", "report_kept"]
 
 
 def _display_path(path: str, target: Path) -> str:
@@ -62,20 +66,14 @@ def print_kept(result: dict[str, list[str]], target: Path) -> None:
         print(f"WARNING: kept {printable(path)}: {why}")
 
 
-def print_trashed(paths: list[str], described: list[str] | None = None, *, captures: list[str] | None = None) -> None:
-    """One line per unchanged file TRW moved into ``.trw/trash`` (its bytes stay there; ``doctor`` lists them).
+def print_retired(paths: list[str], described: list[str] | None = None) -> None:
+    """One line per retired TRW file deleted in place (TRW's own bytes, or committed in git).
 
-    A path a warning already describes (``"<path>: ..."``, e.g. an edited hook-family file) is skipped: it is
-    not unchanged, and saying so contradicted the warning (E2E-INC-133). *captures* holds
-    ``<rel>	<capture folder>`` rows; a file with one names the folder its bytes are in (S8a).
+    A path a warning already describes (``"<path>: ..."``, e.g. a git-recoverable removal with its restore
+    command, or an edited hook-family file) is skipped: the warning says more (E2E-INC-133).
     """
-    folders = dict(row.rpartition("	")[::2] for row in captures or [])
     for path in [p for p in paths if not any(str(w).startswith(f"{p}: ") for w in described or [])]:
-        folder = folders.get(path)
-        if folder:
-            print(f"Moved to {printable(folder)}: {printable(path)}")
-        else:
-            print(f"Moved to .trw/trash: {printable(path)} (unchanged TRW file; see doctor)")
+        print(f"Removed retired TRW file: {printable(path)}")
 
 
 def report_kept(result: dict[str, list[str]], target: Path, *, detailed: bool, quiet: bool) -> None:

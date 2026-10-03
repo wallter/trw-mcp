@@ -6,6 +6,7 @@ single import point. Split out to keep both modules under the 350 effective-LOC 
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import hashlib
 import json
@@ -141,6 +142,14 @@ def _write_meta(cfd: int, rel: str, key: str | None, captured_at: str, sha256: s
         os.close(fd)
 
 
+def _drop_empty_capture(tfd: int, folder: str, cfd: int) -> None:
+    """Remove a capture folder that never received data: only its own meta file, then the folder itself."""
+    with contextlib.suppress(OSError):
+        os.unlink("meta.json", dir_fd=cfd)
+    with contextlib.suppress(OSError):
+        os.rmdir(folder, dir_fd=tfd)
+
+
 def _make_capture_dir(tfd: int, stamp: str) -> tuple[str, int]:
     """Create ``<stamp>-<hex32>`` (0700) below the trash fd, retrying on a name collision."""
     while True:
@@ -222,15 +231,16 @@ def _capture(
     folder, cfd = _make_capture_dir(tfd, time.strftime("%Y%m%dT%H%M%SZ", now))
     fds.append(cfd)
     data_path = trash_dir(root) / folder / "data"
-    _write_meta(cfd, rel, key, captured_at, expected_sha256.lower())
     try:
+        _write_meta(cfd, rel, key, captured_at, expected_sha256.lower())
         os.rename(name, "data", src_dir_fd=pfd, dst_dir_fd=cfd)
-    except FileNotFoundError:
-        return done("absent", "vanished before capture")
     except OSError as exc:
+        _drop_empty_capture(tfd, folder, cfd)  # nothing was captured: give back the space it took (full disk)
+        if isinstance(exc, FileNotFoundError):
+            return done("absent", "vanished before capture")
         if exc.errno == errno.EXDEV:
             return done("kept", "trash on another device")
-        return done("kept", f"could not capture: {exc}")
+        raise
     try:
         return _verify_and_publish(path, root, root_fd, rel_parts, expected_sha256, pfd, cfd, data_path, done)
     except BaseException:
