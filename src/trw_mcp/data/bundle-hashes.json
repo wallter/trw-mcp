@@ -40,6 +40,7 @@
     "hooks/pre-tool-intent-guard.sh": "sha256:98630e2d5d3c0fbfa2c4d6e8416cfc0f23f3bdfc8d246e8fe079c0cc178f88df",
     "hooks/session-end.sh": "sha256:3d99ebfbbed04bda2df47821bff496843681ca953539c1aeba26871fe4f5d0c3",
     "hooks/session-start.sh": "sha256:ca2cd624861570fe988198d140f89d084f31026174ab715714004fcf53fc3b22",
+    "hooks/statusline.sh": "sha256:a0dd190b2f3b1348e7582df38a26d8e30c15fd14c0c2824eb6751aff34fe5108",
     "hooks/stop-ceremony.sh": "sha256:309f3a1d6b65eacd5160a257db98ab240c3945f7097a4b906e366c0574e8cc88",
     "hooks/subagent-start.sh": "sha256:40f81008714ec914d2061a82825c20c682108cb0b00e6e7c075483d0328295f2",
     "hooks/subagent-stop.sh": "sha256:79288af21ca82191771a006548ca9ed58b123d4aa7f43c530874217efb621e4f",

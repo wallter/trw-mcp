@@ -228,6 +228,25 @@ def _write_version_yaml(
 # ---------------------------------------------------------------------------
 
 
+#: Every key :func:`_write_installer_metadata` writes, in write order (the v2 fields, then the legacy ones). The
+#: uncommitted-changes guard reads it to tell TRW's own record from an edited one (``_canon_ownership``).
+INSTALLER_META_KEYS: tuple[str, ...] = (
+    "record_kind",
+    "installer_meta_schema_version",
+    "framework_version_at_install",
+    "aaref_version_at_install",
+    "trw_mcp_version_at_install",
+    "recorded_at",
+    "framework_version",
+    "package_version",
+    "last_updated",
+    "installed_by",
+    "hooks_count",
+    "skills_count",
+    "agents_count",
+)
+
+
 def _write_installer_metadata(
     target_dir: Path,
     action: str,

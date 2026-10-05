@@ -5,7 +5,8 @@ client reported about itself (e.g. grok's and claude's JSON ``usage`` block), so
 the ledger labels them ``self-reported``. A client that reports nothing records
 nothing: unobservable usage is absent, never zero. Each child is keyed by
 ``child_id`` so a result polled twice counts once. The policy event records what
-each dispatch requested versus what its child's command line carried.
+each dispatch requested versus what its child's command line carried, and,
+when the child-slot cap is on, which slot it held and how long it waited.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import structlog
 from trw_mcp.dispatch._policy import policy_record
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
-__all__ = ["record_child_usage", "record_dispatch_policy"]
+__all__ = ["record_child_usage", "record_dispatch_policy", "record_slot_outcome"]
 
 logger = structlog.get_logger(__name__)
 
@@ -42,6 +43,22 @@ def record_dispatch_policy(req: DispatchRequest, child_id: str) -> dict[str, dic
         payload: dict[str, object] = {"child_id": child_id, "client": req.client, **record}
         emit(DispatchPolicyEvent(session_id="", run_id=run.name, payload=payload), run_dir=run, fallback_dir=None)
     return record
+
+
+def record_slot_outcome(client: str, slot: dict[str, object]) -> bool:
+    """Append a dispatch's child-slot outcome (PRD-CORE-355-FR07) to the active run; ``False`` without one.
+
+    The slot is known only once the dispatch ran, after its policy record was written, so it is a second
+    ``dispatch_policy`` event carrying ``slot`` (index, cap, wait seconds, outcome) rather than a field of it.
+    """
+    run = _active_run()
+    if run is None:
+        return False
+    from trw_mcp.telemetry.event_base import DispatchPolicyEvent
+    from trw_mcp.telemetry.unified_events import emit
+
+    payload: dict[str, object] = {"client": client, "slot": slot}
+    return emit(DispatchPolicyEvent(session_id="", run_id=run.name, payload=payload), run_dir=run, fallback_dir=None)
 
 
 def record_child_usage(result: DispatchResult, child_id: str) -> bool:

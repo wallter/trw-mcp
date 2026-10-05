@@ -173,6 +173,10 @@ def _restore_dirty_files(
     from ._claude_code_distill_channels import apply_cc03_hook_registration
 
     apply_cc03_hook_registration(root)
+    # PRD-CORE-354 FR06: same discard-and-reapply for the statusLine entry.
+    from ._settings_merge import apply_statusline_registration
+
+    apply_statusline_registration(root)
 
 
 _KEPT = " (uncommitted_changes)"

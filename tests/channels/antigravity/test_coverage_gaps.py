@@ -45,7 +45,7 @@ def test_install_hook_script_write_failure(tmp_path: Path) -> None:
 
     assert result["installed"] is False
     assert result["error"] is not None
-    assert "Failed to write hook script" in result["error"]
+    assert "Failed to write the AG-03 hook" in result["error"]
 
 
 def test_install_hooks_json_write_failure(tmp_path: Path) -> None:
@@ -65,21 +65,22 @@ def test_install_hooks_json_write_failure(tmp_path: Path) -> None:
         result = install_before_edit_hook(tmp_path, overwrite=True)
 
     assert result["installed"] is False
-    assert "Failed to write hooks.json" in result["error"]
+    assert "Failed to write the AG-03 hook" in result["error"]
 
 
 def test_install_hooks_json_parse_failure(tmp_path: Path) -> None:
-    """install_before_edit_hook handles invalid JSON in existing hooks.json (lines 312-313)."""
+    """install_before_edit_hook leaves an unparseable hooks.json untouched."""
     from trw_mcp.channels.antigravity._before_edit_hook import install_before_edit_hook
 
     # Write an invalid JSON file to simulate corrupt hooks.json
-    hooks_dir = tmp_path / ".antigravitycli"
+    hooks_dir = tmp_path / ".agents"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     (hooks_dir / "hooks.json").write_text("NOT VALID JSON {{{{", encoding="utf-8")
 
-    # Should not raise — should start fresh
+    # Never started over: the user's file is left byte-identical and the problem is reported.
     result = install_before_edit_hook(tmp_path, overwrite=True)
-    assert result["error"] is None or "parse" not in result.get("error", "")
+    assert result["installed"] is False and "not readable JSON" in result["error"]
+    assert (hooks_dir / "hooks.json").read_text(encoding="utf-8") == "NOT VALID JSON {{{{"
 
 
 def test_generate_hook_script_validates_content() -> None:
@@ -253,9 +254,8 @@ def test_install_ag02_exception_goes_to_errors(tmp_path: Path) -> None:
     assert any("AG-02" in e for e in result["errors"])
 
 
-def test_install_ag03_is_withheld_not_errored(tmp_path: Path) -> None:
-    """UF-BOOT-08: the bootstrap does not call the legacy hook installer, so its failure
-    mode cannot reach the result dict; a failing legacy installer is never invoked."""
+def test_install_ag03_failure_is_reported_as_an_error(tmp_path: Path) -> None:
+    """AG03-HOOK-REENABLE: a failing hook installer surfaces in the bootstrap result, never silently."""
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
 
@@ -263,11 +263,10 @@ def test_install_ag03_is_withheld_not_errored(tmp_path: Path) -> None:
     with patch(
         "trw_mcp.channels.antigravity.install_before_edit_hook",
         return_value=error_hook_result,
-    ) as legacy:
+    ):
         result = install_antigravity_distill_channels(tmp_path)
 
-    legacy.assert_not_called()
-    assert not any("AG-03" in e for e in result["errors"])
+    assert any("AG-03" in e and "Permission denied" in e for e in result["errors"])
 
 
 def test_install_manifest_validation_error_captured(tmp_path: Path) -> None:
@@ -353,8 +352,8 @@ def test_manifest_yaml_loads_and_has_three_channels() -> None:
     }
 
 
-def test_manifest_ag03_status_is_aspirational() -> None:
-    """AG-03 manifest entry has status: aspirational (truthful per task context)."""
+def test_manifest_ag03_status_is_active_and_points_at_the_file_agy_reads() -> None:
+    """AG-03 is active: the hook fires on agy 1.2.x from ``.agents/hooks.json`` (verified live 2026-10-03)."""
     import yaml
 
     manifest_path = (
@@ -371,9 +370,9 @@ def test_manifest_ag03_status_is_aspirational() -> None:
 
     ag03 = next((c for c in data["channels"] if c["id"] == "ag-03-before-edit-hook"), None)
     assert ag03 is not None
-    assert ag03["status"] == "aspirational", (
-        f"AG-03 must have status=aspirational (hook does not fire in agy v1.0.2-1.0.3), got: {ag03['status']}"
-    )
+    assert ag03["status"] == "active"
+    assert ag03["file"] == ".agents/hooks.json"
+    assert "activation_gate" not in ag03
 
 
 def test_manifest_ag02_surface_is_subagent_file() -> None:

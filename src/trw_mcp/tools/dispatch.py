@@ -30,7 +30,7 @@ from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._codex_observed import with_observed
 from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request, uncommitted_work_warning
-from trw_mcp.dispatch._runner import dispatch
+from trw_mcp.dispatch._runner import dispatch as _dispatch_child
 from trw_mcp.dispatch._targets import Target, TargetError, list_clients, parse_targets, resolve_role, variant_lanes
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 from trw_mcp.dispatch._usage import record_child_usage, record_dispatch_policy
@@ -44,6 +44,15 @@ logger = structlog.get_logger(__name__)
 # blocks the MCP request thread for minutes can stall the whole server; longer
 # dispatches MUST use the background (wait=False) + poll path instead.
 _MAX_WAIT_TIMEOUT_S = 120
+# PRD-CORE-355: a synchronous call must not hold its MCP request thread on a busy cap; it gets
+# ``concurrency_cap`` back after this long (the CLI and background jobs keep the configured wait).
+_SYNC_SLOT_WAIT_S = 10.0
+
+
+def dispatch(req: DispatchRequest) -> DispatchResult:
+    """Run *req* synchronously for the MCP tool (single and fan-out lanes), with the short slot wait."""
+    return _dispatch_child(req, slot_wait_s=_SYNC_SLOT_WAIT_S)
+
 
 # Cap raw stdout/stderr returned THROUGH MCP (the on-disk result file keeps the
 # full streams). A multi-MB raw stream would bloat the tool response / context.

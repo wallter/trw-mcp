@@ -91,7 +91,7 @@ class TestTheCliNamesWhatItKept:
     ) -> None:
         _run_update(_args(tmp_path), _result(preserved=["AGENTS.md (uncommitted_changes)"]))
 
-        assert "WARNING: kept AGENTS.md: it has uncommitted changes in git" in capsys.readouterr().out
+        assert "WARNING: kept ./AGENTS.md: it has uncommitted changes in git" in capsys.readouterr().out
 
     def test_a_retired_artifact_TRW_could_not_prove_it_wrote_is_named(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -208,3 +208,11 @@ def test_the_cli_names_each_retired_file_unless_a_warning_already_describes_it(
         "Removed retired TRW file: .claude/hooks/old.sh",
         "Removed retired TRW file: a.md",
     ]
+
+
+def test_the_cli_names_every_edit_to_the_users_claude_md(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """CLAUDE.md is the user's file, so an edit to it is never only a count in the summary (9.0.1 regression)."""
+    edit = "removed TRW's block (it already imports AGENTS.md, which imports .trw/INSTRUCTIONS.md)"
+    _run_update(_args(tmp_path), _result(updated=["CLAUDE.md"], claude_md=[edit]))
+
+    assert f"CLAUDE.md: {edit}" in capsys.readouterr().out.splitlines()

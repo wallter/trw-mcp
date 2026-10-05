@@ -1,9 +1,10 @@
 """PRD-CORE-298 FR07: the daemon's security settings are daemon-wide, and a client that differs refuses.
 
 One daemon serves every checkout and enforces the settings it resolved from its own
-environment. A client that resolves another value for any of them would lose that
-policy silently, so the first attach compares the two sets and refuses on any
-difference, naming the key and both values.
+environment. A client that resolves a stricter value than the daemon for any of them
+would lose that policy silently, so the first attach compares the two sets and refuses
+a weaker or unrankable daemon value, naming the key and both values. A daemon that is
+at least as strict is used with a warning: adopting its value never weakens filtering.
 """
 
 from __future__ import annotations
@@ -67,8 +68,13 @@ def test_matching_settings_open_the_store(daemon_checkout: DaemonCheckout, fresh
     assert len(fresh_clients) == 1
 
 
-@pytest.mark.parametrize("key", sorted(_DIFFERING))
-def test_a_differing_setting_refuses_naming_the_key_and_both_values(
+#: The keys whose non-default value in :data:`_DIFFERING` is STRICTER than the default, so a
+#: client resolving it is refused by a default daemon; the rest relax the default.
+_STRICTER_THAN_DEFAULT = {"rbac_enabled", "default_role", "namespace_roles"}
+
+
+@pytest.mark.parametrize("key", sorted(_STRICTER_THAN_DEFAULT))
+def test_a_weaker_or_unordered_daemon_setting_refuses_naming_the_key_and_both_values(
     key: str,
     daemon_checkout: DaemonCheckout,
     fresh_clients: dict[str, object],
@@ -86,7 +92,80 @@ def test_a_differing_setting_refuses_naming_the_key_and_both_values(
     assert key in message
     assert repr(daemon_value) in message
     assert f"MEMORY_{key.upper()}" in message
+    assert "Agents must not stop" in message
     assert fresh_clients == {}, "a refused client must not be cached for later calls"
+
+
+@pytest.mark.parametrize("key", sorted(set(_DIFFERING) - _STRICTER_THAN_DEFAULT))
+def test_a_stricter_daemon_setting_is_adopted_not_refused(
+    key: str,
+    daemon_checkout: DaemonCheckout,
+    fresh_clients: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client that relaxes a key still attaches to a daemon that enforces the stricter default."""
+    monkeypatch.setenv(f"MEMORY_{key.upper()}", _DIFFERING[key])
+
+    store = daemon_store_for(daemon_checkout.trw_dir, daemon_checkout.namespace)
+
+    assert isinstance(store, DaemonMemoryStore)
+    assert len(fresh_clients) == 1
+
+
+def _settings_check(daemon_overrides: dict[str, object], local_overrides: dict[str, object]) -> tuple[int, str]:
+    """Run the attach check against a daemon reporting the defaults plus *daemon_overrides*."""
+    defaults = to_jsonable_python(daemon_wide_security(MemoryConfig()))
+    reported = {**defaults, **daemon_overrides}
+    local = {**defaults, **local_overrides}
+    status = _StatusOnly({"security_settings": reported, "daemon": [7, "t"]})
+    return _require_matching_security(status, "project:x", local)  # type: ignore[arg-type]
+
+
+def test_an_older_daemons_retired_redact_mode_is_accepted_by_a_strict_client() -> None:
+    """The reported 9.0.x failure: a daemon still running trw-memory 5.2.0 or older reports its
+    then-default ``redact``, this client resolves today's default ``strict``. ``redact`` blocked a
+    hash-drifted entry exactly as ``strict`` does, so the attach must not refuse learn/recall."""
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        assert _settings_check({"recall_filter_mode": "redact"}, {"recall_filter_mode": "strict"}) == (7, "t")
+
+    assert any(
+        log["event"] == "daemon_security_setting_stricter" and log["daemon_value"] == "redact" for log in logs
+    ), logs
+
+
+@pytest.mark.parametrize(
+    ("key", "daemon_value", "local_value"),
+    [
+        ("recall_filter_mode", "observe", "strict"),
+        ("recall_filter_mode", "lenient", "strict"),  # a value this client cannot rank
+        ("enable_recall_filter", False, True),
+        ("canary_fail_mode", "log-only", "degrade"),
+        ("canary_fail_mode", "degrade", "halt"),
+        ("provenance_required", False, True),
+        ("rbac_enabled", False, True),
+        ("default_role", "admin", "reader"),
+        ("default_role", "reader", "admin"),  # roles have no safe order: any difference refuses
+    ],
+)
+def test_a_weaker_or_unrankable_daemon_value_still_refuses(key: str, daemon_value: object, local_value: object) -> None:
+    with pytest.raises(StoreUnavailableError, match=key):
+        _settings_check({key: daemon_value}, {key: local_value})
+
+
+@pytest.mark.parametrize(
+    ("key", "daemon_value", "local_value"),
+    [
+        ("recall_filter_mode", "strict", "observe"),
+        ("canary_fail_mode", "halt", "log-only"),
+        ("enable_recall_filter", True, False),
+        ("provenance_required", True, False),
+        ("rbac_enabled", True, False),
+    ],
+)
+def test_a_stricter_daemon_value_is_adopted(key: str, daemon_value: object, local_value: object) -> None:
+    assert _settings_check({key: daemon_value}, {key: local_value}) == (7, "t")
 
 
 def test_a_daemon_that_does_not_report_its_settings_is_refused() -> None:
@@ -173,7 +252,7 @@ def test_a_daemon_restarted_under_other_settings_is_checked_again(
     trw_dir = tmp_path / "repo" / ".trw"
     monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(trw_dir.parent))
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")
+    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")
     monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
     monkeypatch.setattr(_daemon_store, "_clients", {})
     monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _no_autostart)
@@ -184,9 +263,9 @@ def test_a_daemon_restarted_under_other_settings_is_checked_again(
         daemon_store_for(trw_dir, namespace)
     paths.discovery.unlink()  # the killed daemon's record, so the wait below sees the new one
 
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")
+    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")
     with running_daemon(user_dir):
-        monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")  # this client still resolves the old value
+        monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")  # this client still resolves the old value
         with pytest.raises(StoreUnavailableError, match="recall_filter_mode"):
             daemon_store_for(trw_dir, namespace)
 
@@ -214,14 +293,15 @@ def test_a_daemon_other_than_the_one_that_answered_is_checked_again(
     assert client.calls == checks
 
 
+@pytest.mark.parametrize("configured_checkout", [{"MEMORY_RECALL_FILTER_MODE": "observe"}], indirect=True)
 def test_a_local_setting_changed_after_attach_is_checked_again(
-    daemon_checkout: DaemonCheckout, fresh_clients: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    configured_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    daemon_store_for(daemon_checkout.trw_dir, daemon_checkout.namespace)
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "observe")  # the daemon keeps running on its own value
+    daemon_store_for(configured_checkout.trw_dir, configured_checkout.namespace)
+    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")  # the daemon keeps running on its own value
 
     with pytest.raises(StoreUnavailableError, match="recall_filter_mode"):
-        daemon_store_for(daemon_checkout.trw_dir, daemon_checkout.namespace)
+        daemon_store_for(configured_checkout.trw_dir, configured_checkout.namespace)
 
 
 def test_the_settings_reply_names_the_daemon_that_answered(

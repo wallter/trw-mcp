@@ -7,15 +7,15 @@ and ``bootstrap/_ide_targets.py``.
 Artifacts written:
   - .agents/agents/trw-distill-explorer.md                       (AG-02 T1 stub; PRD-CORE-252 destination)
   - .trw/channels/manifest.yaml                                  (three AG channel entries merged)
+  - .agents/hooks.json                                           (AG-03 named PreToolUse hook, merged)
+  - .agents/hooks/trw_before_edit_telemetry.py                   (AG-03 hook script)
 
 AG-01 ANTIGRAVITY.md segment is a runtime channel managed by
 ``render_antigravity_distill_segment()`` — no stub file is written at install.
-AG-03 before-edit hook is NOT written (UF-BOOT-08, 2026-10-02). It was confirmed only on
-agy v1.0.2 (.antigravitycli/hooks.json, flat schema); agy 1.2.14 lists hooks from
-<workspace>/.agents/hooks.json in a grouped named-hook schema
-({"<name>": {"PreToolUse": [{"matcher", "hooks": [{"type", "command"}]}]}}) and does not
-list the legacy file. The step logs ``ag03_hook_skipped``; ``trw-mcp doctor``'s
-``antigravity_hook`` row reports installs left by earlier versions.
+AG-03 before-edit hook: written to .agents/hooks.json (agy 1.2.x's grouped named-hook schema) with its script
+at .agents/hooks/trw_before_edit_telemetry.py. It was withheld 2026-10-02 (UF-BOOT-08) while the installer still wrote the
+agy 1.0.2 path; AG03-HOOK-REENABLE moved the installer, uninstall and the managed-artifact recorder to the verified
+schema together. ``trw-mcp doctor``'s ``antigravity_hook`` row reports installs left at the legacy path.
 AG-04 is a telemetry pull channel — no file written.
 
 PRD-DIST-2404 FR41-FR43.
@@ -81,7 +81,7 @@ def install_antigravity_distill_channels(
     """Install all Antigravity CLI distill channel artifacts.
 
     Installs the AG-02 explorer subagent file and merges channel manifest entries.
-    The AG-03 hook is withheld (see the module docstring).
+    The AG-03 hook is merged into .agents/hooks.json (see the module docstring).
 
     Args:
         target_dir: Repository root directory.
@@ -134,21 +134,24 @@ def install_antigravity_distill_channels(
         log.warning("ag02_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"AG-02 subagent install failed: {exc}")
 
-    # 2. AG-03 before-edit hook: WITHHELD (UF-BOOT-08). The installer wrote the hook to
-    #    .antigravitycli/hooks.json in a flat schema confirmed only on agy v1.0.2. agy 1.2.14
-    #    (checked 2026-10-02 with `agy -p /hooks` in a scratch workspace) lists hooks from
-    #    <workspace>/.agents/hooks.json in a grouped, named-hook schema and does not list the
-    #    legacy file, and the hook script's camelCase/decision contract differs too. Writing a
-    #    registration agy never reads is worse than none, and a guessed schema is not allowed,
-    #    so nothing is written until the installer, uninstall surfaces and managed-artifact
-    #    recorder are moved together. `trw-mcp doctor` (antigravity_hook) flags old installs.
-    log.info(
-        "ag03_hook_skipped",
-        reason="unverified_path_and_schema",
-        agy_reads=".agents/hooks.json (grouped named-hook schema, agy 1.2.14)",
-        legacy_path=".antigravitycli/hooks.json",
-        outcome="skipped",
-    )
+    # 2. AG-03 before-edit hook, re-enabled (AG03-HOOK-REENABLE, 2026-10-03). agy 1.2.x reads workspace hooks from
+    #    .agents/hooks.json in a grouped, named-hook schema (verified live on agy 1.2.15: the hook fired for a
+    #    write_to_file call and its {"decision": "deny"} reply blocked it). TRW's named hook is merged into that file,
+    #    every other named hook is kept, and a hooks.json it cannot parse is left alone and reported.
+    try:
+        from trw_mcp.channels.antigravity import install_before_edit_hook
+        from trw_mcp.channels.antigravity._before_edit_hook import _AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH
+
+        hook_result = install_before_edit_hook(target_dir, overwrite=force)
+        if hook_result.get("skipped"):
+            result["preserved"].extend([_AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH])
+        elif hook_result.get("installed"):
+            result["created"].extend([_AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH])
+        elif hook_result.get("error"):
+            result["errors"].append(f"AG-03 hook install failed: {hook_result['error']}")
+    except Exception as exc:  # justified: fail-open, hook is best-effort
+        log.warning("ag03_hook_install_failed", error=str(exc), outcome="warning")
+        result["errors"].append(f"AG-03 hook install failed: {exc}")
 
     # 3. Bootstrap channel manifest (four antigravity channel entries)
     try:

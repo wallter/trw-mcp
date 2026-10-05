@@ -47,9 +47,9 @@ channels:
   client: antigravity-cli
   surface: hook_script
   telemetry_tag: ag03_before_edit_hook
-  file: .antigravitycli/hooks.json
+  file: .agents/hooks.json
   lock_file: .trw/channels/ag-03-before-edit-hook.lock
-  status: aspirational
+  status: active
   write_strategy: FULL_REWRITE
   markers:
     start: ''
@@ -66,18 +66,17 @@ channels:
     action: NONE
   lock_lifecycle: auto_cleanup_on_channel_disable
   human_edit_detection: NONE
-  description: 'AG-03 Before-edit hook injection. ASPIRATIONAL — installer correctly writes and registers the PreToolUse entry in .antigravitycli/hooks.json (schema confirmed via agy binary analysis), but the hook does NOT fire. agy v1.0.2-1.0.3 routes file edits through an internal Step_CodeAction / tool_confirmation_manager path that bypasses the jsonhook PreToolUse system; verified by a live agy turn 2026-05-29 (file written, hook never invoked). No TRW-side fix possible — re-evaluate when agy routes edits through PreToolUse. Script at .antigravitycli/hooks/trw_before_edit_telemetry.py.'
+  description: 'AG-03 Before-edit hook telemetry. The installer registers a named PreToolUse hook (trw-before-edit-telemetry) in .agents/hooks.json, which agy 1.2.x reads, and writes the script to .agents/hooks/trw_before_edit_telemetry.py. Verified live on agy 1.2.15 (2026-10-03): the hook fires for write_to_file. Fail-open: it always answers allow.'
   regenerate_cmd: trw-mcp init-project --ide antigravity-cli
   mdc_description:
   mdc_globs:
   mdc_always_apply: false
-  hook_schema_confirmed_at: '2026-05-28'
-  activation_gate: 'agy must route file-edit tools through the jsonhook PreToolUse path (currently uses Step_CodeAction / tool_confirmation_manager, which bypasses hooks); blocked as of agy v1.0.3, verified live 2026-05-29.'
+  hook_schema_confirmed_at: '2026-10-03'
   tags:
   - antigravity-cli
   - hook
   - pre-tool-use
-  notes: 'Hooks file: .antigravitycli/hooks.json (separate from settings.json). Event key: PreToolUse. Schema confirmed via agy v1.0.2 binary string analysis. Live-fire 2026-05-29: hook does NOT fire — agy file edits use Step_CodeAction, bypassing jsonhook PreToolUse. Learning L-DtUK.'
+  notes: 'Hooks file: .agents/hooks.json (named-hook schema, command cwd = .agents/). The pre-1.2 .antigravitycli/hooks.json is no longer written; an existing one is left as found.'
 - id: ag-04-tool-return-enrichment
   client: antigravity-cli
   surface: ephemeral_stdout

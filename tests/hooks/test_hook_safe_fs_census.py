@@ -49,6 +49,10 @@ _ALLOWLIST[("claude_code/hooks/pre-tool-distill-hint.sh", "", 'rm -f "$_processe
     "the hook's own mktemp journal in $TMPDIR, not checkout state"
 )
 
+_ALLOWLIST[("hooks/statusline.sh", "_run_bounded", 'rm -f "$_tmp"')] = (
+    "the status line's own mktemp capture file in $TMPDIR, not checkout state"
+)
+
 _LIB_TRW = DATA / "hooks" / "lib-trw.sh"
 _SENTINEL = "OUTSIDE_THE_CHECKOUT"
 

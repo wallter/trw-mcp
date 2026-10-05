@@ -136,9 +136,9 @@ MANIFEST_RECORDERS: tuple[ManifestRecorder, ...] = (
         "managed_client_artifacts",
         (
             ".agents/agents",
+            ".agents/hooks",
             ".agents/rules",
             ".antigravitycli/agents",
-            ".antigravitycli/hooks",
             ".claude/agents",
             ".claude/hooks",
             ".claude/loop.md",

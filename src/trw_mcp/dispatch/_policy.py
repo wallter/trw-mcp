@@ -17,10 +17,18 @@ from trw_mcp.dispatch._client_spec_types import EFFORT_LEVELS, ClientSpec
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS, UnknownClientError, client_spec_for
 from trw_mcp.dispatch._commands import _client_effort, build_command
 from trw_mcp.dispatch._roles import role_task_class
+from trw_mcp.dispatch._slots import slot_settings
 from trw_mcp.dispatch._types import DispatchRequest
 from trw_mcp.models.config._fields_dispatch import DEFAULT_DISPATCH_MAX_TURNS
 
-__all__ = ["operator_set", "policy_record", "resolve_effort", "resolve_max_turns", "resolve_model"]
+__all__ = [
+    "operator_set",
+    "policy_record",
+    "require_effort",
+    "resolve_effort",
+    "resolve_max_turns",
+    "resolve_model",
+]
 
 
 def _spec_for_policy(client: str | None) -> ClientSpec | None:
@@ -53,6 +61,28 @@ def resolve_effort(
     if task_class:
         return TASK_POLICY[task_class].effort, "table"
     return None, "none"
+
+
+def require_effort(client: str, model: str | None, effort_source: str) -> str | None:
+    """PRD-CORE-355-FR06: the refusal text when no effort source won for a client that carries one, else None.
+
+    A client with no effort flag or config key, or a Haiku model (which takes no effort), has nothing to
+    require, so it is never refused for lacking one.
+    """
+    if effort_source != "none":
+        return None
+    try:
+        spec = client_spec_for(client)
+    except UnknownClientError:  # trw-fail-silent-allow: resolution already refused an unknown client
+        return None
+    if not (spec.effort_flag or spec.effort_config_key):
+        return None
+    if model and "haiku" in model.lower():
+        return None
+    return (
+        f"dispatch_require_effort is on and no effort resolved for {client!r}: pass --effort "
+        f"({', '.join(EFFORT_LEVELS)}) or set dispatch_default_effort in .trw/config.yaml"
+    )
 
 
 def resolve_model(explicit: str | None, client: str, role: str | None, config_models: object) -> tuple[str | None, str]:
@@ -153,8 +183,12 @@ def policy_record(req: DispatchRequest) -> dict[str, dict[str, object]]:
             "source": source,
         }
 
-    return {
+    record: dict[str, dict[str, object]] = {
         "effort": knob(req.effort, req.effort_source, applied_effort),
         "model": knob(req.model, model_source, applied_model),
         "turns": {"requested": req.max_turns, "applied": turns_applied, "source": turns_source},
     }
+    slots = slot_settings()
+    if slots.cap > 0:  # PRD-CORE-355-FR07; absent when the cap is off (NFR01)
+        record["slot"] = {"cap": slots.cap, "wait_limit_s": slots.wait_s}
+    return record

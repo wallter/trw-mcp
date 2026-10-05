@@ -23,13 +23,23 @@ __all__ = ["ErrorClass", "error_class", "last_error", "run_dispatch", "with_one_
 logger = structlog.get_logger(__name__)
 
 ErrorClass = Literal[
-    "provider_capacity", "quota", "credential_refresh_conflict", "auth", "content_stop", "timeout", "unknown"
+    "provider_capacity",
+    "quota",
+    "credential_refresh_conflict",
+    "concurrency_cap",
+    "auth",
+    "content_stop",
+    "timeout",
+    "unknown",
 ]
 _ERROR_CLASS: dict[str, ErrorClass] = {
     "timed_out": "timeout",
     "provider_capacity": "provider_capacity",
     "quota_exhausted": "quota",
     "credential_refresh_conflict": "credential_refresh_conflict",
+    # PRD-CORE-355-FR03: every child slot was busy; no child ran. Deliberately NOT retryable: a retry
+    # would only queue again behind the same children (the wait already happened).
+    "concurrency_cap": "concurrency_cap",
 }
 _LAST_ERROR_CHARS = 500
 #: A value the client labels as a credential, in any of ``key: v``, ``key=v``, ``"key": "v"`` (sol r3), and any

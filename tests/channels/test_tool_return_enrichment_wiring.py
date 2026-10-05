@@ -182,7 +182,7 @@ class TestEnrichResponseTiers:
 
 
 class TestBeforeEditHintTierWiring:
-    """Prove the tool handler enriches its response based on client tier."""
+    """trw_code's hint returns the same compact shape for every client tier."""
 
     def _call_tool_with_env_tier(
         self,
@@ -256,42 +256,17 @@ class TestBeforeEditHintTierWiring:
         hints: list[dict[str, Any]] = result["hints"]
         return hints[0]
 
-    def test_t2_response_has_co_change_neighbors(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
-        assert "enrichment" in result
-        ctx = result["enrichment"]["distill_context"]
-        assert ctx is not None
-        assert len(ctx["co_change_neighbors"]) == 2
-
-    def test_t1_response_has_no_co_change_neighbors(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("claude-code", monkeypatch, tmp_path)
-        assert "enrichment" in result
-        ctx = result["enrichment"]["distill_context"]
-        assert ctx is not None
-        assert "co_change_neighbors" not in ctx
-
-    def test_t0_response_has_no_importers_list(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("copilot", monkeypatch, tmp_path)
-        assert "enrichment" in result
-        ctx = result["enrichment"]["distill_context"]
-        assert ctx is not None
-        assert "importers" not in ctx
-
-    def test_t2_importers_not_truncated(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
-        ctx = result["enrichment"]["distill_context"]
-        # sidecar has 6 importers; T2 returns all
-        assert len(ctx["importers"]) == 6
-
-    def test_t1_importers_truncated_to_5(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("claude-code", monkeypatch, tmp_path)
-        ctx = result["enrichment"]["distill_context"]
-        assert len(ctx["importers"]) == 5
-
-    def test_base_fields_unchanged_across_tiers(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-        result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
+    @pytest.mark.parametrize("client_profile", ["codex", "claude-code", "copilot"])
+    def test_hint_carries_the_full_distill_hint_and_no_enrichment_copy(
+        self, client_profile: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        """trw_code's hint already returns the whole distill_hint; a tier-shaped copy of it was duplicate context."""
+        result = self._call_tool_with_env_tier(client_profile, monkeypatch, tmp_path)
+        assert "enrichment" not in result
+        assert "distill_status" not in result  # hint_available is the default and is omitted
         assert result["file_path"] == "src.py"
-        assert result["distill_status"] == "hint_available"
+        assert len(result["distill_hint"]["importers"]) == 6
+        assert len(result["distill_hint"]["co_change_neighbors"]) == 2
 
 
 def test_tier_without_a_builder_warns_and_returns_unenriched() -> None:

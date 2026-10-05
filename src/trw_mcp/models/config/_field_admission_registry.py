@@ -21,6 +21,7 @@ from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
 from trw_mcp.models.config._field_admission_dispatch_access import DISPATCH_ACCESS_ADMISSIONS
+from trw_mcp.models.config._field_admission_dispatch_fanout_safety import DISPATCH_FANOUT_SAFETY_ADMISSIONS
 from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
@@ -342,6 +343,8 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
     # PRD-CORE-281: dispatch pack exposure + child TRW access (own table).
     **DISPATCH_ACCESS_ADMISSIONS,
+    # PRD-CORE-355: dispatch child cap + required effort (own table).
+    **DISPATCH_FANOUT_SAFETY_ADMISSIONS,
     # trw-jev slice 1: assess_support pack exposure (own table).
     **ASSESS_ADMISSIONS,
     # W38 (7.0.0 security P1): platform-contact kill switch (own table).

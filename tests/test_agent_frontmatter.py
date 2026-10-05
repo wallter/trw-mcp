@@ -38,7 +38,14 @@ _VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
 # Dev-repo-only agents installed by channel bootstrap (e.g. trw-distill channels),
 # not part of the bundled-mirror set. They still receive hygiene checks via the
 # parametrized tests, but are excluded from the mirror-parity assertion.
-_DEV_ONLY_AGENTS: frozenset[str] = frozenset({"trw-distill-explorer.md", "trw-distill-sonnet-judge.md"})
+_DEV_ONLY_AGENTS: frozenset[str] = frozenset(
+    {
+        "trw-distill-explorer.md",
+        "trw-distill-sonnet-judge.md",
+        "trw-video-script-reviewer.md",
+        "trw-video-storyboard-reviewer.md",
+    }
+)
 _PRESCRIPTIVE_LINE_START_RE = re.compile(r"^(MUST|CRITICAL|RIGID):", re.MULTILINE)
 
 # FR09 scoping: MUST / CRITICAL / RIGID are blanket-banned at line start.

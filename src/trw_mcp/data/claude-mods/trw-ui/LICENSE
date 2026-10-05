@@ -1,0 +1,15 @@
+TRW Claude Code Plugin
+
+This plugin is first-party TRW content and is licensed under the same terms
+as the trw-mcp package that bundles it: the Business Source License 1.1
+(BUSL-1.1).
+
+For the full license text, parameters (Licensor, Additional Use Grant,
+Change Date, Change License), and the canonical Business Source License 1.1
+terms, see the trw-mcp package LICENSE file:
+
+  https://github.com/wallter/trw-mcp/blob/main/LICENSE
+
+Copyright (c) 2026 Tyler Wall.
+
+SPDX-License-Identifier: BUSL-1.1

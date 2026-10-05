@@ -216,3 +216,59 @@ def test_version_probe_timeout_is_a_bounded_documented_field() -> None:
     for bad in (0, 600):
         with pytest.raises(ValidationError):
             TRWConfig(dispatch_version_probe_timeout_s=bad)
+
+
+# --------------------------------------------------------------------------- #
+# PRD-CORE-355-FR01: fan-out safety keys (cap, slot wait, required effort)
+# --------------------------------------------------------------------------- #
+
+
+def test_fanout_safety_keys_default_off() -> None:
+    cfg = TRWConfig().dispatch
+    assert cfg.dispatch_max_concurrent_children == 0
+    assert cfg.dispatch_slot_wait_s == 600
+    assert cfg.dispatch_require_effort is False
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("dispatch_max_concurrent_children", -1),
+        ("dispatch_max_concurrent_children", 65),
+        ("dispatch_slot_wait_s", -0.5),
+        ("dispatch_slot_wait_s", 7201),
+    ],
+)
+def test_fanout_safety_keys_are_bounded(field: str, bad: float) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TRWConfig(**{field: bad})
+
+
+def test_fanout_safety_keys_project_from_yaml_and_env(_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (_project / ".trw" / "config.yaml").write_text(
+        "dispatch_max_concurrent_children: 4\ndispatch_require_effort: true\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("TRW_DISPATCH_SLOT_WAIT_S", "90")
+    reload_config()
+
+    sub = get_config().dispatch
+    assert (sub.dispatch_max_concurrent_children, sub.dispatch_slot_wait_s, sub.dispatch_require_effort) == (
+        4,
+        90,
+        True,
+    )
+    assert {"dispatch_max_concurrent_children", "dispatch_require_effort"} <= sub.operator_set
+
+    from trw_mcp.dispatch._slots import slot_settings
+
+    assert (slot_settings().cap, slot_settings().wait_s) == (4, 90)
+
+
+def test_fanout_safety_keys_are_admitted() -> None:
+    from trw_mcp.models.config._field_admission_registry import FIELD_ADMISSIONS
+
+    for name in ("dispatch_max_concurrent_children", "dispatch_slot_wait_s", "dispatch_require_effort"):
+        record = FIELD_ADMISSIONS[name]
+        assert record.owner.startswith("PRD-CORE-355") and record.budget_decision == "admitted"

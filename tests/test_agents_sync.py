@@ -34,7 +34,12 @@ if MONOREPO_ROOT is None:
 BUNDLED_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
 
-_DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md", "trw-distill-explorer.md"}
+_DEV_ONLY_AGENTS = {
+    "trw-distill-sonnet-judge.md",
+    "trw-distill-explorer.md",
+    "trw-video-script-reviewer.md",
+    "trw-video-storyboard-reviewer.md",
+}
 
 _MANIFEST_SPEC = importlib.util.spec_from_file_location(
     "bundle_hash_manifest",

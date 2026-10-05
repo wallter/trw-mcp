@@ -1787,9 +1787,10 @@ _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
 #: Its dedup is per process, and ``update-project`` runs once per client as a fresh process, so the installer repeats
 #: it once per client unless it drops the repeats the way it does for ``WARNING:`` notices (E2E row 10).
 _CONFIG_WARNING_LINE_RE = re.compile(r"^TRW: WARNING \u2014\s*")
-#: A child line naming a retired file `update-project` deleted in place (``server/_update_report.py::print_retired``).
-#: A git-held edit of the operator's may be among them, so the spinner must not swallow it (FB-INSTALL-03).
-_RETIRED_LINE_RE = re.compile(r"^Removed retired TRW file:\s*")
+#: A child line naming a retired file `update-project` deleted in place (``server/_update_report.py::print_retired``),
+#: or an edit it made to the operator's own CLAUDE.md (``print_claude_md``). Either may touch the operator's files, so
+#: the spinner must not swallow it (FB-INSTALL-03).
+_RETIRED_LINE_RE = re.compile(r"^(?:Removed retired TRW file|CLAUDE\.md):\s*")
 #: A per-file progress line, used only to advance the spinner's counter.
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
@@ -2010,8 +2011,10 @@ def update_config(
         out.append(f"installation_id: {project_name}\n")
     # PRD-SEC-005-FR01: never append the secret into the tracked config.yaml.
     # The key is persisted to .trw/credentials.yaml (0600) by the caller.
-    if telemetry_enabled and "platform_telemetry_enabled" not in updated:
-        out.append("platform_telemetry_enabled: true\n")
+    # Recorded either way, so the next install reuses the answer instead of asking again (an OFF answer used to
+    # leave no line, and every upgrade re-asked).
+    if "platform_telemetry_enabled" not in updated:
+        out.append(f"platform_telemetry_enabled: {'true' if telemetry_enabled else 'false'}\n")
     if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
@@ -2868,8 +2871,9 @@ def show_success_banner(
         # Dynamic next-steps based on install type
         if is_reinstall:
             print(f"  {BOLD}After updating:{NC}")
-            print(f"    {CYAN}\u2022{NC} Running MCP servers were signaled to restart")
-            print(f"    {CYAN}\u2022{NC} Restart or reconnect your client if the TRW tools are missing")
+            # Nothing is signaled: a client's stdio server runs its old code until the client reconnects. The doctor
+            # check above counts the servers that started before this install.
+            print(f"    {CYAN}\u2022{NC} Running servers keep the old code: reconnect each client (/mcp) or restart it")
             print(f"    {CYAN}\u2022{NC} Your earlier learnings carry over")
         else:
             print(f"  {BOLD}Next:{NC}")
@@ -2896,7 +2900,7 @@ def show_success_banner(
                 status = "ok" if br["reachable"] else "unreachable"
                 ui.info(f"Backend {br['url']}: {status}")
         if is_reinstall:
-            ui.info("Updated. MCP servers signaled to restart.")
+            ui.info("Updated. Running MCP servers keep the old code until their client reconnects (/mcp) or restarts.")
         else:
             next_step = (
                 f"Next: open (or restart) {_format_ide_list(selected_targets)} in your project, then ask your agent to call trw_session_start()."
@@ -5205,9 +5209,10 @@ def _resolve_interactive_telemetry(
     Precedence (highest first):
       1. An explicit ``--telemetry`` / ``--no-telemetry`` flag forwarded through
          install.sh — honored verbatim, no prompt (FR02/FR03).
-      2. A prior ``platform_telemetry_enabled`` recorded in config — used as the
-         consent-prompt DEFAULT so a reinstall never silently re-enables a prior
-         opt-out (FR07).
+      2. A prior ``platform_telemetry_enabled`` recorded in config — the earlier
+         answer, reused without asking again, so an upgrade neither re-asks nor
+         flips a recorded opt-out (FR07; the 9.0.1 upgrade report: asked on every
+         upgrade).
       3. Otherwise, an explicit yes/no consent prompt that defaults to OFF.
 
     The presence of an API key NEVER force-enables telemetry: usage telemetry is
@@ -5220,17 +5225,17 @@ def _resolve_interactive_telemetry(
         ui.step_ok("Telemetry disabled (--no-telemetry)")
         return False
 
-    prior_default = "n"
     if "telemetry" in prior_config:
-        prior_default = "y" if bool(prior_config["telemetry"]) else "n"
+        recorded = bool(prior_config["telemetry"])
+        state = "enabled" if recorded else "disabled"
+        ui.step_ok(f"Telemetry {state} (your earlier choice; --telemetry or --no-telemetry changes it)")
+        return recorded
 
     print()
     ui.hint("Pseudonymous usage telemetry helps us improve TRW for everyone.")
     ui.hint("Only tool-usage counts are shared — never your code or learnings.")
     ui.doc_link_url(_PRIVACY_DOC_URL)
-    if prior_default == "n" and "telemetry" in prior_config:
-        ui.hint("Your prior choice was OFF — leaving it off unless you opt in.")
-    telemetry_enabled = prompt_yes_no("Enable pseudonymous usage telemetry?", default=prior_default)
+    telemetry_enabled = prompt_yes_no("Enable pseudonymous usage telemetry?", default="n")
     ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
     return telemetry_enabled
 

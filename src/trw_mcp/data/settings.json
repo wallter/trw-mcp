@@ -205,5 +205,9 @@
   },
   "env": {
     "ENABLE_TOOL_SEARCH": "true"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh\""
   }
 }

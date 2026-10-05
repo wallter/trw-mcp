@@ -89,6 +89,10 @@ def link_claude_md(target_dir: Path, result: dict[str, list[str]], *, dry_run: b
     included. Never creates a ``CLAUDE.md``, never writes through a symlink, and leaves a file with unbalanced or
     duplicate markers untouched with a warning. The write goes through the instruction guard (backup first, shrink
     floors); a refusal is a warning, because this runs after the update committed. *dry_run* only reports.
+
+    A CLAUDE.md that already imports AGENTS.md, which imports ``.trw/INSTRUCTIONS.md``, needs no block: TRW writes
+    nothing to it, and takes back only a block an earlier release added there. Every edit is named in
+    ``result["claude_md"]`` so the CLI prints it.
     """
     path = target_dir / "CLAUDE.md"
     if path.is_symlink():
@@ -100,6 +104,7 @@ def link_claude_md(target_dir: Path, result: dict[str, list[str]], *, dry_run: b
     from trw_mcp.state.claude_md._instructions_link import claude_md_link_section, fenced_line_indices
 
     from ._file_ops import has_marker, replace_marker_region
+    from ._user_file_edit import strip_managed_block
 
     content = _read_claude_md(path)
     if not isinstance(content, str):
@@ -113,10 +118,19 @@ def link_claude_md(target_dir: Path, result: dict[str, list[str]], *, dry_run: b
             "its own block from your example. Move the example out of the fence or re-run after editing it."
         )
         return
+    own, had_block, problems = strip_managed_block(content, ((_TRW_START_MARKER, _TRW_END_MARKER),))
+    if not problems and _loads_trw_through_agents_md(target_dir, own):
+        if had_block:  # 9.0.1 added one to this file: take back only that
+            if content.rstrip().endswith(_TRW_END_MARKER) and own.endswith(file_eol(content) * 2):
+                own = own[: -len(file_eol(content))]  # the blank line append_block put above it
+            what = f"removed TRW's block (it already imports AGENTS.md, which imports {_INSTRUCTIONS})"
+            _write_claude_md(target_dir, path, content, own, result, what, dry_run)
+        return
     block = claude_md_link_section()
     updated = replace_marker_region(
         content, start=_TRW_START_MARKER, end=_TRW_END_MARKER, new_block=block, header=_TRW_HEADER_MARKER
     )
+    refreshed = updated is not None
     if updated is None:
         if has_marker(content, (_TRW_START_MARKER, "start"), (_TRW_END_MARKER, "end")):
             result.setdefault("warnings", []).append(
@@ -132,8 +146,25 @@ def link_claude_md(target_dir: Path, result: dict[str, list[str]], *, dry_run: b
             updated = append_block(content, block)
     if updated == content:
         return
+    what = "refreshed TRW's block" if refreshed else "added TRW's block"
+    _write_claude_md(target_dir, path, content, updated, result, f"{what} (it imports {_INSTRUCTIONS})", dry_run)
+
+
+_INSTRUCTIONS = ".trw/INSTRUCTIONS.md"
+#: Claude Code expands imports at most five hops deep.
+_MAX_IMPORT_HOPS = 5
+
+
+def _write_claude_md(
+    target_dir: Path, path: Path, content: str, updated: str, result: dict[str, list[str]], what: str, dry_run: bool
+) -> None:
+    """Write *updated* over *content* through the instruction guard, and name the edit in ``result["claude_md"]``.
+
+    Every edit TRW makes to the user's CLAUDE.md gets an output line (``print_claude_md``); a refusal is a warning.
+    """
     if dry_run:
         result.setdefault("updated", []).append("CLAUDE.md")
+        result.setdefault("claude_md", []).append(f"would have {what}")
         return
     from ._guarded_write import guarded_bootstrap_write
 
@@ -148,9 +179,54 @@ def link_claude_md(target_dir: Path, result: dict[str, list[str]], *, dry_run: b
         expected_current=content,
     ):
         result.setdefault("updated", []).append("CLAUDE.md")
+        result.setdefault("claude_md", []).append(what)
         result.setdefault("warnings", []).extend(outcome.get("warnings", []))  # names the previous version's copy
         return
     result.setdefault("warnings", []).extend(f"CLAUDE.md left untouched: {error}" for error in outcome["errors"])
+
+
+def _loads_trw_through_agents_md(target_dir: Path, own: str) -> bool:
+    """True when *own* (CLAUDE.md without TRW's block) imports AGENTS.md and that imports ``.trw/INSTRUCTIONS.md``.
+
+    Directly or through other imported files, within Claude Code's five hops; the import test is the doctor row's
+    (``live_imports``). Then a TRW block in CLAUDE.md only loads the instructions a second time, and its "Claude
+    Code does not load AGENTS.md" sentence is false.
+    """
+    root = Path(os.path.normpath(target_dir.absolute()))
+    agents = root / "AGENTS.md"
+    hops = _import_hops(root, root, own, _MAX_IMPORT_HOPS).get(agents)
+    if hops is None:
+        return False
+    agents_text = _read_claude_md(agents)
+    if not isinstance(agents_text, str):
+        return False
+    return root / _INSTRUCTIONS in _import_hops(root, root, agents_text, _MAX_IMPORT_HOPS - hops)
+
+
+def _import_hops(root: Path, base: Path, text: str, max_hops: int) -> dict[Path, int]:
+    """Every project file *text* (a file in *base*) imports, with the fewest hops it takes, up to *max_hops*.
+
+    Paths outside *root* and home-relative ones are not followed; an imported file is read like CLAUDE.md
+    (no symlink, regular file, bounded) and each one only once.
+    """
+    from trw_mcp.state.claude_md._instructions_link import live_imports
+
+    hops: dict[Path, int] = {}
+    frontier = [(base, text)]
+    for hop in range(1, max_hops + 1):
+        following: list[tuple[Path, str]] = []
+        for directory, body in frontier:
+            for token in live_imports(body):
+                if token.startswith("~"):
+                    continue
+                target = Path(os.path.normpath(directory / token))
+                if target in hops or not target.is_relative_to(root):
+                    continue
+                hops[target] = hop
+                if hop < max_hops and isinstance(imported := _read_claude_md(target), str):
+                    following.append((target.parent, imported))
+        frontier = following
+    return hops
 
 
 #: A root CLAUDE.md is a few KiB; anything past this is not read (and so never rewritten).

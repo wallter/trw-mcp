@@ -1,0 +1,4 @@
+{
+  "description": "trw-ui: read-only TRW status pane and inbox doorbell",
+  "modules": ["../register.ts"]
+}

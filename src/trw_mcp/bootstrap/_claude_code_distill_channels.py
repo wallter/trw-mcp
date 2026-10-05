@@ -351,6 +351,11 @@ def install_claude_code_distill_channels(
     sync_cc03_hook_files(target_dir, result, manifest_hashes)
     if apply_cc03_hook_registration(target_dir):
         result["updated"].append(".claude/settings.json")
+    # PRD-CORE-354 FR06: a fresh whole-template copy still honours the statusLine opt-out.
+    from ._settings_merge import apply_statusline_registration
+
+    if apply_statusline_registration(target_dir):
+        result["updated"].append(".claude/settings.json")
 
     # 3. Bootstrap channel manifest (two CC channel entries)
     try:

@@ -537,6 +537,12 @@ def _check_stray_servers(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("stray_servers", *stray_servers_row(target))
 
 
+def _check_stale_servers(target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_environment import stale_servers_row
+
+    return CheckResult("stale_servers", *stale_servers_row(target))
+
+
 def _check_hook_python(target: Path, _config: TRWConfig) -> CheckResult:
     from trw_mcp.server._doctor_hook_python import hook_python_row
 

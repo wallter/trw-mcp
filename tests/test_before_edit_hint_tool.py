@@ -814,10 +814,9 @@ class TestExposureRecording:
             fallback_dir_resolver=lambda: project / ".trw" / "context",
         )
         response = fn(mode="hint", files="app.py")
-        assert response["status"] == "ok"
-        assert response["count"] == 1
-        hint = response["hints"][0]
-        assert set(hint) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
+        (hint,) = response["hints"]
+        assert "status" not in response
+        assert set(hint) >= {"file_path", "distill_status"}
         events = "".join(p.read_text() for p in (project / ".trw").rglob("*events*.jsonl"))
         assert "trw_code" in events
 

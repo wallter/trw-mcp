@@ -49,10 +49,17 @@ MINIMUM_HOOK_CARRIERS = 2
 
 
 def _commands(node: object) -> list[str]:
-    """Every ``"command": "<str>"`` value anywhere in a parsed hook config."""
+    """Every hook ``"command": "<str>"`` value anywhere in a parsed hook config.
+
+    ``statusLine`` is a render surface, not a hook event (PRD-CORE-354): its
+    command never fires on a lifecycle event and only ``settings.json`` can carry
+    it, so it is skipped rather than counted as a one-carrier registration.
+    """
     found: list[str] = []
     if isinstance(node, dict):
         for key, value in node.items():
+            if key == "statusLine":
+                continue
             if key == "command" and isinstance(value, str):
                 found.append(value)
             else:

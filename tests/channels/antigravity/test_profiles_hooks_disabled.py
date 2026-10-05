@@ -2,16 +2,12 @@
 
 Previously hooks_enabled=False (audit P0-04 fix — was misleadingly True with no hook code).
 Now hooks_enabled=True because AG-03 is implemented and TRW writes a valid
-.antigravitycli/hooks.json hook surface:
-- Hooks file: .antigravitycli/hooks.json (separate from settings.json)
-- Event key: PreToolUse (confirmed via binary string analysis)
-- Hook script: .antigravitycli/hooks/trw_before_edit_telemetry.py
+.agents/hooks.json hook surface (named-hook schema, agy 1.2.x):
+- Hooks file: .agents/hooks.json (separate from settings.json)
+- Event key: PreToolUse
+- Hook script: .agents/hooks/trw_before_edit_telemetry.py
 
-hooks_enabled=True reflects that TRW configures the hook surface. NOTE: the AG-03
-channel itself is ASPIRATIONAL — a live agy turn (2026-05-29) showed the
-PreToolUse hook does not fire for file edits (agy uses Step_CodeAction, which
-bypasses the jsonhook path). The profile flag stays True because TRW does install
-the surface; channel-level firing status lives in the manifest.
+Verified live on agy 1.2.15 (2026-10-03): the hook fires for write_to_file.
 
 PRD-DIST-2404 FR01.
 """

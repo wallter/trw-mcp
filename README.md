@@ -65,17 +65,17 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.0.1 -->
+<!-- whats-new: 9.1.0 -->
 
+- **TRW progress in Claude Code's status line.** Phase, checkpoint age, build, review and deliver evidence on one line; `trw-mcp local status --json` gives any client the same snapshot.
+- **A cap on dispatch fan-out.** Opt in to `dispatch_max_concurrent_children` to limit how many dispatched agents run at once.
+- **Learning keeps working across upgrades.** A memory daemon stricter than the server no longer blocks `trw_learn` and `trw_recall`.
+- **Upgrades say what they changed.** `update-project` names every file it removes and every `CLAUDE.md` edit, and leaves an `AGENTS.md` shim alone.
+- **A complete installer log.** The run log holds the whole install, and `doctor` names MCP servers still running pre-upgrade code.
 - **Share learnings from any host.** `trw-mcp sync push`, `pull` and `status` share team learnings from hosts with no MCP server running, such as CI, headless agents and containers.
-- **Faster, better-ranked team learnings.** Pulled pages are written about 3x faster, a stale session pulls the newest first, and another project's learnings rank below yours.
 - **Sensitive learnings stay home.** Confidentiality labels decide what each surface shows: nothing labelled above `team` is pushed, backed up remotely or written to a tracked file.
-- **Recall queries leave only when you opt in.** A recall query is sent to the platform only with platform contact and `team_sync_enabled` both on, and is redacted first.
-- **Updates that never drop your edits.** Retiring an old TRW file keeps an edit hidden by `--skip-worktree`, `--assume-unchanged` or a lossy clean filter, instead of deleting it.
-- **One command to repair anchors.** `trw-mcp memory repair-anchors` finishes the anchor repair for a checkout in a single run.
-- **Build evidence per test file.** `trw_build_check` can record which test files ran and passed, from a pytest JUnit report.
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.0. 9.0.0 is a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.1. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
 

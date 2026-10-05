@@ -47,6 +47,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     # PLAN.md §3b item 3: appended last for the same reason.
     ("retrieval", "_check_retrieval"),
     ("stray_servers", "_check_stray_servers"),
+    ("stale_servers", "_check_stale_servers"),
     ("claude_code_version", "_check_claude_code_version"),
     # PRD-CORE-300 slice S3a: appended last for the same reason as the rows
     # above — reports the same status `trw-mcp telemetry security` does, now

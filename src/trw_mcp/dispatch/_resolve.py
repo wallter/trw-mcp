@@ -56,7 +56,13 @@ import structlog
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 from trw_mcp.dispatch._confine import confinement_prefix
-from trw_mcp.dispatch._policy import operator_set, resolve_effort, resolve_max_turns, resolve_model
+from trw_mcp.dispatch._policy import (
+    operator_set,
+    require_effort,
+    resolve_effort,
+    resolve_max_turns,
+    resolve_model,
+)
 from trw_mcp.dispatch._posture import (
     ReviewerPostureError,
     TrwAccessError,
@@ -174,6 +180,10 @@ def resolve_dispatch_request(
         resolved_effort, effort_source = resolve_effort(effort, role, config_effort, client=resolved_client)
     except ValueError as exc:
         raise DispatchResolutionError(str(exc), exit_code=2) from exc
+    if getattr(dispatch_cfg, "dispatch_require_effort", False) is True:  # PRD-CORE-355-FR06
+        refusal = require_effort(resolved_client, resolved_model, effort_source)
+        if refusal:
+            raise DispatchResolutionError(refusal, exit_code=2)
     max_turns, max_turns_source = resolve_max_turns(config_turns, role)
     logger.info(
         "dispatch_policy_resolved",

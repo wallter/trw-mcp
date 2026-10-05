@@ -25,6 +25,7 @@ import structlog
 from pydantic_core import to_jsonable_python
 
 from trw_mcp.state._daemon_install_budget import wait_within_install_budget
+from trw_mcp.state._daemon_security import require_daemon_security_floor
 from trw_mcp.state._store_selection import (
     EmbedderStatus,
     NamespaceHealth,
@@ -111,19 +112,8 @@ def _daemon_instance() -> tuple[int, str] | None:
     return (info.pid, info.started_at) if isinstance(info, DaemonInfo) else None
 
 
-def _same(daemon: object, local: object) -> bool:
-    """Equal in type as well as value, so a reported ``1`` never matches ``True``."""
-    if isinstance(daemon, dict) and isinstance(local, dict):
-        return daemon.keys() == local.keys() and all(_same(daemon[key], local[key]) for key in local)
-    return type(daemon) is type(local) and daemon == local
-
-
 def _require_matching_security(client: DaemonClient, namespace: str, local: dict[str, Any]) -> tuple[int, str]:
-    """Refuse a daemon whose security settings differ from *local* (PRD-CORE-298 FR07); else who answered.
-
-    The daemon enforces its own values for every client, so a mismatch would
-    silently drop the policy this client resolved.
-    """
+    """Refuse a daemon whose security settings are weaker than *local* (PRD-CORE-298 FR07); else who answered."""
     status = _run(client.call_tool("memory_status", {"namespace": namespace, "security_settings_only": True}))
     daemon = status.get("security_settings") if isinstance(status, dict) else None
     if not isinstance(daemon, dict):
@@ -132,12 +122,7 @@ def _require_matching_security(client: DaemonClient, namespace: str, local: dict
             f"the memory daemon did not report its security settings ({reason or 'restart it on this version'}). "
             "Run trw-mcp doctor."
         )
-    for key, value in local.items():
-        if not _same(daemon.get(key), value):
-            raise StoreUnavailableError(
-                f"memory security setting {key} is {daemon.get(key)!r} in the daemon but {value!r} here; "
-                f"it is daemon-wide: set MEMORY_{key.upper()} the same for both and restart the daemon."
-            )
+    require_daemon_security_floor(daemon, local)
     answered_by = status.get("daemon")
     if not (isinstance(answered_by, (list, tuple)) and len(answered_by) == 2):
         raise StoreUnavailableError("the memory daemon did not say which daemon answered. Run trw-mcp doctor.")

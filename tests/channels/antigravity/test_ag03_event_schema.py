@@ -24,16 +24,16 @@ from trw_mcp.channels.meta_tune._correlator import PUSH_EVENT_TYPES
 def test_installed_hook_writes_a_valid_channel_event(tmp_path: Path) -> None:
     result = install_before_edit_hook(tmp_path)
     assert result["installed"] is True, result
-    script = Path(str(result["hook_script_path"]))
     out = subprocess.run(
-        [sys.executable, str(script)],
-        input=json.dumps({"tool_name": "write_file", "file_path": "src/a.py"}),
+        [sys.executable, "hooks/trw_before_edit_telemetry.py"],
+        cwd=tmp_path / ".agents",  # agy runs the command with cwd = the directory holding hooks.json
+        input=json.dumps({"toolCall": {"name": "write_file", "args": {"TargetFile": "src/a.py"}}}),
         capture_output=True,
         text=True,
         timeout=60,
         check=True,
     )
-    assert json.loads(out.stdout) == {"continue": True}, "the hook stays fail-open"
+    assert json.loads(out.stdout) == {"decision": "allow"}, "the hook stays fail-open"
     lines = (tmp_path / ".trw" / "telemetry" / "channel-events.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     event = json.loads(lines[0])

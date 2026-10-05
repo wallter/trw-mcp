@@ -14,6 +14,7 @@ import pytest
 from trw_mcp.bootstrap._utils import printable
 from trw_mcp.server import _subcommands
 from trw_mcp.server._uninstall_report import display
+from trw_mcp.server._update_report import print_retired
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +37,7 @@ def test_the_warning_block_escapes_control_characters_and_keeps_the_prefix(capsy
 
 
 def test_the_retired_listing_escapes_control_characters(capsys: pytest.CaptureFixture[str]) -> None:
-    _subcommands._print_retired([HOSTILE, "docs/ok.md"])
+    print_retired([HOSTILE, "docs/ok.md"])
 
     out = capsys.readouterr().out
     _no_raw_controls(out)

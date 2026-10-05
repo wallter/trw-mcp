@@ -69,14 +69,6 @@ def _check_version_sentinel(
     if not installed_version:
         return
 
-    # Compare with running version
-    try:
-        from importlib.metadata import version as pkg_version
-
-        running_version = pkg_version("trw-mcp")
-    except Exception:  # justified: importlib.metadata may fail in edge cases
-        return
-
     # Potemkin defect D (sub_zAfRqZYYq2KtF72d): fire ONLY when the on-disk
     # installed version is genuinely NEWER than the running process — a real
     # pending upgrade that a ``/mcp`` reload would apply. The previous bare
@@ -88,6 +80,11 @@ def _check_version_sentinel(
     # PEP 440 ordering (packaging), failing closed (no advisory) on any
     # unparseable version.
     from packaging.version import InvalidVersion, Version
+
+    # The version this process imported at startup, never a fresh metadata read: an upgrade into the same
+    # environment rewrites the metadata under a running server, so a live read always matched the sentinel and a
+    # server still running the old code never advised a reload.
+    from trw_mcp import __version__ as running_version
 
     try:
         newer_on_disk = Version(installed_version) > Version(running_version)

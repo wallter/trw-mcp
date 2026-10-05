@@ -20,6 +20,7 @@ from trw_mcp.models.config._defaults import (
 )
 from trw_mcp.models.config._fields_dispatch import (
     DEFAULT_DISPATCH_MAX_TURNS,
+    DEFAULT_DISPATCH_SLOT_WAIT_SECS,
     DEFAULT_DISPATCH_TIMEOUT_SECS,
     DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS,
 )
@@ -63,6 +64,9 @@ class DispatchConfig(BaseModel):
     dispatch_fallback_clients: list[str] = Field(default_factory=list)
     dispatch_default_effort: DispatchEffort | None = None
     dispatch_default_max_turns: int = DEFAULT_DISPATCH_MAX_TURNS
+    dispatch_max_concurrent_children: int = 0
+    dispatch_slot_wait_s: float = DEFAULT_DISPATCH_SLOT_WAIT_SECS
+    dispatch_require_effort: bool = False
     #: The dispatch field names the OPERATOR set (config.yaml or TRW_* env). The
     #: projection passes every field explicitly, so this model's own
     #: ``model_fields_set`` cannot tell an operator value from a default.

@@ -17,7 +17,6 @@ without following links, and read up to :data:`_MAX_READ` bytes.
 from __future__ import annotations
 
 import os
-import re
 import stat
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -30,35 +29,13 @@ if TYPE_CHECKING:
 #: A TRW-only leftover is a few hundred bytes; anything larger is the user's file.
 _MAX_READ = 1 << 20
 _MASKS = "Claude Code skips AGENTS.md while it exists"
-#: Claude Code's import syntax: an ``@path`` token, not inside a code span or fenced block.
-_IMPORT = re.compile(r"(?:^|\s)@(?:\./)?AGENTS\.md(?=\s|$)", re.MULTILINE)
-#: CommonMark: a fence is 3+ backticks or tildes indented at most 3 spaces; it closes on a run of the
-#: same character at least as long, with nothing after it but whitespace.
-_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-#: CommonMark code span: a run of N backticks closed by the next run of exactly N.
-_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
 
 
 def _imports_agents_md(text: str) -> bool:
     """True when *text* imports AGENTS.md the way Claude Code reads it (code spans and fences are inert)."""
-    live: list[str] = []
-    fence: str | None = None
-    for line in text.splitlines():
-        match = _FENCE.match(line)
-        if fence is None and match:
-            fence = match.group(1)
-            continue
-        if fence is not None:
-            if (
-                match
-                and match.group(1)[0] == fence[0]
-                and len(match.group(1)) >= len(fence)
-                and not match.group(2).strip()
-            ):
-                fence = None
-            continue
-        live.append(_CODE_SPAN.sub("", line))
-    return bool(_IMPORT.search("\n".join(live)))
+    from trw_mcp.state.claude_md._instructions_link import live_imports
+
+    return any(token in ("AGENTS.md", "./AGENTS.md") for token in live_imports(text))
 
 
 def _symlink_row(target: Path, path: Path) -> tuple[str, str]:

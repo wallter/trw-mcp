@@ -80,8 +80,8 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "99.0.0")
         with (
             patch(
-                "importlib.metadata.version",
-                return_value="0.15.0",
+                "trw_mcp.__version__",
+                "0.15.0",
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -99,8 +99,8 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "0.15.0")
         with (
             patch(
-                "importlib.metadata.version",
-                return_value="0.15.0",
+                "trw_mcp.__version__",
+                "0.15.0",
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -122,8 +122,8 @@ class TestRunAutoMaintenance:
         write_installed_version(trw_dir, "0.48.7")
         with (
             patch(
-                "importlib.metadata.version",
-                return_value="0.55.14",
+                "trw_mcp.__version__",
+                "0.55.14",
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -169,22 +169,25 @@ class TestRunAutoMaintenance:
 
         assert "update_advisory" not in result
 
-    def test_version_sentinel_importlib_failure(
+    def test_version_sentinel_fires_after_an_in_place_upgrade(
         self,
         trw_dir: Path,
         config: TRWConfig,
     ) -> None:
-        """importlib.metadata failure produces no advisory and no crash."""
+        """An upgrade into the server's own environment rewrites the package metadata under it.
+
+        The running server still runs the code it imported at startup, so the comparison is against that
+        version, not a fresh metadata read (which already reports the new one and hid every stale server).
+        """
         write_installed_version(trw_dir, "99.0.0")
         with (
-            patch(
-                "importlib.metadata.version",
-                side_effect=Exception("package not found"),
-            ),
+            patch("importlib.metadata.version", return_value="99.0.0"),
+            patch("trw_mcp.__version__", "0.15.0"),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
-        assert "update_advisory" not in result
+        assert "update_advisory" in result
+        assert "0.15.0" in str(result["update_advisory"])
 
     def test_version_sentinel_e2e_upgrade_cycle(
         self,
@@ -196,8 +199,8 @@ class TestRunAutoMaintenance:
 
         with (
             patch(
-                "importlib.metadata.version",
-                return_value="0.15.1",
+                "trw_mcp.__version__",
+                "0.15.1",
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -218,8 +221,8 @@ class TestRunAutoMaintenance:
 
         with (
             patch(
-                "importlib.metadata.version",
-                return_value="0.16.0",
+                "trw_mcp.__version__",
+                "0.16.0",
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)

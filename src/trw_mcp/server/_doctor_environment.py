@@ -10,15 +10,23 @@ checkout root, the home directory) and reads files only.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from trw_mcp.state._checkout_servers import stray_servers
+from trw_mcp.state._checkout_servers import running_servers, stray_servers
+from trw_mcp.state._process_identity import parse_heartbeat_ts, process_start_epoch
 
-__all__ = ["claude_code_version_row", "foreign_client_paths_row", "gnu_timeout_row", "stray_servers_row"]
+__all__ = [
+    "claude_code_version_row",
+    "foreign_client_paths_row",
+    "gnu_timeout_row",
+    "stale_servers_row",
+    "stray_servers_row",
+]
 
 Row = tuple[Literal["PASS", "WARN", "SKIP"], str]
 
@@ -86,6 +94,33 @@ def stray_servers_row(target: Path) -> Row:
     return (
         "WARN",
         f"{len(lines)} stray trw-mcp server(s) hold this checkout's store: {'; '.join(lines[:5])}. {_STRAY_SCOPE}",
+    )
+
+
+def stale_servers_row(target: Path) -> Row:
+    """trw-mcp servers on this checkout that started before the last install, so still run the code it replaced.
+
+    Nothing restarts them: each is a stdio child of its client and keeps its old code until the client reconnects.
+    The install time is the installer's ``.trw/installed-version.json`` stamp.
+    """
+    try:
+        stamp = json.loads((target / ".trw" / "installed-version.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # trw-fail-silent-allow: no readable install stamp is reported as a SKIP
+        stamp = None
+    installed = parse_heartbeat_ts(stamp.get("timestamp")) if isinstance(stamp, dict) else None
+    if installed is None:
+        return "SKIP", "no install recorded for this checkout (.trw/installed-version.json)"
+    pids = running_servers(target)
+    if pids is None:
+        return "SKIP", "could not read the process table; reconnect each client after an upgrade to load it"
+    stale = sorted(pid for pid in pids if (start := process_start_epoch(pid)) and start < installed.timestamp())
+    if not stale:
+        return "PASS", f"{len(pids)} trw-mcp server(s) running on this checkout; none predates the last install"
+    return (
+        "WARN",
+        f"{len(stale)} of {len(pids)} trw-mcp server(s) on this checkout started before the last install and still run "
+        f"the old code (pids {', '.join(map(str, stale[:10]))}); none was signaled. "
+        "fix: reconnect each client (/mcp in Claude Code) or restart it",
     )
 
 

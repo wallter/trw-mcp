@@ -16,11 +16,11 @@ from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
-
-from trw_mcp.sync import _client_runtime as runtime
 from trw_memory.models.memory import MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 from trw_memory.sync.delta import DeltaTracker
+
+from trw_mcp.sync import _client_runtime as runtime
 
 NS = "project:held-11111111"
 PUSHABLE = 5

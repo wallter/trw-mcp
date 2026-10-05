@@ -5,7 +5,8 @@ a run: its pid, its launching client's pid, and that client's birth time
 (PRD-INFRA-189 FR08). A server started before an upgrade runs the old code until
 its client reconnects, and an old server keeps writing the checkout store that
 ``memory migrate`` just emptied, so the migration names each one. A server that
-never pinned a run is not listed.
+never pinned a run is not listed by those two; :func:`running_servers` also finds the
+unpinned ones from the process table (a server whose working directory is the checkout).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from trw_mcp.state._process_identity import (
     read_process_start_time,
 )
 
-__all__ = ["live_servers", "stray_servers"]
+__all__ = ["live_servers", "running_servers", "stray_servers"]
 
 
 def _process_name(pid: int) -> str:
@@ -88,3 +89,70 @@ def stray_servers(trw_dir: Path) -> list[str]:
         for pid, (client, _) in servers.items()
         if client is None or newest[client][1] != pid
     ]
+
+
+_SERVER_EXECUTABLES = frozenset({"trw-mcp", "trw-mcp-proxy"})
+
+
+def _is_server_command(command: str) -> bool:
+    """A ``trw-mcp`` stdio server or proxy command line, never a one-shot verb such as ``trw-mcp doctor``."""
+    tokens = command.split()
+    for i, word in enumerate(tokens):
+        module = word == "trw_mcp.server" and i > 0 and tokens[i - 1] == "-m"
+        if module or Path(word).name in _SERVER_EXECUTABLES:
+            rest = tokens[i + 1 :]
+            return not rest or rest[0] == "serve" or rest[0].startswith("-")
+    return False
+
+
+def _run(argv: list[str]) -> str | None:
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)  # noqa: S603 -- fixed argv, no shell
+    except (OSError, subprocess.TimeoutExpired):  # trw-fail-silent-allow: None is reported as "could not check"
+        return None
+    return done.stdout if done.returncode == 0 or done.stdout else None
+
+
+def _cwds(pids: list[int]) -> dict[int, str] | None:
+    """Working directory per pid: ``/proc`` on Linux, one ``lsof`` call elsewhere; None when neither can say."""
+    if Path("/proc/self/cwd").exists():
+        found: dict[int, str] = {}
+        for pid in pids:
+            try:
+                found[pid] = os.readlink(f"/proc/{pid}/cwd")
+            except OSError:  # trw-fail-silent-allow: an exited or another user's process has no readable cwd
+                continue
+        return found
+    out = _run(["lsof", "-a", "-d", "cwd", "-p", ",".join(map(str, pids)), "-Fpn"])
+    if out is None:
+        return None
+    found = {}
+    current: int | None = None
+    for line in out.splitlines():
+        if line[:1] == "p" and line[1:].isdigit():
+            current = int(line[1:])
+        elif line[:1] == "n" and current is not None:
+            found[current] = line[1:]
+    return found
+
+
+def running_servers(project: Path) -> set[int] | None:
+    """Pids of the live trw-mcp servers on *project*: recorded in its pins.json, or running with it as their cwd.
+
+    None when the process table cannot be read (Windows, no ``ps``/``lsof``), so a caller says "could not check"
+    instead of "none".
+    """
+    pinned = {pid for pid, _client, _created in _live(project / ".trw")}
+    table = _run(["ps", "-axo", "pid=,command="]) if os.name == "posix" else None
+    if table is None:
+        return None
+    candidates = []
+    for row in table.splitlines():
+        pid_text, _, command = row.strip().partition(" ")
+        if pid_text.isdigit() and int(pid_text) != os.getpid() and _is_server_command(command):
+            candidates.append(int(pid_text))
+    cwds = _cwds(candidates) if candidates else {}
+    if cwds is None:
+        return None
+    root = os.path.realpath(project)
+    return pinned | {pid for pid, cwd in cwds.items() if os.path.realpath(cwd) == root}

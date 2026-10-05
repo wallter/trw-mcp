@@ -364,24 +364,10 @@ _PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
     # PRD-CORE-294 FR01 cut trw_recall to stubs within a byte budget: the eleven
     # counter/shaping keys are gone and nothing may come back.
     "trw_recall": {"ceremony_status", "learnings", "nudge_content", "query", "total_matches"},
-    "trw_code_hint": {
-        "distill_action",
-        "distill_hint",
-        "distill_sidecar_path",
-        "distill_sidecar_sha",
-        "distill_status",
-        "enrichment",
-        "file_path",
-        "learnings",
-        "learnings_count",
-        "tier",
-        # PRD-CORE-294 FR04(b): this scenario's own trw_learn call above wrote
-        # a learning anchored to "app.py", so this exact before_edit_hint call
-        # now legitimately surfaces one transition-nudge line naming it — the
-        # key is conditional (only present when a candidate is selected), not
-        # unconditional bloat.
-        "transition_nudge",
-    },
+    # The compact hint shape: only decision-relevant keys per file. Sidecar
+    # path/sha, tier, enrichment, learnings_count and the per-file nudge are
+    # gone; remediation is hoisted once to the response top level.
+    "trw_code_hint": {"distill_status", "file_path", "learnings"},
     "trw_build_check": {
         "build_receipt_id",
         "cache_path",

@@ -104,10 +104,14 @@ def _strip_grouped_hooks(
         return False, raw, False
     hooks = data.get("hooks")
     new_env, env_changed = _drop_template_env(data.get("env")) if strip_env else (data.get("env"), False)
+    # PRD-CORE-354 FR06: only a TRW-owned statusLine (command names statusline.sh) is withdrawn.
+    from trw_mcp.bootstrap._settings_merge import is_trw_statusline
+
+    status_changed = strip_env and is_trw_statusline(data.get("statusLine"))
     # A non-dict ``hooks`` is the user's (malformed) content: never rewrite or drop it; only env is processed.
     hooks_malformed = not isinstance(hooks, dict)
     if not isinstance(hooks, dict):
-        if not env_changed:
+        if not env_changed and not status_changed:
             return False, raw, False
         hooks = {}
     trw_hooks, trw_groups = grouped_hook_entries(shape, root)
@@ -121,12 +125,14 @@ def _strip_grouped_hooks(
 
     new_hooks, changed = drop_matching_hook_commands(hooks, _is_trw_hook, file_label, {}, is_trw_group=_is_trw_group)
     _warn_kept_trw_commands(new_hooks, trw_hooks, file_label)
-    if not changed and not env_changed:
+    if not changed and not env_changed and not status_changed:
         return False, raw, False
     new_data = dict(data)
     if not hooks_malformed and ("hooks" in data or new_hooks):
         new_data["hooks"] = new_hooks
     if strip_env:
+        if status_changed:
+            del new_data["statusLine"]
         if env_changed:
             new_data["env"] = new_env
         for key in ("env", "hooks"):
@@ -134,9 +140,12 @@ def _strip_grouped_hooks(
                 continue
             if key in new_data and new_data[key] == {}:
                 del new_data[key]
-    return _canonical_or_untouched(
+    outcome = _canonical_or_untouched(
         data, raw, new_data, empty_key="hooks", file_label=file_label, shape=shape if deletable else ""
     )
+    # A custom-formatted file stays byte-identical here, statusLine included: uninstall reports it and
+    # fails the run (test_uninstall_custom_format_reported), so the user is told to remove it by hand.
+    return outcome
 
 
 def _drop_template_env(env: object) -> tuple[object, bool]:
@@ -262,6 +271,32 @@ def _strip_trw_antigravity_hooks(raw: str, _root: Path) -> tuple[bool, str, bool
     if sort_keys is None:
         _runtime_logger().warning(
             "uninstall_merged_config_custom_formatting", path=".antigravitycli/hooks.json", action="left_untouched"
+        )
+        return False, raw, False
+    if not new_data:
+        return True, "", True
+    return True, json.dumps(new_data, indent=2, sort_keys=sort_keys) + "\n", False
+
+
+def _strip_trw_antigravity_named_hooks(raw: str, _root: Path) -> tuple[bool, str, bool]:
+    """Strip TRW's named hook from ``.agents/hooks.json`` (agy 1.2.x: ``{"<name>": {"PreToolUse": [...]}}``).
+
+    The file is the user's: other named hooks are kept untouched. TRW's entry goes only when its value equals, in
+    full, the spec the installer writes; a hook the user edited under that name stays, with a warning.
+    """
+    from trw_mcp.channels.antigravity._before_edit_hook import AG03_HOOK_NAME, AG03_HOOKS_PATH, ag03_hook_spec
+
+    data = json.loads(raw)
+    if not isinstance(data, dict) or AG03_HOOK_NAME not in data:
+        return False, raw, False
+    if data[AG03_HOOK_NAME] != ag03_hook_spec():
+        _runtime_logger().warning("uninstall_user_edited_hook_kept", path=AG03_HOOKS_PATH, hook=AG03_HOOK_NAME)
+        return False, raw, False
+    new_data = {k: v for k, v in data.items() if k != AG03_HOOK_NAME}
+    sort_keys = matching_sort_keys(data, raw)
+    if sort_keys is None:
+        _runtime_logger().warning(
+            "uninstall_merged_config_custom_formatting", path=AG03_HOOKS_PATH, action="left_untouched"
         )
         return False, raw, False
     if not new_data:

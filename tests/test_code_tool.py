@@ -137,8 +137,8 @@ def test_the_default_mode_is_hint(project: Path) -> None:
     no query and matches the pre-edit workflow every install's hooks already call."""
     result = _call(files="app.py")
 
-    assert result["status"] == "ok"
-    assert result["count"] == 1
+    assert "status" not in result  # status appears only when every file failed
+    assert len(result["hints"]) == 1
 
 
 def test_unknown_argument_is_still_rejected_by_the_tools_input_schema(project: Path) -> None:
@@ -156,18 +156,16 @@ def test_hint_mode_takes_one_path_without_trw_distill(project: Path, monkeypatch
 
     result = _call(mode="hint", files="app.py")
 
-    assert result["count"] == 1
     (hint,) = result["hints"]
     assert hint["file_path"] == "app.py"
-    assert hint["distill_hint"] is None
+    assert "distill_hint" not in hint  # empty values are omitted
     assert hint["distill_status"] in _ABSENT_SIDECAR
-    assert isinstance(hint["learnings"], list)
+    assert "learnings" not in hint and "learnings_count" not in hint
 
 
 def test_hint_mode_takes_a_list_of_paths(project: Path) -> None:
     result = _call(mode="hint", files=["a.py", "b.py"])
 
-    assert result["count"] == 2
     assert [hint["file_path"] for hint in result["hints"]] == ["a.py", "b.py"]
 
 
@@ -234,14 +232,14 @@ def test_one_failing_file_does_not_cost_the_others_their_hints(project: Path, mo
 
     result = _call(mode="hint", files=["bad.py", "good.py"])
 
-    assert result["count"] == 2
+    assert len(result["hints"]) == 2
     assert result["hints"][0] == {
         "file_path": "bad.py",
         "status": "failed",
         "error": "the hint could not be computed (RuntimeError)",
     }
     assert result["hints"][1]["file_path"] == "good.py"
-    assert "learnings" in result["hints"][1]
+    assert result["hints"][1].get("status") != "failed"
 
 
 def test_a_hint_for_a_path_outside_the_project_fails_clearly(project: Path) -> None:
@@ -251,14 +249,14 @@ def test_a_hint_for_a_path_outside_the_project_fails_clearly(project: Path) -> N
     assert outside["status"] == "failed" and "outside the project root" in outside["error"]
     assert absolute["status"] == "failed" and "outside the project root" in absolute["error"]
     assert "status" not in inside or inside["status"] != "failed"
-    assert result["failed_count"] == 2 and result["status"] == "ok"
+    assert result["failed_count"] == 2 and "status" not in result
 
 
 def test_only_outside_paths_make_the_whole_call_fail(project: Path) -> None:
     result = _call(mode="hint", files="../escape.py")
 
     assert result["status"] == "failed"
-    assert result["count"] == 1 and "outside the project root" in result["hints"][0]["error"]
+    assert len(result["hints"]) == 1 and "outside the project root" in result["hints"][0]["error"]
 
 
 def test_a_hint_for_a_missing_file_inside_the_project_is_marked_not_found(project: Path) -> None:
@@ -315,7 +313,7 @@ def test_repo_root_inside_the_project_is_still_accepted(project: Path) -> None:
 
     result = _call(mode="hint", files=["a.py"], repo_root=str(project / "sub"))
 
-    assert result["status"] == "ok"
+    assert "status" not in result and result["hints"][0]["file_path"] == "a.py"
 
 
 def test_a_huge_path_is_neither_echoed_in_the_reason_nor_repeated_in_full(project: Path) -> None:
@@ -345,3 +343,53 @@ def test_a_path_label_is_at_most_200_characters_including_the_ellipsis(project: 
     result = _call(mode="hint", files=["/" + "q" * 400])
 
     assert len(result["hints"][0]["file_path"]) == 200
+
+
+def test_compact_response_states_shared_remediation_once_and_drops_internal_fields() -> None:
+    """Every per-file field must help a pre-edit decision; shared text is hoisted once."""
+    from trw_mcp.tools.code import _compact_response
+
+    def raw(path: str, learnings: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "file_path": path,
+            "tier": "public",
+            "distill_hint": None,
+            "distill_status": "target_not_in_sidecar",
+            "distill_action": f"Batch sidecar does not cover {path!r} ... run: trw-distill ... --file {path}",
+            "distill_sidecar_path": "/somewhere/before-edit-batch-abc.json",
+            "distill_sidecar_sha": "abc",
+            "learnings": learnings,
+            "learnings_count": len(learnings),
+            "learnings_status": "ok",
+            "distill_as_of": None,
+            "enrichment": {"tier_applied": "T1"},
+            **({"transition_nudge": "Top learning for this file: L-1. ..."} if learnings else {}),
+        }
+
+    learning = {"id": "L-1", "summary": "keep the cache warm", "impact": 0.6, "tags": ["x"]}
+    result = _compact_response([raw("a.py", []), raw("b.py", [learning])])
+
+    assert result == {
+        "hints": [
+            {"file_path": "a.py", "distill_status": "target_not_in_sidecar"},
+            {
+                "file_path": "b.py",
+                "distill_status": "target_not_in_sidecar",
+                "learnings": [{"id": "L-1", "summary": "keep the cache warm"}],
+            },
+        ],
+        "not_in_sidecar": result["not_in_sidecar"],
+        "learnings_note": result["learnings_note"],
+    }
+    assert result["not_in_sidecar"].endswith("--files a.py,b.py")
+    assert "by id" in result["learnings_note"]
+
+
+def test_compact_response_hoists_a_repeated_action_once() -> None:
+    from trw_mcp.tools.code import _compact_response
+
+    same = {"distill_status": "sidecar_missing", "distill_action": "run trw-distill sidecar build", "learnings": []}
+    result = _compact_response([{"file_path": "a.py", **same}, {"file_path": "b.py", **same}])
+
+    assert result["distill_action"] == "run trw-distill sidecar build"
+    assert all("distill_action" not in hint for hint in result["hints"])

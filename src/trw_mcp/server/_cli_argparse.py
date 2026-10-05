@@ -18,6 +18,7 @@ from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_handoff import add_handoff_subcommands
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import add_project_subcommands
+from trw_mcp.server._cli_argparse_status import add_local_status_args
 from trw_mcp.server._cli_factory import add_factory_subcommands
 from trw_mcp.shared_server._cli import add_shared_subcommands
 from trw_mcp.tools._decision_cli import add_decision_subcommands
@@ -280,6 +281,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit run directory path (auto-detects if omitted)",
     )
+    add_local_status_args(local_status)  # PRD-CORE-354-FR03
     local_learn = local_sub.add_parser("learn", help="Persist a learning without MCP transport")
     local_learn.add_argument("--summary", required=True, help="One-line learning summary")
     local_learn.add_argument("--detail", required=True, help="Learning detail")

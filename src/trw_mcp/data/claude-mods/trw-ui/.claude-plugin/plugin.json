@@ -1,0 +1,56 @@
+{
+  "name": "trw-ui",
+  "version": "0.1.0",
+  "description": "Read-only TRW status pane, optional band and inbox doorbell for Claude Code. Optional adapter: TRW works unchanged without it.",
+  "license": "BUSL-1.1",
+  "userConfig": {
+    "band": {
+      "type": "string",
+      "title": "Status band",
+      "description": "Show a one-line TRW band above the prompt (the statusLine already shows the one-liner, so the default is off).",
+      "options": [
+        "off",
+        "on"
+      ],
+      "default": "off"
+    },
+    "doorbell": {
+      "type": "string",
+      "title": "Inbox doorbell",
+      "description": "off: nothing. notify: toast and badge when TRW peer messages arrive. wake: also submit a fixed pointer-only prompt (opt-in).",
+      "options": [
+        "off",
+        "notify",
+        "wake"
+      ],
+      "default": "notify"
+    },
+    "wake_min_interval_s": {
+      "type": "number",
+      "title": "Wake minimum interval (s)",
+      "description": "Doorbell wake mode: minimum seconds between wake prompts.",
+      "default": 300,
+      "min": 30,
+      "max": 86400
+    },
+    "poll_s": {
+      "type": "number",
+      "title": "Poll interval (s)",
+      "description": "Seconds between status refreshes while the pane or band is visible, or the doorbell is on.",
+      "default": 15,
+      "min": 5,
+      "max": 600
+    },
+    "hidden_poll_s": {
+      "type": "number",
+      "title": "Hidden poll interval (s)",
+      "description": "Seconds between doorbell checks while neither the pane nor the band is visible (never faster than poll_s).",
+      "default": 60,
+      "min": 5,
+      "max": 3600
+    }
+  },
+  "author": {
+    "name": "TRW Framework"
+  }
+}

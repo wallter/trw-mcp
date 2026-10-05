@@ -83,6 +83,7 @@ class TestExistingClaudeMd:
         assert text.startswith(mine)
         assert _IMPORT in _block(text)
         assert "CLAUDE.md" in result["updated"]
+        assert any("added" in line for line in result["claude_md"]), "the edit is named in the output"
 
     def test_a_second_update_changes_nothing(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)
@@ -95,17 +96,63 @@ class TestExistingClaudeMd:
         assert (repo / "CLAUDE.md").read_bytes() == once
         assert "CLAUDE.md" not in result["updated"]
 
-    def test_a_pointer_only_claude_md_is_kept_and_gains_the_block(self, tmp_path: Path) -> None:
-        """FB-INSTALL-02: ``@AGENTS.md`` alone is the user's layout; it stays, the block joins it."""
+    def test_a_shim_that_imports_agents_md_is_left_untouched(self, tmp_path: Path) -> None:
+        """9.0.1 regression: ``@AGENTS.md`` already loads TRW's import, so a block there only repeats it."""
         repo = _repo(tmp_path)
         _init(repo)
         (repo / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
 
+        result = _update(repo)
+
+        assert (repo / "CLAUDE.md").read_bytes() == b"@AGENTS.md\n"
+        assert "CLAUDE.md" not in result["updated"]
+        assert not result.get("claude_md")
+
+    def test_a_shim_reaching_agents_md_through_another_file_is_left_untouched(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        _init(repo)
+        (repo / "notes").mkdir()
+        (repo / "notes" / "rules.md").write_text("Rules.\n@../AGENTS.md\n", encoding="utf-8")
+        (repo / "CLAUDE.md").write_text("# Mine\n\n@notes/rules.md\n", encoding="utf-8")
+
         _update(repo)
 
-        text = (repo / "CLAUDE.md").read_text(encoding="utf-8")
-        assert text.startswith("@AGENTS.md\n")
-        assert _IMPORT in _block(text)
+        assert (repo / "CLAUDE.md").read_text(encoding="utf-8") == "# Mine\n\n@notes/rules.md\n"
+
+    def test_a_shim_given_a_block_by_9_0_1_loses_only_that_block_and_says_so(self, tmp_path: Path) -> None:
+        from trw_mcp.state.claude_md._instructions_link import claude_md_link_section
+
+        repo = _repo(tmp_path)
+        _init(repo)
+        (repo / "CLAUDE.md").write_text(f"@AGENTS.md\n\n{claude_md_link_section()}", encoding="utf-8")
+
+        result = _update(repo)
+
+        assert (repo / "CLAUDE.md").read_bytes() == b"@AGENTS.md\n", "the shim the user wrote, restored"
+        assert "CLAUDE.md" in result["updated"]
+        assert any("removed" in line and "AGENTS.md" in line for line in result["claude_md"]), result
+
+    def test_an_import_inside_a_fence_does_not_count(self, tmp_path: Path) -> None:
+        repo = _repo(tmp_path)
+        _init(repo)
+        (repo / "CLAUDE.md").write_text("# Mine\n\n```\n@AGENTS.md\n```\n", encoding="utf-8")
+
+        _update(repo)
+
+        assert _IMPORT in _block((repo / "CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_a_shim_whose_agents_md_lacks_trws_import_still_gains_the_block(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._template_claude_md import link_claude_md
+
+        repo = _repo(tmp_path)
+        (repo / "AGENTS.md").write_text("# Agents, no TRW block\n", encoding="utf-8")
+        (repo / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+
+        link_claude_md(repo, result)
+
+        assert _IMPORT in _block((repo / "CLAUDE.md").read_text(encoding="utf-8"))
+        assert result["claude_md"], "every edit to CLAUDE.md is reported"
 
     def test_crlf_line_endings_are_kept(self, tmp_path: Path) -> None:
         repo = _repo(tmp_path)

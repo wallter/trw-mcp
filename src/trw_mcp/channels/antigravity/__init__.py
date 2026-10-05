@@ -5,12 +5,9 @@
 Three channels consuming PRD-DIST-2400 substrate:
 - ag-01-antigravity-md-distill        (instruction_file_segment, T1 default, status: active)
 - ag-02-distill-explorer-subagent     (subagent_file, T1 default per audit P1-15, status: active)
-- ag-03-before-edit-hook              (hook_script, status: aspirational — installer + hooks.json
-                                       registration correct, but agy v1.0.2-1.0.3 routes file edits
-                                       through Step_CodeAction / tool_confirmation_manager which
-                                       bypasses the jsonhook PreToolUse path; hook does NOT fire.
-                                       Live-verified 2026-05-29. Re-evaluate when agy fixes its
-                                       edit routing. See manifest activation_gate.)
+- ag-03-before-edit-hook              (hook_script, status: active — registered as a named PreToolUse
+                                       hook in .agents/hooks.json, which agy 1.2.x reads; verified
+                                       live on agy 1.2.15: it fires for write_to_file)
 
 AG-04 tool-return enrichment is delivered by the shared enrich_response /
 _tool_return_tiers substrate path (client_tier resolved from TRW_CLIENT_PROFILE

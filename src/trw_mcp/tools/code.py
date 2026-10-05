@@ -125,7 +125,7 @@ def _path_problem(file_path: str, repo_root: str | None) -> tuple[str, str] | No
     return None
 
 
-def _one_hint(file_path: str, repo_root: str | None, client_tier: str | None, reviewer: bool) -> dict[str, Any]:
+def _one_hint(file_path: str, repo_root: str | None, reviewer: bool) -> dict[str, Any]:
     result = compute_before_edit_hint(file_path=file_path, repo_root=repo_root)
     hint: dict[str, Any] = result.model_dump()
     if not reviewer:
@@ -140,20 +140,75 @@ def _one_hint(file_path: str, repo_root: str | None, client_tier: str | None, re
                 record_ids=[f"hotspot:{file_path}@{sidecar_sha[:8]}"] if sidecar_sha else [],
             )
         # PRD-CORE-294 FR04(b): the top-learning transition nudge, reusing the
-        # learnings already collected. The selector records what it has shown.
+        # learnings already collected. The selector records what it has shown;
+        # the response carries one shared note instead of a line per file.
         with suppress(Exception):  # justified: fail-open, a nudge must never break the hint
             from trw_mcp.tools._ceremony_status_context import maybe_attach_edit_hint_transition_nudge
 
             maybe_attach_edit_hint_transition_nudge(hint, None, learnings=result.learnings)
-    if client_tier is not None:
-        with suppress(Exception):  # justified: fail-open enrichment never breaks the hint
-            from trw_mcp.channels._tool_return_tiers import enrich_response
-
-            return enrich_response(hint, client_tier=client_tier)
     return hint
 
 
-def _hint(files: str | list[str] | None, repo_root: str | None, ctx: Context | None) -> dict[str, Any]:
+#: Shared note shown once when any entry carries learnings (replaces the per-file transition nudge).
+_LEARNINGS_NOTE = "if a learning is wrong or stale, correct it by id; do not add a duplicate"
+
+
+def _compact_entry(hint: dict[str, Any]) -> dict[str, Any]:
+    """Keep only what helps the caller decide before editing.
+
+    Dropped: the entitlement ``tier``, the internal sidecar path/sha, the
+    remediation text (hoisted once to the top level), ``learnings_count`` and
+    the per-file transition nudge, and every empty or default value.
+    """
+    if hint.get("status") == "failed":
+        return hint
+    entry: dict[str, Any] = {"file_path": hint["file_path"]}
+    if hint.get("distill_hint") is not None:
+        entry["distill_hint"] = hint["distill_hint"]
+    if hint.get("distill_status") not in (None, "hint_available"):
+        entry["distill_status"] = hint["distill_status"]
+    if hint.get("distill_as_of") is not None:
+        entry["distill_as_of"] = hint["distill_as_of"]
+    learnings = [{"id": item.get("id"), "summary": item.get("summary")} for item in hint.get("learnings") or []]
+    if learnings:
+        entry["learnings"] = learnings
+    if hint.get("learnings_status") not in (None, "ok"):
+        entry["learnings_status"] = hint["learnings_status"]
+    for key in ("path_status", "path_note"):
+        if key in hint:
+            entry[key] = hint[key]
+    return entry
+
+
+def _compact_response(hints: list[dict[str, Any]]) -> dict[str, Any]:
+    """One response: compact entries plus each remediation stated once for every file it covers."""
+    response: dict[str, Any] = {"hints": [_compact_entry(hint) for hint in hints]}
+    failed = sum(1 for hint in hints if hint.get("status") == "failed")
+    if failed:
+        response["failed_count"] = failed
+        if failed == len(hints):
+            response = {"status": "failed", **response}
+    uncovered = [hint["file_path"] for hint in hints if hint.get("distill_status") == "target_not_in_sidecar"]
+    if uncovered:
+        response["not_in_sidecar"] = (
+            "new since the sidecar or outside the map; refresh: trw-distill self-improve before-edit --repo . "
+            f"--persist-sidecar --files {','.join(uncovered)}"
+        )
+    actions = sorted(
+        {
+            str(hint["distill_action"])
+            for hint in hints
+            if hint.get("distill_action") and hint.get("distill_status") != "target_not_in_sidecar"
+        }
+    )
+    if actions:
+        response["distill_action"] = actions[0] if len(actions) == 1 else actions
+    if any(hint.get("learnings") for hint in hints if hint.get("transition_nudge")):
+        response["learnings_note"] = _LEARNINGS_NOTE
+    return response
+
+
+def _hint(files: str | list[str] | None, repo_root: str | None) -> dict[str, Any]:
     paths = [files] if isinstance(files, str) else list(files or [])
     paths = [path for path in paths if path.strip()]
     if not paths:
@@ -164,11 +219,6 @@ def _hint(files: str | list[str] | None, repo_root: str | None, ctx: Context | N
     from trw_mcp.state._surface_role import reviewer_role_active
 
     reviewer = reviewer_role_active()
-    client_tier: str | None = None
-    with suppress(Exception):  # justified: fail-open, an unresolved client only skips enrichment
-        from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
-
-        client_tier = resolve_tier_for_client(resolve_client_profile(ctx=ctx))
     hints: list[dict[str, Any]] = []
     for path in paths:
         try:
@@ -179,7 +229,7 @@ def _hint(files: str | list[str] | None, repo_root: str | None, ctx: Context | N
             hints.append({"file_path": _shown_path(path), "status": "failed", "error": problem[1]})
             continue
         try:
-            hint = _one_hint(path, repo_root, client_tier, reviewer)
+            hint = _one_hint(path, repo_root, reviewer)
             if problem is not None:
                 hint["path_status"], hint["path_note"] = problem
             hints.append(hint)
@@ -192,13 +242,7 @@ def _hint(files: str | list[str] | None, repo_root: str | None, ctx: Context | N
                     "error": f"the hint could not be computed ({type(exc).__name__})",
                 }
             )
-    failed = sum(1 for hint in hints if hint.get("status") == "failed")
-    return {
-        "status": "failed" if failed == len(hints) else "ok",
-        "hints": hints,
-        "count": len(hints),
-        **({"failed_count": failed} if failed else {}),
-    }
+    return _compact_response(hints)
 
 
 def register_code_tools(server: FastMCP) -> None:
@@ -236,7 +280,7 @@ def register_code_tools(server: FastMCP) -> None:
         if mode == "symbol":
             return _symbol(query, repo_root, top_k, path)
         if mode == "hint":
-            return _hint(files, repo_root, ctx)
+            return _hint(files, repo_root)
         return _refuse(f"unknown mode; use one of {', '.join(LIVE_MODES)}")
 
 

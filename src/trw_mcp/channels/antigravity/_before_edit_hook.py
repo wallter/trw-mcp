@@ -2,23 +2,23 @@
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Integrates with the Antigravity CLI's repo-scoped hook surface:
-- Repo-scoped config dir: ``.antigravitycli/`` (settings.json is the MCP config path).
-- Hooks live in a SEPARATE file: ``.antigravitycli/hooks.json`` (not settings.json),
-  alongside peer workspace files (agents, agent config, rules, skills).
-- Hook event keys: ``PreToolUse`` and ``PostToolUse``.
-- Hook entry format::
+Integrates with agy's workspace hook surface, verified live on agy 1.2.15 (2026-10-03, AG03-HOOK-REENABLE):
 
-    {
-      "PreToolUse":  [{"matcher": "<regex>", "command": "<shell-command>"}],
-      "PostToolUse": [{"matcher": "<regex>", "command": "<shell-command>"}]
-    }
+- Hooks file: ``<workspace>/.agents/hooks.json``, a JSON object whose top-level keys are NAMED hooks::
 
-- The pre-tool result carries: Decision, Reason, Overwrite, PermissionOverrides,
-  AllowTool, DenyReason.
-- The hook is fail-open: it always exits 0 so a hook error never blocks a tool call.
+    {"trw-before-edit-telemetry": {"PreToolUse": [
+        {"matcher": "<regex over tool names>", "hooks": [{"type": "command", "command": "<sh -c line>"}]}]}}
+
+- A handler's command runs through ``sh -c`` with the working directory set to the directory that holds
+  ``hooks.json`` (``.agents/``), so the installed command is relative to it: ``python3 hooks/<script>``.
+- stdin is a camelCase JSON object: ``{"toolCall": {"name": "write_to_file", "args": {"TargetFile": ...}},
+  "stepIdx": N, "conversationId": ..., "workspacePaths": [...]}``; stdout must be ``{"decision": "allow" | "deny" |
+  "ask" | "force_ask", ...}``. A ``deny`` reply blocked a real ``write_to_file`` call in the live check.
+- The hook is fail-open: it always answers ``allow`` and exits 0, so a hook fault never blocks a tool call.
 - Path resolution is ``__file__``-relative (same pattern as the Codex hook).
-- User-level settings live under the CLI's global config dir.
+
+Until 2026-10-02 TRW wrote the agy 1.0.2 shape (``.antigravitycli/hooks.json``, flat entries), which agy 1.2.x does
+not read; the legacy paths are kept below only so uninstall and ``trw-mcp doctor`` can find old installs.
 """
 
 from __future__ import annotations
@@ -36,7 +36,12 @@ log = structlog.get_logger(__name__)
 
 __all__ = [
     "AG03_HOOKS_PATH",
+    "AG03_HOOK_NAME",
     "HOOK_SCRIPT_CONTENT",
+    "LEGACY_EDIT_TOOL_MATCHER",
+    "LEGACY_HOOKS_PATH",
+    "LEGACY_HOOK_SCRIPT_PATH",
+    "ag03_hook_spec",
     "generate_hook_script",
     "install_before_edit_hook",
 ]
@@ -44,15 +49,32 @@ __all__ = [
 # Constants
 # ---------------------------------------------------------------------------
 
-AG03_HOOKS_PATH = ".antigravitycli/hooks.json"
-_AG03_HOOK_SCRIPT_PATH = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
+AG03_HOOKS_PATH = ".agents/hooks.json"
+AG03_HOOK_NAME = "trw-before-edit-telemetry"
+_AG03_HOOK_SCRIPT_PATH = ".agents/hooks/trw_before_edit_telemetry.py"
+#: The command agy runs: relative to the directory holding hooks.json (``.agents/``), verified live.
+_AG03_HOOK_COMMAND = "python3 hooks/trw_before_edit_telemetry.py"
+#: What TRW wrote before agy 1.2.x moved the surface: still looked for by uninstall and doctor.
+LEGACY_HOOKS_PATH = ".antigravitycli/hooks.json"
+LEGACY_HOOK_SCRIPT_PATH = ".antigravitycli/hooks/trw_before_edit_telemetry.py"
 
-# Empirically confirmed hook event name (agy v1.0.2 binary string analysis 2026-05-28)
 _PRE_TOOL_USE_EVENT = "PreToolUse"
 
-# Matcher regex: write_file, replace_file_content, multi_replace_file_content
-# These are the Antigravity CLI file-editing tool names observed in the binary.
-_EDIT_TOOL_MATCHER = "write_file|replace_file_content|multi_replace_file_content"
+# Matcher regex over agy tool names (step type lowercased, minus the CORTEX_STEP_TYPE_ prefix). The names agy 1.2.15
+# uses for file edits: write_to_file (live-verified), replace_file_content, multi_replace_file_content.
+_EDIT_TOOL_MATCHER = "write_to_file|replace_file_content|multi_replace_file_content"
+# The matcher older TRW wrote to the legacy file; uninstall recognises its entry by it.
+LEGACY_EDIT_TOOL_MATCHER = "write_file|replace_file_content|multi_replace_file_content"
+
+
+def ag03_hook_spec() -> dict[str, Any]:
+    """The named-hook value TRW installs under :data:`AG03_HOOK_NAME` (also what uninstall must match, whole)."""
+    return {
+        _PRE_TOOL_USE_EVENT: [
+            {"matcher": _EDIT_TOOL_MATCHER, "hooks": [{"type": "command", "command": _AG03_HOOK_COMMAND}]}
+        ]
+    }
+
 
 # ---------------------------------------------------------------------------
 # Hook script content — stdlib-only, no {{ }} tokens, __file__-relative paths
@@ -65,15 +87,14 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     #!/usr/bin/env python3
     \"\"\"TRW PreToolUse telemetry hook for Antigravity CLI (AG-03).
 
-    Installed by trw-mcp channels. Status: active (PRD-DIST-2404).
-    Always exits 0 — never blocks Antigravity tool execution.
+    Installed by trw-mcp channels. Registered in .agents/hooks.json under the name
+    trw-before-edit-telemetry. Always answers {"decision": "allow"} and exits 0, so it
+    never blocks an Antigravity tool call.
 
-    Empirically verified 2026-05-28 (agy v1.0.2 binary string analysis):
-    - Hooks loaded from .antigravitycli/hooks.json
-    - Event key: "PreToolUse"
-    - Input: JSON delivered via stdin (same pattern as Gemini CLI jsonhook.ParseHooksFile)
-    - Format: {"matcher": "<regex>", "command": "<cmd>"}
-    - PreToolHookResult allows: Decision, Reason, AllowTool, DenyReason
+    Contract, verified live on agy 1.2.15 (2026-10-03):
+    - stdin: camelCase JSON with toolCall (name and args), stepIdx, conversationId, workspacePaths
+    - the edited path is toolCall.args.TargetFile (write_to_file, replace_file_content)
+    - stdout: {"decision": "allow" | "deny" | "ask" | "force_ask", ...}
     \"\"\"
 
     from __future__ import annotations
@@ -88,15 +109,15 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     # CHANNEL_EVENT_V1_REQUIRED): schema_version, channel_id, client, ts, event_type.
     _EVENT_SCHEMA = "channel-event/v1"
     _EVENT_TYPE = "pull_tool_call"
-    _CONTINUE_RESPONSE = json.dumps({"continue": True})
+    _ALLOW_RESPONSE = json.dumps({"decision": "allow"})
 
 
     def _resolve_telemetry_path() -> Path:
         \"\"\"Resolve telemetry log path relative to this script's location.
 
         Uses __file__-relative resolution (audit P0-02 pattern).
-        Assumes hook is installed at .antigravitycli/hooks/trw_before_edit_telemetry.py
-        so repo root is 2 levels up.
+        Assumes the hook is installed at .agents/hooks/trw_before_edit_telemetry.py,
+        so the repo root is 2 levels up from this script's directory.
         \"\"\"
         script_dir = Path(__file__).parent
         repo_root = script_dir.parent.parent
@@ -111,17 +132,20 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
 
 
     def main() -> None:
-        \"\"\"Main hook entrypoint — always exits 0 (fail-open).\"\"\"
+        \"\"\"Main hook entrypoint — always allows and exits 0 (fail-open).\"\"\"
         try:
             raw = sys.stdin.read()
             data = json.loads(raw)
         except Exception:  # trw-fail-silent-allow: fail-open, bad input never blocks agy
-            print(_CONTINUE_RESPONSE)
+            print(_ALLOW_RESPONSE)
             return
 
         try:
-            tool_name = str(data.get("tool_name", data.get("name", "")))
-            file_path = str(data.get("file_path", data.get("path", "")))
+            call = data.get("toolCall") if isinstance(data, dict) else None
+            call = call if isinstance(call, dict) else {}
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            tool_name = str(call.get("name", ""))
+            file_path = str(args.get("TargetFile", ""))
 
             event: dict[str, object] = {
                 "schema_version": _EVENT_SCHEMA,
@@ -138,7 +162,7 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
         except Exception:  # trw-fail-silent-allow: best-effort telemetry, never blocks agy
             pass
 
-        print(_CONTINUE_RESPONSE)
+        print(_ALLOW_RESPONSE)
 
 
     if __name__ == "__main__":
@@ -172,38 +196,23 @@ def generate_hook_script() -> str:
 
 
 # ---------------------------------------------------------------------------
-# hooks.json deep-merge helper
+# hooks.json named-hook merge
 # ---------------------------------------------------------------------------
 
 
-def _merge_hooks_json(
-    existing: dict[str, Any],
-    hook_entry: dict[str, str],
-    event_key: str = _PRE_TOOL_USE_EVENT,
-) -> dict[str, Any]:
-    """Deep-merge a hook entry into an existing hooks.json dict.
+def _merge_named_hook(existing: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Add TRW's named hook to an existing hooks.json object without touching anyone else's.
 
-    Idempotent: if a hook entry with the same command already exists,
-    it is not duplicated.
-
-    Args:
-        existing: Current hooks.json content (may be empty dict).
-        hook_entry: Hook entry dict with "matcher" and "command" keys.
-        event_key: Antigravity event key (e.g. "PreToolUse").
-
-    Returns:
-        Merged dict suitable for json.dumps().
+    Returns ``(merged, status)``: ``"added"``, ``"unchanged"`` (TRW's entry is already there, byte for byte in
+    meaning) or ``"user_edited"`` (the name exists with different content: the user's edit is kept, never replaced).
     """
-    result = dict(existing)
-    event_hooks: list[dict[str, str]] = list(result.get(event_key, []))
-
-    # Idempotent: skip if an entry with the same command already exists
-    command = hook_entry.get("command", "")
-    if not any(h.get("command") == command for h in event_hooks):
-        event_hooks.append(hook_entry)
-
-    result[event_key] = event_hooks
-    return result
+    spec = ag03_hook_spec()
+    current = existing.get(AG03_HOOK_NAME)
+    if current is None:
+        merged = dict(existing)
+        merged[AG03_HOOK_NAME] = spec
+        return merged, "added"
+    return dict(existing), "unchanged" if current == spec else "user_edited"
 
 
 # ---------------------------------------------------------------------------
@@ -211,137 +220,77 @@ def _merge_hooks_json(
 # ---------------------------------------------------------------------------
 
 
+def _result(
+    target_dir: Path, *, installed: bool = False, skipped: bool = False, error: str | None = None, status: str = ""
+) -> dict[str, Any]:
+    return {
+        "installed": installed,
+        "hook_script_path": str(target_dir / _AG03_HOOK_SCRIPT_PATH),
+        "hooks_json_path": str(target_dir / AG03_HOOKS_PATH),
+        "skipped": skipped,
+        "error": error,
+        "status": status,
+    }
+
+
 def install_before_edit_hook(
     target_dir: Path,
     *,
     overwrite: bool = True,
 ) -> dict[str, Any]:
-    """Install the AG-03 PreToolUse hook for Antigravity CLI.
+    """Install the AG-03 PreToolUse hook for the Antigravity CLI.
 
-    Empirically confirmed schema (agy v1.0.2, 2026-05-28):
-    - Hooks file: .antigravitycli/hooks.json
-    - Event key: "PreToolUse"
-    - Format: {"PreToolUse": [{"matcher": "<regex>", "command": "<shell>"}]}
+    Installs, in this order:
+    1. the hook script at ``.agents/hooks/trw_before_edit_telemetry.py``;
+    2. TRW's named hook into ``.agents/hooks.json`` (merged, idempotent; every other named hook is kept).
 
-    Installs:
-    1. Hook script at .antigravitycli/hooks/trw_before_edit_telemetry.py
-    2. Merges hook entry into .antigravitycli/hooks.json (idempotent deep-merge)
+    A ``hooks.json`` that is not a JSON object is the user's file in a state TRW cannot reason about, so it is left
+    untouched and reported as an error rather than started over. Fail-open: nothing here raises.
 
-    Fail-open: all exceptions are caught and returned in the result dict.
-    Never raises.
-
-    Args:
-        target_dir: Repository root directory.
-        overwrite: When False, skip if both files already exist.
-
-    Returns:
-        Dict with keys: installed (bool), hook_script_path (str),
-        hooks_json_path (str), skipped (bool), error (str | None).
+    Returns a dict with ``installed``, ``skipped``, ``error``, ``status`` and the two paths.
     """
     hook_script_path = target_dir / _AG03_HOOK_SCRIPT_PATH
     hooks_json_path = target_dir / AG03_HOOKS_PATH
 
     if not overwrite and hook_script_path.exists() and hooks_json_path.exists():
-        log.debug(
-            "ag03_hook_install_skipped",
-            hook_script=str(hook_script_path),
-            hooks_json=str(hooks_json_path),
-            outcome="skipped_exists",
-        )
-        return {
-            "installed": False,
-            "hook_script_path": str(hook_script_path),
-            "hooks_json_path": str(hooks_json_path),
-            "skipped": True,
-            "error": None,
-        }
+        log.debug("ag03_hook_install_skipped", hooks_json=str(hooks_json_path), outcome="skipped_exists")
+        return _result(target_dir, skipped=True, status="skipped_exists")
+
+    if hooks_json_path.is_symlink():
+        return _result(target_dir, error=f"{AG03_HOOKS_PATH} is a symlink (symlink_leaf); refused, nothing written")
+
+    existing: dict[str, Any] = {}
+    if hooks_json_path.exists():
+        try:
+            parsed = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            log.warning(
+                "ag03_hooks_json_unreadable", path=str(hooks_json_path), error=str(exc), outcome="left_untouched"
+            )
+            return _result(target_dir, error=f"{AG03_HOOKS_PATH} is not readable JSON ({exc}); left untouched")
+        if not isinstance(parsed, dict):
+            return _result(target_dir, error=f"{AG03_HOOKS_PATH} is not a JSON object; left untouched")
+        existing = parsed
+
+    merged, status = _merge_named_hook(existing)
+    if status == "user_edited":
+        # The user changed TRW's entry: honour it, and do not install a script nothing will call.
+        log.info("ag03_hook_user_edited", path=str(hooks_json_path), outcome="kept")
+        return _result(target_dir, skipped=True, status="user_edited")
 
     try:
         content = generate_hook_script()
     except ValueError as exc:
         log.warning("ag03_hook_script_invalid", error=str(exc), outcome="error")
-        return {
-            "installed": False,
-            "hook_script_path": str(hook_script_path),
-            "hooks_json_path": str(hooks_json_path),
-            "skipped": False,
-            "error": str(exc),
-        }
+        return _result(target_dir, error=str(exc))
 
     try:
         write_checkout_file(target_dir, hook_script_path, content.encode("utf-8"))  # bytes: no CRLF on Windows
+        if status == "added":
+            write_checkout_file(target_dir, hooks_json_path, json.dumps(merged, indent=2) + "\n")
     except (OSError, UnsafeWriteError) as exc:
-        log.warning(
-            "ag03_hook_script_write_failed",
-            path=str(hook_script_path),
-            error=str(exc),
-            outcome="error",
-        )
-        return {
-            "installed": False,
-            "hook_script_path": str(hook_script_path),
-            "hooks_json_path": str(hooks_json_path),
-            "skipped": False,
-            "error": f"Failed to write hook script: {exc}",
-        }
+        log.warning("ag03_hook_write_failed", error=str(exc), outcome="error")
+        return _result(target_dir, error=f"Failed to write the AG-03 hook: {exc}")
 
-    # Build the hook entry: command is the path to the installed script
-    # The command is called by agy on each PreToolUse event matching the tool regex
-    hook_command = f"python3 {_AG03_HOOK_SCRIPT_PATH}"
-    hook_entry: dict[str, str] = {
-        "matcher": _EDIT_TOOL_MATCHER,
-        "command": hook_command,
-    }
-
-    # Deep-merge into hooks.json (idempotent)
-    existing: dict[str, Any] = {}
-    if hooks_json_path.exists():
-        try:
-            raw = hooks_json_path.read_text(encoding="utf-8")
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                existing = parsed
-        except (OSError, json.JSONDecodeError) as exc:
-            log.warning(
-                "ag03_hooks_json_parse_failed",
-                path=str(hooks_json_path),
-                error=str(exc),
-                outcome="warning",
-            )
-            # Start fresh — don't corrupt the file
-
-    merged = _merge_hooks_json(existing, hook_entry, event_key=_PRE_TOOL_USE_EVENT)
-
-    try:
-        write_checkout_file(target_dir, hooks_json_path, json.dumps(merged, indent=2) + "\n")
-    except (OSError, UnsafeWriteError) as exc:
-        log.warning(
-            "ag03_hooks_json_write_failed",
-            path=str(hooks_json_path),
-            error=str(exc),
-            outcome="error",
-        )
-        return {
-            "installed": False,
-            "hook_script_path": str(hook_script_path),
-            "hooks_json_path": str(hooks_json_path),
-            "skipped": False,
-            "error": f"Failed to write hooks.json: {exc}",
-        }
-
-    log.debug(
-        "ag03_hook_installed",
-        hook_script=str(hook_script_path),
-        hooks_json=str(hooks_json_path),
-        event_key=_PRE_TOOL_USE_EVENT,
-        matcher=_EDIT_TOOL_MATCHER,
-        outcome="installed",
-    )
-
-    return {
-        "installed": True,
-        "hook_script_path": str(hook_script_path),
-        "hooks_json_path": str(hooks_json_path),
-        "skipped": False,
-        "error": None,
-    }
+    log.debug("ag03_hook_installed", hooks_json=str(hooks_json_path), matcher=_EDIT_TOOL_MATCHER, outcome=status)
+    return _result(target_dir, installed=True, status=status)

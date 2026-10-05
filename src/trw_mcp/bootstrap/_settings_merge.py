@@ -8,6 +8,7 @@ back-compat with callers/tests that import via
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import structlog
@@ -173,6 +174,15 @@ def _merge_settings_json(
                     known.add(identity)
         existing["hooks"] = existing_hooks
 
+    # statusLine is a single object, not a hook list: ownership (PRD-CORE-354 FR06)
+    # decides whether TRW may add, rewrite or remove it.
+    root = dest.parents[1]
+    note = _reconcile_statusline(
+        existing, bundled.get("statusLine"), statusline_enabled(root), shadowed=statusline_shadowed(root)
+    )
+    if note:
+        result.setdefault("notes", []).append(note)
+
     # No-op detection (aligns with _update_or_report's _files_identical): when
     # the merge output is byte-identical to what is already on disk there is
     # nothing to write (PRD-INFRA-190 FR03).
@@ -215,3 +225,99 @@ def _set_hook_registration(settings: Path, event: str, entry: dict[str, object],
     data["hooks"] = hooks
     write_checkout_file(settings.parents[1], settings, json.dumps(data, indent=2) + "\n")
     return True
+
+
+# PRD-CORE-354 FR06: a ``statusLine`` is TRW-owned only when its command runs the
+# project-relative script (``$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh``, optionally
+# braced/quoted and prefixed ``sh``/``bash``). A user's own ``~/.claude/hooks/statusline.sh`` is not.
+STATUSLINE_CONFIG_KEY = "claude_code_statusline"
+_TRW_STATUSLINE_RE = re.compile(
+    r"""^\s*(?:(?:sh|bash)\s+)?["']?\$\{?CLAUDE_PROJECT_DIR\}?/\.claude/hooks/statusline\.sh["']?(?:\s.*)?$""",
+    re.DOTALL,
+)
+
+
+def is_trw_statusline(value: object) -> bool:
+    """``True`` when *value* is a ``statusLine`` object whose command runs TRW's script."""
+    command = value.get("command") if isinstance(value, dict) else None
+    return isinstance(command, str) and _TRW_STATUSLINE_RE.match(command) is not None
+
+
+def _user_home() -> Path:
+    return Path.home()
+
+
+def statusline_shadowed(root: Path) -> bool:
+    """``True`` when a non-TRW ``statusLine`` exists in a scope project settings would override.
+
+    Project ``.claude/settings.json`` outranks ``~/.claude/settings.json``, so adding TRW's
+    entry would hide the user's own; ``.claude/settings.local.json`` outranks the project file.
+    """
+    for path in (_user_home() / ".claude" / "settings.json", root / ".claude" / "settings.local.json"):
+        data = read_json_object(path, context="statusline_shadow")
+        value = data.get("statusLine") if data is not None else None
+        if value is not None and not is_trw_statusline(value):
+            return True
+    return False
+
+
+def statusline_enabled(root: Path) -> bool:
+    """Opt-out switch: ``claude_code_statusline: false`` in ``.trw/config.yaml``.
+
+    Read ad hoc (top-level key, owned outside ``TRWConfig`` like ``cc03_hook_enabled``)
+    so an install toggle needs no config-model field. Anything unreadable means enabled.
+    """
+    try:
+        import yaml
+
+        raw = yaml.safe_load((root / ".trw" / "config.yaml").read_text(encoding="utf-8"))
+    except Exception:  # justified: fail-open, a bad config must not block install
+        return True
+    return not (isinstance(raw, dict) and raw.get(STATUSLINE_CONFIG_KEY) is False)
+
+
+def _reconcile_statusline(data: dict[str, object], bundled: object, enabled: bool, *, shadowed: bool = False) -> str:
+    """Apply the FR06 ownership rule to ``data["statusLine"]`` in place; returns a note when TRW removes its own."""
+    current = data.get("statusLine")
+    if current is not None and not is_trw_statusline(current):
+        return ""  # the user's own statusLine is never touched
+    if not enabled:
+        data.pop("statusLine", None)
+    elif shadowed:
+        # A user/local statusLine must stay visible: withdraw only an entry TRW itself wrote.
+        if current is not None:
+            data.pop("statusLine")
+            return "removed TRW statusLine: a user-level or local statusLine takes precedence"
+    elif is_trw_statusline(bundled):
+        data["statusLine"] = bundled
+    return ""
+
+
+def apply_statusline_registration(target_dir: Path) -> bool:
+    """Idempotently reconcile ``.claude/settings.json``'s statusLine; ``True`` when it changed.
+
+    Covers what the merge cannot: a fresh whole-template copy under opt-out, and
+    the re-apply after the uncommitted-changes guard (same reason as CC-03).
+    """
+    settings = target_dir / ".claude" / "settings.json"
+    data = read_json_object(settings, context="statusline_registration")
+    bundled = read_json_object(_data_dir() / "settings.json", context="statusline_bundled")
+    if data is None or bundled is None:
+        return False
+    before = json.dumps(data, sort_keys=True)
+    _reconcile_statusline(
+        data,
+        bundled.get("statusLine"),
+        statusline_enabled(target_dir),
+        shadowed=statusline_shadowed(target_dir),
+    )
+    if json.dumps(data, sort_keys=True) == before:
+        return False
+    write_checkout_file(target_dir, settings, json.dumps(data, indent=2) + "\n")
+    return True
+
+
+def _data_dir() -> Path:
+    from ._utils import _DATA_DIR
+
+    return Path(_DATA_DIR)

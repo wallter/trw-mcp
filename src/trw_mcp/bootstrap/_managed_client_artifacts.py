@@ -582,7 +582,7 @@ MANAGED_CLIENT_ARTIFACT_SOURCES: tuple[ManagedArtifactSource, ...] = (
     ManagedArtifactSource("claude-code", ".claude/agents", _claude_explorer_agent, _claude_licence_gated),
     ManagedArtifactSource("claude-code", ".claude/hooks", _cc03_hook_scripts),
     ManagedArtifactSource("codex", ".codex/hooks", _codex_post_edit_hook),
-    ManagedArtifactSource("antigravity-cli", ".antigravitycli/hooks", _antigravity_before_edit_hook),
+    ManagedArtifactSource("antigravity-cli", ".agents/hooks", _antigravity_before_edit_hook),
     ManagedArtifactSource("cursor-ide", ".cursor/hooks", _cursor_ide_hook_scripts),
     ManagedArtifactSource("cursor-cli", ".cursor", _cursor_cli_default_config),
     ManagedArtifactSource("copilot", ".github/hooks", _copilot_hook_scripts),

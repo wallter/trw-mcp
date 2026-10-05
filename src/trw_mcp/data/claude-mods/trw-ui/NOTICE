@@ -1,0 +1,20 @@
+trw-ui (TRW Claude Mod)
+
+First-party TRW content, licensed under BUSL-1.1 (see LICENSE).
+
+Portions of register.ts are adapted from Anthropic's sample mods in
+https://github.com/anthropics/claude-code-playground (claude-code/mods/token-weather
+and claude-code/mods/blast-radius), which are licensed under the Apache License,
+Version 2.0:
+
+  Copyright 2026 Anthropic PBC
+  SPDX-License-Identifier: Apache-2.0
+
+What was adapted: the shape of a band hook (ui.render on AbovePrompt that returns
+next(e) when idle), the pane-open-with-isPlaced pattern with a band fallback, and
+the refresh-on-turn.complete pattern. The code was rewritten in TypeScript for a
+different data source; no sample file is shipped unchanged. The Apache-2.0 license
+text applies to those portions: http://www.apache.org/licenses/LICENSE-2.0
+
+The official built-in mods in anthropics/claude-code (not open source) were read
+for patterns only; none of their code is used.

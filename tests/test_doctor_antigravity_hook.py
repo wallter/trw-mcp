@@ -16,7 +16,7 @@ def test_row_passes_when_nothing_is_installed(tmp_path: Path) -> None:
     status, message = antigravity_hook_row(tmp_path)
 
     assert status == "PASS"
-    assert "no TRW AG-03 hook" in message
+    assert "no legacy TRW AG-03 hook" in message
 
 
 def test_row_warns_on_a_trw_hook_in_the_legacy_file_agy_does_not_read(tmp_path: Path) -> None:

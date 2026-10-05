@@ -43,6 +43,7 @@ def agents_link_section() -> str:
 #: TRW's block in a user's own root CLAUDE.md (operator ruling 2026-10-01). Claude Code skips AGENTS.md while a
 #: CLAUDE.md exists, so the block imports TRW's context directly and names AGENTS.md in plain text only: the two
 #: files may differ, and importing one into the other would repeat or contradict the user's own instructions.
+#: A CLAUDE.md that already imports AGENTS.md (and so TRW's import) gets no block (``link_claude_md``).
 CLAUDE_LINK_BODY = (
     f"TRW workflow, tools and deliver gate: [{INSTRUCTIONS_RELPATH}]({INSTRUCTIONS_RELPATH}), imported below. "
     "Claude Code does not load AGENTS.md while this CLAUDE.md exists; if this project also keeps instructions "
@@ -72,6 +73,19 @@ def fenced_line_indices(text: str) -> set[int]:
         if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence) and not match.group(2).strip():
             fence = None
     return fenced
+
+
+#: Claude Code's import syntax: an ``@path`` token at the start of a line or after whitespace.
+_IMPORT_TOKEN = re.compile(r"(?:^|\s)@(\S+)", re.MULTILINE)
+#: CommonMark code span: a run of N backticks closed by the next run of exactly N.
+_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
+
+
+def live_imports(text: str) -> list[str]:
+    """The ``@path`` imports Claude Code expands from *text*, in order; code spans and fenced blocks are inert."""
+    fenced = fenced_line_indices(text)
+    live = "\n".join(_CODE_SPAN.sub("", line) for i, line in enumerate(text.splitlines()) if i not in fenced)
+    return _IMPORT_TOKEN.findall(live)
 
 
 def claude_md_link_section() -> str:
@@ -162,6 +176,7 @@ __all__ = [
     "INSTRUCTIONS_RELPATH",
     "LINK_BODY",
     "agents_link_section",
+    "live_imports",
     "render_instructions_body",
     "render_instructions_file",
     "write_instructions_file",

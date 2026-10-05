@@ -83,8 +83,74 @@ def _run_config_reference(args: argparse.Namespace) -> None:
         )
 
 
+def _local_status_machine(args: argparse.Namespace, fmt: str) -> None:
+    """``local status --json`` / ``--format line`` (PRD-CORE-354 FR01/FR03/FR04).
+
+    Session-keyed and pin-only: no pin is ``run.state == "none"`` (exit 0), not
+    the plain-text refusal. Imports only the status modules, so the statusLine hot
+    path never loads the service layer. Line mode never fails: any error prints
+    the fallback line and exits 0.
+    """
+    import os
+
+    try:
+        from trw_mcp.services.status_snapshot import load_or_build_snapshot
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        session_id = (
+            getattr(args, "session_id", None)
+            or os.environ.get("TRW_SESSION_ID")
+            or os.environ.get("CLAUDE_CODE_SESSION_ID")
+            or None
+        )
+        run_path_str = getattr(args, "run_path", None)
+        try:
+            from trw_mcp.server._cli_replacements import _bounded_lane_active
+
+            # A reviewer/dispatched-child lane runs `local status` as a read-only
+            # verb; the opt-in cache is its only write, so the lane gets none.
+            allow_cache_write = _bounded_lane_active() is None
+        except Exception:  # justified: fail-open, an unknown lane state disables the cache write
+            allow_cache_write = False
+        snapshot = load_or_build_snapshot(
+            resolve_trw_dir(),
+            session_id,
+            cache_ttl_s=getattr(args, "cache_ttl", None),
+            allow_cache_write=allow_cache_write,
+            run_path=Path(run_path_str) if run_path_str else None,
+        )
+        if fmt == "json":
+            print(json.dumps(snapshot, indent=2))
+            return
+        from trw_mcp.services.status_line import render_status_line
+
+        line = render_status_line(snapshot)
+        print(line)
+        ttl = getattr(args, "cache_ttl", None)
+        # The line cache mirrors the JSON cache's guards: opt-in TTL, no explicit run path, lane may write.
+        if allow_cache_write and ttl and ttl > 0 and not run_path_str:
+            try:
+                from trw_mcp.services.status_snapshot import write_cached_line
+
+                write_cached_line(resolve_trw_dir(), session_id, line)
+            except Exception:  # justified: fail-open, a failed cache write never fails the status call
+                pass  # trw-fail-silent-allow: cache is an optimisation
+    except Exception as exc:  # justified: boundary, a status surface must never break its caller
+        if fmt == "line":
+            print("TRW · status unavailable")
+            return
+        print(f"Error: status snapshot failed ({type(exc).__name__}: {exc})", file=sys.stderr)
+        sys.exit(1)
+
+
 def _run_local(args: argparse.Namespace) -> None:
     """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
+    if getattr(args, "local_command", None) == "status":
+        fmt = "json" if getattr(args, "json", False) else str(getattr(args, "status_format", "text") or "text")
+        if fmt in {"json", "line"}:
+            _local_status_machine(args, fmt)
+            return
+
     from trw_memory.exceptions import MemoryError as TrwMemoryError
 
     from trw_mcp.services.orchestration_service import (

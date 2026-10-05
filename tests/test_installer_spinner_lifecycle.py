@@ -80,18 +80,22 @@ def test_a_prompt_stops_a_spinner_nobody_stopped(installer: Any, capsys: pytest.
     assert _spinner_threads() == baseline
 
 
-_RETIRE_CHILD = (
-    "import time; print('Removed retired TRW file: .claude/agents/trw-old.md', flush=True); "
-    "print('Updated: a-file', flush=True); time.sleep(0.3)"
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Removed retired TRW file: .claude/agents/trw-old.md",
+        "CLAUDE.md: removed TRW's block (it already imports AGENTS.md, which imports .trw/INSTRUCTIONS.md)",
+    ],
 )
-
-
-def test_a_removed_retired_file_line_survives_the_spinner(installer: Any, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_line_naming_an_edit_to_the_operators_files_survives_the_spinner(
+    installer: Any, capsys: pytest.CaptureFixture[str], line: str
+) -> None:
     import sys
 
+    child = f"import time; print({line!r}, flush=True); print('Updated: a-file', flush=True); time.sleep(0.3)"
     ui = installer.UI(interactive=True)
-    assert installer.run_with_progress(ui, "Updating", [sys.executable, "-c", _RETIRE_CHILD])
+    assert installer.run_with_progress(ui, "Updating", [sys.executable, "-c", child])
     ui.stop_spinner(True, "configured")
     out = capsys.readouterr().out
-    assert "Removed retired TRW file: .claude/agents/trw-old.md" in out
+    assert line in out
     assert _spinner_threads() == 0

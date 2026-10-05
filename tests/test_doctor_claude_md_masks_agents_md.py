@@ -103,7 +103,8 @@ def test_the_row_is_registered_in_doctor() -> None:
 def test_update_project_keeps_a_root_claude_md_and_adds_only_trws_block(initialized_repo: Path, content: str) -> None:
     """Never trashed, moved or warned about: TRW's marked block is added (or an old one replaced), nothing else.
 
-    The adapter case is FB-INSTALL-02's guarantee: a lone ``@AGENTS.md`` CLAUDE.md is the user's and stays.
+    The adapter case is FB-INSTALL-02's guarantee: a lone ``@AGENTS.md`` CLAUDE.md is the user's and stays, and
+    since it already loads TRW's import through AGENTS.md it stays byte-for-byte, with no block (9.0.1 fix).
     """
     from trw_mcp.bootstrap import update_project
 
@@ -124,6 +125,9 @@ def test_update_project_keeps_a_root_claude_md_and_adds_only_trws_block(initiali
 
 def _assert_kept_with_trw_block(claude_md: Path, content: str) -> None:
     text = claude_md.read_text(encoding="utf-8")
+    if content == "@AGENTS.md\n":
+        assert text == content, "a shim that already reaches TRW's import through AGENTS.md is left alone"
+        return
     assert "@.trw/INSTRUCTIONS.md" in text and text.count("<!-- trw:start -->") == 1
     if "<!-- trw:start -->" in content:
         assert "old TRW block" not in text, "an old TRW-marked block is TRW's to replace"

@@ -512,6 +512,7 @@ class DispatchResult(BaseModel):
             "'credential_refresh_conflict' (another process spent the rotating OAuth refresh token; retried "
             "once behind the credential lock), "
             "'sandbox_unsupported' or 'client_unsupported' (the installed CLI lacks a flag dispatch passes; "
+            "nothing was run), 'concurrency_cap' (every dispatch child slot stayed busy, PRD-CORE-355; "
             "nothing was run), 'nonzero_exit', 'empty_output', or None when the answer is usable. Exists "
             "because a caller that sees only empty findings cannot tell a clean review from "
             "a child that never ran (PRD-CORE-277-FR04)."
@@ -534,7 +535,8 @@ class DispatchResult(BaseModel):
     @property
     def error_class(self) -> str | None:
         """The remedy class when the run produced no usable answer (PRD-CORE-304-FR01): provider_capacity,
-        quota, credential_refresh_conflict, auth, content_stop, timeout or unknown; ``None`` otherwise."""
+        quota, credential_refresh_conflict, concurrency_cap, auth, content_stop, timeout or unknown; ``None``
+        otherwise."""
         from trw_mcp.dispatch._error_class import error_class  # it imports _normalize, which imports this module
 
         return error_class(self.silence_reason, self.structured, self.raw_stderr)

@@ -72,8 +72,8 @@ from trw_mcp.server._subcommands_release import (
 from trw_mcp.server._subcommands_release import (
     _run_version_status as _run_version_status,
 )
-from trw_mcp.server._update_report import print_retired as _print_retired
-from trw_mcp.server._update_report import report_kept
+from trw_mcp.server._update_report import print_claude_md as _print_claude_md
+from trw_mcp.server._update_report import report_kept, report_removed
 
 logger = structlog.get_logger(__name__)
 
@@ -145,26 +145,30 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
         _print_cli_line("Use 'trw-mcp -v update-project ...' for per-file changes or --log-json for structured output.")
 
 
+def _phase_progress(event: str, op: str, *, detailed: bool, quiet: bool) -> Callable[[str, str], None]:
+    """init/update-project's progress callback: a structured log line under ``-v``, else ``==> <phase>``."""
+
+    def _progress(action: str, path: str) -> None:
+        if detailed:
+            logger.info(event, op=op, action=action, path=path)
+        elif not quiet and action == "Phase":
+            _print_cli_line(f"==> {path}")
+
+    return _progress
+
+
 def _run_init_project(args: argparse.Namespace) -> None:
     """Handle the ``init-project`` subcommand."""
     from trw_mcp.bootstrap import init_project
 
     target = Path(args.target_dir).resolve()
-    detailed = _is_detailed_cli(args)
-    quiet = _is_quiet_cli(args)
-
-    def _progress(action: str, path: str) -> None:
-        if detailed:
-            logger.info("init_progress", op="init_project", action=action, path=path)
-        elif not quiet and action == "Phase":
-            _print_cli_line(f"==> {path}")
-
+    detailed, quiet = _is_detailed_cli(args), _is_quiet_cli(args)
     result = init_project(
         target,
         force=args.force,
         runs_root=getattr(args, "runs_root", ".trw/runs"),
         ide=getattr(args, "ide", None),
-        on_progress=_progress,
+        on_progress=_phase_progress("init_progress", "init_project", detailed=detailed, quiet=quiet),
     )
 
     for e in result["errors"]:
@@ -187,6 +191,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
             _print_cli_line(
                 f"Changes: {len(updated)} updated, {len(result['created'])} created, {len(preserved)} preserved"
             )
+            _print_claude_md(result.get("claude_md", []))
             _print_warning_block(result.get("warnings", []))
             _print_cli_line("")
             _print_cli_line("Next: run your AI coding tool in this directory.")
@@ -201,19 +206,12 @@ def _run_update_project(args: argparse.Namespace) -> None:
     target = Path(args.target_dir).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
     detailed, quiet = _is_detailed_cli(args), _is_quiet_cli(args)
-
-    def _progress(action: str, path: str) -> None:
-        if detailed:
-            logger.info("update_progress", op="update_project", action=action, path=path)
-        elif not quiet and action == "Phase":
-            _print_cli_line(f"==> {path}")
-
     result = update_project(
         target,
         pip_install=args.pip_install,
         dry_run=dry_run,
         ide=getattr(args, "ide", None),
-        on_progress=_progress,
+        on_progress=_phase_progress("update_progress", "update_project", detailed=detailed, quiet=quiet),
         reprovision=getattr(args, "reprovision", None),
     )
 
@@ -226,7 +224,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         # had NO errors — so the runs most likely to carry a warning were
         # exactly the runs that swallowed it.
         _print_warning_block(result.get("warnings", []))
-        _print_retired(result.get("retired", []), result.get("warnings", []))
+    report_removed(result, detailed=detailed, quiet=quiet)
     report_kept(result, target, detailed=detailed, quiet=quiet)
     for e in result["errors"]:
         if detailed:

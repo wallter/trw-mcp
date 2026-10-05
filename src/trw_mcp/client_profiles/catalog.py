@@ -385,6 +385,11 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # ``antigravity-hook-map`` strategy matches this shape by command path,
         # so the hook is removed without discarding user entries.
         UninstallSurface(".antigravitycli/hooks.json", merged_config=True, config_shape="antigravity-hook-map"),
+        # AG03-HOOK-REENABLE: the hook's current home. agy 1.2.x reads <workspace>/.agents/hooks.json, a user-owned
+        # file of NAMED hooks, so only TRW's named entry is stripped (`antigravity-named-hooks`), and the script is
+        # a file surface: `.agents/hooks/` can hold the user's own hook scripts.
+        UninstallSurface(".agents/hooks.json", merged_config=True, config_shape="antigravity-named-hooks"),
+        UninstallSurface(".agents/hooks/trw_before_edit_telemetry.py"),
         UninstallSurface(".antigravitycli/hooks"),
         # ``bootstrap/_antigravity_cli.py::generate_antigravity_mcp_config`` writes the
         # ``mcpServers.trw`` entry into the GLOBAL agy config (PRD-FIX-133); without a

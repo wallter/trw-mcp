@@ -35,6 +35,7 @@ from trw_mcp.server._uninstall_hook_strips import (
     _strip_copilot_hook_groups,
     _strip_legacy_claude_md,
     _strip_trw_antigravity_hooks,
+    _strip_trw_antigravity_named_hooks,
     _strip_trw_claude_settings,
     _strip_trw_cursor_hooks,
 )
@@ -531,4 +532,5 @@ _STRIP_STRATEGIES: dict[str, StripStrategy] = {
     "opencode-config": _strip_trw_opencode,
     "cursor-hook-list": _strip_trw_cursor_hooks,
     "antigravity-hook-map": _strip_trw_antigravity_hooks,
+    "antigravity-named-hooks": _strip_trw_antigravity_named_hooks,
 }

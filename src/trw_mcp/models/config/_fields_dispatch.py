@@ -32,6 +32,9 @@ DEFAULT_DISPATCH_MAX_TURNS: int = 30
 # binary, not to trim a working one.
 DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS: int = 5
 
+#: PRD-CORE-355-FR01: how long a top-level dispatch waits for a free child slot.
+DEFAULT_DISPATCH_SLOT_WAIT_SECS: float = 600.0
+
 
 class _DispatchFields:
     """Cross-client dispatch domain mixin — mixed into _TRWConfigFields via MI."""
@@ -76,6 +79,38 @@ class _DispatchFields:
         default=DEFAULT_DISPATCH_MAX_TURNS,
         ge=0,
         description="Turn cap for dispatched children (clients with a verified flag only); 0 disables it.",
+    )
+    # PRD-CORE-355-FR01/FR02: per-USER bound on concurrently running dispatch
+    # children (sync, fan-out and background), shared across processes through
+    # ``~/.trw/runtime/dispatch-slots``. 0 turns it off and touches no slot file.
+    # Read by ``dispatch._slots.slot_settings`` -> ``dispatch._runner.dispatch``.
+    dispatch_max_concurrent_children: int = Field(
+        default=0,
+        ge=0,
+        le=64,
+        description=(
+            "Per-user cap on concurrently running dispatch children across processes; 0 disables it. "
+            "Participants with different caps share the slot files, so the largest active cap wins."
+        ),
+    )
+    # PRD-CORE-355-FR03: bounded wait for a slot before a named refusal.
+    dispatch_slot_wait_s: float = Field(
+        default=DEFAULT_DISPATCH_SLOT_WAIT_SECS,
+        ge=0,
+        le=7200,
+        description=(
+            "Seconds a top-level dispatch waits for a free child slot before refusing with "
+            "silence_reason concurrency_cap; a nested dispatch never waits."
+        ),
+    )
+    # PRD-CORE-355-FR06: refuse a dispatch whose effort resolves to nothing for a
+    # client that can carry one. Off by default.
+    dispatch_require_effort: bool = Field(
+        default=False,
+        description=(
+            "Refuse (exit 2) a dispatch with no effort from --effort, dispatch_default_effort or the "
+            "role table when its client and model accept an effort; clients without a carrier pass."
+        ),
     )
     # Per-probe wall-clock bound for the doctor ``formation_readiness`` version
     # probe (PRD-CORE-266-NFR01). A typed field rather than a literal because it

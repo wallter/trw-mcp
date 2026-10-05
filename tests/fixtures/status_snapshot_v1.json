@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-04T01:12:30.512345+00:00",
+  "session_id": "b2ecd4c9-1ad3-4978-83b3-a9424cece258",
+  "client": "claude-code",
+  "run": {
+    "state": "ok",
+    "run_id": "20261004T001509Z-7eabc79e",
+    "task": "claude-code-status-and-mods",
+    "phase": "implement",
+    "status": "active",
+    "run_path": "/home/dev/project/.trw/runs/claude-code-status-and-mods/20261004T001509Z-7eabc79e",
+    "as_of": "2026-10-04T01:12:30.512345+00:00"
+  },
+  "checkpoint": {
+    "state": "ok",
+    "count": 4,
+    "last_ts": "2026-10-04T01:00:02.100000+00:00",
+    "age_s": 748,
+    "scope": "run",
+    "as_of": "2026-10-04T01:12:30.512345+00:00"
+  },
+  "evidence": {
+    "build": {
+      "state": "passed",
+      "scope": "run",
+      "ts": "2026-10-04T00:58:11.000000+00:00",
+      "test_count": 57,
+      "build_scope": "targeted: tests/test_status_snapshot.py tests/test_status_line_render.py"
+    },
+    "review": {"state": "none", "scope": "run", "ts": null},
+    "deliver": {"state": "none", "scope": "run", "ts": null},
+    "as_of": "2026-10-04T01:12:30.512345+00:00"
+  },
+  "gate_preview": {
+    "state": "ready",
+    "summary": "READY (advisory: no review recorded — run trw_review())",
+    "preview": true,
+    "as_of": "2026-10-04T01:12:30.512345+00:00"
+  },
+  "project_aggregate": {
+    "build_check_result": "passed",
+    "review_verdict": "block",
+    "deliver_called": false,
+    "scope": "project_aggregate"
+  },
+  "inbox": {
+    "state": "ok",
+    "pending": 2,
+    "formation_id": "status-surfaces",
+    "as_of": "2026-10-04T01:12:30.512345+00:00"
+  },
+  "degraded": {"state": "no"},
+  "unknown": []
+}

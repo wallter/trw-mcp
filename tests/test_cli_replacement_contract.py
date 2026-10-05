@@ -280,17 +280,18 @@ def test_a_read_only_fake_entry_runs_under_both_guards(
 def test_planted_negative_entry_without_json_handling_fails_the_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``local status`` has no ``--json`` support: claiming it in the registry
-    must NOT pass the ``--json`` check above."""
+    """``local checkpoint`` has no ``--json`` support: claiming it in the registry
+    must NOT pass the ``--json`` check above. (``local status`` gained ``--json``
+    in PRD-CORE-354, so the planted verb moved to one that still lacks it.)"""
     run_path = _init_run(tmp_path, monkeypatch, capsys)
     capsys.readouterr()
 
     fake = CliReplacement(
-        command="local status", replaces="", state_changing=False, summary="fixture: no --json support"
+        command="local checkpoint", replaces="", state_changing=True, summary="fixture: no --json support"
     )
     monkeypatch.setattr("trw_mcp.server._cli_replacements.CLI_REPLACEMENTS", (fake,))
 
-    code = _run_cli(["local", "status", "--run-path", run_path, "--json"], tmp_path, monkeypatch)
+    code = _run_cli(["local", "checkpoint", "--message", "m", "--run-path", run_path, "--json"], tmp_path, monkeypatch)
     out = capsys.readouterr().out
 
     assert code != 0  # argparse rejects the unrecognized --json flag

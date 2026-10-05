@@ -54,6 +54,7 @@ from trw_mcp.dispatch._posture import (
 from trw_mcp.dispatch._process_identity import capture_identity, signal_group
 from trw_mcp.dispatch._runner_results import _early_result as _early_result
 from trw_mcp.dispatch._sandbox_probe import SandboxProbe, probe_write_containment
+from trw_mcp.dispatch._slots import held_slot_env, run_capped
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
 logger = structlog.get_logger(__name__)
@@ -188,13 +189,25 @@ def _wrap_pty(argv: list[str]) -> list[str]:
 
 
 def dispatch(
-    req: DispatchRequest, *, pid_callback: Callable[[int], None] | None = None, _lane_home: Path | None = None
+    req: DispatchRequest,
+    *,
+    pid_callback: Callable[[int], None] | None = None,
+    slot_wait_s: float | None = None,
+    _lane_home: Path | None = None,
 ) -> DispatchResult:
     """Run *req* (:func:`_run_once`): once more after a capacity or credential-refresh failure, and behind the
-    client's credential lock when its login could expire during the run (PRD-CORE-304-FR02/FR03)."""
+    client's credential lock when its login could expire during the run (PRD-CORE-304-FR02/FR03).
+
+    With ``dispatch_max_concurrent_children`` > 0 the whole run holds one per-user child slot, taken BEFORE
+    the credential lock (PRD-CORE-355-FR02/FR05); no free slot in time is a ``concurrency_cap`` refusal
+    that launches nothing (FR03/FR04). Cap 0 takes no slot and touches no file (NFR01). *slot_wait_s* lowers
+    the slot wait for a caller that cannot block long (the MCP tool); None keeps the configured wait."""
     run = lambda one: _run_once(one, pid_callback=pid_callback, _lane_home=_lane_home)  # noqa: E731
     refuse = lambda why: _early_result(req, [], exit_code=-1, stderr=why, silence_reason="credential_refresh_conflict")  # noqa: E731
-    return run_dispatch(req, run, refuse)
+    # trw:intentional only ``_run_job`` passes pid_callback, which marks the background path (FR02).
+    return run_capped(
+        req, lambda: run_dispatch(req, run, refuse), background=pid_callback is not None, max_wait_s=slot_wait_s
+    )
 
 
 def _run_once(
@@ -281,10 +294,7 @@ def _run_once(
     # checked, so an unwrapped launch still reports through Popen as before.
     if (confine_argv or req.use_pty) and not _binary_resolves(argv[0], req.cwd):
         return _early_result(
-            req,
-            redacted_base,
-            exit_code=-127,
-            stderr=f"Failed to launch {req.client!r}: {argv[0]!r} not found on PATH",
+            req, redacted_base, exit_code=-127, stderr=f"Failed to launch {req.client!r}: {argv[0]!r} not found on PATH"
         )
     if req.use_pty:
         run_argv = _wrap_pty(argv)
@@ -300,16 +310,13 @@ def _run_once(
     env = build_subprocess_env(req.client, posture=req.posture, with_trw=req.with_trw, read_only=req.read_only)
     if _lane_home is not None:
         env["HOME"] = str(_lane_home)
+    # PRD-CORE-355-FR04: a child of a slot holder sees the marker, so its own dispatches never wait.
+    env.update(held_slot_env())
 
     # Validate cwd in the RUNNER (not just the CLI) so the future MCP path is
     # protected too: a non-directory cwd would make subprocess raise.
     if req.cwd is not None and not req.cwd.is_dir():
-        return _early_result(
-            req,
-            argv_redacted,
-            exit_code=-1,
-            stderr=f"cwd is not a directory: {req.cwd}",
-        )
+        return _early_result(req, argv_redacted, exit_code=-1, stderr=f"cwd is not a directory: {req.cwd}")
     cwd = str(req.cwd) if req.cwd is not None else None
     # Before any child runs: an installed CLI that lacks a flag TRW passes it
     # either rejects the argv or (the copilot shim) answers exit 0 with an
@@ -368,6 +375,8 @@ def _run_once(
             cwd=cwd,
             env=env,
             start_new_session=_POSIX,
+            # PRD-CORE-355-FR05: no descriptor (a dispatch slot's flock above all) outlives its owner in a child.
+            close_fds=True,
         )
     except OSError as exc:
         # Missing binary / not executable / permission denied: a clean failure,

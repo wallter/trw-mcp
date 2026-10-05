@@ -1,4 +1,4 @@
-"""``trw-mcp doctor`` row for the AG-03 Antigravity hook location (UF-BOOT-08).
+"""``trw-mcp doctor`` row for the AG-03 Antigravity hook location (UF-BOOT-08, AG03-HOOK-REENABLE).
 
 Belongs to the ``_subcommands_doctor.py`` facade.
 
@@ -7,7 +7,8 @@ Earlier TRW versions wrote a PreToolUse hook to ``.antigravitycli/hooks.json`` (
 ``<workspace>/.agents/hooks.json`` in a grouped, named-hook schema and does not list the
 legacy file (observed with ``agy -p /hooks --output-format json`` in a scratch workspace,
 2026-10-02), so that registration never fires.  The bootstrap no longer writes it; this row
-tells an operator who still has one so they can delete it.  Read-only.
+tells an operator who still has one so they can delete it.  TRW writes the hook again, at the path agy does read
+(``.agents/hooks.json``, named-hook schema): ``update-project`` installs it.  Read-only.
 """
 
 from __future__ import annotations
@@ -46,10 +47,13 @@ def antigravity_hook_row(target: Path) -> tuple[str, str]:
     if (target / _LEGACY_SCRIPT).is_file():
         found.append(_LEGACY_SCRIPT)
     if not found:
-        return "PASS", "no TRW AG-03 hook installed (agy reads hooks from .agents/hooks.json; TRW writes none)."
+        return (
+            "PASS",
+            "no legacy TRW AG-03 hook found (agy reads hooks from .agents/hooks.json, where TRW now writes it).",
+        )
     return (
         "WARN",
-        f"{', '.join(found)} is a TRW AG-03 hook left by an earlier version; agy 1.2.14 reads "
-        ".agents/hooks.json (grouped named-hook schema), so it never fires. Remove the TRW hook entry/script (keep any "
-        "of your own entries); TRW no longer writes them.",
+        f"{', '.join(found)} is a TRW AG-03 hook left by an earlier version; agy 1.2.x reads "
+        ".agents/hooks.json (grouped named-hook schema), so it never fires. Run `trw-mcp update-project` to install "
+        "the current hook, then remove the old TRW hook entry/script (keep any of your own entries).",
     )

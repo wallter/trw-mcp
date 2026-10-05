@@ -341,6 +341,7 @@ class TestHooks:
         "pre-tool-intent-guard.sh",  # PRD-SEC-013 FR05
         "session-end.sh",
         "session-start.sh",
+        "statusline.sh",
         "stop-ceremony.sh",
         "subagent-start.sh",
         "subagent-stop.sh",

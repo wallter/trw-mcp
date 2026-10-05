@@ -29,15 +29,31 @@ _KEPT_REASONS = {
 }
 _KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
 
-__all__ = ["kept_files", "print_kept", "print_retired", "report_kept"]
+__all__ = [
+    "kept_files",
+    "print_claude_md",
+    "print_kept",
+    "print_retired",
+    "removed_files",
+    "report_kept",
+    "report_removed",
+]
 
 
 def _display_path(path: str, target: Path) -> str:
-    """*path* relative to the project when it is inside it, else as given."""
-    try:
-        return Path(path).relative_to(target).as_posix()
-    except ValueError:
-        return path
+    """*path* relative to the project when it is inside it, else as given.
+
+    A file at the project root is shown as ``./NAME``: a bare ``kept FRAMEWORK.md`` read as "some FRAMEWORK.md",
+    when it is the root reference copy, not ``.trw/frameworks/FRAMEWORK.md`` (9.0.1 upgrade report).
+    """
+    candidate = Path(path)
+    if candidate.is_absolute():
+        base = next((b for b in (target, target.resolve()) if candidate.is_relative_to(b)), None)
+        if base is None:
+            return path
+        candidate = candidate.relative_to(base)
+    rel = candidate.as_posix()
+    return rel if "/" in rel else f"./{rel}"
 
 
 def kept_files(result: dict[str, list[str]], target: Path) -> list[tuple[str, str]]:
@@ -76,8 +92,43 @@ def print_retired(paths: list[str], described: list[str] | None = None) -> None:
         print(f"Removed retired TRW file: {printable(path)}")
 
 
+def print_claude_md(edits: list[str], *, detailed: bool = False, quiet: bool = False) -> None:
+    """One ``CLAUDE.md: <what TRW did>`` line per edit to the user's CLAUDE.md (``link_claude_md``).
+
+    The file is the user's, so no edit to it is silent; ``install-trw.py`` re-surfaces these lines past its spinner.
+    Under ``-v`` each is a structured log line instead; ``--quiet`` prints nothing.
+    """
+    for edit in edits if not quiet else []:
+        if detailed:
+            logger.info("claude_md_edited", path="CLAUDE.md", detail=edit)
+        else:
+            print(f"CLAUDE.md: {printable(edit)}")
+
+
+def removed_files(result: dict[str, list[str]]) -> list[str]:
+    """Every file this update deleted, once each, sorted: the retirements plus the transaction diff's deletions.
+
+    ``retired`` is filled only by the retirement sweeps; ``cleaned`` is the snapshot-vs-final diff of the whole
+    managed surface, so a deletion by any other writer is still named (the trw-prd-new removal of a 9.0.1 upgrade,
+    deleted from three skill trees with no output line).
+    """
+    return sorted({str(p) for p in (*result.get("retired", []), *result.get("cleaned", []))})
+
+
+def report_removed(result: dict[str, list[str]], *, detailed: bool, quiet: bool) -> None:
+    """Name every deleted file: structured log lines under ``-v``, plain lines otherwise, nothing if quiet."""
+    removed = removed_files(result)
+    if detailed:
+        for path in removed:
+            logger.warning("update_project_removed", op="update_project", path=path)
+    elif not quiet:
+        print_retired(removed, result.get("warnings", []))
+
+
 def report_kept(result: dict[str, list[str]], target: Path, *, detailed: bool, quiet: bool) -> None:
-    """Name what the update left alone: structured log lines under ``-v``, plain lines otherwise, nothing if quiet."""
+    """Name each edit to the user's CLAUDE.md and what the update left alone: log lines under ``-v``, plain lines
+    otherwise, nothing if quiet."""
+    print_claude_md(result.get("claude_md", []), detailed=detailed, quiet=quiet)
     if detailed:
         for path, why in kept_files(result, target):
             logger.warning("update_project_kept", op="update_project", path=path, detail=why)

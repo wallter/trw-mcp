@@ -146,10 +146,14 @@ def flat_hook_entries(shape: str) -> dict[str, list[object]]:
         return out
     if shape == "antigravity-hook-map":
         from trw_mcp.channels.antigravity._before_edit_hook import (
-            _AG03_HOOK_SCRIPT_PATH,
-            _EDIT_TOOL_MATCHER,
             _PRE_TOOL_USE_EVENT,
+            LEGACY_EDIT_TOOL_MATCHER,
+            LEGACY_HOOK_SCRIPT_PATH,
         )
 
-        return {_PRE_TOOL_USE_EVENT: [{"matcher": _EDIT_TOOL_MATCHER, "command": f"python3 {_AG03_HOOK_SCRIPT_PATH}"}]}
+        return {
+            _PRE_TOOL_USE_EVENT: [
+                {"matcher": LEGACY_EDIT_TOOL_MATCHER, "command": f"python3 {LEGACY_HOOK_SCRIPT_PATH}"}
+            ]
+        }
     return {}

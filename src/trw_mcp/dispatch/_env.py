@@ -39,11 +39,20 @@ _LOCALE_PREFIX = "LC_"
 # are forwarded ON TOP of the per-client allowlist by ``build_runner_env`` only.
 # TRW_DISPATCH_CLAUDE_SETTING_SOURCES: the background runner re-imports the claude
 # argv, so the opt-out must survive the hop or wait=False ignores it.
+# The two TRW_DISPATCH_SLOT_* names carry PRD-CORE-355-FR04's nesting marker
+# and pinned slot directory into a background job, so a nested job refuses at
+# once instead of waiting on its ancestor's slot.
 _RUNNER_PASSTHROUGH: tuple[str, ...] = (
     "PYTHONPATH",
     "VIRTUAL_ENV",
     "TRW_DISPATCH_CLAUDE_SETTING_SOURCES",
     REQUIRE_ENV,
+    "TRW_DISPATCH_SLOT_HELD",
+    "TRW_DISPATCH_SLOT_DIR",
+    # Config env overrides (loader reads TRW_{FIELD}); without them a cap set only via env is lost to a job.
+    "TRW_DISPATCH_MAX_CONCURRENT_CHILDREN",
+    "TRW_DISPATCH_SLOT_WAIT_S",
+    "TRW_DISPATCH_REQUIRE_EFFORT",
 )
 
 # Per-client provider credentials are NOT listed here. They live on the client's

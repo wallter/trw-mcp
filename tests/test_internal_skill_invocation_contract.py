@@ -26,8 +26,6 @@ PUBLIC_GUIDANCE_SURFACES = (
     ROOT
     / "platform/src/app/(marketing)/docs/skills/skills-page/data.tsx",  # trw-leak-allow: proprietary_path real monorepo file this test reads
     ROOT
-    / "platform/src/app/(marketing)/docs/skills/skills-page/PromptMappingSection.tsx",  # trw-leak-allow: proprietary_path real monorepo file this test reads
-    ROOT
     / "platform/src/app/(marketing)/docs/skills/page.tsx",  # trw-leak-allow: proprietary_path real monorepo file this test reads
     ROOT
     / "platform/src/app/(marketing)/docs/requirements/requirements-page/data.tsx",  # trw-leak-allow: proprietary_path real monorepo file this test reads

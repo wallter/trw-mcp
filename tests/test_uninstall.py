@@ -529,13 +529,7 @@ class TestUninstallHookGroupAndMergedSurfaces:
         from trw_mcp.channels.antigravity._before_edit_hook import _AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH
 
         (tmp_path / ".git").mkdir()
-        from trw_mcp.channels.antigravity import install_before_edit_hook
 
-        result = init_project(tmp_path, ide="antigravity-cli")
-        assert not result["errors"], result["errors"]
-        # UF-BOOT-08: init no longer writes the hook; reproduce an install left by an older
-        # TRW, then let a second init record it in the manifest (as the old init did).
-        assert install_before_edit_hook(tmp_path)["installed"]
         result = init_project(tmp_path, ide="antigravity-cli")
         assert not result["errors"], result["errors"]
         hooks_json = tmp_path / AG03_HOOKS_PATH
@@ -549,6 +543,65 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert not hooks_json.exists(), "uninstall left the registered AG-03 hook behind"
         assert not hook_script.exists(), "uninstall left the AG-03 hook script behind"
         assert not (tmp_path / ".antigravitycli" / "hooks").exists()
+
+    def test_antigravity_uninstall_keeps_the_users_other_named_hooks(self, tmp_path: Path) -> None:
+        """AG03-HOOK-REENABLE: only TRW's named entry leaves ``.agents/hooks.json``; the user's hooks stay."""
+        import json
+
+        from trw_mcp.bootstrap import init_project
+        from trw_mcp.channels.antigravity._before_edit_hook import AG03_HOOK_NAME, AG03_HOOKS_PATH
+
+        (tmp_path / ".git").mkdir()
+        assert not init_project(tmp_path, ide="antigravity-cli")["errors"]
+        hooks_json = tmp_path / AG03_HOOKS_PATH
+        mine = {"safety-gate": {"PreToolUse": [{"matcher": "run_command", "hooks": [{"command": "./check.sh"}]}]}}
+        data = json.loads(hooks_json.read_text(encoding="utf-8"))
+        data.update(mine)
+        hooks_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert json.loads(hooks_json.read_text(encoding="utf-8")) == mine
+        assert AG03_HOOK_NAME not in hooks_json.read_text(encoding="utf-8")
+
+    def test_antigravity_uninstall_still_strips_the_legacy_flat_entry_older_trw_wrote(self, tmp_path: Path) -> None:
+        """An install from before AG03-HOOK-REENABLE left a flat entry in ``.antigravitycli/hooks.json``; it still goes."""
+        import json
+
+        from trw_mcp.bootstrap._generated_entries import flat_hook_entries
+
+        (tmp_path / ".git").mkdir()
+        legacy = tmp_path / ".antigravitycli" / "hooks.json"
+        legacy.parent.mkdir()
+        mine = {"PostToolUse": [{"matcher": "read_file", "command": "echo POST"}]}
+        legacy.write_text(json.dumps({**mine, **flat_hook_entries("antigravity-hook-map")}, indent=2) + "\n")
+        entry = flat_hook_entries("antigravity-hook-map")["PreToolUse"][0]
+        assert entry["matcher"] == "write_file|replace_file_content|multi_replace_file_content"
+        assert entry["command"] == "python3 .antigravitycli/hooks/trw_before_edit_telemetry.py"
+
+        from trw_mcp.server._uninstall_hook_strips import _strip_trw_antigravity_hooks
+
+        changed, new_raw, _empty = _strip_trw_antigravity_hooks(legacy.read_text(), tmp_path)
+
+        assert changed and json.loads(new_raw) == mine
+
+    def test_antigravity_uninstall_keeps_a_user_edited_trw_hook(self, tmp_path: Path) -> None:
+        """A hook the user changed under TRW's name is theirs now: uninstall leaves it, byte for byte."""
+        import json
+
+        from trw_mcp.bootstrap import init_project
+        from trw_mcp.channels.antigravity._before_edit_hook import AG03_HOOK_NAME, AG03_HOOKS_PATH
+
+        (tmp_path / ".git").mkdir()
+        assert not init_project(tmp_path, ide="antigravity-cli")["errors"]
+        hooks_json = tmp_path / AG03_HOOKS_PATH
+        edited = {AG03_HOOK_NAME: {"PreToolUse": [{"matcher": "write_to_file", "hooks": [{"command": "echo MINE"}]}]}}
+        body = json.dumps(edited, indent=2) + "\n"
+        hooks_json.write_text(body, encoding="utf-8")
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert hooks_json.read_text(encoding="utf-8") == body
 
     def test_github_skills_removed(self, tmp_path: Path) -> None:
         """FIX 3: .github/skills TRW artifacts are removed.
@@ -977,6 +1030,8 @@ class TestUninstallManifest:
         # writes hooks.json + hooks/trw_before_edit_telemetry.py) MUST be covered by
         # uninstall or a live TRW hook is left registered after removal.
         by_path = {s.relpath: s for s in uninstall_surfaces()}
+        assert ".agents/hooks.json" in relpaths
+        assert ".agents/hooks/trw_before_edit_telemetry.py" in relpaths
         assert ".antigravitycli/hooks.json" in relpaths
         assert ".antigravitycli/hooks" in relpaths
         # hooks.json is a FLAT ``{event: [entry]}`` map, so the codex/copilot
@@ -984,6 +1039,8 @@ class TestUninstallManifest:
         # preserves the user's other event keys, so it is NOT TRW-only either.
         # It gets the command-identity strategy that matches its actual shape.
         assert by_path[".antigravitycli/hooks.json"].config_shape == "antigravity-hook-map"
+        # agy 1.2.x reads ``.agents/hooks.json``: a ``{name: {event: [...]}}`` map holding TRW's one named entry.
+        assert by_path[".agents/hooks.json"].config_shape == "antigravity-named-hooks"
         # The hooks/ DIR holds only TRW scripts and stays a plain removal.
         assert by_path[".antigravitycli/hooks"].merged_config is False
         # FIX 3: previously-missing bootstrap surfaces.
