@@ -19,8 +19,10 @@ from trw_mcp.server._cli_argparse_handoff import add_handoff_subcommands
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import add_project_subcommands
 from trw_mcp.server._cli_argparse_status import add_local_status_args
+from trw_mcp.server._cli_auth import add_auth_subcommands
 from trw_mcp.server._cli_factory import add_factory_subcommands
 from trw_mcp.shared_server._cli import add_shared_subcommands
+from trw_mcp.tools._assess_cli import add_assess_subcommands
 from trw_mcp.tools._decision_cli import add_decision_subcommands
 from trw_mcp.tools._delivery_cli import add_delivery_subcommands
 from trw_mcp.tools._experiment_cli import add_experiment_subcommands
@@ -133,19 +135,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # builder under the 350 effective-LOC module gate (PRD-DIST-243).
     add_project_subcommands(subparsers)
 
-    # auth
-    auth_parser = subparsers.add_parser(
-        "auth",
-        help="Manage platform authentication",
-    )
-    auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    _API_URL_HELP = "Override API URL (default: from config or https://api.trwframework.com)"
-    login_parser = auth_sub.add_parser("login", help="Authenticate via device authorization flow")
-    login_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
-    logout_parser = auth_sub.add_parser("logout", help="Remove stored API key")
-    logout_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
-    status_parser = auth_sub.add_parser("status", help="Show current authentication status")
-    status_parser.add_argument("--api-url", default=None, help=_API_URL_HELP)
+    # auth (login / logout / status / promote) — sibling module, 350 effective-LOC gate
+    add_auth_subcommands(subparsers)
 
     # uninstall
     uninstall_parser = subparsers.add_parser(
@@ -432,6 +423,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     add_instructions_subcommands(subparsers)
     # decision resolve: the ESCALATE-halt resolution verb (PRD-CORE-329 FR04).
     add_decision_subcommands(subparsers)
+    # assess configure/status/install-check: machine-level trw_assess (jev) key and switch.
+    add_assess_subcommands(subparsers)
     # receipt verify / factory status: the experimental software-factory commands.
     # Their top-level names are listed in EXPERIMENTAL_COMMANDS (the one list the
     # public CLI-reference inventory reads to leave them out); register a new

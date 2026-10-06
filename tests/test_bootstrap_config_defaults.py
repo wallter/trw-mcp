@@ -199,7 +199,8 @@ def test_init_project_force_keeps_config_bytes_when_the_store_holds_data(repo: P
     result = init_project(repo, force=True, ide="claude-code")
 
     assert not result["errors"]
-    assert config.read_bytes() == before
+    # The user's bytes are kept; the only change is the client record the hook sweep depends on, appended.
+    assert config.read_bytes() == before + b"target_platforms:\n- claude-code\n"
 
 
 def test_a_pin_that_is_not_this_checkouts_namespace_is_never_granted(repo: Path) -> None:

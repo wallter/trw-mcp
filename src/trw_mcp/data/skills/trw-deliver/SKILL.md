@@ -5,7 +5,7 @@ description: "Persist the session's work with validation evidence, durable learn
 
 # TRW Deliver
 
-**Use when:** accepting completed work under the existing delivery gates. For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. The preferred durable handoff is a sealed Agent Handoff Record (`trw://templates/ahr`, `trw-mcp handoff seal <file>`); its path and digest are the next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
+**Use when:** accepting completed work under the existing delivery gates. For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. The preferred durable handoff is a sealed Agent Handoff Record written with the `trw-handoff` skill (`trw-mcp handoff new`, then `seal`); its path and digest are the next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
 
 ## Steps
 

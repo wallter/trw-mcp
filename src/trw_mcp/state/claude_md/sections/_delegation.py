@@ -71,6 +71,17 @@ MEMORY_ROUTING_POINTER = (
     "`trw://framework/memory-routing`.\n"
 )
 
+#: PRD-CORE-356-FR06: names the handoff skill on the Stop step. Appended to that
+#: line rather than given its own section: the codex/opencode/cursor blocks sit
+#: within ~60 characters of their C14 baseline (tests/test_instruction_block_budget.py).
+#: Gated on the clients whose installer actually ships ``trw-handoff``, not on
+#: ``skills_enabled`` (codex installs ``.agents/skills`` whatever that flag says).
+#: grok and cursor-cli install no skills, and antigravity-cli renders its own
+#: block; naming a skill they cannot load would send the agent looking for nothing.
+#: ``test_handoff_skill_contract`` cross-checks this set against the installers.
+HANDOFF_POINTER = " Handoffs: `trw-handoff` skill (resume: `receive <path>`)."
+HANDOFF_SKILL_CLIENTS = frozenset({"claude-code", "codex", "copilot", "cursor-ide", "opencode"})
+
 #: PRD-CORE-301-FR13: the offline rule stays; the table is ``trw-mcp local --help``'s epilog.
 OFFLINE_POINTER = (
     "### Troubleshooting: the MCP surface is absent\n"
@@ -128,6 +139,7 @@ def render_agents_trw_section(*, client_profile: ClientProfile | None = None) ->
     # Gated on the resolved profile (named, or the ambient one), so the default
     # claude-code sync keeps the pointer instead of dropping it (PRD-CORE-341-FR02).
     delegation = DELEGATION_GUIDE_POINTER if profile.include_delegation else ""
+    handoff = HANDOFF_POINTER if profile.client_id in HANDOFF_SKILL_CLIENTS else ""
 
     return (
         "## Workflow\n"
@@ -137,7 +149,7 @@ def render_agents_trw_section(*, client_profile: ClientProfile | None = None) ->
         # (PRD-FIX-141-FR04) stays on the on-demand memory-routing resource.
         "1. **Start**: call `trw_session_start()` — it loads prior learnings and recovers any active run\n"
         "2. **During**: call `trw_checkpoint()` after milestones to save progress\n"
-        f"3. **Stop**: {_SESSION_BOUNDARY_TEXT.rstrip()}\n"
+        f"3. **Stop**: {_SESSION_BOUNDARY_TEXT.rstrip()}{handoff}\n"
         "\n"
         # PRD-CORE-336-FR04: the pre-edit hint for clients without a model-visible hook channel.
         + render_pre_edit_hint_instruction()

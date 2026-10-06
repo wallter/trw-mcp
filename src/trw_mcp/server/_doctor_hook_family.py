@@ -252,14 +252,38 @@ def verify_calls(
 
 
 def hook_family_row(target: Path) -> tuple[Literal["PASS", "WARN", "FAIL", "SKIP"], str]:
-    """FAIL when a managed hook cannot parse, sources a missing lib, or calls a function its lib lacks.
+    """FAIL when settings.json registers a missing TRW-managed hook, or one cannot parse, sources a missing lib, or
+    calls a function its lib lacks.
 
     WARN when a hook's calls could not be verified (shell the checker does not model): never a guess as FAIL.
     """
+    from trw_mcp.bootstrap._hook_closure import settings_hook_refs
+
     hooks = target / ".claude" / "hooks"
     sh = shutil.which("sh")
     managed = sorted(p.name for p in _BUNDLED.glob("*.sh")) if _BUNDLED.is_dir() else []
     deployed_names = [n for n in managed if (hooks / n).is_file()]
+    # A hook settings.json registers but the folder lacks fails on every event; an empty folder must not read SKIP.
+    absent_refs = {n for n in settings_hook_refs(target) if not (hooks / n).is_file()}
+    unregistered = sorted(set(managed) & absent_refs)
+    own_missing = sorted(absent_refs - set(managed))
+    own_note = (
+        f"settings.json registers {len(own_missing)} project-owned hook(s) missing from .claude/hooks: "
+        + ", ".join(own_missing)
+        + " (not TRW's; restore them or drop the registration)"
+        if own_missing
+        else ""
+    )
+    if unregistered:
+        shown = ", ".join(unregistered[:_SHOWN]) + (
+            f" (+{len(unregistered) - _SHOWN} more)" if len(unregistered) > _SHOWN else ""
+        )
+        return "FAIL", (
+            f".claude/settings.json registers {len(unregistered)} TRW hook(s) missing from .claude/hooks: {shown}."
+            " Claude Code cannot run them. Run `trw-mcp update-project` to restore them."
+        )
+    if own_note and (sh is None or not deployed_names):
+        return "WARN", own_note + "."
     if sh is None or not deployed_names:
         return "SKIP", "no TRW-managed hook in .claude/hooks (or no POSIX sh)."
     bundled_defs = {n: defined_functions(_read(_BUNDLED / n)) for n in managed if n.startswith("lib-")}
@@ -282,8 +306,10 @@ def hook_family_row(target: Path) -> tuple[Literal["PASS", "WARN", "FAIL", "SKIP
         elif lost:
             shown = ", ".join(sorted(lost)[:_SHOWN]) + (f" (+{len(lost) - _SHOWN} more)" if len(lost) > _SHOWN else "")
             problems.append(f"{name}: calls {len(lost)} function(s) undefined in its {', '.join(libs)}: {shown}")
-    if not problems and unsure:
-        return "WARN", "; ".join(unsure) + ". Check those hooks by hand, or run `trw-mcp update-project`."
+    if not problems and (unsure or own_note):
+        return "WARN", "; ".join(
+            [*unsure, *([own_note] if own_note else [])]
+        ) + ". Check those hooks by hand, or run `trw-mcp update-project`."
     if not problems:
         return "PASS", f"{len(deployed_names)} managed hook(s) parse and find every function they call."
     return "FAIL", (

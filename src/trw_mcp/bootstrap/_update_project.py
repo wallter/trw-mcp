@@ -33,6 +33,7 @@ from ._update_phases import (
     _generate_behavioral_protocol_md as _generate_behavioral_protocol_md,
     _init_result_dict as _init_result_dict,
     _refresh_distill_channels as _refresh_distill_channels,
+    _forget_rolled_back_changes,
     _restore_dirty_files as _restore_dirty_files,
     _run_core_update_phases as _run_core_update_phases,
     _RUN_RECORDS as _RUN_RECORDS,
@@ -154,11 +155,11 @@ def _run_post_update_phases(
     manifest_hashes: dict[str, str] | None = None,
 ) -> frozenset[str]:
     """Execute post-update phases (metadata, instruction sync, client configs); return the canon pins retired."""
-    # PRD-SEC-005-FR05: migrate any tracked config.yaml key into the ignored
-    # credentials.yaml (idempotent, fail-open) before other post-update work.
-    from trw_mcp.models.config._credentials import migrate_for_update_project
+    # PRD-SEC-005-FR05 credential move and the pre-6.0.0 channel-manifest keys, before any writer or channel
+    # merge reads those files (idempotent, fail-open).
+    from ._update_phases import apply_upgrade_migrations
 
-    migrate_for_update_project(target_dir / ".trw" / "config.yaml", result)
+    apply_upgrade_migrations(target_dir, result)
 
     from ._version_pins import retire_default_version_pins
 
@@ -348,7 +349,7 @@ def _apply_update(
                 changes = {}
                 try:
                     _rollback(root, snapshot_root, result)
-                    result["warnings"].append("update-project rolled back managed directories after write failure")
+                    _forget_rolled_back_changes(root, result)  # and says the run was rolled back
                 except OSError as exc:
                     # The snapshot is the only copy of what the rollback could not put
                     # back (parked symlinks included) — keep it and say where it is.

@@ -109,7 +109,9 @@ _TRW_MANAGED_SERVER_KEYS: frozenset[str] = frozenset(
 #: The operator's own environment the server reads for the trw_assess backend (enablement, key, endpoint,
 #: model). Codex passes an MCP server only an allow-list of variables, so without ``env_vars`` an operator's
 #: ``TRW_JEV_ENABLED=false`` never reaches the server and cannot switch the backend off. Forwarding passes
-#: along only what the operator set themselves; it never sets a value. Added to the user's own list.
+#: along only what the operator set themselves; it never sets a value. Added to the user's own list. The
+#: server also reads the key, endpoint and model from the ``~/.trw/jev.env`` machine store itself
+#: (``trw_memory.decisions.resolve_jev_settings``), so a machine-configured key needs no forwarding.
 _TRW_FORWARDED_ENV: tuple[str, ...] = ("OPENROUTER_API_KEY", "TRW_JEV_BASE_URL", "TRW_JEV_ENABLED", "TRW_JEV_MODEL")
 
 

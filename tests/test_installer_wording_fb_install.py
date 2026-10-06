@@ -33,6 +33,8 @@ def installer() -> ModuleType:
 class _RecordingUI:
     """A UI stand-in that records the verdict lines ``run_install_doctor`` chooses."""
 
+    interactive = False  # run_install_doctor's trw_assess install-check reads it
+
     def __init__(self) -> None:
         self.ok: list[str] = []
         self.warn: list[str] = []

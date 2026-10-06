@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import importlib.metadata as importlib_metadata
 import json
@@ -36,6 +37,7 @@ import os
 import random
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -153,6 +155,10 @@ _SUPPORTED_IDES = [
     "antigravity-cli",
     "grok",
 ]
+
+#: The clients a NEW install configures when the project records none and no ``--ide`` is given.
+#: Detection never widens it: a machine that merely has Cursor on PATH does not get Cursor.
+_DEFAULT_IDES = ["claude-code", "codex", "antigravity-cli"]
 
 _IDE_META: dict[str, dict[str, str]] = {
     "claude-code": {
@@ -725,11 +731,28 @@ def _read_credentials_key(credentials_path: Path) -> str:
     return ""
 
 
+def _read_machine_credentials_key() -> str:
+    """The computer-wide key in ``~/.trw/credentials.yaml``, or ``""`` when absent or not private.
+
+    Self-contained mirror of ``models/config/_credentials.py::read_machine_key``:
+    read only when it is a regular file (not a symlink) owned by the current
+    user with no group/other permission bits.
+    """
+    path = Path.home() / ".trw" / "credentials.yaml"
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return ""  # trw-fail-silent-allow: absent or unreachable machine store means "no computer-wide key"; the project and env layers still decide
+    owner_only = os.name == "nt" or (st.st_uid == os.geteuid() and not st.st_mode & 0o077)
+    return _read_credentials_key(path) if stat.S_ISREG(st.st_mode) and owner_only else ""
+
+
 def _resolve_prior_api_key(target_dir: Path) -> str:
     """Resolve the platform API key by SEC-005 precedence (highest wins).
 
     Precedence (PRD-SEC-005-FR03 + PRD-INFRA-129 FR05): ``TRW_API_KEY`` env >
-    ``TRW_PLATFORM_API_KEY`` env > ``.trw/credentials.yaml``.
+    ``TRW_PLATFORM_API_KEY`` env > ``.trw/credentials.yaml`` >
+    ``~/.trw/credentials.yaml`` (the computer-wide sign-in).
 
     ``TRW_API_KEY`` is consulted FIRST because ``scripts/install.sh`` reads the
     key from ``credentials.yaml`` and exports it ONLY under that name; before
@@ -749,7 +772,7 @@ def _resolve_prior_api_key(target_dir: Path) -> str:
     env_key = os.environ.get("TRW_PLATFORM_API_KEY", "").strip()
     if env_key:
         return env_key
-    return _read_credentials_key(target_dir / ".trw" / "credentials.yaml")
+    return _read_credentials_key(target_dir / ".trw" / "credentials.yaml") or _read_machine_credentials_key()
 
 
 def _load_prior_config(target_dir: Path, ui: UI | None = None) -> dict[str, object]:
@@ -830,12 +853,15 @@ def _load_prior_config(target_dir: Path, ui: UI | None = None) -> dict[str, obje
                 ]
                 prior["target_platforms"] = _normalize_ide_targets(target_platforms, strict=False)
                 if unknowns and ui is not None:
-                    supported = ", ".join([*_SUPPORTED_IDES, "all"])
-                    ui.warn(
-                        "Ignoring unknown target_platforms in .trw/config.yaml: "
-                        f"{', '.join(repr(u) for u in unknowns)}. "
-                        f"Supported values: {supported}"
+                    # gemini/aider are withdrawn ids (docs/CLIENT-PROFILES.md): the entry stays as written, and the
+                    # prior config is read more than once per install, so the warning is shown once.
+                    message = (
+                        f"Ignoring unknown target_platforms in .trw/config.yaml: {', '.join(map(repr, unknowns))}"
+                        f" ({'gemini is withdrawn, use antigravity-cli; ' if 'gemini' in unknowns else ''}"
+                        f"supported values: {', '.join([*_SUPPORTED_IDES, 'all'])})"
                     )
+                    if ui.first_sighting(message):
+                        ui.warn(message)
             except Exception:  # trw-fail-silent-allow: a malformed prior target_platforms must never block an upgrade; it reads as no prior choice and the client is re-prompted or detected
                 pass
     except (
@@ -1901,21 +1927,29 @@ def write_platform_credentials(config_path: Path, api_key: str) -> Path | None:
     config. The chmod is best-effort (Windows has no POSIX mode bits).
 
     Returns the credentials path on a successful write, or ``None`` when there
-    is no key to write.
+    is no key to write -- including when *api_key* IS the computer-wide sign-in
+    (``~/.trw/credentials.yaml``): the project then resolves it from there at
+    runtime, so a rotation replaces one copy instead of one per project.
+
+    The file is created at 0600 from the first byte (a temp opened
+    ``O_CREAT|O_EXCL|O_NOFOLLOW`` at 0600, then renamed over the target), never
+    written world-readable and chmod-ed afterwards.
     """
-    if not api_key:
+    if not api_key or api_key == _read_machine_credentials_key():
         return None
     credentials_path = config_path.parent / "credentials.yaml"
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
-    credentials_path.write_text(
-        f'# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\nplatform_api_key: "{api_key}"\n',
-        encoding="utf-8",
-    )
+    body = f'# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\nplatform_api_key: "{api_key}"\n'
+    tmp = credentials_path.with_name(f".credentials.yaml.{os.getpid()}.tmp")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
-        os.chmod(credentials_path, 0o600)
-    except OSError:
-        # Windows does not honor POSIX mode bits; proceed (NFR03).
-        pass
+        with os.fdopen(os.open(tmp, flags, 0o600), "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.replace(tmp, credentials_path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
     return credentials_path
 
 
@@ -2156,27 +2190,16 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
     sentinel_path = trw_dir / "installed-version.json"
     resolved_version = _resolve_path_trw_mcp_version()
     marker_version = resolved_version or effective_version
+    fields = (("version", marker_version), ("intended", effective_version), ("timestamp", _iso_now()))
     try:
-        sentinel_path.write_text(
-            json.dumps(
-                {
-                    key: value
-                    for key, value in (
-                        ("version", marker_version),
-                        ("intended", effective_version),
-                        ("timestamp", _iso_now()),
-                    )
-                    if value is not None
-                }
-            ),
-            encoding="utf-8",
-        )
+        sentinel_path.write_text(json.dumps({k: v for k, v in fields if v is not None}), encoding="utf-8")
     except OSError:  # trw-fail-silent-allow: best-effort sentinel write, install must never fail on it
         pass
 
     shadow = shutil.which("trw-mcp")
     identity = _same_file(shadow, _MCP_TARGET_BINARY) if shadow and _MCP_TARGET_BINARY else None
-    other_binary = identity is False
+    # TRW's own ~/.local/bin launcher shim exec'ing this install is not a shadow.
+    other_binary = identity is False and not _is_launcher_shim_to(str(shadow), str(_MCP_TARGET_BINARY))
     if (resolved_version and effective_version and resolved_version != effective_version) or other_binary:
         ui.step_warn(
             f"A trw-mcp {resolved_version or '(unknown version)'} is shadowing the intended "
@@ -2979,9 +3002,9 @@ def _prompt_ide_selection(
     if detected_ides:
         print(f"{GREEN}[TRW]{NC} Existing client config: {_format_ide_list(detected_ides)}")
 
-    default_targets = _normalize_ide_targets(prior_targets or _unique(detected_ides + detected_clis))
+    default_targets = _normalize_ide_targets(prior_targets or _DEFAULT_IDES)
     if not default_targets:
-        default_targets = ["claude-code"]
+        default_targets = _DEFAULT_IDES.copy()
 
     tty = _open_tty()
     if tty is None or not sys.stdout.isatty():
@@ -3072,12 +3095,16 @@ def find_trw_cmd(python: str, pip_target: str = "") -> list[str]:
 
 
 def _is_launcher_shim_to(path: str, target: str) -> bool:
-    """True when *path* is the one-line shim this installer's managed-venv rung writes, exec'ing *target*."""
+    """True when *path* is the one-line shim this installer's managed-venv rung writes, exec'ing *target*.
+
+    Compared as files: the shim names the venv's ``bin/trw-mcp`` while *target* comes from RECORD as
+    ``site-packages/../../../bin/trw-mcp``, so a string match called TRW's own shim a shadowing install.
+    """
     try:
         head = Path(path).read_text(encoding="utf-8", errors="ignore")[:2048]
     except OSError:  # trw-fail-silent-allow: an unreadable PATH entry is simply not our shim
         return False
-    return f'exec "{target}"' in head
+    return any(_same_file(execd, target) for execd in re.findall(r'^exec "([^"\n]+)"', head, re.MULTILINE))
 
 
 def _warn_if_another_trw_mcp_is_first_on_path(ui: UI) -> None:
@@ -4868,10 +4895,10 @@ def phase_project_setup(
             # clients TRW is being configured for.
             resolved_targets = _prompt_ide_selection(detected_clis, detected_ides, prior_targets=prior_targets)
         else:
-            # Headless: reuse prior targets, else auto-configure detected clients.
-            resolved_targets = _normalize_ide_targets(prior_targets or _unique(detected_ides + detected_clis))
+            # Headless: reuse prior targets, else the default client set (detection is advisory only).
+            resolved_targets = _normalize_ide_targets(prior_targets or _DEFAULT_IDES)
             if not resolved_targets:
-                resolved_targets = ["claude-code"]
+                resolved_targets = _DEFAULT_IDES.copy()
 
     if not resolved_targets:
         ui.step_warn("Skipping client surface setup — re-run install-trw.py or trw-mcp update-project later")
@@ -4943,6 +4970,9 @@ def run_install_doctor(
     Fail-open: a doctor that cannot run or parse warns but never aborts the install.
     """
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
+    # trw_assess (jev) first: inherit the machine key (~/.trw/jev.env) in one line, or offer once (interactive only)
+    # to promote a key found only in this project's .env. Never writes the key into a project file; advisory.
+    subprocess.run([*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive], check=False)
     cmd = [*trw_cmd, "doctor", str(target_dir), "--format", "json"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
@@ -5357,9 +5387,7 @@ def phase_configure(
 def _prompt_project_name(ui: UI, default: str) -> str:
     """Interactive project name prompt with sanitization."""
     raw = prompt_input("Project name:", default)
-    name = sanitize_project_name(raw)
-    if not name:
-        name = default
+    name = sanitize_project_name(raw) or default
     if not re.match(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", name):
         ui.step_warn("Could not sanitize name, using default")
         name = default
@@ -5467,10 +5495,8 @@ def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any]
         print()
 
         def _open_bg() -> None:
-            try:
+            with contextlib.suppress(Exception):
                 _wb.open(verification_uri_complete)
-            except Exception:
-                pass
 
         _t = threading.Thread(target=_open_bg, daemon=True)
         _t.start()
@@ -5694,6 +5720,7 @@ def main() -> None:
         help="Override the entitlement endpoint URL (testing only; defaults to api.trwframework.com)",
     )
 
+    parser.add_argument("--trust-codex-hooks", action="store_true", help="Pre-approve TRW's own Codex hooks (by hash)")
     args = parser.parse_args()
     try:
         ide_targets = _parse_ide_argument(args.ide)
@@ -5966,6 +5993,8 @@ def main() -> None:
             ide=ide_targets,
             pip_target=args.pip_target,
         )
+        if args.trust_codex_hooks and (target_dir / ".codex" / "hooks.json").is_file():  # explicit consent; prints each
+            subprocess.run([*find_trw_cmd(python, args.pip_target), "trust-codex-hooks", str(target_dir)], check=False)
 
         # After update-project: a checkout upgraded from 5.x keeps learnings nothing reads.
         store_migrated = phase_migrate_store(
@@ -6073,10 +6102,8 @@ def main() -> None:
         _emit_install_complete_event(target_dir)
 
     finally:
-        try:
+        with contextlib.suppress(OSError):
             shutil.rmtree(tmpdir)
-        except OSError:
-            pass
 
 
 if __name__ == "__main__":

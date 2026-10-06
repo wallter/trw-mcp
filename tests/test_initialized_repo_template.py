@@ -57,6 +57,7 @@ def test_copied_tree_matches_a_fresh_init(initialized_repo: Path, tmp_path_facto
     assert sorted(k for k in copied if ".rollback" not in k) == sorted(k for k in expected if ".rollback" not in k)
     stamped = {".trw/channels/manifest.yaml", ".trw/frameworks/DEPLOYMENT.json", ".trw/frameworks/VERSION.yaml"}
     stamped |= {".trw/installer-meta.yaml", ".trw/config.yaml", ".trw/runtime/memory-token"}
+    stamped.add(".trw/runtime/written-digests.json")  # digests of the stamped files above
     unpinned = [ln for ln in expected[".trw/config.yaml"].splitlines() if not ln.startswith(b"project_namespace:")]
     assert [
         ln for ln in copied[".trw/config.yaml"].splitlines() if not ln.startswith(b"project_namespace:")

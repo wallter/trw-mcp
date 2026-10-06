@@ -61,6 +61,10 @@ _AUDITED_TREES = (
 #: REPORTED residual at the class-before-site stage, not a verified-safe exception (tag legend:
 #: ``trw_memory._write_census.CLASS_TAGS``).
 _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
+    ("bootstrap/_codex_hook_trust.py", "_atomic_write", 1): (
+        "operator-named-path",
+        "replaces the user's Codex config ($CODEX_HOME/config.toml) after a re-parse proves only TRW's hook approvals changed; not the checkout.",
+    ),
     ("bootstrap/_headless_report.py", "redact_file", 1): (
         "own-state-stays",
         "rewrites the installer's own 0600 run log under $TMPDIR with secrets scrubbed, not the checkout.",
@@ -84,7 +88,7 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         "own-state-stays",
         "copy into the private scratch tree built by _snapshot_transaction_paths, not the checkout.",
     ),
-    ("channels/_manifest_loader.py", "_atomic_dump_yaml", 1): (
+    ("channels/_manifest_loader.py", "_atomic_write_text", 1): (
         "unscheduled-checkout-write",
         "os.fdopen(fd, 'w') on a tempfile.mkstemp(dir=path.parent) descriptor; mkstemp re-resolves the parent by name (V04).",
     ),
@@ -106,7 +110,7 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ),
     ("models/config/_credentials.py", "_blank_config_key", 1): (
         "unscheduled-checkout-write",
-        ".trw/config.yaml rewrite that blanks a migrated key; plain write_text, not named by FR09.",
+        ".trw/config.yaml rewrite that blanks a migrated key; plain write_bytes, not named by FR09.",
     ),
     ("state/_ceremony_progress_state.py", "_emit_nudge_shown_event", 1): (
         "unscheduled-checkout-write",
@@ -245,6 +249,10 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
         ".trw/memory backup copied to a fresh migration-work dir with shutil.copyfile (counted since the matcher learned shutil copies).",
     ),
     # --- security slice 3A: tools/ sync/ telemetry/ meta_tune/ formation/ server/ (reported residuals) ---
+    ("tools/_assess_cli.py", "_ask_on_tty", 1): (
+        "own-state-stays",
+        "opens the controlling terminal /dev/tty read-write to ask one yes/no question; writes no file.",
+    ),
     ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 1): (
         "unscheduled-checkout-write",
         "deferred-deliver lock file under .trw opened 'a+'; appends through a leaf symlink but writes no bytes (lock only).",

@@ -31,7 +31,7 @@ from trw_mcp._outbound_http import (
 )
 from trw_mcp.models.config._credentials import (
     credentials_path_for,
-    read_key_from_file,
+    resolve_platform_api_key_with_source,
     write_credentials_key,
 )
 
@@ -46,6 +46,7 @@ from ._auth_config import (
 from ._auth_config import (
     device_auth_logout as device_auth_logout,
 )
+from ._auth_machine import maybe_save_machine_key
 
 # Spinner extracted to ``_auth_spinner.py`` (PRD-DIST-243 Phase 1,
 # cycle 22) to keep this module under the 350-effective-LOC threshold.
@@ -299,12 +300,12 @@ def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     Returns ``{"authenticated": True, "key_prefix": "trw_dk_...", "org_name": ..., "user_email": ...}``
     if a platform API key is configured, otherwise ``{"authenticated": False}``.
     """
-    # PRD-SEC-005: the bearer credential lives ONLY in the ignored 0600
-    # credentials.yaml. The git-tracked config.yaml is never read for the
-    # secret (a legacy tracked key is migrated to credentials.yaml by
-    # `trw-mcp update-project`); config.yaml is still read below for the
-    # non-secret org/email metadata.
-    key_value = read_key_from_file(credentials_path_for(config_path))
+    # PRD-SEC-005: the bearer credential lives ONLY in an ignored 0600
+    # credentials.yaml -- the project's, else the machine store
+    # (~/.trw/credentials.yaml), or the env. The git-tracked config.yaml is
+    # never read for the secret; it is still read below for the non-secret
+    # org/email metadata. ``key_source`` names the layer, never the value.
+    key_value, key_source = resolve_platform_api_key_with_source(config_path)
 
     lines = _read_config_lines(config_path)
     if lines is None and not key_value:
@@ -330,6 +331,7 @@ def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
     result: dict[str, object] = {
         "authenticated": True,
         "key_prefix": key_prefix,
+        "key_source": key_source,
         "config_path": str(config_path),
         "api_url": api_url,
     }
@@ -343,8 +345,13 @@ def device_auth_status(config_path: Path, api_url: str) -> dict[str, object]:
 # ── CLI entry points (called from server subcommand dispatch) ─────────
 
 
-def run_auth_login(api_url: str, config_path: Path) -> int:
-    """CLI handler for ``trw-mcp auth login``. Returns exit code."""
+def run_auth_login(api_url: str, config_path: Path, machine: bool | None = None) -> int:
+    """CLI handler for ``trw-mcp auth login``. Returns exit code.
+
+    *machine*: True saves the key to the computer-wide ``~/.trw/credentials.yaml``
+    (then not to this project, so a later rotation has one copy to replace);
+    False keeps it project-only; None asks on a terminal (no terminal: project-only).
+    """
     result = device_auth_login(api_url, interactive=True)
     if result is None:
         return 1
@@ -365,8 +372,10 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
     if api_key and isinstance(api_key, str):
         config_path.parent.mkdir(parents=True, exist_ok=True)
         credentials_path = credentials_path_for(config_path)
+        saved_machine = maybe_save_machine_key(api_key, machine)
         try:
-            write_credentials_key(credentials_path, api_key)
+            if not saved_machine:
+                write_credentials_key(credentials_path, api_key)
         except UnsafeWriteError as exc:
             # PRD-CORE-337-FR09: a symlinked leaf or parent component refuses the
             # write rather than following it. Surface a clean, typed CLI error --
@@ -380,7 +389,8 @@ def run_auth_login(api_url: str, config_path: Path) -> int:
             _save_config_field(config_path, "platform_org_name", org_name)
         if user_email:
             _save_config_field(config_path, "platform_user_email", user_email)
-        print(f"\n  {GREEN}\u2713{NC} API key saved to {credentials_path} (mode 0600)")
+        if not saved_machine:
+            print(f"\n  {GREEN}\u2713{NC} API key saved to {credentials_path} (mode 0600)")
     else:
         print(f"\n  {YELLOW}No API key in response{NC}")
 
@@ -404,6 +414,7 @@ def run_auth_status(config_path: Path, api_url: str) -> int:
     if status.get("authenticated"):
         print(f"  {GREEN}\u2713{NC} Authenticated")
         print(f"    Key:   {status.get('key_prefix', '?')}")
+        print(f"    From:  {status.get('key_source', '?')}")
         org = status.get("org_name")
         email = status.get("user_email")
         if org:

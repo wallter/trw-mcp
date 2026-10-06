@@ -105,6 +105,35 @@ def test_update_project_helper_idempotent_no_notes(tmp_path: Path) -> None:
     assert second["warnings"] == []
 
 
+def test_migration_reports_each_write_with_its_exact_bytes(tmp_path: Path) -> None:
+    """update-project's rollback proves a write was its own by the bytes it recorded; an unrecorded migration
+    write was moved to .trw/trash as foreign bytes, credential included."""
+    cfg = _config(tmp_path)
+    cfg.write_text('installation_id: "x"\nplatform_api_key: "trw_dk_tracked"\n', encoding="utf-8")
+    recorded: dict[Path, bytes] = {}
+
+    assert migrate_config_key(cfg, lambda path, data: recorded.__setitem__(path, data)) is True
+
+    creds = credentials_path_for(cfg)
+    assert recorded == {creds: creds.read_bytes(), cfg: cfg.read_bytes()}
+
+
+def test_update_project_helper_notes_once_when_run_twice_in_one_update(tmp_path: Path) -> None:
+    """update-project runs the migration again after it puts an uncommitted config.yaml back whole."""
+    cfg = _config(tmp_path)
+    original = 'platform_api_key: "trw_dk_tracked"\n'
+    cfg.write_text(original, encoding="utf-8")
+    result: dict[str, list[str]] = {"updated": [], "warnings": [], "errors": []}
+
+    migrate_for_update_project(cfg, result)
+    cfg.write_text(original, encoding="utf-8")  # the uncommitted-file guard restores the pre-run bytes
+    migrate_for_update_project(cfg, result)
+
+    assert read_key_from_file(cfg) == ""
+    assert sum("ROTATE" in w for w in result["warnings"]) == 1
+    assert sum("credentials.yaml" in u for u in result["updated"]) == 1
+
+
 def test_update_project_helper_noop_missing_config(tmp_path: Path) -> None:
     cfg = tmp_path / ".trw" / "config.yaml"
     result: dict[str, list[str]] = {"updated": [], "warnings": [], "errors": []}

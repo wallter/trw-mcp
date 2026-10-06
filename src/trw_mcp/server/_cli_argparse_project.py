@@ -104,6 +104,13 @@ def add_project_subcommands(
         help="Clear PATH's deletion tombstone so it is written again (repeatable); 'all' clears every tombstone",
     )
 
+    trust_parser = subparsers.add_parser(
+        "trust-codex-hooks",
+        help="Pre-approve TRW's own Codex hooks in ~/.codex/config.toml, pinned to each hook's current hash",
+    )
+    trust_parser.add_argument("target_dir", nargs="?", default=".", help="Project directory (default: .)")
+    trust_parser.add_argument("--revoke", action="store_true", help="Remove those approvals instead")
+
     # audit
     audit_parser = subparsers.add_parser(
         "audit",

@@ -7,11 +7,13 @@ from importlib import resources
 import pytest
 
 _DATA = resources.files("trw_mcp.data")
+# PRD-CORE-356 (G14): the implementer, lead and deliver sources point at the one write procedure,
+# the trw-handoff skill and its scaffold verb, instead of "copy a tier from trw://templates/ahr".
 SOURCES = {
-    "agents/trw-implementer.md": ("trw://templates/ahr", "trw-mcp handoff seal", "none_known"),
-    "agents/trw-lead.md": ("trw://templates/ahr", "read-back before accepting", "`standard`"),
+    "agents/trw-implementer.md": ("`trw-handoff` skill", "trw-mcp handoff new", "none_known"),
+    "agents/trw-lead.md": ("`trw-handoff` skill", "read-back before accepting", "`standard`"),
     "skills/trw-exec-plan/SKILL.md": ("trw://templates/ahr", "next_actions[0]"),
-    "skills/trw-deliver/SKILL.md": ("trw://templates/ahr", "trw-mcp handoff seal"),
+    "skills/trw-deliver/SKILL.md": ("`trw-handoff` skill", "trw-mcp handoff new"),
 }
 
 

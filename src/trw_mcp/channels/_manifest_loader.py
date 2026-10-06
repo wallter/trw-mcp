@@ -7,6 +7,7 @@ auto-recovery (FR15 — auto_recreate_empty helper + manifest_recovered telemetr
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -89,13 +90,10 @@ def _normalize_aliases(entry_dict: dict[str, Any]) -> dict[str, Any]:
             d.pop(alias)
 
     # tier_default / tier_min / default_tier were removed from ChannelEntry
-    # 2026-09-22 (RC-014): nothing read them to change behavior. Deliberately
-    # NOT normalized here (unlike the aliases above) — the operator's
-    # standing "no compat shims" policy applies, and ChannelEntry's
-    # extra="forbid" means an old on-disk manifest that still carries any of
-    # these three keys will fail to load with a clear validation error. The
-    # upgrade path is a clean reinstall (`trw-mcp update-project` regenerates
-    # manifests from the bundled templates, which no longer emit these keys).
+    # 2026-09-22 (RC-014): nothing read them to change behavior. They are not
+    # dropped here, so a read-only load of an old manifest still fails loudly;
+    # update-project migrates the file on disk instead
+    # (migrate_retired_entry_keys, called by the bootstrap merge).
 
     # file: path | target_path  (when string, not to be confused with surface enum)
     for alias in ("path", "target_path"):
@@ -149,6 +147,106 @@ def _normalize_aliases(entry_dict: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+#: Entry keys a pre-6.0.0 manifest carries that ChannelEntry no longer accepts (RC-014).
+RETIRED_ENTRY_KEYS: tuple[str, ...] = ("tier_default", "tier_min", "default_tier")
+
+
+def _summarize_validation_error(exc: ValidationError) -> str:
+    """One line for a pydantic error: each distinct problem once, with how many entries share it.
+
+    ``str(ValidationError)`` prints three lines per error, each ending in the same "For further information
+    visit ..." URL, so a 13-entry manifest with two stale keys printed 26 copies of that URL.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for err in exc.errors():
+        field = str(err["loc"][-1]) if err["loc"] else "manifest"
+        key = (field, str(err["msg"]))
+        counts[key] = counts.get(key, 0) + 1
+    total = sum(counts.values())
+    parts = [f"{field}: {msg}" + (f" (x{n})" if n > 1 else "") for (field, msg), n in counts.items()]
+    return f"{total} validation error{'s' if total != 1 else ''}: " + "; ".join(parts)
+
+
+def _validate_raw(raw: Any) -> ChannelManifest:
+    """Validate a parsed manifest mapping (format, channel shape, entry schema) after alias normalization."""
+    if not isinstance(raw, dict):
+        raise ManifestValidationError("Manifest must be a YAML mapping")
+
+    fv = raw.get("format_version")
+    if not fv:
+        raise ManifestValidationError("format_version is required")
+    if fv != MANIFEST_FORMAT_VERSION:
+        raise ManifestValidationError(f"format_version must be {MANIFEST_FORMAT_VERSION!r}, got {fv!r}")
+
+    raw_channels = raw.get("channels", [])
+    if not isinstance(raw_channels, list):
+        raise ManifestValidationError("channels must be a list")
+
+    normalized: list[dict[str, Any]] = []
+    for i, ch in enumerate(raw_channels):
+        if not isinstance(ch, dict):
+            raise ManifestValidationError(f"channels[{i}] is not a mapping")
+        normalized.append(_normalize_aliases(ch))
+
+    raw["channels"] = normalized
+
+    try:
+        return ChannelManifest.model_validate(raw)
+    except ValidationError as exc:
+        raise ManifestValidationError(_summarize_validation_error(exc)) from exc
+
+
+def _dump_rt(data: Any) -> str:
+    """Round-trip YAML text for *data*: the one serializer every manifest write uses."""
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    buf = io.StringIO()
+    yaml.dump(data, buf)
+    return buf.getvalue()
+
+
+def drop_retired_entry_keys(text: str) -> tuple[str, int]:
+    """Return *text* with every :data:`RETIRED_ENTRY_KEYS` key removed from each channel entry, and the count.
+
+    Round-trip YAML keeps every other key, value, comment and order. A text with nothing to drop (or that is
+    not a manifest-shaped mapping) comes back unchanged with a count of 0. Raises ``ManifestValidationError``
+    for unparseable YAML.
+    """
+    try:
+        data: Any = YAML(typ="rt").load(text)
+    except YAMLError as exc:
+        raise ManifestValidationError(f"Manifest is not valid YAML: {exc}") from exc
+    channels = data.get("channels") if isinstance(data, dict) else None
+    dropped = 0
+    for entry in channels if isinstance(channels, list) else []:
+        if isinstance(entry, dict):
+            for key in RETIRED_ENTRY_KEYS:
+                if key in entry:
+                    del entry[key]
+                    dropped += 1
+    return (_dump_rt(data), dropped) if dropped else (text, 0)
+
+
+def migrate_retired_entry_keys(path: Path) -> int:
+    """Drop the retired tier keys from the manifest at *path* in place; return how many keys were dropped.
+
+    The file is rewritten only when the result then validates, so a manifest with any other problem is left
+    byte-identical and that problem raised as ``ManifestValidationError``. Returns 0, writing nothing, when
+    there is nothing to drop.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestValidationError(f"Manifest could not be read: {exc}") from exc
+    new_text, dropped = drop_retired_entry_keys(text)
+    if not dropped:
+        return 0
+    _validate_raw(YAML(typ="safe").load(new_text))
+    _atomic_write_text(new_text, path)
+    log.info("manifest_retired_keys_dropped", path=str(path), dropped=dropped)
+    return dropped
+
+
 def load(path: Path) -> ChannelManifest:
     """Load and validate a channel manifest from *path*.
 
@@ -172,32 +270,7 @@ def load(path: Path) -> ChannelManifest:
         # errors, so a raw ruamel YAMLError would escape as a traceback.
         raise ManifestValidationError(f"Manifest is not valid YAML: {exc}") from exc
 
-    if not isinstance(raw, dict):
-        raise ManifestValidationError("Manifest must be a YAML mapping")
-
-    fv = raw.get("format_version")
-    if not fv:
-        raise ManifestValidationError("format_version is required")
-    if fv != MANIFEST_FORMAT_VERSION:
-        raise ManifestValidationError(f"format_version must be {MANIFEST_FORMAT_VERSION!r}, got {fv!r}")
-
-    raw_channels = raw.get("channels", [])
-    if not isinstance(raw_channels, list):
-        raise ManifestValidationError("channels must be a list")
-
-    normalized: list[dict[str, Any]] = []
-    for i, ch in enumerate(raw_channels):
-        if not isinstance(ch, dict):
-            raise ManifestValidationError(f"channels[{i}] is not a mapping")
-        normalized.append(_normalize_aliases(ch))
-
-    raw["channels"] = normalized
-
-    try:
-        manifest = ChannelManifest.model_validate(raw)
-    except ValidationError as exc:
-        raise ManifestValidationError(str(exc)) from exc
-
+    manifest = _validate_raw(raw)
     log.debug("manifest_loaded", path=str(path), channel_count=len(manifest.channels))
     return manifest
 
@@ -215,14 +288,17 @@ def _atomic_dump_yaml(data: dict[str, Any], path: Path) -> None:
     lost update under true concurrency remains possible — callers that
     read-modify-write should still coordinate.)
     """
+    _atomic_write_text(_dump_rt(data), path)
+
+
+def _atomic_write_text(text: str, path: Path) -> None:
+    """Publish *text* at *path* via a sibling temp file + os.replace, recording the bytes as this run's write."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    yaml = YAML(typ="rt")
-    yaml.default_flow_style = False
     fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.tmp.")
     tmp_path = Path(tmp_str)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            yaml.dump(data, fh)
+            fh.write(text)
         published = tmp_path.read_bytes()  # private temp file: exactly the bytes about to be published
         os.replace(tmp_path, path)
         record_run_write(path, published)  # FB-01-KI1-RACE restore proof

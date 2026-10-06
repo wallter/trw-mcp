@@ -41,6 +41,7 @@ def test_a_doctor_fail_row_prints_its_own_message(
     monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
     warned: list[str] = []
     ui = installer.UI.__new__(installer.UI)
+    ui.interactive = False
     monkeypatch.setattr(installer.UI, "step_warn", lambda _self, text, *a, **k: warned.append(text))
     monkeypatch.setattr(installer.UI, "step_ok", lambda _self, text, *a, **k: None)
 

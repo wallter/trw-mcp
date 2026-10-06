@@ -118,3 +118,31 @@ def test_explicit_env_off_beats_a_project_that_enables_itself(
     status, message = jev_row(tmp_path, TRWConfig(assess_enabled=True))
 
     assert status == "WARN" and "backend off: switched off by TRW_JEV_ENABLED" in message
+
+
+def _machine_store(home: Path, mode: int = 0o600) -> None:
+    (home / ".trw").mkdir(exist_ok=True)
+    store = home / ".trw" / "jev.env"
+    store.write_text(f"OPENROUTER_API_KEY={_KEY}\n", encoding="utf-8")
+    store.chmod(mode)
+
+
+def test_machine_switch_and_machine_store_key_pass_without_a_project_env(tmp_path: Path, _clean: Path) -> None:
+    _machine_switch(_clean)
+    _machine_store(_clean)
+
+    status, message = jev_row(tmp_path, TRWConfig(assess_enabled=True))
+
+    assert status == "PASS"
+    assert "backend enabled by ~/.trw/config.yaml, key from ~/.trw/jev.env" in message
+    assert _KEY not in message
+
+
+def test_a_world_readable_machine_store_is_refused_and_named(tmp_path: Path, _clean: Path) -> None:
+    _machine_switch(_clean)
+    _machine_store(_clean, mode=0o644)
+
+    status, message = jev_row(tmp_path, TRWConfig(assess_enabled=True))
+
+    assert status == "WARN" and "~/.trw/jev.env refused" in message and "chmod 600" in message
+    assert _KEY not in message

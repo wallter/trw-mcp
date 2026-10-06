@@ -8,7 +8,8 @@ enabled by one of (first explicit wins, see ``trw_memory.decisions._enablement``
 ``TRW_JEV_ENABLED``; project scope (``assess_enabled`` in the project's ``.trw/config.yaml``, or
 ``TRW_JEV_ENABLED`` in its ``.env``); or the operator's own ``~/.trw/config.yaml`` machine switch
 (2026-09-23 operator decision — a project may now enable the backend, not only disable it). The
-key stays per-repo regardless: ``OPENROUTER_API_KEY`` from the env or the project ``.env``, and the
+key comes from the env, the project ``.env``, else the owner-only ``~/.trw/jev.env`` machine store
+(``trw_memory.decisions.resolve_jev_settings``, set with ``trw-mcp assess configure``), and the
 base URL is still restricted to an allowlisted host — enabling from project scope never redirects
 where the key is sent. Design and measurements: the trw-jev decision-backend research (PRD-CORE-288).
 

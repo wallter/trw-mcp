@@ -634,8 +634,8 @@ def preserve_uncommitted_changes(
             and before.read_bytes() == after.read_bytes()
         ):
             continue  # same bytes, different mode: a restored exec bit changes no content of the user's
-        if refresh_loses_nothing(rel, before, after):
-            continue  # .mcp.json: only TRW's own `trw` entry changed; AGENTS.md: only TRW's block changed (_dirty_refresh)
+        if refresh_loses_nothing(rel, before, after, root=target_dir):
+            continue  # TRW's own last write, .mcp.json's `trw` entry, or AGENTS.md's TRW block only (_dirty_refresh)
         if before.is_file() and not before.is_symlink():
             recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
             if recorded == hashlib.sha256(before.read_bytes()).hexdigest():

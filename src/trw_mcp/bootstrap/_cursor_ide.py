@@ -59,6 +59,7 @@ _IDE_CURATED_SKILLS: list[str] = [
     "trw-memory-audit",
     "trw-reflect",
     "trw-delegate",
+    "trw-handoff",
     "trw-assess",  # installed only while assess_enabled is on (_optional_skills)
     # "trw-release" — skill directory does not exist yet (PRD-CORE-137)
 ]

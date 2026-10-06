@@ -12,6 +12,7 @@ from trw_mcp.channels._manifest_loader import (
     ManifestValidationError,
     auto_recreate_empty,
     load,
+    migrate_retired_entry_keys,
     write,
 )
 from trw_mcp.channels._manifest_models import ChannelEntry
@@ -40,13 +41,19 @@ def merge_distill_channel_manifest(repo_root: Path, manifest_data: Path, client_
         auto_recreate_empty(manifest_path, reason="missing")
         manifest = load(manifest_path)
     except ManifestValidationError as exc:
-        # Never replace an existing manifest: it may hold entries no bundle can restore. Fail loudly with the
-        # file untouched; every caller reports this in the install/update result (RC-014 review P0).
-        raise ManifestValidationError(
-            f"{manifest_path} is invalid and was left unchanged ({exc}). A manifest from before trw-mcp 6.0.0"
-            " carries the retired keys tier_default and tier_min: delete those two keys from every entry, or"
-            " remove the file and run `trw-mcp update-project` to regenerate it."
-        ) from exc
+        # A pre-6.0.0 manifest fails only on the retired tier keys: drop them in place (every other byte kept)
+        # and carry on. Anything else is never replaced: it may hold entries no bundle can restore, so the
+        # file stays untouched and every caller reports the error (RC-014 review P0).
+        try:
+            dropped = migrate_retired_entry_keys(manifest_path)
+        except ManifestValidationError:
+            dropped = 0
+        if not dropped:
+            raise ManifestValidationError(
+                f"{manifest_path} is invalid and was left unchanged ({exc}). Fix the entries it names, or remove"
+                " the file and run `trw-mcp update-project` to regenerate it."
+            ) from exc
+        manifest = load(manifest_path)
 
     existing_ids = {entry.id for entry in manifest.channels}
     added = 0

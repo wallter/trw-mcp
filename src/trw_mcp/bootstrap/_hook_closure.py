@@ -147,3 +147,16 @@ def deployable_hook_files(clients: Sequence[str], hooks_dir: Path, target_dir: P
     # A registered name with no matching bundled file is not deployable — the
     # channel installer for that hook (if any) owns shipping it separately.
     return {name for name in closure if (hooks_dir / name).is_file()}
+
+
+def settings_hook_refs(target_dir: Path) -> set[str]:
+    """Every ``.claude/hooks/<name>.sh`` the project's own ``.claude/settings.json`` registers (empty when absent).
+
+    Read as text, so a settings file that does not parse still names its hooks. Used by ``doctor``'s
+    ``hook_family`` row: a registered hook missing from disk fails on every Claude Code event.
+    """
+    try:
+        raw = (target_dir / ".claude" / "settings.json").read_text(encoding="utf-8", errors="replace")
+    except OSError:  # trw-fail-silent-allow: no readable settings.json registers no hook
+        return set()
+    return set(_HOOK_PATH_RE.findall(raw))

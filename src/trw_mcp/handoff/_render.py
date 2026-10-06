@@ -95,7 +95,7 @@ def _action(a: JsonDoc) -> str:
 
 def _evidence(ev: JsonDoc) -> str:
     raw = ev.get("raw", {})
-    parts = [ev["procedure"], ev["scope"], ev["result"], ev["at"], ev["producer"], raw.get("uri", "—")]
+    parts = [ev["procedure"], ev["scope"], ev["result"], ev["at"], ev.get("producer", "—"), raw.get("uri", "—")]
     return "; ".join(escape(p) for p in parts)
 
 

@@ -21,6 +21,9 @@ skills:
   trw-delegate:
     disposition: portable
     reason: MCP-first read-only second-opinion dispatch is client-neutral and supports shell-less harnesses
+  trw-handoff:
+    disposition: portable
+    reason: Client-neutral handoff write and read-back procedure driven by the trw-mcp handoff CLI
   trw-assess:
     disposition: portable
     reason: Client-neutral guidance for the opt-in trw_assess tool; installed only while assess_enabled is on

@@ -48,6 +48,7 @@ __all__ = [
     "append_checkout_file",
     "record_run_write",
     "recording_writes",
+    "run_writes",
     "write_checkout_file",
     "written_this_run",
 ]
@@ -103,6 +104,11 @@ def record_run_write(path: Path, data: bytes) -> None:
     ledger = _RUN_WRITES.get()
     if ledger is not None:
         ledger[os.path.realpath(path)] = hashlib.sha256(data).hexdigest()
+
+
+def run_writes() -> dict[str, str]:
+    """Every ``{real path: sha256}`` this run wrote so far (empty when no ledger is open)."""
+    return dict(_RUN_WRITES.get() or {})
 
 
 def written_this_run(path: Path) -> str | None:

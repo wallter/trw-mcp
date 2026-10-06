@@ -68,6 +68,7 @@ _RUNTIME_PREFIXES = (
     ".trw/hooks/",
     ".trw/security/",
     ".trw/frameworks/.rollback/",
+    ".trw/runtime/written-digests.json",  # the bytes a run wrote, for the next run's uncommitted-file guard
 )
 
 

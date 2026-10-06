@@ -440,6 +440,7 @@ class TestSkills:
         "trw-exec-plan",
         "trw-feedback",
         "trw-framework-check",
+        "trw-handoff",
         "trw-learn",
         "trw-memory-audit",
         "trw-memory-optimize",
@@ -461,7 +462,7 @@ class TestSkills:
         return [s for s in self.EXPECTED_SKILLS if s not in CONDITIONAL_SKILLS]
 
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/skills/ has 26 subdirectories each with SKILL.md."""
+        """After init_project(), .claude/skills/ holds every default skill, each with SKILL.md."""
         result = init_project(fake_git_repo)
         assert not result["errors"]
 

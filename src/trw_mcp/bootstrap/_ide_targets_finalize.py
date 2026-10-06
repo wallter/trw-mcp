@@ -40,6 +40,8 @@ def _update_config_target_platforms(
     target_dir: Path,
     ide_targets: list[str],
     result: dict[str, list[str]],
+    *,
+    absent_means: tuple[str, ...] = ("claude-code",),
 ) -> None:
     """Augment target_platforms in config.yaml without narrowing the user list.
 
@@ -54,6 +56,17 @@ def _update_config_target_platforms(
       - When the merged list equals the existing list (no new IDE, no duplicate), the file
         is preserved (not rewritten).
       - All other config fields preserved.
+      - A config with NO ``target_platforms`` key is always written when there is
+        anything to record. Every reader of the record (``_recorded_targets``,
+        ``update_write_targets``) reads an absent key as "no clients", so leaving
+        it absent because the merge equalled *absent_means* recorded nothing: an
+        install whose ``.trw/config.yaml`` predated ``init-project --ide
+        claude-code`` (the bootstrap's ``auth login`` writes one) then ran
+        ``update-project --ide codex`` against ``[codex]`` alone, and the hook
+        sweep withdrew every Claude Code hook settings.json still registers.
+        *absent_means* is what an absent key stands for: the legacy
+        ``["claude-code"]`` for an update of a pre-record install, ``()`` for
+        ``init-project``, whose own fresh config records exactly its clients.
 
     Prior behavior (pre-0.44.1) replaced the entire list with ``ide_targets``,
     which destroyed multi-platform configurations when ``--ide <single>`` was
@@ -71,7 +84,7 @@ def _update_config_target_platforms(
     try:
         content = config_path.read_text(encoding="utf-8")
         data = yaml.safe_load(content) or {}
-        existing = _recorded_platforms(data, default=["claude-code"])
+        existing = _recorded_platforms(data, default=list(absent_means))
 
         # Deduplicate the existing entries (first occurrence wins), then append
         # any ide_targets entries not already present.
@@ -85,7 +98,7 @@ def _update_config_target_platforms(
                 merged.append(new_id)
                 added.append(new_id)
 
-        if merged == existing:
+        if merged == existing and ("target_platforms" in data or not merged):
             result.setdefault("preserved", []).append(str(config_path))
             logger.debug(
                 "config_target_platforms_unchanged",
@@ -94,8 +107,14 @@ def _update_config_target_platforms(
             )
             return
 
-        data["target_platforms"] = merged
-        write_checkout_file(target_dir, config_path, yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
+        if "target_platforms" in data:
+            data["target_platforms"] = merged
+            text = yaml.safe_dump(data, default_flow_style=False, sort_keys=False)
+        else:
+            # Only the key is missing: append it, so the user's comments and layout stay byte-for-byte.
+            block = yaml.safe_dump({"target_platforms": merged}, default_flow_style=False, sort_keys=False)
+            text = content + ("" if not content or content.endswith("\n") else "\n") + block
+        write_checkout_file(target_dir, config_path, text)
         result.setdefault("updated", []).append(str(config_path))
         logger.info(
             "config_target_platforms_augmented",

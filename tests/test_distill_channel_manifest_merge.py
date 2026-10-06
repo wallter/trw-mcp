@@ -52,21 +52,27 @@ def test_invalid_source_does_not_mutate_target(tmp_path: Path) -> None:
     assert target.read_bytes() == before
 
 
+_PRE_RC014 = (
+    "# a comment the migration keeps\n"
+    "format_version: manifest/v1\n"
+    "channels:\n"
+    "  - id: my-custom-channel\n"
+    "    client: codex\n"
+    "    surface: agents_md_segment\n"
+    "    telemetry_tag: my.custom\n"
+    "    tier_default: T2\n"
+    "    tier_min: T0\n"
+)
+
+
 @pytest.mark.parametrize(
     "content",
     [
         "{invalid",
-        # An upgrade from a manifest written before RC-014: a custom entry plus the retired tier keys.
-        "format_version: manifest/v1\n"
-        "channels:\n"
-        "  - id: my-custom-channel\n"
-        "    client: codex\n"
-        "    surface: agents_md_segment\n"
-        "    telemetry_tag: my.custom\n"
-        "    tier_default: T2\n"
-        "    tier_min: T0\n",
+        # The retired tier keys alongside a real problem: the migration must not paper over the rest.
+        _PRE_RC014.replace("    surface: agents_md_segment\n", "    surface: not-a-surface\n"),
     ],
-    ids=["unparseable", "pre-rc014-manifest"],
+    ids=["unparseable", "pre-rc014-manifest-with-another-error"],
 )
 def test_an_invalid_target_fails_loudly_and_is_never_replaced(tmp_path: Path, content: str) -> None:
     """RC-014 review P0: recovery used to overwrite an invalid manifest with an empty one, deleting custom
@@ -80,8 +86,24 @@ def test_an_invalid_target_fails_loudly_and_is_never_replaced(tmp_path: Path, co
         merge_distill_channel_manifest(tmp_path, _source(tmp_path / "source.yaml"), "test")
 
     assert target.read_bytes() == before
-    # The operator is told which keys and what to do (lead ruling: fail loudly, no migration code).
-    assert "tier_default and tier_min" in str(err.value) and "trw-mcp update-project" in str(err.value)
+    assert "trw-mcp update-project" in str(err.value)
+    # One line: no per-error pydantic URL repeated once per entry and key.
+    assert "errors.pydantic.dev" not in str(err.value)
+
+
+def test_a_pre_rc014_manifest_is_migrated_not_refused(tmp_path: Path) -> None:
+    """The 9.1.0 install failure: a manifest whose only problem is the retired tier keys aborted update-project
+    and rolled the whole project back. The merge now drops the two keys in place, keeps the custom entry and
+    merges as usual."""
+    target = tmp_path / ".trw/channels/manifest.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text(_PRE_RC014, encoding="utf-8")
+
+    assert merge_distill_channel_manifest(tmp_path, _source(tmp_path / "source.yaml"), "test") == (1, 2)
+
+    text = target.read_text(encoding="utf-8")
+    assert "tier_default" not in text and "tier_min" not in text
+    assert {entry.id for entry in load(target).channels} == {"my-custom-channel", "client-entry"}
 
 
 def test_missing_target_is_created_without_warning_or_telemetry(

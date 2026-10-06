@@ -221,9 +221,10 @@ class TestPriorTargetsWithoutMeta:
 class TestHeadlessMode:
     """Non-interactive (CI) installs auto-configure without prompting."""
 
-    def test_headless_first_install_uses_detected(
+    def test_headless_first_install_ignores_detection(
         self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Detected clients never widen the default set (operator, 2026-10-05)."""
         target = _project(tmp_path)
 
         resolved, run_calls, prompts = _drive(
@@ -231,12 +232,12 @@ class TestHeadlessMode:
             monkeypatch,
             target,
             interactive=False,
-            detected_clis=["claude-code"],
-            detected_ides=["cursor-ide"],
+            detected_clis=["claude-code", "cursor-ide"],
+            detected_ides=["cursor-ide", "opencode"],
         )
 
         assert prompts == []
-        assert resolved == ["cursor-ide", "claude-code"]
+        assert resolved == ["claude-code", "codex", "antigravity-cli"]
         assert _first_action(run_calls) == "init-project"
 
     def test_headless_first_install_default_when_nothing_detected(
@@ -246,7 +247,31 @@ class TestHeadlessMode:
 
         resolved, _run_calls, _ = _drive(installer, monkeypatch, target, interactive=False)
 
-        assert resolved == ["claude-code"]
+        assert resolved == ["claude-code", "codex", "antigravity-cli"]
+
+    def test_headless_existing_config_target_platforms_preserved(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path, prior_targets=["cursor-ide"], meta=True)
+
+        resolved, run_calls, _ = _drive(installer, monkeypatch, target, interactive=False)
+
+        assert resolved == ["cursor-ide"]
+        assert _first_action(run_calls) == "update-project"
+
+    def test_default_ides_are_the_three_clients(self, installer: ModuleType) -> None:
+        assert installer._DEFAULT_IDES == ["claude-code", "codex", "antigravity-cli"]
+        assert set(installer._DEFAULT_IDES) <= set(installer._SUPPORTED_IDES)
+
+    def test_interactive_prompt_preselects_default_not_detected(
+        self, installer: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no tty the prompt returns its pre-selection: the defaults, not the detected clients."""
+        monkeypatch.setattr(installer, "_open_tty", lambda: None)
+
+        chosen = installer._prompt_ide_selection(["cursor-cli"], ["cursor-ide"], prior_targets=None)
+
+        assert chosen == ["claude-code", "codex", "antigravity-cli"]
 
 
 class TestExplicitIDEFlag:

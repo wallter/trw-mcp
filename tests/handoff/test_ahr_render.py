@@ -66,3 +66,13 @@ def test_injection_in_field_cannot_open_markdown_structure() -> None:
     assert "\n## Injected" not in rendered
     assert "<script>" not in rendered
     assert "](http" not in rendered
+
+
+def test_evidence_without_the_optional_producer_renders() -> None:
+    """``producer`` is optional in the schema; the view printed a KeyError instead (eval, 2026-10-05)."""
+    doc = load(STANDARD)
+    evidence = [ev for claim in doc["claims"] for ev in claim.get("evidence", [])]
+    assert evidence, "the standard vector needs a verified claim for this test"
+    for ev in evidence:
+        ev.pop("producer", None)
+    assert "— " in render_markdown(doc) or "—;" in render_markdown(doc)

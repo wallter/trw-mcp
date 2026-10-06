@@ -55,13 +55,20 @@ def refresh_changed_only_trw_block(before: str, after: str, markers: tuple[str, 
     return old_sides == new_sides
 
 
-def refresh_loses_nothing(rel: str, before: Path, after: Path) -> bool:
+def refresh_loses_nothing(rel: str, before: Path, after: Path, *, root: Path | None = None) -> bool:
     """True when this run's refresh of the dirty repo-relative *rel* (``before`` = pre-run, ``after`` = now) loses no user byte.
+
+    With *root*: ``before`` is byte-for-byte what TRW last wrote to *rel* there (``_written_digests``), so an
+    untracked file in a repository with no commits is TRW's own output, not an edit to keep.
 
     ``.mcp.json``: only TRW's own ``trw`` entry is rewritten. A marker-merged instruction file (AGENTS.md,
     ``.github/copilot-instructions.md``, ANTIGRAVITY.md): only the bytes inside TRW's markers changed. Any other
     path, and anything not provably so, is False and the caller keeps the user's bytes.
     """
+    from ._written_digests import trw_wrote_these_bytes
+
+    if root is not None and trw_wrote_these_bytes(root, rel, before):
+        return True
     if rel == ".mcp.json":
         return mcp_json_refresh_loses_nothing(before)
     markers = _marker_merged_files().get(rel)

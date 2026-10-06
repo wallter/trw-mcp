@@ -36,6 +36,7 @@ from ._file_ops import _new_result, _record_write, read_json_object
 
 _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 _CODEX_HOOKS_PATH = ".codex/hooks.json"
+_TRUST_HINT = "To approve only TRW's own hooks, pinned to their current hash, run `trw-mcp trust-codex-hooks`."
 
 
 def _trw_hook_group(
@@ -149,7 +150,7 @@ def codex_hooks_review_warning(target_dir: Path | None = None) -> str:
             return (
                 f"TRW registered {hook_count} TRW-managed {hook_label} in .codex/hooks.json; current Codex builds "
                 "require manual review before project hooks run. Open /hooks in Codex to approve or disable them. "
-                "Hook trust state stays in user-controlled Codex config, not in project files."
+                "Hook trust state stays in user-controlled Codex config, not in project files. " + _TRUST_HINT
             )
     else:
         hook_count = codex_trw_hook_count()
@@ -159,7 +160,7 @@ def codex_hooks_review_warning(target_dir: Path | None = None) -> str:
         "manual review before project hooks run. Open /hooks in Codex to approve or "
         f"disable the {hook_count} TRW-managed {hook_label}. The deprecated "
         "[features].codex_hooks key is migrated on update; hook trust state stays in "
-        "user-controlled Codex config, not in project files."
+        "user-controlled Codex config, not in project files. " + _TRUST_HINT
     )
 
 

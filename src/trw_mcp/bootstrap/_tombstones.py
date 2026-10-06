@@ -150,16 +150,18 @@ def enforce_and_write_manifest(
     clients: list[str],
     skill_dir_snapshot: dict[str, frozenset[str]] | None = None,
 ) -> None:
-    """Enforce tombstones, then write the manifest recording them (FR10/FR12).
+    """Enforce tombstones, then write the manifest recording them (FR10/FR12) and the bytes this run wrote.
 
     One call for ``_apply_update``'s last two writer-adjacent steps, so its own
     body stays inside the 350 effective-LOC gate.
     """
     from ._retired_artifacts import retired_artifact_notices
     from ._version_migration import _write_manifest
+    from ._written_digests import record_written_digests
 
     enforce_tombstones(root, tombstones, result, skill_dir_snapshot)
     _write_manifest(root, result, effective_data, clients=clients, tombstones=tombstones)
+    record_written_digests(root, result)  # the next run's proof that untracked bytes are TRW's own output
     # PRD-INFRA-200 FR05: report only -- never delete (three fix-delta rounds
     # on an earlier delete-based design each found a real deletion-safety gap).
     if notices := retired_artifact_notices(root):

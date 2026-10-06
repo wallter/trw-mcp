@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from trw_memory.decisions._machine_store import MACHINE_STORE_LABEL
+
 from trw_mcp.models.config import TRWConfig
 
 __all__ = ["jev_row"]
@@ -19,31 +21,32 @@ __all__ = ["jev_row"]
 _ENABLE_HINT = "add `assess_enabled: true` to ~/.trw/config.yaml (or the project's .trw/config.yaml)"
 
 
-def _key_source(target: Path) -> str:
-    if os.environ.get("OPENROUTER_API_KEY"):
-        return "environment"
-    from trw_memory.decisions._dotenv import parse_dotenv_subset
-
-    if parse_dotenv_subset(target / ".env", allowed_keys=frozenset({"OPENROUTER_API_KEY"})):
-        return "project .env"
-    return ""
-
-
 def jev_row(target: Path, config: TRWConfig) -> tuple[Literal["PASS", "WARN", "SKIP"], str]:
-    """``(status, message)``: SKIP when off, WARN when shown but unusable, PASS when usable."""
+    """``(status, message)``: SKIP when off, WARN when shown but unusable, PASS when usable.
+
+    Names the layer that enabled the backend and the layer that supplied the key (environment,
+    project .env or the ``~/.trw/jev.env`` machine store), never the key itself.
+    """
+    from trw_memory.decisions import resolve_jev_settings
+
     from trw_mcp.tools._assess_enablement import backend_enablement
 
     enabled, source = backend_enablement(target)
-    key = _key_source(target)
+    settings = resolve_jev_settings(dict(os.environ), target / ".env")
     # The tool is shown whenever either switch is on (``assess_surfaced``), so "off" means both are.
     if not getattr(config, "assess_enabled", False) and not enabled:
         return "SKIP", f"trw_assess off (experimental, opt-in): {_ENABLE_HINT}"
     # A layer that said no is named, so an operator can see which switch turned it off.
     off_reason = f"switched off by {source}" if source else _ENABLE_HINT
+    store_note = f" ({MACHINE_STORE_LABEL} refused: it {settings.store_problem})" if settings.store_problem else ""
     missing = [
         *([] if enabled else [f"backend off: {off_reason}"]),
-        *([] if key else ["no OPENROUTER_API_KEY in the environment or the project .env"]),
+        *(
+            []
+            if settings.api_key
+            else [f"no OPENROUTER_API_KEY in the environment, the project .env or {MACHINE_STORE_LABEL}{store_note}"]
+        ),
     ]
     if missing:
         return "WARN", "trw_assess shown but every call returns disabled: " + "; ".join(missing)
-    return "PASS", f"trw_assess usable: backend enabled by {source}, key from {key}"
+    return "PASS", f"trw_assess usable: backend enabled by {source}, key from {settings.key_source}{store_note}"

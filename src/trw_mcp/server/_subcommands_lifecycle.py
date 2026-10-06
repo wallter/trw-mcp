@@ -5,7 +5,7 @@ with test imports (``test_uninstall.py``, ``test_cli_auth_subcommand.py``).
 
 Two handlers:
 - ``_run_uninstall`` — remove TRW files from a project (uninstall subcommand)
-- ``_run_auth`` — login/logout/status auth subcommand dispatch
+- (``_run_auth`` moved to ``_cli_auth.run_auth``; ``_subcommands`` re-exports it)
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from trw_mcp.bootstrap._codex_hook_trust import revoke_on_uninstall
 from trw_mcp.bootstrap._git_hooks import _resolve_hooks_dir
 from trw_mcp.bootstrap._safe_remove import path_refusal, safe_remove
 from trw_mcp.bootstrap._utils import printable
@@ -48,15 +49,6 @@ from trw_mcp.server._uninstall_report import (
     stripped_note,
 )
 from trw_mcp.server._uninstall_trash_report import _move_matched_captures_to_os_trash
-
-
-def _surfaces_declared_by_others(recorded: list[str], removed: str) -> set[str]:
-    """Relpaths the project's other recorded clients declare, per their client specs."""
-    from trw_mcp.client_profiles.catalog import client_surfaces
-    from trw_mcp.models.config._profiles import builtin_client_ids
-
-    known = set(builtin_client_ids())
-    return {s.relpath for client in recorded if client != removed and client in known for s in client_surfaces(client)}
 
 
 def _run_uninstall(args: argparse.Namespace) -> None:
@@ -115,7 +107,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         rewrite_manifest_after_removal,
     )
     from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE, _read_manifest, manifest_refusal
-    from trw_mcp.client_profiles.catalog import client_surfaces, uninstall_surfaces
+    from trw_mcp.client_profiles.catalog import client_surfaces, surfaces_declared_by_others, uninstall_surfaces
 
     target = Path(getattr(args, "target_dir", ".")).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
@@ -175,7 +167,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     # and copilot all run scripts from it, PRD-INFRA-192 FR09) -- belongs to all of
     # them: a scoped removal strips/deletes it only when no remaining recorded
     # client declares that surface too.
-    still_declared = _surfaces_declared_by_others(recorded_clients, remove_ide) if remove_ide else set()
+    still_declared = surfaces_declared_by_others(recorded_clients, remove_ide) if remove_ide else set()
     remaining_targets = [c for c in recorded_clients if c != remove_ide] if remove_ide else []
     # ``.trw`` is the ONE surface exempt from the manifest-driven/rule-3
     # machinery below: it holds the manifest itself plus the learning corpus,
@@ -338,6 +330,7 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     errors = 0
     refused: list[Path] = []
     _note_preexisting_trash(target / ".trw")  # before anything is captured: a trash already there is kept
+    revoke_on_uninstall(target, remove_ide)  # before .codex/hooks.json goes: the approvals are keyed on its entries
     if memory:
         try:
             deleted = _uninstall_memory.delete_checkout_memory(memory, target / ".trw")
@@ -496,28 +489,3 @@ def _run_uninstall(args: argparse.Namespace) -> None:
         # scripted callers (`trw-mcp uninstall --yes && ...`).
         print(f"  {errors} item(s) could not be removed — see errors above.", file=sys.stderr)
         raise SystemExit(1)
-
-
-def _run_auth(args: argparse.Namespace) -> None:
-    """Handle the ``auth`` subcommand (login/logout/status)."""
-    from trw_mcp.cli.auth import run_auth_login, run_auth_logout, run_auth_status
-
-    config_path = Path.cwd() / ".trw" / "config.yaml"
-    api_url = getattr(args, "api_url", None) or "https://api.trwframework.com"
-
-    auth_cmd = getattr(args, "auth_command", None)
-    if auth_cmd == "login":
-        sys.exit(run_auth_login(api_url, config_path))
-    elif auth_cmd == "logout":
-        sys.exit(run_auth_logout(config_path))
-    elif auth_cmd == "status":
-        sys.exit(run_auth_status(config_path, api_url))
-    else:
-        # No auth subcommand: show help
-        print("Usage: trw-mcp auth {login|logout|status}")
-        print()
-        print("Commands:")
-        print("  login   Authenticate via device authorization flow")
-        print("  logout  Remove stored API key")
-        print("  status  Show current authentication status")
-        sys.exit(0)

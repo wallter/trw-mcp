@@ -12,7 +12,9 @@ from trw_mcp.channels._manifest_loader import (
     ManifestMissingError,
     ManifestValidationError,
     auto_recreate_empty,
+    drop_retired_entry_keys,
     load,
+    migrate_retired_entry_keys,
     write,
 )
 from trw_mcp.channels._manifest_models import MarkersConfig
@@ -237,16 +239,10 @@ channels:
     assert manifest.channels[0].lock_file == ".trw/channels/ch.lock"
 
 
-def test_tier_default_key_raises_no_compat_shim(tmp_path: Path) -> None:
-    """``tier_default``/``tier_min`` were removed with no normalization (RC-014).
-
-    Unlike ``default_tier`` -> ``tier_default`` before it, these two keys are
-    NOT dropped or renamed on load: the standing "no compat shims" policy
-    means an old manifest that still carries them must fail loudly via
-    ChannelEntry's extra="forbid" rather than silently lose the field. The
-    merge never replaces such a file (test_distill_channel_manifest_merge.py);
-    the operator removes the two keys or deletes the file to regenerate it.
-    """
+def test_tier_default_key_still_fails_a_plain_load(tmp_path: Path) -> None:
+    """``tier_default``/``tier_min`` were removed from ChannelEntry (RC-014) and a read-only load does not drop
+    them: it fails with one readable line, not one pydantic URL per entry and key. update-project migrates
+    the file on disk instead (``migrate_retired_entry_keys``)."""
     yaml_str = """\
 format_version: "manifest/v1"
 channels:
@@ -255,11 +251,66 @@ channels:
     surface: agents_md_segment
     telemetry_tag: t
     tier_default: "T2"
+    tier_min: "T0"
+  - id: ch2
+    client: codex
+    surface: agents_md_segment
+    telemetry_tag: t2
+    tier_default: "T1"
+    tier_min: "T0"
 """
     p = tmp_path / "manifest.yaml"
     _write_yaml(p, yaml_str)
-    with pytest.raises(ManifestValidationError):
+    with pytest.raises(ManifestValidationError) as err:
         load(p)
+    message = str(err.value)
+    assert "\n" not in message and "errors.pydantic.dev" not in message
+    assert message.startswith("4 validation errors:")
+    assert "tier_default: Extra inputs are not permitted (x2)" in message
+    assert "tier_min: Extra inputs are not permitted (x2)" in message
+
+
+_PRE_RC014_YAML = """\
+# operator note: keep this channel
+format_version: manifest/v1
+generated_by: trw-mcp
+generated_at: '2026-06-06T17:50:35.343Z'
+channels:
+- id: ch1
+  client: codex
+  surface: agents_md_segment
+  telemetry_tag: t
+  tier_default: T2
+  tier_min: T0
+  ttl_days: 7
+"""
+
+
+def test_drop_retired_entry_keys_keeps_every_other_byte() -> None:
+    new_text, dropped = drop_retired_entry_keys(_PRE_RC014_YAML)
+    assert dropped == 2
+    assert new_text == _PRE_RC014_YAML.replace("  tier_default: T2\n  tier_min: T0\n", "")
+
+
+def test_drop_retired_entry_keys_is_a_no_op_without_them() -> None:
+    assert drop_retired_entry_keys(VALID_ONE_CHANNEL_YAML) == (VALID_ONE_CHANNEL_YAML, 0)
+
+
+def test_migrate_retired_entry_keys_rewrites_then_loads(tmp_path: Path) -> None:
+    p = tmp_path / "manifest.yaml"
+    _write_yaml(p, _PRE_RC014_YAML)
+    assert migrate_retired_entry_keys(p) == 2
+    assert [c.id for c in load(p).channels] == ["ch1"]
+    assert migrate_retired_entry_keys(p) == 0  # idempotent
+
+
+def test_migrate_retired_entry_keys_leaves_an_otherwise_invalid_file_untouched(tmp_path: Path) -> None:
+    p = tmp_path / "manifest.yaml"
+    _write_yaml(p, _PRE_RC014_YAML.replace("surface: agents_md_segment", "surface: nonsense"))
+    before = p.read_bytes()
+    with pytest.raises(ManifestValidationError):
+        migrate_retired_entry_keys(p)
+    assert p.read_bytes() == before
 
 
 def test_content_types_is_dropped_not_renamed(tmp_path: Path) -> None:

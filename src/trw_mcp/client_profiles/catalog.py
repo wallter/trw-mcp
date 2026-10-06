@@ -484,6 +484,12 @@ def client_surfaces(client_id: str, generated: frozenset[str] | None = None) -> 
     return tuple(surfaces)
 
 
+def surfaces_declared_by_others(recorded: list[str], removed: str) -> set[str]:
+    """Relpaths the project's other recorded clients declare, per their client specs."""
+    known = set(builtin_client_ids())
+    return {s.relpath for client in recorded if client != removed and client in known for s in client_surfaces(client)}
+
+
 def client_scaffold_relpaths(client_id: str) -> frozenset[str]:
     """Repo-relative paths TRW creates when installing *client_id*.
 

@@ -431,20 +431,17 @@ def init_project(
         result.setdefault("warnings", []).append(warning)
         logger.warning("project_init_non_git", project_root=str(target_dir))
 
+    from trw_mcp._checkout_write import recording_writes
     from trw_mcp.agents._report_cap import project_report_cap
     from trw_mcp.state._project_root_binding import installing_into
 
+    from ._written_digests import record_written_digests
+
     try:
         # PRD-CORE-290-FR04: the target's configured report cap; B71-117: the target is "the project".
-        with project_report_cap(target_dir), installing_into(target_dir):
-            _run_init_phases(
-                target_dir,
-                result,
-                force=force,
-                runs_root=runs_root,
-                ide=ide,
-                on_progress=on_progress,
-            )
+        with project_report_cap(target_dir), installing_into(target_dir), recording_writes():
+            _run_init_phases(target_dir, result, force=force, runs_root=runs_root, ide=ide, on_progress=on_progress)
+            record_written_digests(target_dir, result)  # update-project's proof that untracked bytes are TRW's
     except Exception as exc:  # justified: honor the dict-contract return, never raise a raw traceback
         logger.exception("project_init_exception", project_root=str(target_dir))
         result["errors"].append(f"init-project failed: {type(exc).__name__}: {exc}")
@@ -534,7 +531,7 @@ def _run_init_phases(
         # does; the kept config otherwise never learned the new client (E2E-CODEX-INIT-ARTIFACTS).
         from ._ide_targets_finalize import _update_config_target_platforms
 
-        _update_config_target_platforms(target_dir, recordable, result)
+        _update_config_target_platforms(target_dir, recordable, result, absent_means=())
     if rewrite_config and kept_pin:
         _set_pin(target_dir / ".trw", kept_pin)
     # 3a. A new checkout has nothing to move: pin project_namespace and mint its grant (PRD-CORE-280 FR06)

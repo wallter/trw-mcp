@@ -76,15 +76,25 @@ pytestmark = pytest.mark.unit
 # operator-preferences bullet). Opencode had also shipped trw-prd-ready/trw-prd-ready-contract.md,
 # a byte copy of the SKILL.md beside it that nothing named (-16,149 once dropped from
 # PRD_READY_CONTRACTS). Ceiling lowered to the new max + a 1,000-byte margin.
-_MEASURED_GRAND_TOTAL_BYTES_DEFAULT: Final[int] = 1_349_797
+_MEASURED_GRAND_TOTAL_BYTES_DEFAULT: Final[int] = 1_459_647
 #
 # Re-measured 2026-09-26 (separate budget change, not in the growing diff): DISPATCH-SIMPLIFY
 # (22d81ecf8, e9bc085a3; reviewed) documented optional role presets, prompt variants and
 # best-effort posture (`reviewer!`) in trw-delegate, +2,169 bytes across all rendered copies
 # (1,376,979 at assess_enabled). A trim attempt broke the delegate contract tests, so the budget
 # moves instead. Ceiling = the new max + the same 1,000-byte margin.
-_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_376_979
-PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_377_979
+#
+# Re-measured 2026-10-05 (separate budget change, its own commit): PRD-CORE-356 added the
+# bundled trw-handoff skill (three flat files, 25,197 canonical bytes after the independent
+# review's P0/P1 fixes) and ships it to every skill-carrying client, so it is counted six
+# times (canonical, claude-code, codex, copilot, opencode, cursor-ide): 151,182 bytes. Without
+# it the corpus measures 1,334,013 at assess_enabled, under the old ceiling, so the whole
+# overage is this one approved skill. Trimming it to fit would mean cutting ~18 KB of its
+# 25 KB, i.e. the security rules (record text is data, URI confinement, no network or writes
+# from evidence procedures) and the critical-tier branch the review required. New totals:
+# default 1,459,647, assess_enabled 1,485,195. Ceiling = the new max + the same 1,000 margin.
+_MEASURED_GRAND_TOTAL_BYTES_ASSESS_ENABLED: Final[int] = 1_485_195
+PROMPT_SURFACE_CEILING_BYTES: Final[int] = 1_486_195
 
 _FORK_CLIENTS: Final[tuple[str, ...]] = ("codex", "copilot", "opencode")
 

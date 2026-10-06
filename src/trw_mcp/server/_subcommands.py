@@ -18,6 +18,7 @@ import structlog
 
 from trw_mcp._checkout_write import write_checkout_file
 from trw_mcp.bootstrap._utils import printable
+from trw_mcp.server._cli_auth import run_auth as _run_auth
 from trw_mcp.server._subcommands_check import (
     _check_instructions_core as _check_instructions_core,
 )
@@ -47,7 +48,6 @@ from trw_mcp.server._subcommands_doctor import (
 )
 from trw_mcp.server._subcommands_gc import _run_gc as _run_gc
 from trw_mcp.server._subcommands_learn_drain import _run_learn_drain as _run_learn_drain
-from trw_mcp.server._subcommands_lifecycle import _run_auth as _run_auth
 from trw_mcp.server._subcommands_lifecycle import (
     _run_uninstall as _run_uninstall,
 )
@@ -453,6 +453,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "version-status": _run_version_status,
     "auth": _run_auth,
     "uninstall": _run_uninstall,
+    "trust-codex-hooks": _lazy_verb("trw_mcp.bootstrap._codex_hook_trust", "run_cli"),
     "config-reference": _run_config_reference,
     "local": _run_local,
     "code": _lazy_verb("trw_mcp.server._subcommands_code", "run_code"),
@@ -491,5 +492,6 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "receipt": _lazy_verb("trw_mcp.tools._receipt_cli", "run_receipt"),
     "factory": _lazy_verb("trw_mcp.server._cli_factory", "run_factory"),
     "decision": _lazy_verb("trw_mcp.tools._decision_cli", "run_decision"),
+    "assess": _lazy_verb("trw_mcp.tools._assess_cli", "run_assess"),
     **{verb: _lazy_verb("trw_mcp.shared_server._cli", f"run_{verb}") for verb in ("swap", "status", "env")},
 }

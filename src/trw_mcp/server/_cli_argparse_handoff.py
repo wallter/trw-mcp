@@ -2,7 +2,9 @@
 
 Belongs to the ``_cli_argparse.py`` facade. Registers the ``handoff`` verb group
 (subparser dest ``handoff_command``) for Agent Handoff Records: ``validate``,
-``digest`` and ``render`` are read-only; ``seal`` writes only the named file.
+``digest``, ``render`` and ``check`` are read-only; ``seal`` writes only the named file;
+``new`` and ``readback-new`` write only a fresh draft (``new`` also its changed-paths sidecar),
+never over an existing file.
 """
 
 from __future__ import annotations
@@ -15,12 +17,57 @@ __all__ = ["add_handoff_subcommands"]
 def add_handoff_subcommands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """Register ``handoff validate|digest|seal|render``."""
+    """Register ``handoff new|readback-new|validate|digest|seal|render|check``."""
     parser = subparsers.add_parser(
         "handoff",
-        help="Validate, digest, seal or render an Agent Handoff Record (AHR 1.0-rc.1)",
+        help="Draft, validate, digest, seal, render or check an Agent Handoff Record (AHR 1.0-rc.1)",
     )
     sub = parser.add_subparsers(dest="handoff_command")
+
+    new = sub.add_parser(
+        "new",
+        help="Write a DRAFT handoff: ids, times, git state and pointer digests filled in, "
+        "judgement fields as TODO(handoff): sentinels",
+    )
+    new.add_argument("--tier", choices=("minimal", "standard", "critical"), default="minimal")
+    new.add_argument("--subject", required=True, help="Stable slug for the work item, reused by superseding records")
+    new.add_argument(
+        "--next-read",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="A file inside the repository the receiver reads (repeatable, in reading order; a file: URI is "
+        "repo-relative); digested over its raw bytes. https: and trw: URIs are carried undigested",
+    )
+    new.add_argument("--to-scope", default="next-session", help="Scope of the unaddressed receiver")
+    new.add_argument(
+        "--to-id",
+        default=None,
+        metavar="ID",
+        help="Address the record to this agent (e.g. codex:next or a peer member id); "
+        "critical defaults to <harness>:next, with the operator as verifier",
+    )
+    new.add_argument(
+        "--out",
+        default=None,
+        metavar="PATH",
+        help="Draft path (default: <active run>/handoffs/<id>.json, else .trw/handoffs/<id>.json)",
+    )
+
+    rbnew = sub.add_parser(
+        "readback-new",
+        help="Write a DRAFT read-back for a handoff: id, author, time, handoff digest and pointer checks "
+        "filled in, restatements and re-verification results as TODO(handoff): sentinels",
+    )
+    rbnew.add_argument("file", help="The AHR handoff JSON file being received")
+    rbnew.add_argument(
+        "--out", default=None, metavar="PATH", help="Draft path (default: <id>.readback.<readback_id>.json beside it)"
+    )
+    rbnew.add_argument(
+        "--as-addressee",
+        action="store_true",
+        help="The user confirmed this session is the principal the record is addressed to",
+    )
 
     validate = sub.add_parser(
         "validate",
@@ -44,3 +91,11 @@ def add_handoff_subcommands(
         help="Print the Markdown view of a valid handoff record (the JSON stays normative)",
     )
     render.add_argument("file", help="AHR handoff JSON file")
+
+    check = sub.add_parser(
+        "check",
+        help="Receiver pre-flight: digest, validity, expiry, supersession, pointer digests and git state; "
+        "JSON on stdout, summary on stderr, exit 1 on any finding",
+    )
+    check.add_argument("file", help="AHR handoff JSON file")
+    check.add_argument("--digest", default=None, metavar="sha256:HEX", help="The digest the sender gave you")

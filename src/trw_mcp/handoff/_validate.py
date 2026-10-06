@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULT_URI_SCHEMES",
     "MAX_CANONICAL_BYTES",
     "MAX_INPUT_BYTES",
+    "PLACEHOLDER",
     "AhrInputError",
     "AhrParseError",
     "Finding",
@@ -69,6 +70,9 @@ _TOKEN_KEYS = frozenset(
     }
     | _TIME_KEYS
 )
+#: The scaffold's own sentinel (``handoff new``/``readback-new``), matched anywhere in a string. Plain
+#: ``TODO:`` text is legitimate content (a verbatim constraint, a third-party record) and never matches.
+PLACEHOLDER = "TODO(handoff):"
 _RULE_RE = re.compile(r"^(X-\d+|R-[A-Z]+-\d+|schema)\b:?\s*")
 
 
@@ -213,10 +217,31 @@ def _uri_findings(value: object, allowed: frozenset[str], path: str, out: list[F
         _uri_findings(child, allowed, here, out)
 
 
-def _schema_findings(doc: JsonDoc) -> list[Finding]:
+def _placeholder_findings(value: object, path: str, out: list[Finding]) -> None:
+    """``placeholder``: a value still holding the scaffold sentinel; an unfilled draft never seals."""
+    if isinstance(value, str):
+        if PLACEHOLDER in value:
+            out.append(
+                Finding("placeholder", path or "<root>", f"unfilled draft value: replace the {PLACEHOLDER} sentinel")
+            )
+        return
+    items = enumerate(value) if isinstance(value, list) else value.items() if isinstance(value, dict) else ()
+    for key, child in items:
+        if not (path == "" and key == "extensions"):  # extensions are opaque (R-DOC-3)
+            _placeholder_findings(child, f"{path}/{key}", out)
+
+
+def _schema_findings(doc: JsonDoc, held: frozenset[str] = frozenset()) -> list[Finding]:
+    """Schema errors, minus those a draft sentinel explains: one at a sentinel's path, or a ``oneOf``/``anyOf``
+    over a subtree holding one (a sentinel severity fails every branch of ``risks_or_none``)."""
+
+    def explained(path: str, validator: object) -> bool:
+        return path in held or (validator in ("oneOf", "anyOf") and any(h.startswith(f"{path}/") for h in held))
+
     return [
         Finding("schema", "/".join(map(str, e.absolute_path)) or "<root>", e.message[:160])
         for e in _validator().iter_errors(doc)
+        if not explained("/".join(map(str, e.absolute_path)), e.validator)
     ]
 
 
@@ -239,11 +264,24 @@ def validate(
 ) -> list[Finding]:
     """Return every L1 finding for ``doc``; empty means it conforms at L1.
 
-    A read-back needs ``handoff``; a missing or invalid one raises ``AhrInputError``.
-    [R] rules are never reported as passed: an empty list says nothing about them.
+    ``placeholder`` findings (values still holding the ``TODO(handoff):`` sentinel) come first and are reported
+    even when the schema fails. A read-back needs ``handoff``; a missing or invalid one
+    raises ``AhrInputError``. [R] rules are never reported as passed: an empty list says
+    nothing about them.
     """
-    schema = _schema_findings(doc)
-    if schema:
+    placeholders: list[Finding] = []
+    _placeholder_findings(doc, "", placeholders)
+    held = frozenset(f.path.lstrip("/") for f in placeholders)
+    # A sentinel in an enum, timestamp or URI field also fails the schema there; that finding repeats the placeholder.
+    rest = [f for f in _l1_findings(doc, handoff, allowed_schemes, held) if f.path.lstrip("/") not in held]
+    return placeholders + rest
+
+
+def _l1_findings(
+    doc: JsonDoc, handoff: JsonDoc | None, allowed_schemes: frozenset[str], held: frozenset[str] = frozenset()
+) -> list[Finding]:
+    schema = _schema_findings(doc, held)
+    if schema or held:  # a draft with sentinels left stops at the schema: X-rules would judge sentinel text
         return schema
     try:
         size = len(jcs(doc))

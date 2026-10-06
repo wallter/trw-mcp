@@ -140,6 +140,60 @@ def _refresh_distill_channels(
         result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
 
 
+#: Notes for changes a rollback undoes: reporting them after it would describe a project that no longer exists.
+_ROLLED_BACK_NOTES: frozenset[str] = frozenset(
+    {
+        "platform_api_key moved out of git-tracked config.yaml — "
+        "ROTATE the key if it was already committed to git history.",
+    }
+)
+
+
+def _forget_rolled_back_changes(root: Path, result: dict[str, list[str]]) -> None:
+    """Report a finished rollback, and drop the reports of writes it put back so a failed run does not claim them.
+
+    ``retired`` names files this run deleted in place. Each one the rollback restored (it is on disk again) is
+    no longer reported as removed: printing "Removed retired TRW file" under a failed step described a
+    half-updated project the rollback had already undone. One it could not restore stays reported. The
+    credential-move note goes too: config.yaml is back as it was.
+    """
+    result["warnings"].append("update-project rolled back managed directories after write failure")
+    retired = [str(p) for p in result.get("retired", [])]
+    restored = [p for p in retired if (root / p).exists()]
+    if restored:
+        result["warnings"].append(
+            f"the rollback put back the {len(restored)} retired TRW file(s) this run had removed;"
+            " the next successful update-project removes them"
+        )
+        result["retired"] = [p for p in retired if p not in restored]
+    result["warnings"] = [w for w in result["warnings"] if w not in _ROLLED_BACK_NOTES]
+
+
+def apply_upgrade_migrations(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Migrate the retired shapes an older install left on disk; idempotent, fail-open, each note once per run.
+
+    Runs before the writers and again after :func:`_restore_dirty_files`: an uncommitted config.yaml or channel
+    manifest comes back whole there, which would otherwise undo the migration on every run.
+
+    * ``.trw/channels/manifest.yaml``: drops the ``tier_default``/``tier_min`` keys a pre-6.0.0 manifest
+      carries (every other byte kept). Any other invalidity is left for the channel merge to report.
+    * ``.trw/config.yaml``: moves a ``platform_api_key`` into ``.trw/credentials.yaml`` (PRD-SEC-005-FR05).
+    """
+    from trw_mcp.channels._manifest_loader import ManifestValidationError, migrate_retired_entry_keys
+    from trw_mcp.models.config._credentials import migrate_for_update_project
+
+    manifest = target_dir / ".trw" / "channels" / "manifest.yaml"
+    if manifest.is_file() and not manifest.is_symlink():
+        try:
+            dropped = migrate_retired_entry_keys(manifest)
+        except (ManifestValidationError, OSError):  # trw-fail-silent-allow: the channel merge reports it
+            dropped = 0
+        note = ".trw/channels/manifest.yaml: dropped the retired keys tier_default and tier_min (unused since trw-mcp 6.0.0)"
+        if dropped and note not in result["warnings"]:
+            result["warnings"].append(note)
+    migrate_for_update_project(target_dir / ".trw" / "config.yaml", result)
+
+
 def _restore_dirty_files(
     root: Path,
     snapshot_root: Path,
@@ -153,6 +207,7 @@ def _restore_dirty_files(
     from ._client_adoption import rerecord
 
     preserve_uncommitted_changes(root, snapshot_root, dirty, manifest_hashes, result)
+    apply_upgrade_migrations(root, result)  # the restore just put back a pre-migration config.yaml or manifest
     # The bytes the restore put back, before any later writer (pin retirement, re-record, CC-03 re-apply): the
     # report compares the final bytes against these (E2E-INC-142; codex r2 KI1).
     record_kept_digests(root, result)

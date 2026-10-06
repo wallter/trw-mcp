@@ -28,6 +28,8 @@ def _installer() -> ModuleType:
 
 
 class _Ui:
+    interactive = False  # run_install_doctor's trw_assess install-check reads it
+
     def __init__(self) -> None:
         self.lines: list[str] = []
 

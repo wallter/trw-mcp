@@ -709,14 +709,14 @@ class TestCodexManagedBlock:
         assert "TRW_JEV_ENABLED" in tomllib.loads(first)["mcp_servers"]["trw"]["env_vars"]
 
     def test_every_forwarded_name_is_one_the_assess_backend_reads(self) -> None:
-        """``TRW_JEV_ENABLED`` resolution lives in ``_enablement``, everything else in ``_env``."""
+        """``TRW_JEV_ENABLED`` resolution lives in ``_enablement``; key, endpoint and model in ``_machine_store``."""
         import inspect
 
-        from trw_memory.decisions import _enablement, _env
+        from trw_memory.decisions import _enablement, _machine_store
 
         from trw_mcp.bootstrap._codex import _TRW_FORWARDED_ENV
 
-        source = inspect.getsource(_env) + inspect.getsource(_enablement)
+        source = inspect.getsource(_machine_store) + inspect.getsource(_enablement)
         assert [name for name in _TRW_FORWARDED_ENV if f'"{name}"' not in source] == []
 
     def test_a_markerless_config_keeps_the_users_own_keys_out_of_the_managed_block(self, tmp_path: Path) -> None:

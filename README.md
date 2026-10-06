@@ -65,17 +65,17 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.1.0 -->
+<!-- whats-new: 9.1.1 -->
 
+- **Handoffs another session can trust.** The `trw-handoff` skill writes a sealed record with labelled claims and verbatim constraints, and `receive` checks it before acting.
+- **Set up once per computer.** Sign in and configure `trw_assess` once; new projects reuse `~/.trw` instead of asking again.
+- **Safer installs.** Installing for Claude Code plus another client keeps its hooks, and `doctor` fails loudly when a registered TRW hook is missing.
+- **A sensible default.** New installs configure Claude Code, Codex and Antigravity CLI, and you can opt in to pre-approving TRW's own Codex hooks.
 - **TRW progress in Claude Code's status line.** Phase, checkpoint age, build, review and deliver evidence on one line; `trw-mcp local status --json` gives any client the same snapshot.
 - **A cap on dispatch fan-out.** Opt in to `dispatch_max_concurrent_children` to limit how many dispatched agents run at once.
 - **Learning keeps working across upgrades.** A memory daemon stricter than the server no longer blocks `trw_learn` and `trw_recall`.
-- **Upgrades say what they changed.** `update-project` names every file it removes and every `CLAUDE.md` edit, and leaves an `AGENTS.md` shim alone.
-- **A complete installer log.** The run log holds the whole install, and `doctor` names MCP servers still running pre-upgrade code.
-- **Share learnings from any host.** `trw-mcp sync push`, `pull` and `status` share team learnings from hosts with no MCP server running, such as CI, headless agents and containers.
-- **Sensitive learnings stay home.** Confidentiality labels decide what each surface shows: nothing labelled above `team` is pushed, backed up remotely or written to a tracked file.
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.1. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.2. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
 
@@ -145,9 +145,9 @@ trw-mcp exposes <!-- inv:tools -->15<!-- /inv --> tools. The most used:
 
 The [tool reference](https://trwframework.com/docs/tools) covers the rest.
 
-**Skills (<!-- inv:skills -->22<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
+**Skills (<!-- inv:skills -->23<!-- /inv --> bundled).** Workflows the agent loads only when invoked; the invocation syntax depends on the client. The ones you invoke directly:
 
-- Delivery: `/trw-deliver`, `/trw-commit`, `/trw-reflect`
+- Delivery: `/trw-deliver`, `/trw-commit`, `/trw-reflect`, `/trw-handoff`
 - Requirements: `/trw-prd-ready`
 - Review and quality: `/trw-audit`, `/trw-self-review`, `/trw-security-check`, `/trw-test-strategy`, `/trw-dry-check`, `/trw-delegate`, `/trw-plan-review`
 - Memory: `/trw-learn`, `/trw-memory-audit`, `/trw-memory-optimize`
