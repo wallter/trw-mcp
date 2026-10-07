@@ -280,6 +280,7 @@ def _apply_update(
     on_progress: ProgressCallback,
     dirty: set[str] | None,
     reprovision: list[str] | None,
+    dry_run: bool = False,
 ) -> None:
     """Run every in-surface writer against *root* and report the surface diff.
 
@@ -349,7 +350,7 @@ def _apply_update(
                 changes = {}
                 try:
                     _rollback(root, snapshot_root, result)
-                    _forget_rolled_back_changes(root, result)  # and says the run was rolled back
+                    _forget_rolled_back_changes(root, result, dry_run=dry_run)  # and says the run was rolled back
                 except OSError as exc:
                     # The snapshot is the only copy of what the rollback could not put
                     # back (parked symlinks included) — keep it and say where it is.
@@ -475,7 +476,14 @@ def update_project(
                 target_dir,
                 result,
                 lambda scratch: _apply_update(
-                    scratch, effective_data, result, ide=ide, on_progress=None, dirty=dirty, reprovision=reprovision
+                    scratch,
+                    effective_data,
+                    result,
+                    ide=ide,
+                    on_progress=None,
+                    dirty=dirty,
+                    reprovision=reprovision,
+                    dry_run=True,
                 ),
             )
             result["would_run"] = external

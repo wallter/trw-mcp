@@ -49,6 +49,13 @@ def add_memory_subcommands(
     )
     repair_parser.add_argument("--target-dir", default=".", help="Checkout root (default: .)")
     repair_parser.add_argument("--json", dest="as_json", action="store_true", help="Print one JSON document")
+    repair_parser.add_argument(
+        "--report-candidates",
+        action="store_true",
+        help="Also scan the newest 2000 rows (read-only) for hash-damaged rows and widely shared anchors; "
+        "writes .trw/context/anchor_candidates.json. The fetch is not time-bounded; the deadline applies to "
+        "analysis and marks the report complete=false when exceeded",
+    )
 
 
 def add_models_subcommands(

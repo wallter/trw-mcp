@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ from tests._memory_fixtures import FAKE_NAMESPACE
 from tests._memory_store_fake import FakeMemoryStore
 from tests._structlog_capture import captured_structlog  # noqa: F401  (fixture, imported by name)
 from trw_mcp.state import _anchor_repair
-from trw_mcp.state._anchor_repair import repair_legacy_anchors
+from trw_mcp.state._anchor_repair import repair_legacy_anchors, repair_until_settled
 
 pytestmark = pytest.mark.usefixtures("fake_memory_store")
 
@@ -414,3 +415,249 @@ def test_a_marker_that_is_not_a_regular_file_never_blocks_and_is_not_current(tmp
     fifo = tmp_path / "anchors_repo_relative"
     os.mkfifo(fifo)
     assert _marker_is_current(fifo) is False
+
+
+# ---- feedback #167: detection-only candidate report -------------------------------------------------------
+
+
+def _row(store: FakeMemoryStore, entry_id: str, content: str, *anchors: tuple[str, str]) -> None:
+    store.rows[(FAKE_NAMESPACE, entry_id)] = MemoryEntry(
+        id=entry_id,
+        content=content,
+        namespace=FAKE_NAMESPACE,
+        anchors=[
+            Anchor.model_construct(file=f, symbol_name=s, symbol_type="function", signature="", line_range=None)
+            for f, s in anchors
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "damaged"),
+    [
+        ("see a1b2c3d4/e5f6a7b8/9c0d1e2f.py for the fix", True),
+        ("edit /3fa9c1d2/b7e40a51 before running", True),
+        ("see src/trw_mcp/state/a.py for the fix", False),
+        ("commit a1b2c3d4 fixed it", False),
+        ("deadbeef/cafebabe are words not hashes", False),
+    ],
+)
+def test_hash_damaged_text_detection(text: str, damaged: bool) -> None:
+    from trw_mcp.state._anchor_candidates import looks_hash_damaged
+
+    assert looks_hash_damaged(text) is damaged
+
+
+def test_report_flags_hash_damaged_rows_and_widely_shared_unrelated_anchors_without_writing_rows(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore
+) -> None:
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    store = fake_memory_store
+    _row(store, "HASHED", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py", ("src/a.py", "alpha"))
+    for i in range(SHARED_ANCHOR_MIN_ROWS):
+        _row(store, f"BULK{i}", f"unrelated lesson number {i} about topic {i * 7}", ("src/hot.py", "handler"))
+    for i in range(SHARED_ANCHOR_MIN_ROWS):  # many rows, but every one is about the anchor: not a candidate
+        _row(store, f"ABOUT{i}", f"handler quirk {i} in the request path", ("src/real.py", "handler"))
+    before = {key: row.model_copy() for key, row in store.rows.items()}
+
+    report = anchor_candidate_report(trw_dir)
+
+    assert report.hash_damaged == ["HASHED"]
+    assert list(report.shared_anchors) == ["src/hot.py"]
+    assert report.shared_anchor_counts == {"src/hot.py": SHARED_ANCHOR_MIN_ROWS}
+    assert sorted(report.shared_anchors["src/hot.py"]) == sorted(f"BULK{i}" for i in range(SHARED_ANCHOR_MIN_ROWS))
+    assert store.rows == before  # detection only: no anchor cleared or rewritten
+    saved = json.loads((trw_dir / "context" / "anchor_candidates.json").read_text())
+    assert saved["hash_damaged"] == ["HASHED"] and saved["complete"] is True
+
+
+def test_report_below_the_threshold_flags_nothing(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    store = fake_memory_store
+    for i in range(SHARED_ANCHOR_MIN_ROWS - 1):
+        _row(store, f"R{i}", f"unrelated lesson {i} about topic {i * 7}", ("src/hot.py", "handler"))
+    report = anchor_candidate_report(trw_dir)
+    assert report.hash_damaged == [] and report.shared_anchors == {}
+
+
+def test_repair_never_runs_the_candidate_scan_on_its_own(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    _row(fake_memory_store, "HASHED", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    repair_until_settled(trw_dir, trw_dir.parent)
+    assert not (trw_dir / "context" / "anchor_candidates.json").exists()
+
+
+def test_each_opt_in_scan_reports_a_candidate_added_since_the_last(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore
+) -> None:
+    from trw_mcp.state._anchor_candidates import anchor_candidate_report
+
+    report_file = trw_dir / "context" / "anchor_candidates.json"
+    _row(fake_memory_store, "HASHED", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    anchor_candidate_report(trw_dir)
+    assert json.loads(report_file.read_text())["hash_damaged"] == ["HASHED"]
+
+    _row(fake_memory_store, "LATER", "also 0a1b2c3d/4e5f6a7b/8c9d0e1f.py")
+    anchor_candidate_report(trw_dir)
+    assert json.loads(report_file.read_text())["hash_damaged"] == ["HASHED", "LATER"]
+
+
+def test_a_clean_scan_replaces_a_stale_report_with_an_empty_one(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore
+) -> None:
+    from trw_mcp.state._anchor_candidates import anchor_candidate_report
+
+    _row(fake_memory_store, "HASHED", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    anchor_candidate_report(trw_dir)
+    del fake_memory_store.rows[(FAKE_NAMESPACE, "HASHED")]
+
+    anchor_candidate_report(trw_dir)
+
+    saved = json.loads((trw_dir / "context" / "anchor_candidates.json").read_text())
+    assert saved["hash_damaged"] == [] and saved["shared_anchors"] == {} and saved["complete"] is True
+
+
+def test_relevance_uses_token_boundaries_and_ignores_short_names(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore
+) -> None:
+    """Review P2: the letter 'a' (or 'handler' inside 'handlers') must not make a row relevant to src/a.py."""
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    for i in range(SHARED_ANCHOR_MIN_ROWS):
+        _row(fake_memory_store, f"N{i}", f"a lesson about a banana {i}; handlers differ", ("src/a.py", "handler"))
+    report = anchor_candidate_report(trw_dir)
+    assert list(report.shared_anchors) == ["src/a.py"]
+
+
+def test_a_whole_token_mention_still_counts_as_relevant(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    for i in range(SHARED_ANCHOR_MIN_ROWS):
+        _row(fake_memory_store, f"M{i}", f"the handler in a.py misbehaves {i}", ("src/a.py", "handler"))
+    assert anchor_candidate_report(trw_dir).shared_anchors == {}
+
+
+def test_a_path_inside_a_longer_name_is_not_a_mention(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """Review round 3: 'schema.py' contains 'a.py' as a raw substring but is a different file."""
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    for i in range(SHARED_ANCHOR_MIN_ROWS):
+        _row(fake_memory_store, f"P{i}", f"parsing fails in schema.py case {i}", ("a.py", "zz"))
+    assert list(anchor_candidate_report(trw_dir).shared_anchors) == ["a.py"]
+
+
+def test_the_scan_is_one_bounded_fetch_and_an_over_budget_report_says_incomplete(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.state import _anchor_candidates
+
+    monkeypatch.setattr(_anchor_candidates, "SCAN_MAX_ROWS", 50)
+    for i in range(120):
+        _row(fake_memory_store, f"R{i:03d}", f"plain lesson {i}")
+    fake_memory_store.calls.clear()
+
+    report = _anchor_candidates.anchor_candidate_report(trw_dir)
+
+    fetches = [c for c in fake_memory_store.calls if c[0] == "list_entries"]
+    assert len(fetches) == 1 and fetches[0][1][3] == 50
+    assert report.scanned == 50 and report.complete is False
+    assert json.loads((trw_dir / "context" / "anchor_candidates.json").read_text())["complete"] is False
+
+
+def test_a_time_budget_overrun_marks_the_report_incomplete(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.state import _anchor_candidates
+
+    monkeypatch.setattr(_anchor_candidates, "SCAN_SECONDS", -1.0)
+    _row(fake_memory_store, "R1", "plain lesson")
+    report = _anchor_candidates.anchor_candidate_report(trw_dir)
+    assert report.complete is False and report.scanned == 0
+
+
+def test_report_keeps_exact_counts_but_only_a_sample_of_ids(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.state import _anchor_candidates
+
+    monkeypatch.setattr(_anchor_candidates, "SAMPLE_IDS", 3)
+    for i in range(7):
+        _row(fake_memory_store, f"H{i}", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    report = _anchor_candidates.anchor_candidate_report(trw_dir)
+    assert report.hash_damaged_count == 7 and len(report.hash_damaged) == 3
+
+
+def test_a_slow_fetch_that_uses_the_whole_budget_reports_incomplete_without_scanning(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.state import _anchor_candidates
+
+    _row(fake_memory_store, "H1", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    now = [0.0]
+    monkeypatch.setattr(_anchor_candidates.time, "monotonic", lambda: now[0])
+    real_list = fake_memory_store.list_entries
+
+    def slow_list(*args: object, **kwargs: object) -> list[MemoryEntry]:
+        now[0] += 100.0  # the fetch alone outlasts SCAN_SECONDS
+        return real_list(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(fake_memory_store, "list_entries", slow_list)
+    report = _anchor_candidates.anchor_candidate_report(trw_dir)
+    assert report.complete is False and report.scanned == 0
+
+
+def test_an_overrun_on_the_final_row_is_still_reported_incomplete(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.state import _anchor_candidates
+
+    _row(fake_memory_store, "H1", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+    clock = iter([0.0, 1.0, 100.0, 100.0])  # in budget before the row, past it right after the only row
+    monkeypatch.setattr(_anchor_candidates.time, "monotonic", lambda: next(clock))
+    report = _anchor_candidates.anchor_candidate_report(trw_dir)
+    assert report.scanned == 1 and report.complete is False
+
+
+def test_the_cli_runs_the_candidate_scan_only_when_asked(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import argparse
+
+    from trw_mcp.server import _cli_argparse_memory
+    from trw_mcp.server._subcommands_memory import run_memory
+
+    (tmp_path / ".trw").mkdir()
+    _row(fake_memory_store, "HASHED", "fix in a1b2c3d4/e5f6a7b8/9c0d1e2f.py")
+
+    def run(*extra: str) -> dict[str, object]:
+        parser = argparse.ArgumentParser()
+        _cli_argparse_memory.add_memory_subcommands(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["memory", "repair-anchors", "--target-dir", str(tmp_path), "--json", *extra])
+        with pytest.raises(SystemExit):
+            run_memory(args)
+        return json.loads(capsys.readouterr().out)
+
+    assert "candidates_hash_damaged" not in run()
+    assert not (tmp_path / ".trw" / "context" / "anchor_candidates.json").exists()
+    counts = run("--report-candidates")
+    assert counts["candidates_hash_damaged"] == 1 and counts["candidates_complete"] is True
+    assert (tmp_path / ".trw" / "context" / "anchor_candidates.json").exists()
+
+
+@pytest.mark.parametrize("name", ["a.c", "x.h"])
+def test_a_short_filename_mention_still_counts_as_relevant(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore, name: str
+) -> None:
+    """Review final: a 3-character real file name is a mention; only bare stems and symbols need 4 characters."""
+    from trw_mcp.state._anchor_candidates import SHARED_ANCHOR_MIN_ROWS, anchor_candidate_report
+
+    for i in range(SHARED_ANCHOR_MIN_ROWS):
+        _row(fake_memory_store, f"S{i}", f"crash in {name} on case {i}", (name, "zz"))
+    assert anchor_candidate_report(trw_dir).shared_anchors == {}
+
+
+def test_the_fetch_limit_is_two_thousand_rows() -> None:
+    from trw_mcp.state._anchor_candidates import SCAN_MAX_ROWS
+
+    assert SCAN_MAX_ROWS == 2000

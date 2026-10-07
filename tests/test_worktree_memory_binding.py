@@ -253,6 +253,7 @@ def test_a_symlink_to_a_registered_worktree_borrows_as_the_worktree_does(
     assert (namespace, set(daemon.tokens)) == (repo.pin, {_MAIN_TOKEN})
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_an_unreadable_registration_fails_closed(repo: Repo, daemon: type[_FakeDaemon]) -> None:
     registration = repo.main / ".git" / "worktrees" / "wt" / "gitdir"
     registration.chmod(0)

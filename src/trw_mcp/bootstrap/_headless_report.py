@@ -11,7 +11,11 @@ The JSON document (``schema_version`` 1)::
     {"schema_version": 1, "ok": bool, "version": str|null, "interpreter": str, "install_path": str,
      "clients_configured": [str], "doctor": {"status": str, "summary": str},
      "warnings": [{"message": str, "remedy": str}], "files_changed": [str], "next_steps": [str],
-     "log_path": str}
+     "log_path": str, "dispatch": {"enabled": bool, "decided_by": "flag|prior|prompt|default",
+     "default_client": str|null, "clients": [per-client resolved defaults], "writes": [...], "warnings": [str]}}
+
+``dispatch`` is the ``trw-mcp config dispatch --json`` result (``--dispatch-json FILE``), or, when the run
+did not make a decision, the effective config's dispatch state with ``decided_by`` ``prior`` or ``default``.
 
 ``install_path`` is the project directory the install targeted; ``files_changed`` are absolute paths of
 project files written since the run started. Everything that reaches the log or the document is passed
@@ -28,6 +32,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from trw_mcp.telemetry.anonymizer import redact_secrets
 
@@ -47,6 +52,17 @@ def redact_text(text: str) -> str:
         if len(secret) >= 8:
             text = text.replace(secret, "<REDACTED>")
     return _PLATFORM_KEY.sub("<REDACTED>", redact_secrets(text))
+
+
+def redact_dispatch(value: Any) -> Any:
+    """*value* (a dispatch setup result) with every string passed through :func:`redact_text`."""
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, dict):
+        return {redact_text(str(k)): redact_dispatch(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_dispatch(v) for v in value]
+    return value
 
 
 def redact_file(path: Path) -> None:
@@ -128,6 +144,15 @@ def _clients(project: Path) -> list[str]:
         return []  # trw-fail-silent-allow: the client list is best-effort; the report must still print
 
 
+def _dispatch_state(project: Path) -> dict[str, object]:
+    """The dispatch setup result for a run that made no decision: the effective config, read-only."""
+    from trw_mcp.dispatch._setup import describe_dispatch
+    from trw_mcp.models.config._loader import config_for_trw_dir
+
+    cfg = config_for_trw_dir(project / ".trw").dispatch
+    return describe_dispatch(cfg, "prior" if "dispatch_tools_exposed" in cfg.operator_set else "default")
+
+
 def _next_steps(ok: bool, doctor_status: str, auth_skipped: bool, project: Path) -> list[str]:
     if not ok:
         return [f"Read the run log, fix the cause named in warnings, and re-run the installer in {project}"]
@@ -150,6 +175,7 @@ def build_report(
     shell_warnings: list[str],
     error: str = "",
     auth_skipped: bool = False,
+    dispatch: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Assemble the schema-1 document for a run that ended with *exit_code*."""
     ok = exit_code == 0
@@ -178,7 +204,17 @@ def build_report(
         "files_changed": [p for p in files_changed(project, since) if p != log_path],
         "next_steps": _next_steps(ok, doctor["status"], auth_skipped, project),
         "log_path": log_path,
+        "dispatch": redact_dispatch(dispatch if dispatch is not None else _dispatch_state(project)),
     }
+
+
+def _read_step(path: str) -> dict[str, object] | None:
+    """The step's JSON result from *path*; ``None`` (compute from config) when absent or unreadable."""
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8")) if path else None
+    except (OSError, ValueError):  # trw-fail-silent-allow: a missing step result falls back to the live config state
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -193,13 +229,15 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--warnings", default="", help="file with one shell warning per line")
     rep.add_argument("--error", default="")
     rep.add_argument("--auth-skipped", action="store_true")
+    rep.add_argument("--dispatch-json", default="", help="file holding `trw-mcp config dispatch --json` output")
     args = parser.parse_args(argv)
     if args.cmd == "redact-file":
         redact_file(Path(args.path))
         return 0
     lines = Path(args.warnings).read_text(encoding="utf-8", errors="replace").splitlines() if args.warnings else []
+    step = _read_step(args.dispatch_json)
     doc = build_report(
-        Path(args.dir).resolve(), args.exit_code, args.log, args.since, lines, args.error, args.auth_skipped
+        Path(args.dir).resolve(), args.exit_code, args.log, args.since, lines, args.error, args.auth_skipped, step
     )
     sys.stdout.write(json.dumps(doc) + "\n")
     return 0

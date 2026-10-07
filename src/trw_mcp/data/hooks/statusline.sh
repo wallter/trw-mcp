@@ -88,9 +88,11 @@ _run_bounded() {
     return "$_rc"
 }
 
-# Portable mtime in epoch seconds: BSD/macOS `stat -f`, then GNU `stat -c`.
+# Portable mtime in epoch seconds: GNU `stat -c`, then BSD/macOS `stat -f`. GNU first: GNU reads `-f` as
+# --file-system and prints a filesystem report before failing on "%m", which polluted the value; BSD's
+# `stat -c` fails with nothing on stdout.
 _mtime() {
-    stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
 }
 
 # Print the cached status line for session $1 when fresh (< 5 s); non-zero otherwise.

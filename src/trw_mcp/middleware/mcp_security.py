@@ -60,6 +60,7 @@ from trw_mcp.security.anomaly_detector import (
     AnomalyDetector,
     AnomalyObservation,
     hash_tool_args,
+    is_novelty_exempt,
 )
 from trw_mcp.security.capability_scope import CapabilityScope, CapabilityScopeError, apply_scope
 from trw_mcp.security.mcp_registry import MCPAllowlist, MCPRegistry
@@ -247,6 +248,9 @@ class MCPSecurityMiddleware(Middleware):
                 args_hash=args_hash,
                 run_id=run_id,
                 session_id=session_id,
+                novelty_exempt=is_novelty_exempt(
+                    resolved_server, runtime_peer.tool, safe_args, own_server=self.default_server_name
+                ),
             )
         )
         layers_fired.append("anomaly_detector")

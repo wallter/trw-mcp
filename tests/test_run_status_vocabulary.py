@@ -26,6 +26,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests import _source_index as source_index
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 from trw_mcp.models.run import (
@@ -115,7 +116,7 @@ def _bare_status_literal_sites() -> tuple[list[str], list[str]]:
     unparseable: list[str] = []
     for path in sorted(_TRW_MCP_SRC.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = source_index.tree(path)
         except SyntaxError:
             unparseable.append(str(path.relative_to(_REPO_ROOT)))
             continue
@@ -243,7 +244,7 @@ def test_bare_status_literal_scan_is_non_vacuous(tmp_path: Path) -> None:
     """The FR03 scan must be able to fail — it found four sites before the fix."""
     probe = tmp_path / "probe.py"
     probe.write_text('data = {}\ndata["status"] = "abandoned"\n', encoding="utf-8")
-    tree = ast.parse(probe.read_text(encoding="utf-8"))
+    tree = source_index.tree(probe)
     found = [
         node
         for node in ast.walk(tree)

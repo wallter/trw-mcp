@@ -143,7 +143,9 @@ def running_servers(project: Path) -> set[int] | None:
     instead of "none".
     """
     pinned = {pid for pid, _client, _created in _live(project / ".trw")}
-    table = _run(["ps", "-axo", "pid=,command="]) if os.name == "posix" else None
+    # -ww: unlimited width. procps cuts a piped `ps` at 80 columns, so a server under a long venv path lost its
+    # `trw-mcp` token and went uncounted on Linux (macOS ps does not truncate a pipe).
+    table = _run(["ps", "-ww", "-axo", "pid=,command="]) if os.name == "posix" else None
     if table is None:
         return None
     candidates = []

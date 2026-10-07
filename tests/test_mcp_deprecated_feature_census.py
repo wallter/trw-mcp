@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 _TESTS_DIR = Path(__file__).resolve().parent
 _TRW_MCP_SRC = _TESTS_DIR.parent / "src"
 _TRW_MEMORY_SRC = _TESTS_DIR.parent.parent / "trw-memory" / "src"
@@ -257,7 +259,7 @@ def _imported_module_names(py_file: Path) -> set[str]:
     no comment/docstring ambiguity to resolve by hand.
     """
     # A source file that does not parse fails the census loudly rather than being skipped as "no imports".
-    tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+    tree = source_index.tree(py_file)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

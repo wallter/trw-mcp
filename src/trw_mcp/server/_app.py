@@ -290,11 +290,12 @@ async def _build_sync_lifespan(_: FastMCP) -> AsyncIterator[None]:
     """
     from trw_mcp.server._boot_deferred import cancel_sync_task, remember_serving_loop
 
-    remember_serving_loop(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
+    remember_serving_loop(loop)
     try:
         yield
     finally:
-        sync_task = cancel_sync_task()
+        sync_task = cancel_sync_task(loop)
         if sync_task is not None:
             with suppress(asyncio.CancelledError):
                 await sync_task

@@ -240,7 +240,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
             ids = [t.strip() for t in target.split(",") if t.strip()]
             return _status(ids[0], verbose) if len(ids) == 1 else status_many(ids)
         if action == "clients":
-            return list_clients(dict(get_config().dispatch.dispatch_default_models or {}))
+            return list_clients(dispatch_cfg=get_config().dispatch)
         if action == "evidence":
             return export_evidence(ctx, target or None, include_events=verbose, include_schema=verbose)
         if action == "validate_evidence":

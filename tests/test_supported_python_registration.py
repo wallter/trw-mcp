@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests import _source_index as source_index
+
 _PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "trw_mcp"
 
 
@@ -18,7 +20,7 @@ def test_runtime_typed_dicts_use_pydantic_compatible_backport() -> None:
         # Hook payloads are copied into user projects and remain stdlib-only.
         if "data/hooks" in path.as_posix():
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = source_index.tree(path)
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom) or node.module != "typing":
                 continue

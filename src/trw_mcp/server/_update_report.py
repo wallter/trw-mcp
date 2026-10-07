@@ -9,7 +9,9 @@ they also survive its spinner.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import structlog
 
@@ -30,6 +32,9 @@ _KEPT_REASONS = {
 _KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
 
 __all__ = [
+    "Record",
+    "attention_count",
+    "build_records",
     "kept_files",
     "print_claude_md",
     "print_kept",
@@ -38,6 +43,26 @@ __all__ = [
     "report_kept",
     "report_removed",
 ]
+
+
+@dataclass(frozen=True)
+class Record:
+    """One path the update touched or left, with the action actually taken: the one source the report renders from.
+
+    ``removed`` was deleted; ``kept`` is a file the update did not replace; ``left_in_place`` is a retired TRW
+    artifact the update reports but never deletes (its own warning carries the remedy).
+    """
+
+    path: str
+    action: Literal["removed", "kept", "left_in_place"]
+    reason: str = ""
+
+
+def _left_in_place(result: dict[str, list[str]], target: Path) -> set[str]:
+    """Display paths of retired artifacts present or kept, already named by a retired notice or its removal command."""
+    return {
+        _display_path(str(p), target) for p in (*result.get("retired_present", []), *result.get("retired_kept", []))
+    }
 
 
 def _display_path(path: str, target: Path) -> str:
@@ -62,6 +87,9 @@ def kept_files(result: dict[str, list[str]], target: Path) -> list[tuple[str, st
     The two producers: ``modified`` (a hook, skill or agent the user edited, recorded by the raw-copy guard and
     read by nothing until now) and ``preserved`` entries that carry a reason, which the summary only counts.
     """
+    # A path a retired notice already names (with its removal command) is not named again as "kept": that read as
+    # two contradictory statements (feedback #158).
+    named_retired = _left_in_place(result, target)
     kept: dict[str, str] = {}
     for path in result.get("modified", []):
         kept.setdefault(_display_path(str(path), target), _KEPT_EDITED)
@@ -69,7 +97,28 @@ def kept_files(result: dict[str, list[str]], target: Path) -> list[tuple[str, st
         for suffix, why in _KEPT_REASONS.items():
             if str(entry).endswith(suffix):
                 kept.setdefault(_display_path(str(entry).removesuffix(suffix).rstrip(), target), why)
-    return list(kept.items())
+    return [(path, why) for path, why in kept.items() if path not in named_retired]
+
+
+def build_records(result: dict[str, list[str]], target: Path) -> list[Record]:
+    """Every path that needs a report line, once, from the structured facts in *result* (no text matching).
+
+    Removals the producer already described with a restore command (``retired_described``) are not repeated here.
+    """
+    from trw_mcp.bootstrap._retired_artifacts import curated_out_reason
+
+    in_git = {str(p) for p in result.get("retired_described", [])}
+    records = [
+        Record(path, "removed", curated_out_reason(path)) for path in removed_files(result) if path not in in_git
+    ]
+    records.extend(Record(path, "left_in_place") for path in sorted(_left_in_place(result, target)))
+    records.extend(Record(path, "kept", why) for path, why in kept_files(result, target))
+    return records
+
+
+def attention_count(result: dict[str, list[str]], target: Path) -> int:
+    """How many paths the operator must look at: the ``kept`` and ``left_in_place`` records."""
+    return sum(1 for record in build_records(result, target) if record.action != "removed")
 
 
 def print_kept(result: dict[str, list[str]], target: Path) -> None:
@@ -78,18 +127,40 @@ def print_kept(result: dict[str, list[str]], target: Path) -> None:
     Printed before the summary, like warnings: a run that kept an edited hook library while replacing the hooks
     that source it is exactly the run whose summary is skipped on error.
     """
+    by_reason: dict[str, list[str]] = {}
     for path, why in kept_files(result, target):
-        print(f"WARNING: kept {printable(path)}: {why}")
+        by_reason.setdefault(why, []).append(printable(path))
+    for why, paths in by_reason.items():  # one line per reason, with the count (feedback #142)
+        if len(paths) == 1:
+            print(f"WARNING: kept {paths[0]}: {why}")
+        else:
+            print(f"WARNING: kept {len(paths)} files ({why}): {', '.join(paths)}")
 
 
-def print_retired(paths: list[str], described: list[str] | None = None) -> None:
-    """One line per retired TRW file deleted in place (TRW's own bytes, or committed in git).
+def print_retired(records: list[Record], *, dry_run: bool = False) -> None:
+    """One line per retired TRW file deleted in place, with the client-curation reason when there is one.
 
-    A path a warning already describes (``"<path>: ..."``, e.g. a git-recoverable removal with its restore
-    command, or an edited hook-family file) is skipped: the warning says more (E2E-INC-133).
+    A dry run only proposes the removal, so it says "Would remove", never the past tense.
     """
-    for path in [p for p in paths if not any(str(w).startswith(f"{p}: ") for w in described or [])]:
-        print(f"Removed retired TRW file: {printable(path)}")
+    verb = "Would remove" if dry_run else "Removed"
+    for record in records:
+        if record.action == "removed":
+            reason = f" ({record.reason})" if record.reason else ""
+            print(f"{verb} retired TRW file: {printable(record.path)}{reason}")
+
+
+def print_refreshed(result: dict[str, list[str]]) -> None:
+    """``AGENTS.md: <what TRW did to its block>``: the file is the user's, so a write to it is never silent (#138).
+
+    A dry run only proposes the write ("would refresh").
+    """
+    dry = "would_run" in result
+    for key, verb in (
+        ("created", "would create" if dry else "created"),
+        ("updated", "would refresh" if dry else "refreshed"),
+    ):
+        if "AGENTS.md" in result.get(key, []):
+            print(f"AGENTS.md: {verb} the TRW block")
 
 
 def print_claude_md(edits: list[str], *, detailed: bool = False, quiet: bool = False) -> None:
@@ -122,13 +193,17 @@ def report_removed(result: dict[str, list[str]], *, detailed: bool, quiet: bool)
         for path in removed:
             logger.warning("update_project_removed", op="update_project", path=path)
     elif not quiet:
-        print_retired(removed, result.get("warnings", []))
+        print_retired(build_records(result, Path()), dry_run="would_run" in result)
 
 
 def report_kept(result: dict[str, list[str]], target: Path, *, detailed: bool, quiet: bool) -> None:
     """Name each edit to the user's CLAUDE.md and what the update left alone: log lines under ``-v``, plain lines
     otherwise, nothing if quiet."""
     print_claude_md(result.get("claude_md", []), detailed=detailed, quiet=quiet)
+    if not detailed and not quiet:
+        print_refreshed(result)
+        for note in result.get("notes", []):
+            print(f"Would apply: {printable(note)}" if "would_run" in result else f"Note: {printable(note)}")
     if detailed:
         for path, why in kept_files(result, target):
             logger.warning("update_project_kept", op="update_project", path=path, detail=why)

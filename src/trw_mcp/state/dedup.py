@@ -24,6 +24,7 @@ from trw_memory.models.memory import (
     Assertion,
     AssertionType,
     Confidence,
+    EvidenceLevel,
     MemoryEntry,
     MemoryStatus,
     MemoryType,
@@ -69,6 +70,7 @@ def _entry_view(data: dict[str, object], *, status: MemoryStatus = MemoryStatus.
             "protection_tier": ProtectionTier(str(data.get("protection_tier") or "normal")),
             "confidence": Confidence(confidence if confidence in _CONFIDENCES else "unverified"),
             "type": MemoryType(str(data.get("type") or "pattern")),
+            "evidence_level": EvidenceLevel(str(data.get("evidence_level") or "unknown")),
             "assertions": [
                 Assertion(
                     type=AssertionType(str(a["type"])), pattern=str(a.get("pattern", "")), target=str(a["target"])
@@ -81,7 +83,17 @@ def _entry_view(data: dict[str, object], *, status: MemoryStatus = MemoryStatus.
 
 
 #: Merge-owned sidecar keys whose store column has the same name; ``impact`` is ``importance``.
-_ROW_OWNED = ("detail", "tags", "evidence", "recurrence", "merged_from", "assertions", "protection_tier", "type")
+_ROW_OWNED = (
+    "detail",
+    "tags",
+    "evidence",
+    "recurrence",
+    "merged_from",
+    "assertions",
+    "protection_tier",
+    "type",
+    "evidence_level",
+)
 
 
 def merge_base(sidecar: dict[str, object], row: MemoryEntry) -> dict[str, object]:
@@ -189,6 +201,7 @@ def merge_into_survivor(
         merged_from=merged.merged_from,
         protection_tier=str(merged.protection_tier),
         confidence=raw_confidence if merged.confidence == survivor.confidence else str(merged.confidence),
+        evidence_level=str(getattr(merged.evidence_level, "value", merged.evidence_level)),
         type=str(merged.type),
         updated=datetime.now(tz=timezone.utc).date().isoformat(),
     )

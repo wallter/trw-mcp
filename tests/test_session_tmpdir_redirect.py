@@ -104,17 +104,23 @@ def test_the_sweep_removes_only_old_basetemps_whose_lock_owner_is_dead(tmp_path:
     assert running.is_dir() and finished.is_dir() and just_killed.is_dir() and not_numbered.is_dir()
 
 
-def test_the_package_keeps_every_tmp_path_until_the_run_ends() -> None:
-    """``tmp_path_retention_policy = "failed"`` deleted a passing test's tmp_path while its daemon or writer
-    threads still used it: 8 failures and 21 errors across unrelated trw-memory files (2026-09-28). A normal
-    exit already keeps only 3 runs; the killed-run sweep above covers the rest.
+def test_the_package_keeps_only_failed_tmp_paths_of_the_last_run() -> None:
+    """trw-mcp keeps a failed test's tmp_path, and only the last session's.
+
+    ``"failed"`` was dropped on 2026-09-28 because it deleted passing tmp_paths under live daemon and writer
+    threads -- 8 failures and 21 errors, all in trw-memory, which still keeps ``"all"`` (its own copy of this test).
+    trw-mcp then ran three full suites with ``-o tmp_path_retention_policy=failed`` (2026-10-06: -n 4, -n 8, -n 8)
+    and the only casualties were three tests whose global ``os`` patches outlived the test body into the cleanup,
+    now scoped with ``monkeypatch.context()``. At -n 8 a run writes tens of thousands of temp trees; keeping them
+    all for three sessions is the disk cost this setting removes.
     """
     import tomllib
 
     options = tomllib.loads((_PACKAGE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pytest"][
         "ini_options"
     ]
-    assert options.get("tmp_path_retention_policy", "all") == "all"
+    assert options.get("tmp_path_retention_policy") == "failed"
+    assert options.get("tmp_path_retention_count") == 1
 
 
 def test_windows_never_probes_a_lock_pid(monkeypatch: pytest.MonkeyPatch) -> None:

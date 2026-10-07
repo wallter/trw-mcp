@@ -71,6 +71,7 @@ import ast
 from pathlib import Path
 
 import trw_mcp
+from tests import _source_index as source_index
 
 #: Class tags for the reasons below (PRD-QUAL-147 FR09 brief):
 #:   checkout memory.db -- the pre-6.0 checkout-supplied project store; QUAL-147 FR06/FR07 routes
@@ -266,7 +267,7 @@ def _direct_connect_call_sites(root: Path | None = None) -> list[tuple[str, str,
     sites: list[tuple[str, str, int]] = []
     for path in sorted(package_root.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text())
+            tree = source_index.tree(path)
         except SyntaxError:  # trw-fail-silent-allow: no source file under trw_mcp/src is expected to be unparseable; a genuinely broken file would fail mypy/ruff long before this census runs, so skipping it here does not hide a connect() call the rest of the pipeline missed
             continue
         sites.extend(_ordered_sites(tree, str(path.relative_to(package_root))))
@@ -283,6 +284,22 @@ def test_every_direct_sqlite_connect_is_accounted_for() -> None:
         f"new direct sqlite3/connect_registered call(s) not in _AUDITED_EXCEPTIONS: {sorted(unaudited)} -- "
         "add a reasoned, class-tagged entry (see the class-tag legend above _AUDITED_EXCEPTIONS)."
     )
+
+
+def test_the_census_is_green_with_the_index_bypassed() -> None:
+    """The one census that stays uncached (P2c): every file is re-read and re-parsed, nothing is stored.
+
+    The other censuses share parsed trees through ``tests/_source_index.py``. This one proves the cached path
+    is not the only path the direct-connect census has been green on: with the index bypassed the walk finds
+    the same sites as the cached walk, and every one is audited.
+    """
+    cached = _direct_connect_call_sites()
+    with source_index.bypass():
+        before = source_index.stats()
+        fresh = _direct_connect_call_sites()
+        assert source_index.stats() == before, "a bypassed walk must not read from or write to the index"
+    assert fresh == cached
+    assert set(fresh) - set(_AUDITED_EXCEPTIONS) == set()
 
 
 def test_every_audited_exception_still_exists_at_its_recorded_site() -> None:

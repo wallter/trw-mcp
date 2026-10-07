@@ -123,7 +123,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkou
             "local",
             "feedback",
             "--category",
-            "bug",
+            "bugfix",
             "--subject",
             "s",
             "--message",

@@ -34,6 +34,7 @@ from trw_memory.sync._remote_common import (
     trusted_platform_hosts,
 )
 
+from tests import _source_index as source_index
 from tests._contact_support import payload_trw_dir
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state._platform_trust import platform_auth_headers, platform_contact_enabled
@@ -735,7 +736,7 @@ def test_every_outbound_module_is_gated_by_the_contact_switch_or_named_exempt() 
     found = {
         path.relative_to(root).as_posix()
         for path in root.rglob("*.py")
-        if "code_index" not in path.parts and _opens_a_connection(ast.parse(path.read_text(encoding="utf-8")))
+        if "code_index" not in path.parts and _opens_a_connection(source_index.tree(path))
     }
     unregistered = found - _CONTACT_GATED - set(_CONTACT_EXEMPT)
     assert not unregistered, (

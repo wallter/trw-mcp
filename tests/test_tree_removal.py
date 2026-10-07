@@ -10,6 +10,7 @@ import ast
 from pathlib import Path
 
 import trw_mcp
+from tests import _source_index as source_index
 
 _HANDLER_KEYWORDS = frozenset({"ignore_errors", "onerror", "onexc"})
 
@@ -19,7 +20,7 @@ def _handler_rmtree_calls() -> list[str]:
     root = Path(trw_mcp.__file__).parent
     found = []
     for path in sorted(root.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             if not isinstance(node, ast.Call):
                 continue
             name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")

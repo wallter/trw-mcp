@@ -119,6 +119,10 @@ def hook_channel_row(target: Path) -> tuple[Status, str]:
         )
     if unknown:
         parts.append(f"no pre-edit hint decision recorded for {', '.join(unknown)}")
+    if fallback and not unknown and not hook_off:
+        # Nothing to fix: these clients have no hook channel by design (feedback #141), so this is information, not a
+        # warning. The doctor vocabulary has no INFO level, so it reads as a PASS that says what the channel is.
+        return "PASS", f"info: {parts[0]}"
     return "WARN", "; ".join(parts)
 
 

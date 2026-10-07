@@ -96,6 +96,35 @@ def test_an_unpinned_checkout_mints_nothing(checkout: Path) -> None:
     assert not (checkout / CHECKOUT_TOKEN_RELPATH).exists()
 
 
+def test_migrate_removes_the_slice_a_token_for_an_unpinned_checkout_and_exits_cleanly(
+    checkout: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Feedback #115: the daemon will not start while the token exists, so --migrate must not need a pin to remove it."""
+    (checkout / ".trw" / "config.yaml").write_text("", encoding="utf-8")
+    paths = DaemonPaths.resolve()
+    paths.token.write_text("an-all-namespace-bearer", encoding="utf-8")
+
+    _run("token", "--target-dir", str(checkout), "--migrate")  # no SystemExit
+
+    assert not paths.token.exists()
+    assert "needs no grant" in capsys.readouterr().out
+    assert not paths.grants.exists()
+    assert not (checkout / CHECKOUT_TOKEN_RELPATH).exists()
+
+
+def test_migrate_removes_a_symlinked_slice_a_token_without_following_it(checkout: Path) -> None:
+    (checkout / ".trw" / "config.yaml").write_text("", encoding="utf-8")
+    paths = DaemonPaths.resolve()
+    real = checkout.parent / "elsewhere-token"
+    real.write_text("kept", encoding="utf-8")
+    paths.token.symlink_to(real)
+
+    _run("token", "--target-dir", str(checkout), "--migrate")
+
+    assert not paths.token.is_symlink()
+    assert real.read_text(encoding="utf-8") == "kept"
+
+
 def test_doctor_names_the_migration_while_a_slice_a_token_remains(checkout: Path) -> None:
     from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
 

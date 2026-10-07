@@ -129,14 +129,16 @@ def _write_learnings(rows_file: Path, learnings: list[dict[str, Any]]) -> None:
 #: The fixture store: the REAL hook module, with ``read_rows`` answered from the rows file.
 #: No rows file stands for an unreachable store. TRW_TEST_RECALL_TIMEOUT_NS forces the
 #: FR08 scan deadline, the only way to observe a mid-scan expiry deterministically.
+#: TRW_TEST_READ_ROWS_SLEEP stalls the store read, to meet the in-process hook deadline.
 _FIXTURE_STORE = """
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 from trw_mcp.state import _auto_recall_hook as hook
 from trw_mcp.state._store_selection import StoreUnavailableError
 if os.environ.get("TRW_TEST_RECALL_TIMEOUT_NS"):
     hook.TIMEOUT_NS = int(os.environ["TRW_TEST_RECALL_TIMEOUT_NS"])
 def read_rows(root, cap):
+    time.sleep(float(os.environ.get("TRW_TEST_READ_ROWS_SLEEP", "0")))
     path = root / ".trw" / "fixture-store-rows.json"
     if not path.is_file():
         raise StoreUnavailableError("the fixture has no store")
@@ -147,10 +149,22 @@ sys.exit(hook.main(sys.argv[1:], read_rows=read_rows))
 
 
 def fixture_store_python(tmp_path: Path) -> Path:
-    """An executable standing in for the project interpreter, serving the fixture store."""
+    """An executable standing in for the project interpreter, serving the fixture store.
+
+    The hook starts the recall module as ``python -c <boot> <module> <args...>``: the boot code arms the
+    in-process deadline watchdog and then runs ``<module>``. The stand-in keeps that boot code and swaps in
+    the fixture module, so the watchdog under test is the shipped one.
+    """
+    module_dir = tmp_path / "fixture-store-module"
+    module_dir.mkdir(exist_ok=True)
+    (module_dir / "fixture_store_main.py").write_text(_FIXTURE_STORE, encoding="utf-8")
     wrapper = tmp_path / "fixture-store-python"
     wrapper.write_text(
-        f'#!/bin/sh\n[ "$1" = "-m" ] && shift 2\nexec "{sys.executable}" -c \'{_FIXTURE_STORE}\' "$@"\n',
+        "#!/bin/sh\n"
+        f'if [ "$1" = "-c" ]; then code=$2; shift 3; PYTHONPATH="{module_dir}${{PYTHONPATH:+:$PYTHONPATH}}" '
+        f'exec "{sys.executable}" -c "$code" fixture_store_main "$@"; fi\n'
+        f'[ "$1" = "-m" ] && shift 2\n'
+        f'exec "{sys.executable}" -c \'{_FIXTURE_STORE}\' "$@"\n',
         encoding="utf-8",
     )
     wrapper.chmod(0o755)
@@ -160,7 +174,21 @@ def fixture_store_python(tmp_path: Path) -> Path:
 def _make_path_without_jq(tmp_path: Path) -> str:
     bin_dir = tmp_path / "bin-no-jq"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for tool_name in ("sh", "python3", "grep", "head", "sed", "tr", "cat", "dirname", "mkdir", "rm"):
+    for tool_name in (
+        "sh",
+        "python3",
+        "grep",
+        "head",
+        "sed",
+        "tr",
+        "cat",
+        "dirname",
+        "mkdir",
+        "rm",
+        "mktemp",
+        "sleep",
+        "date",
+    ):
         tool_path = shutil.which(tool_name)
         assert tool_path is not None, f"Required tool missing in test environment: {tool_name}"
         (bin_dir / tool_name).symlink_to(tool_path)

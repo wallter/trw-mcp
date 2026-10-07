@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
-import stat
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -81,34 +80,18 @@ def mask_key(key: str | None) -> str:
 
 
 def enable_machine_switch(home: Path | None = None) -> str:
-    """Set ``assess_enabled: true`` in ``~/.trw/config.yaml``, keeping every other key and comment.
+    """Set ``assess_enabled: true`` in ``~/.trw/config.yaml`` through the one config writer (PRD-INFRA-210-FR05).
 
     Returns ``""`` on success, else why it refused (a file that is not a YAML mapping is never
-    overwritten). The file keeps its own permission bits.
+    overwritten). The file keeps its comments, key order and permission bits.
     """
-    from ruamel.yaml import YAML
-    from ruamel.yaml.error import YAMLError
-    from trw_memory.safe_fs import write_beneath
+    from trw_mcp.tools._config_cli import ConfigSetRefusedError, set_config_value
 
     root = Path.home() if home is None else home
-    path = root / ".trw" / "config.yaml"
-    yaml = YAML()  # round-trip: comments and key order survive
-    mode = 0o644
-    data: object = {}
-    if path.is_file():
-        mode = stat.S_IMODE(path.stat().st_mode)
-        try:
-            data = yaml.load(path.read_text(encoding="utf-8")) or {}
-        except (YAMLError, ValueError, OSError) as exc:
-            return f"{_USER_CONFIG_LABEL} could not be read ({type(exc).__name__}); add `assess_enabled: true` by hand"
-    if not isinstance(data, dict):
-        return f"{_USER_CONFIG_LABEL} is not a YAML mapping; add `assess_enabled: true` by hand"
-    data["assess_enabled"] = True
-    from io import StringIO
-
-    buf = StringIO()
-    yaml.dump(data, buf)
-    write_beneath(root, ".trw/config.yaml", buf.getvalue().encode("utf-8"), mode=mode, exact_mode=True)
+    try:
+        set_config_value("assess_enabled", "true", scope="machine", target_dir=root, home=root)
+    except ConfigSetRefusedError as exc:
+        return f"{_USER_CONFIG_LABEL}: {exc}; add `assess_enabled: true` by hand"
     return ""
 
 

@@ -568,8 +568,10 @@ def test_a_hostile_trw_name_cannot_drive_the_terminal_through_doctor_or_the_noti
     assert status == "WARN"
     assert len(notices) == 2
     for text in (message, *notices):
-        assert "\x1b" not in text and "\n" not in text
+        assert "\x1b" not in text
         assert "trw-custom\\x1b[2J\\n[PASS] forged" in text
+    assert all("\n" not in n for n in notices)
+    assert not any(line.startswith("[PASS]") for line in message.splitlines())
 
 
 def test_the_removal_command_for_a_hostile_name_still_names_that_exact_path(tmp_path: Path) -> None:

@@ -155,7 +155,7 @@ def enforce_and_write_manifest(
     One call for ``_apply_update``'s last two writer-adjacent steps, so its own
     body stays inside the 350 effective-LOC gate.
     """
-    from ._retired_artifacts import retired_artifact_notices
+    from ._retired_artifacts import retired_artifact_notices, retired_artifact_paths
     from ._version_migration import _write_manifest
     from ._written_digests import record_written_digests
 
@@ -166,6 +166,7 @@ def enforce_and_write_manifest(
     # on an earlier delete-based design each found a real deletion-safety gap).
     if notices := retired_artifact_notices(root):
         result.setdefault("warnings", []).extend(notices)
+        result["retired_present"] = retired_artifact_paths(root)  # the report names a path once, not as kept too
 
 
 def enforce_tombstones(

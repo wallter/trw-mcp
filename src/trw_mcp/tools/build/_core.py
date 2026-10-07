@@ -40,12 +40,20 @@ def cache_build_status(trw_dir: Path, status: BuildStatus) -> Path:
 
 
 def persist_build_progress_state(
-    trw_dir: Path, status: BuildStatus, *, scope: str, session_id: str | None = None, session_only: bool = False
+    trw_dir: Path,
+    status: BuildStatus,
+    *,
+    scope: str,
+    session_id: str | None = None,
+    session_only: bool = False,
+    static_not_run: bool = False,
 ) -> None:
     """Best-effort persistence of build outcome to ceremony progress state.
 
     ``session_only`` records just the caller's own per-session result (a build check for a run that is not
-    the caller's active run); the shared project-level fields are left alone.
+    the caller's active run); the shared project-level fields are left alone. ``static_not_run`` with passing
+    tests records ``not_run`` (unknown), never ``failed``; it still is not ``passed``, so every gate that needs a
+    pass keeps blocking.
     """
     try:
         from trw_mcp.state._ceremony_progress_state import mark_build_check, mark_session_build_check
@@ -53,7 +61,9 @@ def persist_build_progress_state(
         static_checks_clean = status.static_checks_clean
         if static_checks_clean is None:
             static_checks_clean = status.mypy_clean
-        passed = status.tests_passed and static_checks_clean
+        passed: bool | None = status.tests_passed and static_checks_clean
+        if static_not_run:
+            passed = None if status.tests_passed else False
         if session_only:
             mark_session_build_check(trw_dir, passed, session_id)
         else:

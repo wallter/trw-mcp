@@ -28,6 +28,7 @@ from typing import TextIO
 import structlog
 
 from trw_mcp._locking import _lock_ex, _lock_sh, _lock_un
+from trw_mcp._yaml_memo import memo_parse
 from trw_mcp.exceptions import StateError
 from trw_mcp.state._containment import assert_trw_write_contained
 
@@ -109,6 +110,14 @@ from trw_mcp.state._persistence_helpers import (
 )
 
 
+def _parse_yaml(text: str, tolerate_identical_duplicates: bool) -> tuple[object, list[tuple[str, int]]]:
+    """*text* parsed by :meth:`FileStateReader.read_yaml`'s loader, and the identical duplicates it tolerated."""
+    loader = _config_yaml() if tolerate_identical_duplicates else _safe_yaml()
+    data = loader.load(text)
+    tolerated = list(getattr(loader.constructor, "tolerated", [])) if tolerate_identical_duplicates else []
+    return data, tolerated
+
+
 class FileStateReader:
     """File-based implementation of StateReader."""
 
@@ -158,16 +167,18 @@ class FileStateReader:
             with os.fdopen(fd, "r", encoding="utf-8") as fh:
                 _lock_sh(fh.fileno())
                 try:
-                    loader = _config_yaml() if tolerate_identical_duplicates else _safe_yaml()
-                    data = loader.load(fh)
+                    text = fh.read()
                 finally:
                     _lock_un(fh.fileno())
+            # Inside an install the parse is memoised by content hash (``trw_mcp._yaml_memo``); outside, it parses.
+            kind = "state-config" if tolerate_identical_duplicates else "state-safe"
+            data, tolerated = memo_parse(kind, text, lambda body: _parse_yaml(body, tolerate_identical_duplicates))
         except Exception as exc:  # justified: boundary, wrap unknown I/O errors as StateError
             raise StateError(
                 f"Failed to read YAML: {yaml_error_text(exc)}",
                 path=str(checked_path),
             ) from None
-        if tolerate_identical_duplicates and (tolerated := getattr(loader.constructor, "tolerated", [])):
+        if tolerated:
             logger.warning(
                 "yaml_identical_duplicate_key_tolerated",
                 path=str(checked_path),

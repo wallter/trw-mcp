@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 
 
@@ -55,7 +56,7 @@ def _mirror_skip_conditions(source: str) -> list[tuple[int, str]]:
     """Each module-wide monorepo skip in *source* with its condition: a module-level ``if`` around
     ``pytest.skip(..., allow_module_level=True)``, or a ``pytestmark`` skipif (bare or in a list)."""
     found: list[tuple[int, str]] = []
-    for node in ast.parse(source).body:
+    for node in source_index.parse(source).body:
         if isinstance(node, ast.If):
             if any(_monorepo_skip(call) for branch in node.orelse for call in ast.walk(branch)):
                 found.append((node.lineno, f"else of {ast.unparse(node.test)}"))  # skipped when the test is false

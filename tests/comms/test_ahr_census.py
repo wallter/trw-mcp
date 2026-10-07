@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests.comms._ahr_support import events, handoff_doc, inbox, offer, read_back, readback_doc
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
@@ -37,7 +38,7 @@ def ahr_writes(root: Path) -> dict[str, list[str]]:
     """Every literal SQL write to ``ahr_events`` under *root*, by file."""
     found: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         # Adjacent string literals are one Constant after parsing, so a split statement is seen whole.
         hits = [text for text in _literals(tree) if _WRITE.search(text)]
         if hits:
@@ -52,7 +53,7 @@ def test_ahr_events_has_one_writer_and_one_insert() -> None:
 
 @pytest.mark.unit
 def test_the_writer_never_updates_or_deletes_the_log() -> None:
-    texts = _literals(ast.parse((_SRC / _WRITER).read_text(encoding="utf-8")))
+    texts = _literals(source_index.tree(_SRC / _WRITER))
     assert not [t for t in texts if re.search(r"\b(UPDATE|DELETE|REPLACE)\b", t) and "ahr_events" in t]
 
 

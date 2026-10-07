@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 pytestmark = pytest.mark.unit
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
@@ -85,7 +87,7 @@ def _modules() -> list[tuple[str, str, ast.AST]]:
     out = []
     for path in sorted(_SRC.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
-        out.append((str(path.relative_to(_SRC)), text, ast.parse(text)))
+        out.append((str(path.relative_to(_SRC)), text, source_index.parse(text)))
     return out
 
 

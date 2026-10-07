@@ -186,6 +186,28 @@ def present_managed_configs(target_dir: Path) -> list[str]:
     return [rel for rel, _extractor in _MANAGED_CONFIGS if (target_dir / rel).is_file()]
 
 
+#: Catalog config shapes that hold an MCP server entry: the files a running client must be reconnected after an upgrade.
+_MCP_SERVER_SHAPES = frozenset({"mcp-server-map", "vscode-server-map", "opencode-config", "codex-toml"})
+
+
+def reconnect_client_configs(target_dir: Path) -> list[str]:
+    """The repo-relative MCP configs present in *target_dir*, derived from the client-profile catalog.
+
+    Unlike :data:`_MANAGED_CONFIGS` (which pairs a config with a launcher extractor and omits clients whose launcher
+    shape is not compared), this names every client the catalog says carries an MCP entry, Grok included (feedback #158).
+    """
+    from trw_mcp.client_profiles.catalog import uninstall_surfaces
+
+    return [
+        s.relpath
+        for s in uninstall_surfaces()
+        if s.merged_config
+        and not s.home_scoped
+        and s.config_shape in _MCP_SERVER_SHAPES
+        and (target_dir / s.relpath).is_file()
+    ]
+
+
 def _is_dev_checkout(target_dir: Path) -> bool:
     return (target_dir / "trw-mcp" / "src" / "trw_mcp").is_dir()
 
@@ -288,4 +310,9 @@ def check_launcher_divergence(target: Path, _config: object) -> CheckResult:
     return CheckResult("launcher_divergence", *launcher_divergence_row(target))
 
 
-__all__ = ["check_launcher_divergence", "launcher_divergence_row", "present_managed_configs"]
+__all__ = [
+    "check_launcher_divergence",
+    "launcher_divergence_row",
+    "present_managed_configs",
+    "reconnect_client_configs",
+]

@@ -13,6 +13,9 @@ from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 from trw_mcp.tools.ceremony import _do_reflect
 from trw_mcp.tools.checkpoint import _do_checkpoint
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 @pytest.mark.integration
 class TestDeliverPartialFailure:

@@ -28,6 +28,8 @@ import inspect
 from pathlib import Path
 from typing import Any, get_type_hints
 
+from tests import _source_index as source_index
+
 _PIN_STATE_HELPERS: frozenset[str] = frozenset(
     {
         "pin_active_run",
@@ -64,8 +66,8 @@ def _module_call_map() -> dict[str, set[str]]:
         if module.endswith(".__init__"):
             module = module.removesuffix(".__init__")
         try:
-            tree = ast.parse(py_path.read_text(encoding="utf-8"))
-        except SyntaxError:
+            tree = source_index.tree(py_path)
+        except SyntaxError:  # trw-fail-silent-allow: an unparseable file under trw_mcp/src fails ruff and mypy first; this scan is not where it is reported
             continue
         aliases: dict[str, str] = {}
         for node in tree.body:

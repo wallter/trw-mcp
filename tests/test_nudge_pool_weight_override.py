@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 
@@ -282,7 +283,7 @@ def test_exactly_two_read_sites() -> None:
 
 
 def test_select_pool_reads_through_the_resolution_method() -> None:
-    tree = ast.parse((_SRC / "tools" / "_ceremony_status_pool.py").read_text(encoding="utf-8"))
+    tree = source_index.tree(_SRC / "tools" / "_ceremony_status_pool.py")
     select_pool = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "select_pool")
     calls = {
         n.func.attr for n in ast.walk(select_pool) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)

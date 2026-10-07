@@ -5,8 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tests.conftest import _join_and_reset_deferred, get_tools_sync
 from trw_mcp.models.config import TRWConfig
+
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
 
 
 class TestDeliverAutoPrune:

@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 from trw_memory.labels import Level
 
+from tests import _source_index as source_index
 from tests._layout import MONOREPO_ROOT, requires_monorepo
 from trw_mcp.state._session_mark import session_mark
 
@@ -164,7 +165,7 @@ def _file_index(path: str, text: str) -> tuple[dict[Site, ast.AST], frozenset[Si
     functions: dict[Site, ast.AST] = {}
     builder_sites: set[Site] = set()
     referrers: dict[str, set[Site]] = {}
-    for qualname, func in _functions(ast.parse(text)):
+    for qualname, func in _functions(source_index.parse(text)):
         site = (path, qualname)
         functions[site] = func
         for node in _own_nodes(func):

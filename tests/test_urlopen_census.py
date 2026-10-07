@@ -56,6 +56,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 #: Empty after PRD-SEC-021 FR04: zero ``urllib.request.urlopen`` call sites remain in
 #: ``trw-mcp/src/trw_mcp``. Add a ``"path/to/file.py:qualname"`` entry (``qualname`` is
 #: the enclosing function's dotted name, or ``<module>`` for module-level code) with a
@@ -223,7 +225,7 @@ def _census_scan(root: Path, *, rel_prefix: str, allowlist: dict[str, str] | Non
         text = path.read_text(encoding="utf-8")
         if "urlopen" not in text and "open" not in text:
             continue
-        tree = ast.parse(text, filename=str(path))
+        tree = source_index.parse(text, filename=str(path))
         aliases = _urlopen_aliases(tree)
         build_opener_aliases_by_scope = _build_opener_aliases(tree)
         for node, qualname in _iter_calls_with_qualname(tree):

@@ -185,3 +185,44 @@ def test_no_ceremony_state_file_is_created_for_a_scratch_run(
     build_check_invoke(tests_passed=True, test_count=1, scope="canary fake", run_path=str(scratch))
 
     assert not (tmp_project / ".trw" / "context" / "ceremony-state.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("tests_passed", "static", "stored"),
+    [(True, None, "not_run"), (False, None, "failed"), (True, True, "passed"), (True, False, "failed")],
+)
+def test_a_not_run_static_check_beside_passing_tests_is_unknown_not_failed(
+    tmp_project: Path, build_check_invoke: Any, tests_passed: bool, static: bool | None, stored: str
+) -> None:
+    """Feedback #131: an omitted static check is ``not_run`` in the stored state AND in the rendered response."""
+    import json
+
+    extra: dict[str, Any] = {} if static is None else {"static_checks_clean": static}
+    result = build_check_invoke(tests_passed=tests_passed, test_count=3, scope="unit", **extra)
+
+    state = json.loads((tmp_project / ".trw" / "context" / "ceremony-state.json").read_text(encoding="utf-8"))
+    assert state["build_check_result"] == stored
+    assert set(state["session_build_results"].values()) <= {stored}
+    assert f"build={stored}" in str(result["ceremony_status"])
+    if stored == "not_run":
+        assert "failed" not in str(result["ceremony_status"]).lower()
+        assert "Build failed" not in str(result.get("nudge_content", ""))
+        assert result["static_checks_clean"] == "not_run"
+
+
+def test_a_not_run_build_never_satisfies_the_unpinned_deliver_gate_and_is_not_a_failure(tmp_project: Path) -> None:
+    """The delivery block stays: ``not_run`` is no pass, and (honestly) no recorded failure either."""
+    from trw_mcp.tools._delivery_event_checks import unpinned_build_failure_recorded, unpinned_build_passed
+
+    trw_dir = tmp_project / ".trw"
+    state_path = trw_dir / "context" / "ceremony-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = "2999-01-01T00:00:00+00:00"
+    state_path.write_text(
+        '{"session_started": true, "session_build_results": {"s1": "not_run"}, "session_build_results_at": {"s1": "%s"}}'
+        % stamp,
+        encoding="utf-8",
+    )
+
+    assert unpinned_build_passed(trw_dir, "s1") is False
+    assert unpinned_build_failure_recorded(trw_dir, "s1") is False

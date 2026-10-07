@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from fastmcp import Client
 
+from tests import _source_index as source_index
 from tests._formation_test_support import formation_env  # noqa: F401
 from tests.comms.conftest import core
 from tests.comms.test_fetch_ack import invoke, transport_scene  # noqa: F401
@@ -227,7 +228,7 @@ def ledger_writers(root: Path) -> set[str]:
     return {
         path.relative_to(root).as_posix()
         for path in sorted(root.rglob("*.py"))
-        if any(_WRITE.search(text) for text in _literals(ast.parse(path.read_text(encoding="utf-8"))))
+        if any(_WRITE.search(text) for text in _literals(source_index.tree(path)))
     }
 
 
@@ -361,7 +362,7 @@ def handoff_readers(root: Path) -> set[str]:
     """Every source file whose SQL reads the pointer table, or reads the ledger without excluding handoff facts."""
     found: set[str] = set()
     for path in sorted(root.rglob("*.py")):
-        for text in _literals(ast.parse(path.read_text(encoding="utf-8"))):
+        for text in _literals(source_index.tree(path)):
             # A literal reads a ledger table when it mentions one and carries a SELECT keyword (any
             # case, core322-s3 r9) -- a write included, since ``INSERT ... SELECT`` reads its source
             # (core322-s3 r12). Prose and dict keys that merely say "milestones" are not reads.
@@ -381,7 +382,7 @@ def callers_of(root: Path, name: str) -> set[tuple[str, str]]:
     """``(file, function)`` for every function in *root* that calls *name*."""
     found: set[tuple[str, str]] = set()
     for path in sorted(root.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for call in ast.walk(node):
                     if isinstance(call, ast.Call):

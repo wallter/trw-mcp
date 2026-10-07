@@ -447,3 +447,43 @@ async def test_mounted_hooks_enforce_resolved_phase(tmp_path: Path, monkeypatch:
     allowed = await mw.on_call_tool(context, call_next)
     assert allowed.structured_content == {}
     call_next.assert_awaited_once()
+
+
+def _status_tool_middleware(tmp_path: Path) -> MCPSecurityMiddleware:
+    servers = [
+        MCPServer(
+            name=name,
+            url_or_command=name,
+            public_key_fingerprint=f"sha256:{name}",
+            allowed_tools=[AllowedTool(name="trw_status", allowed_phases=("implement",), allowed_scopes=("read",))],
+        )
+        for name in ("trw", "foreign_server")
+    ]
+    cfg = AnomalyDetectorConfig(checkout_root=tmp_path, shadow_clock_path=tmp_path / "sec" / "clock.yaml")
+    det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    det.seed_baseline(known_pairs={("trw", "trw_status"), ("foreign_server", "trw_status")})
+    return MCPSecurityMiddleware(
+        allowlist=MCPAllowlist(servers=servers),
+        scopes={
+            "trw_status": CapabilityScope(
+                server_name="trw", tool_name="trw_status", allowed_phases=("implement",), allowed_scopes=("read",)
+            )
+        },
+        anomaly_detector=det,
+        run_dir=None,
+        fallback_dir=tmp_path,
+    )
+
+
+def test_only_trws_own_feedback_call_skips_novelty_a_foreign_servers_same_named_tool_is_monitored(
+    tmp_path: Path,
+) -> None:
+    """Feedback #141 review: the exemption is bound to TRW's server, not to a tool-name suffix."""
+    mw = _status_tool_middleware(tmp_path)
+
+    mw.on_tool_call(transport="stdio", server="trw", tool="trw_status", args={"feedback": "free text one"})
+    assert [a for a in mw._recent_anomalies if a["type"] == "novel_arg_pattern"] == []
+
+    mw.on_tool_call(transport="stdio", server="foreign_server", tool="trw_status", args={"feedback": "free text"})
+    novel = [a for a in mw._recent_anomalies if a["type"] == "novel_arg_pattern"]
+    assert [a["server"] for a in novel] == ["foreign_server"]

@@ -33,5 +33,5 @@ Use `trw_learn(learning_id=..., ...)` to correct or amend an existing entry — 
 
 ## Feedback semantics
 
-For what recall/build/delivery observations establish—and what they do not—see
-[memory feedback](memory-feedback.md). Counts alone do not establish usefulness.
+Recall, build and delivery observations are signals about a learning, not proof that it helped.
+Counts alone do not establish usefulness.

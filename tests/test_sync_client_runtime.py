@@ -274,9 +274,54 @@ async def test_sync_lifespan_defers_the_start_and_still_cancels(tmp_path, monkey
                 #    schedules, and what the first tool call runs inline — starts
                 #    the loop on the serving loop the lifespan recorded.
                 assert _boot_deferred.ensure_deferred_boot_work() is True
+                # Run inline on the serving loop, the step creates the task before it
+                # returns. Asserting that synchronously -- rather than only waiting on
+                # ``started`` -- makes a recurrence of the 2026-10-05 -n 8 timeout name
+                # its mechanism: no task (the deferred step resolved no backend), a task
+                # on another loop, or a task cancelled before its first step. It was the
+                # first: benchmarks/engmem_mcp.py left ``_resolve_backend_sync`` stubbed for
+                # the rest of any worker that ran test_engmem_harness_lock_race before this
+                # test (2026-10-06; the harness now restores it and that test asserts so).
+                owned = _boot_deferred._sync_task
+                assert owned is not None, "the deferred step created no sync task"
+                assert owned.get_loop() is asyncio.get_running_loop()
+                assert not owned.cancelled(), "the sync task was cancelled before it ran"
                 await asyncio.wait_for(started.wait(), timeout=30)
 
             # 3. Shutdown still owns cancellation of the task it did not create.
             await asyncio.wait_for(cancelled.wait(), timeout=30)
     finally:
+        _boot_deferred.reset_deferred_boot_state()
+
+
+@pytest.mark.asyncio
+async def test_a_lifespan_never_cancels_a_sync_task_on_another_loop() -> None:
+    """``cancel_sync_task(loop)`` takes only the task its own serving loop runs.
+
+    The handle is process-global. Before this, any lifespan ending -- on any loop, from any
+    thread -- cancelled whatever task was registered, including one another loop had just
+    created and not yet stepped (a candidate cause of the -n 8 timeout above).
+    """
+    from trw_mcp.server import _boot_deferred
+
+    gate = asyncio.Event()
+
+    async def sync_loop() -> None:
+        await gate.wait()
+
+    _boot_deferred.reset_deferred_boot_state()
+    task = asyncio.get_running_loop().create_task(sync_loop())
+    _boot_deferred._sync_task = task
+    foreign = asyncio.new_event_loop()
+    try:
+        assert _boot_deferred.cancel_sync_task(foreign) is None
+        assert not task.cancelled() and _boot_deferred._sync_task is task
+
+        assert _boot_deferred.cancel_sync_task(asyncio.get_running_loop()) is task
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert _boot_deferred._sync_task is None
+    finally:
+        foreign.close()
+        gate.set()
         _boot_deferred.reset_deferred_boot_state()

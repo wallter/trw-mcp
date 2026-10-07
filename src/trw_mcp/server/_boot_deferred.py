@@ -185,13 +185,22 @@ async def schedule_deferred_boot_work(budget_ms: int) -> None:
         logger.warning("boot_deferred_work_failed", exc_info=True)
 
 
-def cancel_sync_task() -> asyncio.Task[None] | None:
-    """Return and clear the owned sync task so the lifespan can cancel it."""
+def cancel_sync_task(loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task[None] | None:
+    """Return and clear the owned sync task so the lifespan can cancel it.
+
+    With *loop*, only a task running on that loop is taken. A lifespan owns the task its
+    own serving loop runs, nothing else: the handle is process-global, so a second
+    lifespan ending on another loop (two apps in one process, a test's leftover server)
+    would otherwise cancel -- from the wrong thread -- a task it never owned, before that
+    task had run a single step.
+    """
     global _sync_task
     with _lock:
-        task, _sync_task = _sync_task, None
-    if task is not None:
-        task.cancel()
+        task = _sync_task
+        if task is None or (loop is not None and task.get_loop() is not loop):
+            return None
+        _sync_task = None
+    task.cancel()
     return task
 
 

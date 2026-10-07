@@ -31,6 +31,25 @@ TOKEN_ECONOMY_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer="trw-mcp/tests/test_dispatch_policy_precedence.py",
         budget_decision="admitted",
     ),
+    "dispatch_default_efforts": ConfigAdmission(
+        field_name="dispatch_default_efforts",
+        owner="PRD-INFRA-210-FR01",
+        consumer="trw_mcp.dispatch._resolve.resolve_dispatch_request -> dispatch._policy.resolve_effort",
+        default_rationale=(
+            "Empty. An unset map leaves dispatch_default_effort, the client provider default and the "
+            "task-class table in charge, so resolution is byte-identical to before the field existed."
+        ),
+        interaction_analysis=(
+            "Outranked by an explicit request effort; outranks dispatch_default_effort for the named "
+            "client only. Keys are typed to DispatchClient and values to the portable ladder, so a typo "
+            "fails at config load. Counts only when operator-set; the applied value is still clamped to "
+            "what the client's flag accepts."
+        ),
+        deprecation_plan="Retire if effort moves into a per-role operator policy object.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-INFRA-210.md",
+        test_pointer="trw-mcp/tests/test_dispatch_policy_precedence.py",
+        budget_decision="admitted",
+    ),
     "dispatch_default_max_turns": ConfigAdmission(
         field_name="dispatch_default_max_turns",
         owner="PRD-CORE-290-FR04",

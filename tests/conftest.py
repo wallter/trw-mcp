@@ -53,6 +53,7 @@ from trw_memory.testing.daemon_reaper import (
     tag_daemon_ownership,
 )
 
+from tests import _admission_lock
 from tests._daemon_escape import escape_message, published_daemon_pids, session_homes, stop_escaped
 from tests._otel_support import otel_spans  # noqa: F401  (PRD-CORE-342 FR09 shared fixture)
 from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
@@ -99,7 +100,12 @@ pytest_plugins = (
 # monorepo it is developed in — no shared test-support module exists across
 # these independently-distributed packages (trw-mcp and trw-memory ship to
 # PyPI; a new cross-package test dependency is not worth it for 15 lines).
-_MAX_XDIST_WORKERS = 4
+# The 2026-09-05 OOM was on an older machine. On the 64 GB arm64 Mac a full
+# trw-mcp run at -n 8 measured 502 s and a 12.5 GB peak with no swap
+# (2026-10-06; -n 4: 763 s, -n 12: 436 s at load ~14), so the cap is 8. The
+# admission lock (tests/_admission_lock.py) admits one wide run per host, so
+# two agents' runs queue rather than stack at 8 each.
+_MAX_XDIST_WORKERS = 8
 _ALLOW_WIDE_XDIST_ENV = "TRW_PYTEST_ALLOW_WIDE_XDIST"
 
 
@@ -315,6 +321,10 @@ def _refuse_on_low_disk(config: pytest.Config) -> None:
         )
 
 
+#: The admission lock's descriptor, held by a wide controller from configure to unconfigure.
+_ADMISSION_FD = pytest.StashKey[int]()
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Tag this process's memory daemons, then refuse a wide xdist fan-out and a near-full disk.
 
@@ -328,11 +338,26 @@ def pytest_configure(config: pytest.Config) -> None:
     violation = _xdist_fanout_violation(getattr(config.option, "numprocesses", None), allow_wide)
     if violation is not None:
         pytest.exit(
-            f"{violation}. xdist fan-out capped at 4 workers on this "
-            "workstation (2026-09-05 OOM); use -n 4 or set "
+            f"{violation}. xdist fan-out capped at {_MAX_XDIST_WORKERS} workers on this "
+            f"workstation (2026-09-05 OOM); use -n {_MAX_XDIST_WORKERS} or set "
             "TRW_PYTEST_ALLOW_WIDE_XDIST=1",
             returncode=3,
         )
+    # Heavy-suite admission: one wide run per host at a time (see tests/_admission_lock.py).
+    try:
+        fd = _admission_lock.admit(getattr(config.option, "numprocesses", None))
+    except _admission_lock.AdmissionRefused as exc:
+        pytest.exit(str(exc), returncode=3)
+    if fd is not None:
+        config.stash[_ADMISSION_FD] = fd
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Release the admission lock as soon as the run ends (process death releases it too)."""
+    fd = config.stash.get(_ADMISSION_FD, None)
+    if fd is not None:
+        del config.stash[_ADMISSION_FD]
+        _admission_lock.dismiss(fd)
 
 
 # Prefer monorepo sources over stale site-packages when tests run from the checkout.
@@ -676,6 +701,42 @@ def _isolate_client_session_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     for name in (*known_session_id_env_vars(), "TRW_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_client_profile_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the variables that name the active client (``TRW_CLIENT_PROFILE`` and the detection signals).
+
+    A run started from Claude Code inherits ``CLAUDE_CODE_ENTRYPOINT``, so ``detect_client_profile`` said
+    claude-code there and "unknown" in CI and the release Linux leg. The unpinned deliver gate blocks an unknown
+    client (no change-evidence writer, E2E-INC-115 b), so deliver tests passed only from a Claude Code terminal.
+    A test that needs a client declares it: the ``claude_code_client`` fixture, or ``monkeypatch.setenv``.
+    """
+    from trw_mcp.state.source_detection import _CLIENT_SIGNALS
+
+    for name in (
+        "TRW_CLIENT_PROFILE",
+        *(key for _client, keys in _CLIENT_SIGNALS for key in keys),
+        *_OTHER_CLIENT_DETECTION_ENV,
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+#: Client-detection signals read outside ``_CLIENT_SIGNALS`` and the session-id registry (both cleared above):
+#: ``handoff/_scaffold.py`` names the harness from ``CLAUDECODE`` and ``CODEX_THREAD_ID``, and
+#: ``bootstrap/_utils.py`` detects cursor-cli from ``CURSOR_API_KEY``. Location and hook-input variables
+#: (``CODEX_HOME``, ``CURSOR_PROJECT_DIR``, ``CODEX_HOOK_INPUT``) name no client and are left alone.
+_OTHER_CLIENT_DETECTION_ENV = ("CLAUDECODE", "CODEX_THREAD_ID", "CURSOR_API_KEY")
+
+
+@pytest.fixture
+def claude_code_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Declare claude-code, the one client with a registered change-evidence writer.
+
+    For tests whose subject is a deliver path, not client identity: an unpinned session with no recorded edits is
+    then an honest zero rather than the no-writer block (E2E-INC-115 b).
+    """
+    monkeypatch.setenv("TRW_CLIENT_PROFILE", "claude-code")
 
 
 @pytest.fixture(autouse=True)

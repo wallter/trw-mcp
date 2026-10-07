@@ -22,6 +22,9 @@ from tests.conftest import extract_tool_fn, make_test_server
 from trw_mcp.state._ceremony_progress_state import CeremonyState, NudgeContext, write_ceremony_state
 from trw_mcp.state._ceremony_state_model import ToolName
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 @pytest.fixture
 def status_spy(monkeypatch: pytest.MonkeyPatch) -> list[NudgeContext | None]:

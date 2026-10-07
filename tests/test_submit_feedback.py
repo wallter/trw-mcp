@@ -824,3 +824,14 @@ def test_feedback_outbox_replay_never_sends_a_trw_platform_key() -> None:
     )
     assert payload is not None
     assert _TRW_KEY_BODY not in repr(payload)
+
+
+def test_the_not_configured_error_names_what_is_missing_and_where_it_looked() -> None:
+    """Feedback #168: a refusal says which value is absent and which sources were checked."""
+    from trw_mcp.tools.submit_feedback import _not_configured
+
+    message = _not_configured("https://example.invalid", "")
+
+    assert message.startswith("backend not configured") and "missing API key" in message
+    assert "TRW_BACKEND_URL" in message and "config.yaml" in message and "install-trw" in message
+    assert "missing URL" in _not_configured("", "k")

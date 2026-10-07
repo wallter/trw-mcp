@@ -37,6 +37,7 @@ def _init_result_dict(dry_run: bool) -> dict[str, list[str]]:
         "cleaned": [],
     }
     if dry_run:
+        result["dry_run"] = []  # presence flag: retirement warnings are worded as proposals (describe_removal)
         result["warnings"].append("DRY RUN — no files will be modified.")
     return result
 
@@ -149,23 +150,40 @@ _ROLLED_BACK_NOTES: frozenset[str] = frozenset(
 )
 
 
-def _forget_rolled_back_changes(root: Path, result: dict[str, list[str]]) -> None:
+def _forget_rolled_back_changes(root: Path, result: dict[str, list[str]], *, dry_run: bool = False) -> None:
     """Report a finished rollback, and drop the reports of writes it put back so a failed run does not claim them.
 
     ``retired`` names files this run deleted in place. Each one the rollback restored (it is on disk again) is
     no longer reported as removed: printing "Removed retired TRW file" under a failed step described a
     half-updated project the rollback had already undone. One it could not restore stays reported. The
     credential-move note goes too: config.yaml is back as it was.
+
+    A dry run changed nothing in the project (its scratch copy was rolled back), so it says the real run WOULD fail
+    instead of claiming a rollback of files it never touched (feedback #112).
     """
-    result["warnings"].append("update-project rolled back managed directories after write failure")
     retired = [str(p) for p in result.get("retired", [])]
     restored = [p for p in retired if (root / p).exists()]
     if restored:
-        result["warnings"].append(
-            f"the rollback put back the {len(restored)} retired TRW file(s) this run had removed;"
-            " the next successful update-project removes them"
-        )
-        result["retired"] = [p for p in retired if p not in restored]
+        result["retired"] = [p for p in retired if p not in restored]  # both modes: it is on disk again
+        # Its removal description (the git-restore note) describes a change the rollback undid.
+        # Only the exact warnings describe_removal recorded for a restored path go; a recovery warning for the same
+        # path (a concurrent writer's file, where the user's edit was backed up) is a different string and stays.
+        retracted = [n for n in result.get("retirement_notes", []) if n.split("\t", 1)[0] in restored]
+        for note in retracted:
+            if (message := note.split("\t", 1)[1]) in result["warnings"]:
+                result["warnings"].remove(message)
+        result["retirement_notes"] = [n for n in result.get("retirement_notes", []) if n not in retracted]
+        result["retired_described"] = [p for p in result.get("retired_described", []) if str(p) not in restored]
+    result.pop("notes", None)  # a change note (hook timeouts, statusline) describes bytes the rollback put back
+    if dry_run:
+        result["warnings"].append("dry run: this update would fail (see errors); nothing in the project was changed")
+    else:
+        result["warnings"].append("update-project rolled back managed directories after write failure")
+        if restored:
+            result["warnings"].append(
+                f"the rollback put back the {len(restored)} retired TRW file(s) this run had removed;"
+                " the next successful update-project removes them"
+            )
     result["warnings"] = [w for w in result["warnings"] if w not in _ROLLED_BACK_NOTES]
 
 

@@ -30,9 +30,13 @@ import sys
 import time
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._platform_trust import payload_trw_dir, send_policy_all
 from trw_mcp.sync.backup import BackupUploader
+
+logger = structlog.get_logger(__name__)
 
 __all__ = ["run_backup"]
 
@@ -84,6 +88,17 @@ def _confirm_replace(db_path: Path, args: argparse.Namespace) -> None:
             return
     print(f"backup restore: not replacing {what}; re-run with --yes to confirm", file=sys.stderr)
     sys.exit(2)
+
+
+def _served_store() -> Path | None:
+    """The store the daemon serves for the invoking project, or ``None`` when it cannot be resolved."""
+    from trw_memory.daemon import served_store_path
+
+    try:
+        return served_store_path().resolve()
+    except (OSError, RuntimeError) as exc:  # justified: an unprovable store identity means "touch nothing"
+        logger.warning("backup_restore_served_store_unresolved", reason=type(exc).__name__)
+        return None
 
 
 def _invoking_trw_dir() -> Path | None:
@@ -315,13 +330,21 @@ def _run_backup_restore(args: argparse.Namespace) -> None:
         print(f"Restored {db_path} from {archive_path}")
     from trw_mcp.server._backup_derived_tiers import restore_derived_tiers, restore_store_warm_tiers
 
+    # Derived tiers are touched only when the restored file IS the store the invoking project serves (#166).
+    # payload_trw_dir() answers "which .trw is nearest", a disclosure-policy question, not "who owns this store".
+    served = _served_store()
+    if getattr(args, "db", None) and (served is None or served != db_path):
+        print(
+            f"Left every project's derived copies (warm tiers, learning files) as they were: {db_path} is not the "
+            f"store this project serves ({served or 'unresolved'}), so no project's recall is provably out of step with it."
+        )
+        return
     keep = bool(getattr(args, "keep_derived", False))
     if (store_notice := restore_store_warm_tiers(db_path.parent, keep=keep)) is not None:
         print(store_notice)
-    for trw_dir in dict.fromkeys((_invoking_trw_dir(), payload_trw_dir(db_path))):
-        notice = restore_derived_tiers(trw_dir, keep=keep)  # INC-128: recall must agree with the restored store
-        if notice is not None:
-            print(notice)
+    notice = restore_derived_tiers(_invoking_trw_dir(), keep=keep)  # INC-128: recall must agree with the restored store
+    if notice is not None:
+        print(notice)
 
 
 def run_backup(args: argparse.Namespace) -> None:

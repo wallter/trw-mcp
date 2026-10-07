@@ -11,6 +11,7 @@ why that close can never drop a live lock.
 
 from __future__ import annotations
 
+import gc
 import os
 import threading
 from pathlib import Path
@@ -288,6 +289,29 @@ def test_replacing_the_only_pinned_path_at_capacity_still_refreshes_it(
     assert key1 not in _checkout_access._fds, "the old inode's slot must be freed (net-zero refresh)"
     with pytest.raises(OSError):
         os.fstat(fd1)  # the retired descriptor must actually be closed, not merely forgotten
+
+
+def test_a_destroyed_connections_hold_does_not_keep_a_replaced_inode_pinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection destroyed before the refresh no longer holds the old inode, even before anything drained it.
+
+    ``__del__`` only queues its release; retirement read the undrained ``_held_inodes`` and kept the stale fd
+    pinned past the cap (seen in the Linux leg, where an inode number freed by one test is reused by the next).
+    """
+    monkeypatch.setattr(_checkout_access, "_MAX_PINNED_FDS", 1)
+    target = tmp_path / "solo.sqlite3"
+    target.write_bytes(b"a" * 8)
+    _checkout_access.read_at(target, 8)
+    key1 = _checkout_access._path_inode[target]
+    conn = _checkout_access.held_connect(target)
+    del conn
+    gc.collect()  # the connection sits in a reference cycle; collecting it queues its release, undrained
+    assert _checkout_access._pending_releases, "precondition: the release is queued, not yet applied"
+    _replace_with_new_inode(target, b"b" * 8)
+
+    assert _checkout_access.read_at(target, 8) == b"b" * 8
+    assert key1 not in _checkout_access._fds, "a released hold must not keep the old inode pinned"
 
 
 def test_close_stale_never_closes_a_descriptor_whose_key_was_re_pinned(tmp_path: Path) -> None:

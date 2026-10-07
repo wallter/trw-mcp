@@ -12,6 +12,20 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("governing_project")]
 
 
+@pytest.fixture(autouse=True)
+def _serves_nothing_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The machine's real served store is never consulted: a test says which file it serves with ``_serve``."""
+    from trw_mcp.server import _subcommands_backup
+
+    monkeypatch.setattr(_subcommands_backup, "_served_store", lambda: (tmp_path / "served-elsewhere.db").resolve())
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, db_path: Path) -> None:
+    from trw_mcp.server import _subcommands_backup
+
+    monkeypatch.setattr(_subcommands_backup, "_served_store", lambda: db_path.resolve())
+
+
 def _store(tmp_path: Path) -> Path:
     from trw_memory.models.memory import MemoryEntry
     from trw_memory.storage.sqlite_backend import SQLiteBackend
@@ -105,6 +119,7 @@ def test_a_restore_moves_the_derived_copies_aside_so_recall_matches_the_store(
 
     trw_dir = _project_with_derived_tiers(tmp_path, monkeypatch)
     db_path = _store(tmp_path)
+    _serve(monkeypatch, db_path)
     _restore(db_path, create_backup_archive(tmp_path, db_path).path)
 
     out = capsys.readouterr().out
@@ -124,6 +139,7 @@ def test_keep_derived_leaves_them_and_says_so(
 
     trw_dir = _project_with_derived_tiers(tmp_path, monkeypatch)
     db_path = _store(tmp_path)
+    _serve(monkeypatch, db_path)
     _restore(db_path, create_backup_archive(tmp_path, db_path).path, keep_derived=True)
 
     assert "--keep-derived" in capsys.readouterr().out
@@ -143,6 +159,7 @@ def test_a_symlinked_derived_tier_is_left_and_named(
     (trw_dir / "memory" / "warm.jsonl").unlink()
     (trw_dir / "memory" / "warm.jsonl").symlink_to(elsewhere)
     db_path = _store(tmp_path)
+    _serve(monkeypatch, db_path)
     _restore(db_path, create_backup_archive(tmp_path, db_path).path)
 
     assert "a symlink, not followed" in capsys.readouterr().out
@@ -173,6 +190,7 @@ def test_the_per_project_warm_tier_beside_the_store_is_moved_aside_too(
 
     monkeypatch.setattr(_subcommands_backup, "_invoking_trw_dir", lambda: None)
     db_path = _store(tmp_path)
+    _serve(monkeypatch, db_path)
     warm = tmp_path / "project_demo-1" / "memory" / "warm.jsonl"
     warm.parent.mkdir(parents=True)
     warm.write_text('{"id": "L-postx"}\n', encoding="utf-8")
@@ -183,3 +201,71 @@ def test_the_per_project_warm_tier_beside_the_store_is_moved_aside_too(
     [aside] = [p for p in tmp_path.iterdir() if p.name.startswith("pre-restore-derived-")]
     assert "L-postx" in (aside / "project_demo-1" / "memory" / "warm.jsonl").read_text(encoding="utf-8")
     assert "Moved aside" in capsys.readouterr().out
+
+
+def _unproven(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, db_path: Path, **extra: object) -> Path:
+    from trw_memory.storage._backup_archive import create_backup_archive
+
+    trw_dir = _project_with_derived_tiers(tmp_path, monkeypatch)
+    _restore(db_path, create_backup_archive(db_path.parent, db_path).path, **extra)
+    return trw_dir
+
+
+@pytest.mark.parametrize("where", ["external", "inside_checkout", "beside_served_store"])
+def test_restoring_a_db_the_project_does_not_serve_leaves_every_projects_tiers_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], where: str
+) -> None:
+    """Feedback #166: only a restored file that IS the served store realigns derived tiers; nearness proves nothing."""
+    folder = {
+        "external": tmp_path / "other",
+        "inside_checkout": tmp_path / "project",  # holds the live .trw, but is not the store it serves
+        "beside_served_store": tmp_path,  # the served store's own directory
+    }[where]
+    folder.mkdir(exist_ok=True)
+    (folder / "project_demo-1" / "memory").mkdir(parents=True)
+    beside = folder / "project_demo-1" / "memory" / "warm.jsonl"
+    beside.write_text('{"id": "L-keep"}\n', encoding="utf-8")
+    db_path = _store(folder)
+    trw_dir = _unproven(tmp_path, monkeypatch, db_path)
+
+    assert beside.is_file() and (trw_dir / "memory" / "warm.jsonl").is_file()
+    assert (trw_dir / "learnings" / "entries" / "2026-01-01-post.yaml").is_file()
+    assert (trw_dir / "learnings" / "index.yaml").is_file()
+    assert not list(tmp_path.rglob("pre-restore-derived-*"))
+    assert "is not the store this project serves" in capsys.readouterr().out
+
+
+def test_an_explicit_db_equal_to_the_served_store_still_realigns_the_serving_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_memory.storage._backup_archive import create_backup_archive
+
+    trw_dir = _project_with_derived_tiers(tmp_path, monkeypatch)
+    db_path = _store(tmp_path)
+    _serve(monkeypatch, db_path)
+    _restore(db_path, create_backup_archive(tmp_path, db_path).path)
+
+    assert not (trw_dir / "memory" / "warm.jsonl").exists()
+    assert "Moved aside (not deleted)" in capsys.readouterr().out
+
+
+def test_keep_derived_with_an_unserved_db_still_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "other").mkdir()
+    trw_dir = _unproven(tmp_path, monkeypatch, _store(tmp_path / "other"), keep_derived=True)
+
+    assert (trw_dir / "memory" / "warm.jsonl").is_file()
+    assert "NOT restored" not in capsys.readouterr().out
+
+
+def test_an_unresolvable_served_store_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.server import _subcommands_backup
+
+    monkeypatch.setattr(_subcommands_backup, "_served_store", lambda: None)
+    trw_dir = _unproven(tmp_path, monkeypatch, _store(tmp_path))
+
+    assert (trw_dir / "memory" / "warm.jsonl").is_file()
+    assert "unresolved" in capsys.readouterr().out

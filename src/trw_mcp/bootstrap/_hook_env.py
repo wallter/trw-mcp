@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
     from trw_mcp.models.config._client_profile import ClientProfile
 
 logger = structlog.get_logger(__name__)
@@ -131,12 +132,38 @@ def _installed_lib_predates_hook_env_split(trw_dir: Path) -> bool:
     return _LIB_TRW_SPLIT_MARKER not in content
 
 
+_HOOKS_OFF_TAIL = " will not run. Fix: "
+
+
+def _hooks_off_head(source: str) -> str:
+    return f"hooks_enabled resolves to false ({source}), so the TRW hooks for "
+
+
+def _hooks_off_message(head: str, source: str, display_name: str, warnings: list[str]) -> str:
+    """The one hooks_enabled warning: *display_name* plus every client an earlier call in this run already named."""
+    earlier = next((w for w in warnings if w.startswith(head)), None)
+    named = earlier[len(head) : earlier.index(_HOOKS_OFF_TAIL)].split(", ") if earlier else []
+    if display_name not in named:
+        named.append(display_name)
+    return f"{head}{', '.join(named)}{_HOOKS_OFF_TAIL}{_hooks_enabled_remedy(source)}"
+
+
+def _hooks_enabled_remedy(source: str) -> str:
+    """The exact command that lifts a ``hooks_enabled: false`` decided by *source* (feedback #161)."""
+    if "TRW_HOOKS_ENABLED" in source:
+        return "unset TRW_HOOKS_ENABLED"
+    if source.startswith("/"):
+        return f"sed -i.bak 's/^hooks_enabled:.*/hooks_enabled: true/' {shlex.quote(source)}"
+    return "set 'hooks_enabled: true' in .trw/config.yaml"
+
+
 def _write_hook_env_file(
     trw_dir: Path,
     profile: ClientProfile,
     *,
     key: str | None = None,
     warnings: list[str] | None = None,
+    config: TRWConfig | None = None,
 ) -> Path:
     """Write ``.trw/runtime/hook-env.d/<key>.sh`` for hook scripts (PRD-CORE-149 FR04).
 
@@ -163,6 +190,8 @@ def _write_hook_env_file(
     is ``False`` -- this client's hooks will therefore never fire despite
     being installed. A structlog warning is always emitted regardless of
     whether a caller passed ``warnings``.
+
+    ``config``, when given, is the cascade already resolved for *trw_dir*; ``None`` resolves it here.
 
     The pre-split shared ``hook-env.sh`` is retained (kept byte-identical to
     this write) while the installed ``lib-trw.sh`` still predates the split --
@@ -212,14 +241,13 @@ def _write_hook_env_file(
             legacy_shared_path.unlink(missing_ok=True)
         except OSError:
             logger.debug("hook_env_legacy_cleanup_failed", path=str(legacy_shared_path))
-    publish_hook_flags(trw_dir)
-    if profile.hooks_enabled and not resolve_hooks_enabled(trw_dir):
+    publish_hook_flags(trw_dir, config)
+    if profile.hooks_enabled and not resolve_hooks_enabled(trw_dir, config):
         source = resolve_hooks_enabled_source(trw_dir)
-        message = (
-            f"{profile.display_name} ({profile.client_id}) installs TRW hooks, but hooks_enabled resolves to "
-            f"false ({source}), so they will not run. Remove or flip that setting to re-enable "
-            f"{profile.display_name}'s hooks."
-        )
+        # One message for the run, not one per client: the cause and the fix are the same for every client. It
+        # names every affected client, so a later client extends the existing message instead of adding another.
+        head = _hooks_off_head(source)
+        message = _hooks_off_message(head, source, profile.display_name, warnings or [])
         logger.warning(
             "hook_env_client_hooks_disabled_by_resolved_config",
             client_id=profile.client_id,
@@ -227,7 +255,11 @@ def _write_hook_env_file(
             source=source,
         )
         if warnings is not None:
-            warnings.append(message)
+            index = next((i for i, w in enumerate(warnings) if w.startswith(head)), None)
+            if index is None:
+                warnings.append(message)
+            else:
+                warnings[index] = message
     logger.debug(
         "hook_env_written",
         path=str(path),
@@ -244,6 +276,7 @@ def write_hook_env_for_clients(
     client_ids: list[str],
     *,
     warnings: list[str] | None = None,
+    config: TRWConfig | None = None,
 ) -> list[Path]:
     """Write ``hook-env.d/<key>.sh`` for every resolved client in *client_ids*.
 
@@ -255,8 +288,17 @@ def write_hook_env_for_clients(
     happened to be first). Falls back to ``claude-code`` when *client_ids* is
     empty. Duplicate ids are written once. Fail-open per client: one profile's
     write failure is logged and does not stop the rest.
+
+    The config cascade is resolved ONCE for the whole pass (it was rebuilt twice per client, P2a), and at
+    the moment the pass runs: the hook switches are client-independent and nothing in the pass writes
+    ``config.yaml``, so every client reads the same values the per-client builds read. Each pass is its own
+    refresh point, after the phases that do write ``config.yaml`` (``target_platforms``, key migrations).
+    *config* is a caller's already-resolved cascade for *trw_dir*.
     """
     from trw_mcp.models.config._profiles import resolve_client_profile
+
+    if config is None:
+        config = _cascade_config(trw_dir)
 
     written: list[Path] = []
     seen: set[str] = set()
@@ -266,7 +308,23 @@ def write_hook_env_for_clients(
         seen.add(client_id)
         try:
             profile = resolve_client_profile(client_id)
-            written.append(_write_hook_env_file(trw_dir, profile, warnings=warnings))
+            written.append(_write_hook_env_file(trw_dir, profile, warnings=warnings, config=config))
         except Exception as exc:  # justified: fail-open, hook-env is best-effort, one client must not block another
             logger.warning("hook_env_write_failed", error=str(exc), client_id=client_id)
     return written
+
+
+def _cascade_config(trw_dir: Path) -> TRWConfig | None:
+    """*trw_dir*'s config cascade, or ``None`` when it does not load.
+
+    ``None`` hands each client's write the per-client resolution it always had, so a config that does not
+    load fails exactly as before: the flags publish is logged and skipped, and the client's own write is
+    logged as failed.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._loader import resolve_config_overrides
+
+    try:
+        return TRWConfig(**resolve_config_overrides(trw_dir / "config.yaml"))  # type: ignore[arg-type]
+    except Exception:  # trw-fail-silent-allow: not swallowed; each client re-resolves and logs the failure itself
+        return None

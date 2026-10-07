@@ -443,7 +443,7 @@ def _attach_deliver_ceremony_status(trw_dir: Path, results: DeliverResultDict) -
             trw_dir,
             tool_name="deliver",
             tool_success=bool(results.get("success", True)),
-            build_passed=(recorded == "passed") if recorded else None,
+            build_passed=(recorded == "passed") if recorded and recorded != "not_run" else None,
         )
     except Exception as exc:  # justified: fail-open — status decoration must not block deliver
         record_into(cast("MutableMapping[str, object]", results), "ceremony_status", exc, severity="info")

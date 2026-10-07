@@ -388,6 +388,113 @@ _json_object() {
 # path through a non-object is an error (no output, non-zero exit), empty input
 # prints nothing. Float spelling is the one known difference (jq 1.7/1.8 print
 # 1e100 as 1E+100); no hook reads a float. Returns 1 when neither parser exists.
+# ---------------------------------------------------------------------------
+# Hook time budget (feedback #159/#160). A hook that has a deadline exports TRW_HOOK_DEADLINE_MS, an
+# absolute epoch-millisecond instant, and _TRW_UPS_WORK, a private directory. Every python3 it starts then
+# (1) arms an in-process watchdog before any heavy import (_TRW_PY_WATCHDOG): a daemon thread that exits 0 at
+# the deadline, so nothing partial is written; and (2) is waited on by _trw_wait_bounded, a backstop for a
+# python that never reaches its watchdog (a hung interpreter start), which kills that ONE child and nothing
+# else. The pure-shell steps are fast and stay unbounded. Without the deadline variable nothing changes.
+# ---------------------------------------------------------------------------
+
+# Free of single quotes so it can sit in a single-quoted shell string; one statement per line so it can be
+# prepended to any `python3 -c` program.
+_TRW_PY_WATCHDOG='import os, threading, time
+_d = os.environ.get("TRW_HOOK_DEADLINE_MS", "")
+if _d.isdigit():
+    _w = threading.Timer(max(0.0, int(_d) / 1000.0 - time.time()), os._exit, (0,))
+    _w.daemon = True
+    _w.start()
+'
+
+# _trw_now_ms: set _trw_now to epoch milliseconds, from `date +%s%3N` (GNU), else perl's Time::HiRes, else the
+# whole second (a deadline then errs by up to a second, never by a fork per tick). Called, not captured, so
+# the chosen method is remembered in _TRW_NOW_MODE.
+_trw_now_ms() {
+  case "${_TRW_NOW_MODE:-}" in
+    date) _trw_now=$(date +%s%3N) ;;
+    perl) _trw_now=$(perl -MTime::HiRes=time -e 'printf "%d", time() * 1000') ;;
+    sec) _trw_now="$(date +%s)000" ;;
+    *)
+      _trw_now=$(date +%s%3N 2>/dev/null) || _trw_now=""
+      case "$_trw_now" in '' | *[!0-9]*) _trw_now="" ;; esac
+      if [ "${#_trw_now}" -ge 13 ]; then
+        _TRW_NOW_MODE=date
+      elif command -v perl >/dev/null 2>&1; then
+        _TRW_NOW_MODE=perl
+        _trw_now=$(perl -MTime::HiRes=time -e 'printf "%d", time() * 1000')
+      else
+        _TRW_NOW_MODE=sec
+        _trw_now="$(date +%s)000"
+      fi
+      ;;
+  esac
+}
+
+# _trw_sleep_tick: one poll interval, 10 ms where sleep takes fractions and a second where it does not.
+_trw_sleep_tick() {
+  if [ -z "${_TRW_TICK:-}" ]; then
+    if sleep 0.01 2>/dev/null; then _TRW_TICK=0.01; else _TRW_TICK=1; fi
+    return 0
+  fi
+  sleep "$_TRW_TICK"
+}
+
+# _trw_wait_bounded DEADLINE_MS: wait for the background child in _TRW_BG_PID. It is killed (its pid alone)
+# once the clock passes DEADLINE_MS plus 100 ms, the grace that lets the child's own watchdog fire first;
+# returns 124 then, else the child's exit status. The clock is read every 10th 10 ms poll (every poll when a tick is a whole second), and the
+# pid is cleared once reaped so no later cleanup signals a pid the kernel may have reused.
+_trw_wait_bounded() {
+  _wb_limit=$(($1 + 100))
+  _wb_n=0
+  while kill -0 "$_TRW_BG_PID" 2>/dev/null; do
+    _wb_n=$((_wb_n + 1))
+    # Whole-second sleeps (no fractional sleep here) make a tick a full second: read the clock every time.
+    if [ "${_TRW_TICK:-0.01}" = 1 ] || [ $((_wb_n % 10)) -eq 0 ]; then
+      _trw_now_ms
+      if [ "$_trw_now" -ge "$_wb_limit" ]; then
+        kill -KILL "$_TRW_BG_PID" 2>/dev/null || true
+        { wait "$_TRW_BG_PID"; } 2>/dev/null || true
+        _TRW_BG_PID=""
+        return 124
+      fi
+    fi
+    _trw_sleep_tick
+  done
+  _wb_rc=0
+  wait "$_TRW_BG_PID" 2>/dev/null || _wb_rc=$?
+  _TRW_BG_PID=""
+  return "$_wb_rc"
+}
+
+# _trw_py_run MODE SCRIPT [ARG...]: `python3 -I -c SCRIPT ARG...`. MODE is `pipe` when the program reads its
+# stdin (copied aside first: a background child gets no stdin) or `none`. Under a hook deadline it runs armed
+# and backstopped as above; a spent deadline refuses to start another python (124); a killed one prints
+# nothing. Without a deadline it is exactly the plain call.
+_trw_py_run() {
+  _pr_mode=$1
+  _pr_script=$2
+  shift 2
+  if [ -z "${TRW_HOOK_DEADLINE_MS:-}" ] || [ -z "${_TRW_UPS_WORK:-}" ]; then
+    python3 -I -c "$_pr_script" "$@"
+    return
+  fi
+  _trw_now_ms
+  [ "$_trw_now" -lt "$TRW_HOOK_DEADLINE_MS" ] || return 124
+  _pr_in=/dev/null
+  if [ "$_pr_mode" = pipe ]; then
+    _pr_in="$_TRW_UPS_WORK/py.in"
+    cat >"$_pr_in" 2>/dev/null || : >"$_pr_in"
+  fi
+  _pr_out="$_TRW_UPS_WORK/py.out"
+  python3 -I -c "$_TRW_PY_WATCHDOG$_pr_script" "$@" <"$_pr_in" >"$_pr_out" 2>/dev/null &
+  _TRW_BG_PID=$!
+  _pr_rc=0
+  _trw_wait_bounded "$TRW_HOOK_DEADLINE_MS" || _pr_rc=$?
+  [ "$_pr_rc" = 124 ] || cat "$_pr_out" 2>/dev/null
+  return "$_pr_rc"
+}
+
 _json_get() {
   _jg_file="" _jg_arg="" _jg_def="" _jg_hasdef=0 _jg_strings=0
   while [ $# -gt 0 ]; do
@@ -433,7 +540,9 @@ _json_get() {
       jq -r --arg arg "$_jg_arg" --arg def "$_jg_def" "$_jg_filter" 2>/dev/null
     fi
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -I -c "$_TRW_JSON_GET_PY" "$_jg_file" "$_jg_arg" "$_jg_hasdef" "$_jg_def" "$_jg_strings" "$@" 2>/dev/null
+    _jg_mode=pipe
+    [ -z "$_jg_file" ] || _jg_mode=none
+    _trw_py_run "$_jg_mode" "$_TRW_JSON_GET_PY" "$_jg_file" "$_jg_arg" "$_jg_hasdef" "$_jg_def" "$_jg_strings" "$@" 2>/dev/null
   else
     return 1
   fi
@@ -518,7 +627,7 @@ _json_string_leaves() {
       then (.[0][$f] // "" | [.. | strings] | join("\n")) else error("not one JSON object") end' \
       2>/dev/null
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -I -c "$_TRW_JSON_LEAVES_PY" "$1" 2>/dev/null
+    _trw_py_run pipe "$_TRW_JSON_LEAVES_PY" "$1" 2>/dev/null
   else
     return 1
   fi
@@ -1240,7 +1349,7 @@ _trw_pin_rows() {
         | [.key, ((.value.pid // "-") | tostring), ((.value.last_heartbeat_ts // "-") | tostring)]
         | @tsv) else error("pins.json is not an object") end' "$1" 2>/dev/null || return 1
   elif command -v python3 >/dev/null 2>&1; then
-    python3 -I -c 'import json,sys
+    _trw_py_run none 'import json,sys
 d = json.load(open(sys.argv[1]))
 if not isinstance(d, dict):
     raise SystemExit(1)

@@ -71,3 +71,23 @@ def test_frontmatter_overrides_the_heuristic_both_ways() -> None:
 @pytest.mark.parametrize("status", ["done", "implemented", "deprecated", "superseded"])
 def test_a_settled_prd_is_not_reopened(status: str) -> None:
     assert _rules("The daemon changes.", status=status) == []
+
+
+def _rows(*lines: str) -> str:
+    return "The daemon changes.\n\n### Architectural-shift checklist\n\n" + "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("cls", list("ABCDEFG"))
+def test_a_parenthetical_note_after_the_class_letter_is_accepted(cls: str) -> None:
+    """Feedback #143: ``| A (untrusted input) |`` is a row for class A."""
+    rows = [f"| {c} (a note about {c}) | covered |" for c in "ABCDEFG"]
+
+    assert _rules(_rows(*rows)) == []
+    assert _rules(_rows(*[r for r in rows if not r.startswith(f"| {cls} ")])) == [ARCH_SHIFT_RULE]
+
+
+@pytest.mark.parametrize("junk", ["| A sentence of prose | x |", "| A (unclosed | x |", "A (note) |"])
+def test_prose_after_the_letter_is_still_not_a_row(junk: str) -> None:
+    rows = [f"| {c} | covered |" for c in "BCDEFG"]
+
+    assert _rules(_rows(junk, *rows)) == [ARCH_SHIFT_RULE]

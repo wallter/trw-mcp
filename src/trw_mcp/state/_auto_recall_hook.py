@@ -236,6 +236,10 @@ def _diagnostic(outcome: Outcome, keywords: int, min_score: float) -> None:
 def main(argv: Sequence[str], *, read_rows: ReadRows = store_rows, stdin: TextIO | None = None) -> int:
     """``<project_root> <prompt> <injected_file> <max_results> <max_tokens> <min_score> <scan_cap>``.
 
+    *injected_file* is both the history of ids already delivered (read) and where the ids injected now are
+    appended. The hook hands it a scratch copy of the real dedup file and moves the result over only once the
+    text has actually been emitted, so a hook cancelled or cut off in between records nothing.
+
     A prompt of ``-`` is read from stdin: a shell hands a long prompt over argv only up to ARG_MAX
     (128 KB per argument on Linux), past which the exec fails and recall silently never runs.
     """

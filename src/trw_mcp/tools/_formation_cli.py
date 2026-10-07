@@ -19,17 +19,12 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import yaml
-
-if TYPE_CHECKING:  # import-time cost is paid only by the type checker
-    from trw_mcp.formation import FormationStatus
 
 __all__ = ["add_formation_subcommands", "run_formation"]
 
 _OUTCOMES = ("abandoned", "reassigned")
-_HEADERS = ("member", "client", "role", "status", "phase", "build", "review", "delivery", "stale")
 
 
 def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -48,6 +43,13 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     lead_parser.add_argument("--member-id", default="orchestrator", help="Id peers use to trw_send to this session")
     lead_parser.add_argument(
         "--run", dest="run_path", default=None, help="Must name this session's pinned run (a guard, not authority)"
+    )
+
+    lead_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Rebind to this session's pin after the lead's MCP pin changed (the pin must own the orchestrator run; "
+        "move it with `trw-mcp run adopt --session-id`). Default: this process's own session.",
     )
 
     brief_parser = verbs.add_parser("brief", help="Render a member's brief from the manifest")
@@ -243,15 +245,21 @@ def _orchestrator_session(args: argparse.Namespace) -> tuple[Path, str]:
     """
     from trw_mcp.formation import FormationError
     from trw_mcp.state._call_context import build_call_context
-    from trw_mcp.state._paths_pin_mgmt import get_pinned_run
+    from trw_mcp.state._paths_pin_mgmt import get_pinned_run, run_path_for_pin
 
     context = build_call_context(None)
-    pinned = get_pinned_run(context=context)
+    if named := str(getattr(args, "session_id", None) or "").strip():
+        # An explicit session is still authority only through the PIN STORE: it must own a run (feedback #144).
+        pinned = run_path_for_pin(named)
+        session_id = named
+    else:
+        pinned = get_pinned_run(context=context)
+        session_id = context.session_id
     if pinned is None:
         raise FormationError("no_pinned_run: run trw_init (or trw_session_start) in the orchestrator session first")
     if (explicit := getattr(args, "run_path", None)) and Path(explicit).resolve() != pinned.resolve():
         raise FormationError(f"run_not_pinned: --run {explicit} is not this session's pinned run {pinned}")
-    return pinned.resolve(), context.session_id
+    return pinned.resolve(), session_id
 
 
 def _run_init(args: argparse.Namespace) -> None:
@@ -338,84 +346,9 @@ def _run_brief(args: argparse.Namespace) -> None:
 
 
 def _run_status(args: argparse.Namespace) -> None:
-    from trw_mcp.formation import FormationError, pause_roll_call, status
+    from trw_mcp.tools._formation_status_cli import run_status
 
-    board = status(run_path=_resolve_run(args))
-    if board is None:
-        raise FormationError("no formation is active for this run")
-    pause = pause_roll_call(Path(board.manifest_path))
-    if getattr(args, "as_json", False):
-        from trw_mcp.formation import formation_usage, member_usage
-
-        # PRD-CORE-290-FR01: the usage ledger lives on this CLI surface only (NFR01),
-        # and its total sits beside the outcome checks for the same span (NFR02).
-        runs = [Path(row.run_path) for row in board.rows if row.run_path]
-        members = []
-        for row in board.rows:
-            usage = member_usage(Path(row.run_path)) if row.run_path else {}
-            members.append({**row.as_dict(), **({"usage": usage} if usage else {})})
-        outcomes = {
-            "members": len(board.rows),
-            "builds_passed": sum(row.build == "passed" for row in board.rows),
-            "reviews_open": sum(row.review not in ("", "pass", "passed") for row in board.rows),
-        }
-        print(
-            json.dumps(
-                {
-                    "formation_id": board.formation_id,
-                    "revision": board.revision,
-                    "manifest_path": board.manifest_path,
-                    "members": members,
-                    "usage": {**formation_usage(runs), "outcomes": outcomes},
-                    "non_terminal": [{"member_id": m, "status": s} for m, s in board.non_terminal],
-                    "stalls": [finding.as_dict() for finding in board.stalls],
-                    "stall_measurement": board.stall_measurement,
-                    "stall_scope": board.stall_scope,
-                    **({"pause": pause} if pause is not None else {}),
-                },
-                indent=2,
-            )
-        )
-        return
-    print(f"formation {board.formation_id} (revision {board.revision}) — {board.manifest_path}")
-    print(_render_table(board))
-    for member_id, member_status in board.non_terminal:
-        print(f"  waiting on {member_id}: {member_status}")
-    for finding in board.stalls:
-        print(f"  {finding.line()}")
-    if board.stall_measurement != "measured":
-        for source in ("mailbox", "mcp_tool_calls"):
-            if board.stall_scope[source] != "measured":
-                print(f"  stalls not_measured: {source} unavailable")
-    if pause is not None:
-        acked, missing = list(pause["acked"]), list(pause["not_acked"])  # type: ignore[call-overload]
-        overdue = " OVERDUE" if pause.get("overdue") else ""
-        print(f"PAUSED {pause['pause_id']} since {pause['since_utc']}{overdue}: {pause['reason']}")
-        print(f"  acked {len(acked)}/{len(acked) + len(missing)}; not acked: {', '.join(missing) or 'none'}")
-
-
-def _render_table(board: FormationStatus) -> str:
-    rows = [
-        [
-            row.member_id,
-            row.client,
-            row.role,
-            row.status,
-            row.phase,
-            row.build,
-            row.review,
-            row.delivery,
-            row.stale_reason if row.stale else "",
-        ]
-        for row in board.rows
-    ]
-    widths = [
-        max(len(_HEADERS[i]), *(len(r[i]) for r in rows)) if rows else len(_HEADERS[i]) for i in range(len(_HEADERS))
-    ]
-    lines = ["  ".join(h.ljust(widths[i]) for i, h in enumerate(_HEADERS))]
-    lines.append("  ".join("-" * widths[i] for i in range(len(_HEADERS))))
-    lines.extend("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) for row in rows)
-    return "\n".join(lines)
+    run_status(args, _resolve_run(args))
 
 
 def _run_comms_schema(args: argparse.Namespace, command: str) -> None:

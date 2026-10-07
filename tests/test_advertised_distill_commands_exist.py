@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 import trw_mcp
+from tests import _source_index as source_index
 
 #: trw-distill is proprietary and is deliberately absent from trw-mcp's
 #: dependencies, so this can only run in the monorepo. That is the right place:
@@ -66,8 +67,8 @@ def _advertised_commands() -> dict[str, set[str]]:
         if "self-improve" not in src:
             continue
         try:
-            tree = ast.parse(src)
-        except SyntaxError:  # pragma: no cover - defensive
+            tree = source_index.parse(src)
+        except SyntaxError:  # pragma: no cover - defensive  # trw-fail-silent-allow: an unparseable file under trw_mcp/src fails ruff and mypy first; this scan is not where it is reported
             continue
         docstrings = set()
         for node in ast.walk(tree):

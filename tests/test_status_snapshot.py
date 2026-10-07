@@ -259,6 +259,7 @@ def test_corrupt_events_line_is_skipped(tmp_path: Path) -> None:
     assert "evidence.deliver" not in snap["unknown"]
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_unreadable_sources_are_unknown_never_a_pass(tmp_path: Path) -> None:
     trw_dir, run = _project(tmp_path)
     events = run / "meta" / "events.jsonl"

@@ -198,12 +198,14 @@ def test_a_retired_skill_is_deleted_in_place_and_reported_as_retired(tmp_path: P
 def test_the_cli_names_each_retired_file_unless_a_warning_already_describes_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from trw_mcp.server._update_report import print_retired
+    from trw_mcp.server._update_report import report_removed
 
-    print_retired(
-        [".claude/hooks/old.sh", "a.md", "b.md"],
-        ["b.md: removed; your version differs from TRW's but is committed in git (restore: git restore -- b.md)"],
+    result = _result(
+        retired=[".claude/hooks/old.sh", "a.md", "b.md"],
+        retired_described=["b.md"],
+        warnings=["b.md: removed; your version differs from TRW's but is committed in git"],
     )
+    report_removed(result, detailed=False, quiet=False)
     assert capsys.readouterr().out.splitlines() == [
         "Removed retired TRW file: .claude/hooks/old.sh",
         "Removed retired TRW file: a.md",

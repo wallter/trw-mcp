@@ -49,6 +49,10 @@ _ALLOWLIST[("claude_code/hooks/pre-tool-distill-hint.sh", "", 'rm -f "$_processe
     "the hook's own mktemp journal in $TMPDIR, not checkout state"
 )
 
+_ALLOWLIST[("hooks/user-prompt-submit.sh", "_ups_cleanup", 'rm -rf "$_TRW_UPS_WORK"')] = (
+    "the supervisor's own mktemp -d directory in $TMPDIR (capture files, the raw prompt), not checkout state"
+)
+
 _ALLOWLIST[("hooks/statusline.sh", "_run_bounded", 'rm -f "$_tmp"')] = (
     "the status line's own mktemp capture file in $TMPDIR, not checkout state"
 )

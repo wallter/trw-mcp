@@ -85,6 +85,9 @@ def test_a_prompt_stops_a_spinner_nobody_stopped(installer: Any, capsys: pytest.
     [
         "Removed retired TRW file: .claude/agents/trw-old.md",
         "CLAUDE.md: removed TRW's block (it already imports AGENTS.md, which imports .trw/INSTRUCTIONS.md)",
+        "AGENTS.md: refreshed the TRW block",
+        "Note: .claude/settings.json: 2 hook timeout(s) updated to TRW's bundled value",
+        "Status: ready, 3 item(s) need attention (see above)",
     ],
 )
 def test_a_line_naming_an_edit_to_the_operators_files_survives_the_spinner(
@@ -99,3 +102,31 @@ def test_a_line_naming_an_edit_to_the_operators_files_survives_the_spinner(
     out = capsys.readouterr().out
     assert line in out
     assert _spinner_threads() == 0
+
+
+def test_every_line_the_update_report_prints_for_the_operators_files_is_relayed(
+    installer: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The contract between the reporter and the installer's relay: the real reporter's lines, not copies of them."""
+    from trw_mcp.server._subcommands import _summarize_update_result
+    from trw_mcp.server._update_report import report_kept, report_removed
+
+    result: dict[str, list[str]] = {
+        "updated": ["AGENTS.md"],
+        "created": [],
+        "preserved": ["a.sh (not_installer_owned)"],
+        "errors": [],
+        "warnings": [],
+        "retired": [".claude/agents/trw-old.md"],
+        "notes": [".claude/settings.json: 1 hook timeout(s) updated"],
+    }
+    report_removed(result, detailed=False, quiet=False)
+    report_kept(result, tmp_path, detailed=False, quiet=False)
+    _summarize_update_result(result, target=tmp_path, dry_run=False, ide=None)
+    printed = [line.strip() for line in capsys.readouterr().out.splitlines() if line.strip()]
+    expected = ("Removed retired TRW file:", "AGENTS.md:", "Note:", "Status: ready,")
+
+    relayed = [line for line in printed if installer._RETIRED_LINE_RE.match(line)]
+
+    for prefix in expected:
+        assert any(line.startswith(prefix) for line in relayed), (prefix, printed)

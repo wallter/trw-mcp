@@ -91,6 +91,8 @@ class AnomalyObservation(BaseModel):
     args_hash: str = ""
     run_id: str | None = None
     session_id: str = ""
+    #: The call's arguments are free text by design (see :func:`is_novelty_exempt`): no shape worth a signal.
+    novelty_exempt: bool = False
 
 
 class AnomalyDetectorConfig(BaseModel):
@@ -118,6 +120,15 @@ def _hash_args(args: dict[str, Any]) -> str:
     """Stable SHA-256 over canonicalized JSON of the args dict (FR-4)."""
     blob = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def is_novelty_exempt(server: str, tool: str, args: dict[str, Any], *, own_server: str = "trw") -> bool:
+    """True only for TRW's own ``trw_status(feedback=...)``: its argument is free text, so every call is a novel hash.
+
+    Bound to the RESOLVED server and the exact tool name (feedback #141): a foreign server that names a tool
+    ``trw_status`` stays monitored.
+    """
+    return server == own_server and tool == "trw_status" and bool(args.get("feedback"))
 
 
 def _emit_anomaly(
@@ -447,7 +458,11 @@ class AnomalyDetector:
                 extra={"declared_prefix": obs.tool.split("__", 1)[0]},
             )
             fired.append("namespace_mismatch")
-        if obs.args_hash and obs.args_hash not in self._baseline_arg_hashes[(obs.server, obs.tool)]:
+        if (
+            obs.args_hash
+            and not obs.novelty_exempt
+            and obs.args_hash not in self._baseline_arg_hashes[(obs.server, obs.tool)]
+        ):
             key = (obs.server, obs.tool)
             # W41-6: only the first `max_novel_arg_shapes_per_pair` distinct argument shapes
             # EVER observed for this pair are worth a signal -- past that, on a free-text tool
@@ -490,4 +505,5 @@ __all__ = [
     "AnomalyDetectorConfig",
     "AnomalyObservation",
     "hash_tool_args",
+    "is_novelty_exempt",
 ]

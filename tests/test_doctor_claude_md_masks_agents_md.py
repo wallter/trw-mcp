@@ -296,10 +296,12 @@ def test_a_read_failure_after_open_warns_and_closes_the_descriptor(
     def _fstat(_fd: int) -> os.stat_result:
         raise OSError(5, "I/O error")
 
-    monkeypatch.setattr(_doctor_claude_md.os, "open", _open)
-    monkeypatch.setattr(_doctor_claude_md.os, "fstat", _fstat)
-
-    status, message = _row(project)
+    # Scoped: both live on the global os module, and tmp_path's cleanup (which may run before this test's
+    # monkeypatch is undone) needs the real os.open and os.fstat back.
+    with monkeypatch.context() as patched:
+        patched.setattr(_doctor_claude_md.os, "open", _open)
+        patched.setattr(_doctor_claude_md.os, "fstat", _fstat)
+        status, message = _row(project)
 
     assert status == "WARN"
     assert "cannot be read" in message
@@ -324,8 +326,13 @@ def test_the_reader_works_where_os_lacks_o_nonblock(tmp_path: Path, monkeypatch:
     """Windows has no O_NONBLOCK (or O_NOFOLLOW); the row must still read a regular file."""
     from trw_mcp.server import _doctor_claude_md
 
-    monkeypatch.delattr(_doctor_claude_md.os, "O_NONBLOCK", raising=False)
     project = _project(tmp_path, ["claude-code"])
     (project / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
 
-    assert _row(project)[0] == "PASS"
+    # Scoped: the attribute lives on the global os module, and tmp_path's cleanup (which may run before this
+    # test's monkeypatch is undone) needs os.O_NONBLOCK back.
+    with monkeypatch.context() as patched:
+        patched.delattr(_doctor_claude_md.os, "O_NONBLOCK", raising=False)
+        row = _row(project)
+
+    assert row[0] == "PASS"

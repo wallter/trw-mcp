@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp"
 
@@ -148,8 +150,8 @@ def _scan() -> tuple[dict[str, set[Path]], int]:
     modules = _production_modules()
     for path in modules:
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover - a syntactically broken tree fails elsewhere
+            tree = source_index.tree(path)
+        except SyntaxError:  # pragma: no cover - a syntactically broken tree fails elsewhere  # trw-fail-silent-allow: an unparseable file under trw_mcp/src fails ruff and mypy first; this scan is not where it is reported
             continue
         for name in _module_readers(tree, fields):
             readers[name].add(path)

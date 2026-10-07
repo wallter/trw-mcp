@@ -126,3 +126,13 @@ def apply_role(role: str | None, prompt: str) -> str:
     if spec is None:
         return prompt
     return f"{spec.preamble}\n\n---\n\n{prompt}"
+
+
+#: Feedback #133: a host-confined read-only lane denies every file write, and agy writes its own command
+#: adapter on the first ``run_command``, so shell commands cannot work there. Steering is advisory; the
+#: sandbox is not widened.
+CONFINED_READ_ONLY_PREAMBLE = (
+    "This is a read-only review under a write-denying sandbox. Do not use run_command or any shell "
+    "command: it cannot run here. Read files with your file-viewing tool and search with your grep or "
+    "search tool, then answer from what you read."
+)

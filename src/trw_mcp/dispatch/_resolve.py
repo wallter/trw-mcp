@@ -57,6 +57,8 @@ import structlog
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 from trw_mcp.dispatch._confine import confinement_prefix
 from trw_mcp.dispatch._policy import (
+    configured_effort,
+    configured_models,
     operator_set,
     require_effort,
     resolve_effort,
@@ -69,7 +71,7 @@ from trw_mcp.dispatch._posture import (
     verify_reviewer_posture,
     verify_trw_access,
 )
-from trw_mcp.dispatch._roles import apply_role
+from trw_mcp.dispatch._roles import CONFINED_READ_ONLY_PREAMBLE, apply_role
 from trw_mcp.dispatch._types import DispatchPosture, DispatchRequest
 
 if TYPE_CHECKING:
@@ -172,8 +174,8 @@ def resolve_dispatch_request(
     # row (PRD-CORE-290-FR03); the winning source is recorded on the request.
     # Only what the operator set counts as "config" (DispatchConfig.operator_set).
     cfg = cast("DispatchConfig", dispatch_cfg)
-    models = cfg.dispatch_default_models if operator_set(cfg, "dispatch_default_models") else None
-    config_effort = cfg.dispatch_default_effort if operator_set(cfg, "dispatch_default_effort") else None
+    models = configured_models(cfg)
+    config_effort = configured_effort(cfg, resolved_client)
     config_turns = cfg.dispatch_default_max_turns if operator_set(cfg, "dispatch_default_max_turns") else None
     resolved_model, model_source = resolve_model(model, resolved_client, role, models)
     try:
@@ -244,6 +246,8 @@ def resolve_dispatch_request(
             effective_with_trw = False
 
     resolved_prompt = apply_role(role, prompt)
+    if effective_read_only and client_spec_for(resolved_client).host_confinement:
+        resolved_prompt = f"{CONFINED_READ_ONLY_PREAMBLE}\n\n---\n\n{resolved_prompt}"
     resolved_cwd = _resolve_cwd(cwd, client=resolved_client)
 
     return DispatchRequest(

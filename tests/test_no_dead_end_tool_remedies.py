@@ -17,6 +17,7 @@ import functools
 import re
 from pathlib import Path
 
+from tests import _source_index as source_index
 from trw_mcp.models.surface_v2 import POST_CUT_SURFACE, RETIRED_TOOLS
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
@@ -41,7 +42,7 @@ def _prose() -> dict[str, str]:
     texts: dict[str, str] = {}
     for path in _SRC.rglob("*"):
         if path.suffix == ".py":
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = source_index.tree(path)
             strings = (n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str))
             # Prose or a call: anything with whitespace or "(". A bare registry token ("trw_reflect" in
             # an analytics tuple, an event name) is data, not guidance.

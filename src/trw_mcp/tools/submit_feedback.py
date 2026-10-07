@@ -346,7 +346,7 @@ def _submit_feedback_impl(
 
     backend_url, api_key = _backend()
     if not backend_url or not api_key:
-        return SubmitFeedbackResult(success=False, error=_NOT_CONFIGURED, status_code=0)
+        return SubmitFeedbackResult(success=False, error=_not_configured(backend_url, api_key), status_code=0)
     if refusal := session_egress_refusal():  # FR06: not even queued, so a later flush cannot send it
         return SubmitFeedbackResult(success=False, error=refusal, status_code=0)
 
@@ -382,9 +382,25 @@ def _submit_feedback_impl(
     return _send_recorded(backend_url, api_key, payload, record)
 
 
-_NOT_CONFIGURED = (
-    "backend not configured — set TRW_BACKEND_URL and TRW_BACKEND_API_KEY (or run install-trw to provision)"
-)
+def _not_configured(backend_url: str, api_key: str) -> str:
+    """The not-configured error, naming what is missing and every place that was checked (feedback #168).
+
+    The same process env and ``.trw/config.yaml`` feed the MCP server and the CLI, but a server launched with its
+    own env may hold values a shell does not: saying where this process looked makes that difference findable.
+    """
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    missing = " and ".join(name for name, value in (("URL", backend_url), ("API key", api_key)) if not value)
+    try:
+        config_file = str(resolve_trw_dir() / "config.yaml")
+    except Exception:  # justified: the hint must never turn a refusal into a crash
+        logger.debug("feedback_not_configured_trw_dir_unresolved", reason="resolve_failed")
+        config_file = ".trw/config.yaml"
+    return (
+        f"backend not configured (missing {missing}); checked the process env (TRW_BACKEND_URL, "
+        f"TRW_BACKEND_API_KEY) and {config_file} from {Path.cwd()} -- set them, or run install-trw to provision. "
+        "An MCP server launched with its own env may hold values this shell lacks."
+    )
 
 
 def _backend() -> tuple[str, str]:

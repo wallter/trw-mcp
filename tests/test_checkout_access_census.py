@@ -24,6 +24,7 @@ import ast
 from pathlib import Path
 
 import trw_mcp
+from tests import _source_index as source_index
 
 #: Repo-relative path (from ``trw_mcp/src/trw_mcp``) -> one-line, dated reason. Every entry is a
 #: named residual, not a silently-tolerated one; each states whether it is own-state (stays) or a
@@ -147,7 +148,7 @@ def _census_violations(root: Path | None = None) -> list[tuple[str, str]]:
         if relative == _MODULE_FILE:
             continue
         try:
-            tree = ast.parse(path.read_text())
+            tree = source_index.tree(path)
         except SyntaxError:  # trw-fail-silent-allow: an unparseable file under trw_mcp/src fails ruff/mypy first
             continue
         if relative in _ALLOWLIST:
@@ -186,7 +187,7 @@ def test_discovery_no_longer_needs_its_transitional_allowlist_row() -> None:
     """
     package_root = Path(trw_mcp.__file__).parent
     assert "code_index/discovery.py" not in _ALLOWLIST
-    tree = ast.parse((package_root / "code_index/discovery.py").read_text())
+    tree = source_index.tree(package_root / "code_index/discovery.py")
     assert not _calls_direct_open(tree), (
         "code_index/discovery.py opens a checkout file directly again -- route it through "
         "trw_mcp._checkout_access.open_under (PRD-CORE-316 FR07), or re-add a reasoned _ALLOWLIST row."

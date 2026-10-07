@@ -22,6 +22,9 @@ import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 def _common_patches(trw_dir: Path, run_dir: Path | None, tmp_path: Path) -> list[object]:
     """Patches that isolate the deliver path from real fs/index/sync side effects."""

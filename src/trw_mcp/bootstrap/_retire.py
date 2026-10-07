@@ -169,7 +169,7 @@ def retire_file(path: Path, root: Path, proven: Collection[str], *, managed: boo
     elif (bool(proven) if managed is None else managed) and git_recoverable(path, root, digest):
         status = "git"
     else:
-        return Retired("kept", "not TRW's unchanged bytes, and git does not hold this version")
+        return Retired("kept", "not TRW's unchanged bytes, and it differs from git HEAD (or is not tracked)")
     removal = remove_if_hash(path, root, digest)  # rename-capture, re-prove the hash; a save in between is put back
     if removal.status == "absent":
         return Retired("absent")
@@ -229,15 +229,24 @@ def retire_tree(artifact: Path, root: Path, allowed: Callable[[Path], set[str]])
     return out
 
 
+def describe_removal(result: dict[str, list[str]], rel: str, text: str, dry_text: str = "") -> None:
+    """Warn that *rel* was removed, and record THAT warning (path and exact text) so a rollback can retract only it.
+
+    A dry run only proposes the removal, so it shows *dry_text* when given. ``retired_described`` marks the path as
+    already described, and ``retirement_notes`` holds ``<path><TAB><exact warning>``: a genuine recovery warning for
+    the same path (where the user's edit went) is a different string and is never touched by the rollback.
+    """
+    message = dry_text if dry_text and "dry_run" in result else text
+    result.setdefault("warnings", []).append(message)
+    result.setdefault("retired_described", []).append(rel)
+    result.setdefault("retirement_notes", []).append(f"{rel}\t{message}")
+
+
 def record_retirement(result: dict[str, list[str]], outcome: Retirement) -> None:
     """Report *outcome*: every gone file in ``retired`` (the uncommitted-changes guard must not restore it), a
     warning naming each git-recoverable removal with its restore command and each kept file with its removal."""
     gone = [*outcome.removed, *outcome.git]
     notes = [
-        *(
-            f"{p}: removed; your version differs from TRW's but is committed in git (restore: git restore -- {shlex.quote(p)})"
-            for p in outcome.git
-        ),
         *(
             f"{p}: {why}"
             if why.startswith("kept at ")
@@ -245,6 +254,16 @@ def record_retirement(result: dict[str, list[str]], outcome: Retirement) -> None
             for p, why in outcome.kept
         ),
     ]
+    for p in outcome.git:  # the restore warning, retractable by a rollback and a proposal in a dry run
+        describe_removal(
+            result,
+            p,
+            f"{p}: removed; your version differs from TRW's but is committed in git (restore: git restore -- {shlex.quote(p)})",
+            f"{p}: would remove; your version differs from TRW's but is committed in git"
+            f" (it would be recoverable with: git restore -- {shlex.quote(p)})",
+        )
+    if outcome.kept:  # likewise for a kept retired file: its warning carries the removal command
+        result.setdefault("retired_kept", []).extend(p for p, _why in outcome.kept)
     if gone:
         result.setdefault("retired", []).extend(gone)
     if notes:

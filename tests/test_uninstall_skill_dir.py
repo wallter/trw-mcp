@@ -169,8 +169,9 @@ def test_unlistable_directory_is_kept(env: Env, monkeypatch: pytest.MonkeyPatch)
             raise PermissionError(13, "denied")
         return real_scandir(path)
 
-    monkeypatch.setattr(os, "scandir", deny)
-    removed, _, _ = _remove(env)
+    with monkeypatch.context() as patched:  # scoped: tmp_path's cleanup scans with the real os.scandir
+        patched.setattr(os, "scandir", deny)
+        removed, _, _ = _remove(env)
     assert removed == set()
     assert (refs / "a.md").read_bytes() == REF_MD
 
@@ -211,8 +212,9 @@ def test_rmdir_error_other_than_not_empty_is_a_failure(env: Env, monkeypatch: py
     def deny(path: str | os.PathLike[str]) -> None:
         raise PermissionError(13, "denied")
 
-    monkeypatch.setattr(os, "rmdir", deny)
-    removed, errors, _ = _remove(env)
+    with monkeypatch.context() as patched:  # scoped: tmp_path's cleanup removes directories with the real os.rmdir
+        patched.setattr(os, "rmdir", deny)
+        removed, errors, _ = _remove(env)
     assert removed == set() and errors >= 1
 
 

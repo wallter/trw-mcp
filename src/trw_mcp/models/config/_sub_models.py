@@ -63,6 +63,7 @@ class DispatchConfig(BaseModel):
     dispatch_child_trw_access: bool = False
     dispatch_fallback_clients: list[str] = Field(default_factory=list)
     dispatch_default_effort: DispatchEffort | None = None
+    dispatch_default_efforts: dict[DispatchClient, DispatchEffort] = Field(default_factory=dict)
     dispatch_default_max_turns: int = DEFAULT_DISPATCH_MAX_TURNS
     dispatch_max_concurrent_children: int = 0
     dispatch_slot_wait_s: float = DEFAULT_DISPATCH_SLOT_WAIT_SECS

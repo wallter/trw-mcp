@@ -11,6 +11,7 @@ Every test runs the real script with stubs on PATH (helpers from ``test_install_
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -112,7 +113,9 @@ def test_a_partial_venv_this_run_created_is_named_with_its_removal_command_not_d
     assert code != 0
     assert venv.is_dir(), "a failed install must not delete a directory by pathname"
     assert "This run created a partial environment at" in output
-    assert f"rm -rf '{venv}'" in output
+    # The command is shell-quoted (printf %q), so the contract is what a shell makes of it, not a quote style.
+    (command,) = [ln for ln in output.splitlines() if "rm -rf " in ln]
+    assert shlex.split(command.split("rm -rf ", 1)[1]) == [str(venv)]
 
 
 def test_a_venv_an_earlier_install_left_is_kept_when_the_retry_fails(tmp_path: Path) -> None:

@@ -23,6 +23,7 @@ from trw_mcp.server._cli_auth import add_auth_subcommands
 from trw_mcp.server._cli_factory import add_factory_subcommands
 from trw_mcp.shared_server._cli import add_shared_subcommands
 from trw_mcp.tools._assess_cli import add_assess_subcommands
+from trw_mcp.tools._config_cli import add_config_subcommands
 from trw_mcp.tools._decision_cli import add_decision_subcommands
 from trw_mcp.tools._delivery_cli import add_delivery_subcommands
 from trw_mcp.tools._experiment_cli import add_experiment_subcommands
@@ -322,7 +323,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum learnings to print (default: services.local_surface_service default)",
     )
     local_feedback = local_sub.add_parser("feedback", help="Submit feedback without MCP transport")
-    local_feedback.add_argument("--category", required=True, help="Feedback category")
+    local_feedback.add_argument(
+        "--category",
+        required=True,
+        choices=("bugfix", "installation", "feedback", "feature_request", "question", "other"),
+        help="Feedback category",
+    )
     local_feedback.add_argument("--subject", required=True, help="One-line subject")
     local_feedback.add_argument("--message", "-m", required=True, help="Feedback body (redacted before validation)")
     local_feedback.add_argument("--contact-email", default=None, help="Optional reply address")
@@ -425,6 +431,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     add_decision_subcommands(subparsers)
     # assess configure/status/install-check: machine-level trw_assess (jev) key and switch.
     add_assess_subcommands(subparsers)
+    # config set: the one validated config.yaml writer (PRD-INFRA-210).
+    add_config_subcommands(subparsers)
     # receipt verify / factory status: the experimental software-factory commands.
     # Their top-level names are listed in EXPERIMENTAL_COMMANDS (the one list the
     # public CLI-reference inventory reads to leave them out); register a new

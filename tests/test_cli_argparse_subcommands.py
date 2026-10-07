@@ -470,3 +470,19 @@ def test_the_pinned_orchestrator_needs_no_run_flag(formation_env: FormationFixtu
     assert exited.value.code == 0
     board = status(run_path=orchestrator)
     assert board is not None and [row.member_id for row in board.rows] == ["impl-1"]
+
+
+def test_local_feedback_category_choices_are_the_ones_the_submitter_accepts(parser) -> None:  # type: ignore[no-untyped-def]
+    """Feedback #168: ``--category`` lists its choices and rejects others at parse time, in step with the submitter."""
+    from trw_mcp.tools.submit_feedback import _ALLOWED_CATEGORIES
+
+    local = next(a for a in parser._subparsers._group_actions[0].choices["local"]._subparsers._group_actions)
+    category = next(a for a in local.choices["feedback"]._actions if a.dest == "category")
+
+    assert set(category.choices) == set(_ALLOWED_CATEGORIES)
+    with pytest.raises(SystemExit):
+        parser.parse_args(["local", "feedback", "--category", "bug", "--subject", "s", "-m", "m"])
+    assert (
+        parser.parse_args(["local", "feedback", "--category", "bugfix", "--subject", "s", "-m", "m"]).category
+        == "bugfix"
+    )

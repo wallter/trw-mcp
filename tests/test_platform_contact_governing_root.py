@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.sync.backup import BackupUploader
 from trw_mcp.sync.client import BackendSyncClient
@@ -61,7 +62,7 @@ def test_no_sender_asks_the_contact_switch_without_naming_its_payload_source() -
     offenders = {
         f"{path.relative_to(_SRC).as_posix()}:{line}"
         for path in _SRC.rglob("*.py")
-        for line in _argless_switch_calls(ast.parse(path.read_text(encoding="utf-8")))
+        for line in _argless_switch_calls(source_index.tree(path))
     }
     assert not offenders, f"platform_contact_enabled() re-finds its project; pass the payload's .trw: {offenders}"
 

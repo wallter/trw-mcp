@@ -693,6 +693,7 @@ def test_a_live_holders_lock_file_survives_a_refused_second_swap(
     assert lock.exists()
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_unreadable_venv_dir_is_refused_with_the_tree_unchanged(
     paths: SharedPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -742,6 +743,7 @@ def test_fork_with_unreadable_distill_metadata_is_refused_untouched(
     assert _same_bytes(paths, before)
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_unreadable_parent_dir_is_refused_and_nothing_is_touched(
     paths: SharedPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

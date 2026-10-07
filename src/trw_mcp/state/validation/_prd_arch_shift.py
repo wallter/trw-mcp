@@ -27,6 +27,8 @@ _TRIGGER = re.compile(
     r"|\bexecutor\b|\b(?:egress|privacy|security|documented) control\b",
     re.IGNORECASE,
 )
+#: A class row: ``| A |``, ``- B:``, or with a parenthetical note after the letter (``| A (untrusted input) |``).
+_ROW = r"^\s*[|-]\s*\**([A-G])\**(?:\s*\([^)|\n]*\))?\s*[|:.]"
 _HEADING = re.compile(r"^(#{2,4})\s+.*architectural-shift checklist.*$", re.IGNORECASE | re.MULTILINE)
 
 
@@ -48,7 +50,7 @@ def _missing_classes(content: str) -> str | None:
     rest = content[heading.end() :]
     end = re.search(rf"^#{{1,{level}}}\s", rest, re.MULTILINE)
     section = rest[: end.start()] if end else rest
-    rows = {m.group(1) for m in re.finditer(r"^\s*[|-]\s*\**([A-G])\**\s*[|:.]", section, re.MULTILINE)}
+    rows = {m.group(1) for m in re.finditer(_ROW, section, re.MULTILINE)}
     return "".join(c for c in CLASSES if c not in rows)
 
 

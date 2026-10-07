@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 pytestmark = pytest.mark.unit
 
 # Repo root resolved from this test file's location (…/trw-mcp/tests/<file>).
@@ -163,7 +165,7 @@ def _iter_tool_functions() -> list[tuple[str, str, str | None]]:
     for path in sorted(_TOOLS_DIR.rglob("*.py")):
         if path.name in {"__init__.py"}:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = source_index.tree(path)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

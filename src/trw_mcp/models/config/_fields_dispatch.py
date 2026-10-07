@@ -73,6 +73,12 @@ class _DispatchFields:
         default=None,
         description="Effort for dispatched children when the request names none; overrides the role's table row.",
     )
+    # PRD-INFRA-210-FR01: per-client effort, the effort twin of ``dispatch_default_models``. Typed
+    # keys and levels so a misspelt client or level fails at config load.
+    dispatch_default_efforts: dict[DispatchClient, DispatchEffort] = Field(
+        default_factory=dict,
+        description="Per-client effort for dispatched children (e.g. {'codex': 'medium'}); outranks dispatch_default_effort.",
+    )
     # PRD-CORE-290-FR04: turn cap for dispatched children, passed only through a
     # client's verified turn-limit flag. 0 disables it.
     dispatch_default_max_turns: int = Field(

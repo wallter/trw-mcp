@@ -77,17 +77,24 @@ def _owned_namespaces(target: Path, named: str | None) -> frozenset[str]:
 def _run_memory_token(args: argparse.Namespace) -> None:
     from trw_memory.daemon import DaemonPaths, mint_grant, write_checkout_grant
 
+    from trw_mcp.bootstrap._namespace_pin import written_pin
+
     target = Path(args.target_dir).resolve()
+    paths = DaemonPaths.resolve()
+    if args.migrate and (paths.token.exists() or paths.token.is_symlink()):
+        # First: the daemon refuses to start while this token exists, and migrating needs the daemon, so a
+        # pin check that exits first leaves an unpinned checkout with no way forward (feedback #115).
+        paths.token.unlink()
+        print(f"memory token: removed the Slice A all-namespace token {paths.token}")
+    if args.migrate and not written_pin(target):
+        print(f"memory token: {target} has no pinned project_namespace; an unmigrated checkout needs no grant")
+        return
     owned = _owned_namespaces(target, args.namespace)
     requested = frozenset(args.grant or owned)
     if not requested <= owned:
         sys.exit(
             f"memory token: refusing {sorted(requested - owned)}; this checkout may be granted only {sorted(owned)}"
         )
-    paths = DaemonPaths.resolve()
-    if args.migrate and paths.token.exists():
-        paths.token.unlink()
-        print(f"memory token: removed the Slice A all-namespace token {paths.token}")
     written = write_checkout_grant(target / ".trw", mint_grant(paths, requested, root=target))
     print(f"memory token: granted {sorted(requested)}; token stored at {written}")
 
@@ -180,6 +187,19 @@ def _run_memory_repair_anchors(args: argparse.Namespace) -> None:
         "validity_refreshed": outcome.validity_refreshed,
         "complete": outcome.complete,
     }
+    if getattr(args, "report_candidates", False):
+        from trw_mcp.state._anchor_candidates import anchor_candidate_report
+
+        try:
+            candidates = anchor_candidate_report(trw_dir)
+        except Exception as exc:  # trw-fail-silent-allow: advisory scan; reported on stderr, the repair result stands
+            print(f"memory repair-anchors: the candidate report failed ({type(exc).__name__}: {exc})", file=sys.stderr)
+        else:
+            counts.update(
+                candidates_hash_damaged=candidates.hash_damaged_count,
+                candidates_shared_anchor_files=len(candidates.shared_anchors),
+                candidates_complete=candidates.complete,
+            )
     if args.as_json:
         print(json.dumps(counts))
     else:

@@ -133,3 +133,124 @@ def test_the_row_is_in_the_catalogue_and_runs_through_the_facade(
     result = _check_user_yaml(tmp_path, TRWConfig())
 
     assert (result.name, result.status) == ("user_tier_yaml", "WARN")
+
+
+def _git_repo(target: Path, ignore: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(target)], check=True, capture_output=True)
+    (target / ".gitignore").write_text(ignore, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("ignore", "track", "status"),
+    [
+        (".trw/\n", None, "PASS"),  # everything ignored, nothing tracked
+        ("", None, "WARN"),  # nothing ignored
+        ("/.trw/learnings/entries/\n", None, "WARN"),  # entries ignored, index.yaml still publishable
+        ("/.trw/learnings/index.yaml\n", None, "WARN"),  # index ignored, the copy is not
+        (".trw/\n", "sidecar", "WARN"),  # a copy tracked before the ignore rule stays tracked
+        (".trw/\n", "index", "WARN"),
+    ],
+)
+def test_the_publication_claim_comes_from_git_about_the_real_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ignore: str, track: str | None, status: str
+) -> None:
+    """Feedback #157: PASS only when git ignores every real copy and index.yaml and tracks none of them."""
+    import subprocess
+
+    store = FakeMemoryStore()
+    store.put("personal one", USER_NAMESPACE, {"entry_id": "L-u1"})
+    _pin(store, monkeypatch)
+    _git_repo(tmp_path, ignore)
+    sidecar = _sidecar(tmp_path, "L-u1", "personal-one")
+    index = _index(tmp_path, "L-u1")
+    if track:
+        tracked = sidecar if track == "sidecar" else index
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-f", str(tracked)], check=True, capture_output=True)
+
+    got_status, message = user_yaml_row(tmp_path, TRWConfig())
+
+    assert got_status == status
+    assert ("would publish them" in message) is (status == "WARN")
+    assert "1 user-tier learning(s)" in message
+
+
+def _ignored_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ignore: str) -> Path:
+    store = FakeMemoryStore()
+    store.put("personal one", USER_NAMESPACE, {"entry_id": "L-u1"})
+    _pin(store, monkeypatch)
+    _git_repo(tmp_path, ignore)
+    return tmp_path
+
+
+def test_a_tracked_copy_is_not_hidden_by_an_ignored_duplicate_of_the_same_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Feedback #157 review: every file carrying a user-tier id is checked, not one per id."""
+    import subprocess
+
+    _ignored_pair(tmp_path, monkeypatch, "z-ignored.yaml\n")
+    entries = tmp_path / ".trw" / "learnings" / "entries"
+    entries.mkdir(parents=True)
+    for name in ("a-tracked.yaml", "z-ignored.yaml"):
+        (entries / name).write_text("id: L-u1\nsummary: s\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "-f", str(entries / "a-tracked.yaml")], check=True, capture_output=True
+    )
+
+    status, message = user_yaml_row(tmp_path, TRWConfig())
+
+    assert status == "WARN" and "would publish them" in message
+
+
+@pytest.mark.parametrize(
+    ("ignore", "track", "status"), [("", True, "WARN"), (".trw/\n", False, "PASS"), (".trw/\n", True, "WARN")]
+)
+def test_an_index_only_copy_is_inspected_when_entries_is_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ignore: str, track: bool, status: str
+) -> None:
+    import subprocess
+
+    _ignored_pair(tmp_path, monkeypatch, ignore)
+    (tmp_path / ".trw" / "learnings").mkdir(parents=True)
+    index = _index(tmp_path, "L-u1")
+    assert not (tmp_path / ".trw" / "learnings" / "entries").exists()
+    if track:
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-f", str(index)], check=True, capture_output=True)
+
+    got, message = user_yaml_row(tmp_path, TRWConfig())
+
+    assert got == status
+    assert "0 user-tier learning(s)" in message and "1 row(s)" in message
+
+
+def test_a_tracked_sidecar_with_malformed_yaml_after_its_id_is_still_a_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Feedback #157 review: the id comes from a line scan, so unparseable YAML cannot hide a published copy."""
+    import subprocess
+
+    _ignored_pair(tmp_path, monkeypatch, "")
+    entries = tmp_path / ".trw" / "learnings" / "entries"
+    entries.mkdir(parents=True)
+    bad = entries / "2026-01-01-private.yaml"
+    bad.write_text("id: L-u1\nsummary: private: personal material\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", str(bad)], check=True, capture_output=True)
+
+    status, message = user_yaml_row(tmp_path, TRWConfig())
+
+    assert status == "WARN" and "1 user-tier learning(s)" in message
+
+
+def test_a_file_whose_id_cannot_be_identified_makes_the_inspection_incomplete_not_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ignored_pair(tmp_path, monkeypatch, ".trw/\n")
+    entries = tmp_path / ".trw" / "learnings" / "entries"
+    entries.mkdir(parents=True)
+    (entries / "mystery.yaml").write_text("summary: no id anywhere\n", encoding="utf-8")
+
+    status, message = user_yaml_row(tmp_path, TRWConfig())
+
+    assert status == "WARN" and "inspection incomplete" in message and "mystery.yaml" in message

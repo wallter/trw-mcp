@@ -67,6 +67,14 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
         "Claude Code --setting-sources for dispatched runs (default user,project); opt out with 'user'.",
     ),
     EnvOnlyVar(
+        "TRW_DISPATCH_MODELS",
+        "Installer pins for `trw-mcp config dispatch`: comma-separated CLIENT=MODEL, written to the machine config.",
+    ),
+    EnvOnlyVar(
+        "TRW_DISPATCH_EFFORTS",
+        "Installer pins for `trw-mcp config dispatch`: comma-separated CLIENT=LEVEL, written to the machine config.",
+    ),
+    EnvOnlyVar(
         "TRW_ENTITLEMENT_KEY",
         "HMAC key used to verify entitlement tokens; unset falls back to a derived default.",
     ),

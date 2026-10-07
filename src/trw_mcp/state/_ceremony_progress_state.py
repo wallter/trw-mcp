@@ -195,10 +195,15 @@ def mark_checkpoint(trw_dir: Path) -> None:
         write_ceremony_state(trw_dir, state)
 
 
-def mark_build_check(trw_dir: Path, passed: bool, session_id: str | None = None) -> None:
+def _build_word(passed: bool | None) -> str:
+    """``passed`` / ``failed``; ``None`` is a build whose static check was not run: ``not_run``, neither of the two."""
+    return "not_run" if passed is None else "passed" if passed else "failed"
+
+
+def mark_build_check(trw_dir: Path, passed: bool | None, session_id: str | None = None) -> None:
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
-        state.build_check_result = "passed" if passed else "failed"
+        state.build_check_result = _build_word(passed)
         state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
         if session_id:
             _touch_session_build_result(state, session_id, state.build_check_result)
@@ -206,7 +211,7 @@ def mark_build_check(trw_dir: Path, passed: bool, session_id: str | None = None)
         write_ceremony_state(trw_dir, state)
 
 
-def mark_session_build_check(trw_dir: Path, passed: bool, session_id: str | None) -> None:
+def mark_session_build_check(trw_dir: Path, passed: bool | None, session_id: str | None) -> None:
     """Record ONLY this session's own build result: the per-session maps, never the shared fields.
 
     ``mark_build_check`` also sets the project-global ``build_check_result`` / ``last_build_check_ts``, which the
@@ -220,7 +225,7 @@ def mark_session_build_check(trw_dir: Path, passed: bool, session_id: str | None
         return
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
-        result = "passed" if passed else "failed"
+        result = _build_word(passed)
         _touch_session_build_result(state, session_id, result)
         state.session_build_results_at[session_id] = datetime.now(timezone.utc).isoformat()
         write_ceremony_state(trw_dir, state)

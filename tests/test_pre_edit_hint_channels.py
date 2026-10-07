@@ -224,9 +224,24 @@ class TestDoctorRow:
 
         status, message = hook_channel_row(self._select(tmp_path, ["claude-code", fallback]))
 
-        assert status == "WARN"
+        assert status == "PASS"  # informational: no hook channel exists for this client, nothing to fix (#141)
+        assert message.startswith("info:")
         assert fallback in message and 'trw_code(mode="hint")' in message
         assert "claude-code" not in message
+
+    def test_a_fallback_client_beside_a_disabled_hook_still_warns(self, tmp_path: Path) -> None:
+        from trw_mcp.server._doctor_hook_channel import hook_channel_row
+
+        project = self._select(tmp_path, ["claude-code", "grok"])
+        config = project / ".trw" / "config.yaml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace("enabled: true", "enabled: false"), encoding="utf-8"
+        )
+
+        status, message = hook_channel_row(project)
+
+        assert status == "WARN"
+        assert "cc03_hook_enabled" in message
 
     def test_a_client_without_a_decision_is_named(self, tmp_path: Path) -> None:
         from trw_mcp.server._doctor_hook_channel import hook_channel_row
@@ -255,7 +270,7 @@ class TestDoctorRow:
 
         rows = {row.name: row for row in _doctor_core(tmp_path, TRWConfig())}
 
-        assert rows["hook_channel"].status == "WARN"
+        assert rows["hook_channel"].status == "PASS"  # informational, not actionable (#141)
         assert "copilot" in rows["hook_channel"].message
 
 

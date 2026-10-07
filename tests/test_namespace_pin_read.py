@@ -105,7 +105,17 @@ def test_the_light_read_equals_trwconfig_or_refuses(tmp_path: Path, monkeypatch:
     assert agreed >= 100 and refused_alone > 0
 
 
-@pytest.mark.parametrize("layer", ["not-yaml", "integer", "unreadable"])
+_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+@pytest.mark.parametrize(
+    "layer",
+    [
+        "not-yaml",
+        "integer",
+        pytest.param("unreadable", marks=pytest.mark.skipif(_ROOT, reason="root ignores mode bits")),
+    ],
+)
 def test_an_unreadable_pin_fails_closed_in_store_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layer: str
 ) -> None:

@@ -2807,6 +2807,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "84.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6d/44/f5da03a8ef95d369145c5bb53050e7877c9f3d312e128605fd9504829143/setuptools-84.0.0.tar.gz", hash = "sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73", size = 1168449, upload-time = "2026-08-08T18:27:58.365Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", hash = "sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670", size = 818216, upload-time = "2026-08-08T18:27:56.719Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2954,7 +2963,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "9.1.1"
+version = "9.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -2996,6 +3005,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "setuptools" },
     { name = "types-pyyaml" },
     { name = "vulture" },
 ]
@@ -3043,10 +3053,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0,<0.16" },
+    { name = "setuptools", marker = "extra == 'dev'", specifier = ">=83.0.0" },
     { name = "sqlite-vec", specifier = ">=0.1.5" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "trw-memory", specifier = ">=5.2.2,<6.0.0" },
+    { name = "trw-memory", specifier = ">=5.2.3,<6.0.0" },
     { name = "trw-memory", extras = ["otel"], marker = "extra == 'otel'" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "typing-extensions", specifier = ">=4.6.0" },
@@ -3056,7 +3067,7 @@ provides-extras = ["sqlite-fix", "meta-tune", "otel", "dev", "ai"]
 
 [[package]]
 name = "trw-memory"
-version = "5.2.2"
+version = "5.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -3083,9 +3094,9 @@ dependencies = [
     { name = "structlog" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/be/6fe3473681b06510179e3be27395470fa00de81cbf4f654e9bfc657a8d4f/trw_memory-5.2.2.tar.gz", hash = "sha256:25817006b5ccf0ec4aee156225c180b856c37dc435087de157b10eac320d4381", size = 2194025, upload-time = "2026-10-06T04:47:50.688Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/04/f021d644c11b0d7f2fb64dd7fcbd990014d77110018bf2ae2bb4b73817e9/trw_memory-5.2.3.tar.gz", hash = "sha256:49cba942a42392a0b7a5925832fa9f0b4417e750495275eccf51f1185b8a9edd", size = 2201718, upload-time = "2026-10-07T17:44:57.666Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/e3/4c83b61abf5957fc58fb4503f6da6ddac3ad770f9e00baabcb904515d684/trw_memory-5.2.2-py3-none-any.whl", hash = "sha256:fc98868cf851494c3deb085fff905dc00a9ea50575ba1fd3efa64f30611a129a", size = 1080000, upload-time = "2026-10-06T04:47:48.402Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/dd/23468881da322084afe43c05f5bf798f6f84a4aa3bb0ff13823abd2ae46d/trw_memory-5.2.3-py3-none-any.whl", hash = "sha256:a764503d9c233d003001e4b553efe584b8021558e1d5096e9b9779b2d8ac186d", size = 1081271, upload-time = "2026-10-07T17:44:55.811Z" },
 ]
 
 [package.optional-dependencies]

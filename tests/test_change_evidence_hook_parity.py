@@ -25,6 +25,9 @@ from trw_mcp.channels.codex._post_tool_use_telemetry import HOOK_SCRIPT_CONTENT
 from trw_mcp.models.config import builtin_client_ids
 from trw_mcp.tools._delivery_event_checks import unpinned_session_changed_files
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 _HOOKS = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks"
 _LONG_AGO = datetime(2000, 1, 1, tzinfo=timezone.utc)
 

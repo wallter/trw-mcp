@@ -256,6 +256,9 @@ async def _drive_run_and_record_order(
     monkeypatch.setattr(_md, "attach_checkout", attach_checkout)
     monkeypatch.setattr(_mc, "MemoryClient", fake_client_cls)
 
+    import trw_mcp.server._boot_deferred as boot_deferred
+
+    real_resolve = boot_deferred._resolve_backend_sync
     mod = _exec_module_at(path, module_name)
     args = argparse.Namespace(size=0, seed=1, limit=5, store=str(tmp_path / "store"), entry="recall")
 
@@ -275,6 +278,10 @@ async def _drive_run_and_record_order(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+    # The harness stubs backend sync for its own run only. The stub once outlived run() and every later test in
+    # the same xdist worker ran the no-op (test_sync_lifespan_defers_the_start_and_still_cancels: "the deferred
+    # step created no sync task").
+    assert boot_deferred._resolve_backend_sync is real_resolve, "run() left backend sync stubbed in the process"
     return order
 
 

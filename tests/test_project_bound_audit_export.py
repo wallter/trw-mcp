@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._paths import resolve_project_root
 
@@ -97,7 +98,7 @@ def test_no_shipped_code_assigns_the_process_wide_project_root() -> None:
     src = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
     writes: list[str] = []
     for path in src.rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             targets = node.targets if isinstance(node, ast.Assign) else []
             for target in targets:
                 if (

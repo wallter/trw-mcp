@@ -25,6 +25,9 @@ from trw_mcp.tools._deliver_gate_dispatch import (
     evaluate_delivery_gates,
 )
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 #: PRD-CORE-321: evaluate_delivery_gates always reports requirement drift; with no
 #: run there is no declared scope, so the report is exactly this and nothing more.
 _NO_RUN_DRIFT = {"scope": "not_declared", "prds": {}}

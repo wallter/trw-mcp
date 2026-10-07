@@ -139,6 +139,9 @@ from _ownership_harness import (
 )
 from trw_memory.testing.daemon_reaper import daemon_env_passthrough
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 def _jq_free_env(root: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
     """Real hook env (PATH/HOME/etc.) with jq hidden and python3 present."""

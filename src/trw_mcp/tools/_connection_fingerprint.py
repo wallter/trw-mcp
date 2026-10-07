@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import secrets
 
+import structlog
 from typing_extensions import TypedDict
+
+logger = structlog.get_logger(__name__)
 
 # Contract version of the connection-fingerprint block defined by FR01. Bumped
 # only when the emitted field set changes; stable within a process and across
@@ -60,20 +63,24 @@ class ConnectionFingerprintDict(TypedDict):
 def _resolve_build_identity() -> str:
     """Resolve the trw-mcp build identity (package version). Typed fail-open.
 
-    A missing/uninstalled package metadata entry falls back to the in-tree
-    ``__version__`` and finally to ``"unknown"`` — it never raises.
+    The RUNNING version (``trw_mcp.__version__``, fixed at import) is reported first, so a
+    process that outlived an upgrade does not claim the version now on disk (feedback #140).
+    Package metadata is the fallback, then ``"unknown"``; it never raises.
     """
+    try:
+        from trw_mcp import __version__
+
+        if __version__:
+            return str(__version__)
+    except Exception:  # justified: fall through to the on-disk metadata
+        logger.debug("build_identity_running_version_unavailable", reason="import_failed")
     try:
         from importlib.metadata import version as _pkg_version
 
         return _pkg_version("trw-mcp")
-    except Exception:  # justified: editable/uninstalled -> in-tree __version__
-        try:
-            from trw_mcp import __version__
-
-            return str(__version__)
-        except Exception:  # justified: last-resort, fingerprint must never raise
-            return "unknown"
+    except Exception:  # justified: last-resort, fingerprint must never raise
+        logger.debug("build_identity_metadata_unavailable", reason="no_package_metadata")
+        return "unknown"
 
 
 def _resolve_project_identity() -> str:

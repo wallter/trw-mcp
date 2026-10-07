@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 from tests._memory_fixtures import FAKE_NAMESPACE, DaemonCheckout
 from tests._memory_store_fake import FakeMemoryStore
@@ -75,7 +76,7 @@ def test_no_trw_mcp_module_imports_a_model_runtime_or_an_embedder() -> None:
     offenders = {
         str(path.relative_to(root)): uses
         for path in sorted(root.rglob("*.py"))
-        if (uses := _embedder_uses(ast.parse(path.read_text(encoding="utf-8"))))
+        if (uses := _embedder_uses(source_index.tree(path)))
     }
 
     assert offenders == {}

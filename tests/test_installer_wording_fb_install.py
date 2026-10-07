@@ -379,7 +379,7 @@ class TestProjectLabelNamesTheKeyItReads:
     ) -> None:
         monkeypatch.setattr(installer, "_open_tty", lambda: None)
         target = make_project(tmp_path)
-        (target / ".trw" / "config.yaml").write_text("installation_id: a\n", encoding="utf-8")
+        (target / ".trw" / "config.yaml").write_text("installation_id: my-project\n", encoding="utf-8")
         ui = installer.UI(interactive=True)
         prior = installer._load_prior_config(target)
 
@@ -392,3 +392,41 @@ class TestProjectLabelNamesTheKeyItReads:
         assert project_lines, out
         assert "installation_id" in project_lines[0]
         assert "from prior install" in project_lines[0]
+
+    @pytest.mark.parametrize("stale_id", ["a", "-", "x" * 3 + "!"])
+    @pytest.mark.parametrize("interactive", [True, False])
+    def test_an_invalid_prior_id_is_not_reused_and_is_warned_about(
+        self,
+        installer: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        stale_id: str,
+        interactive: bool,
+    ) -> None:
+        """Feedback #156: a one-character installation_id ('a') was copied forward as 'Project: a' on every reinstall."""
+        monkeypatch.setattr(installer, "_open_tty", lambda: None)
+        monkeypatch.setattr(installer, "_prompt_project_name", lambda _ui, default: default)
+        target = make_project(tmp_path)
+        (target / ".trw" / "config.yaml").write_text(f"installation_id: {stale_id}\n", encoding="utf-8")
+        prior = installer._load_prior_config(target)
+
+        installer.phase_configure(
+            installer.UI(interactive=interactive),
+            1,
+            1,
+            target,
+            interactive,
+            "",
+            "",
+            False,
+            prior_config=prior,
+            skip_auth=True,
+            target_platforms=None,
+        )
+
+        out = capsys.readouterr().out
+        assert "from prior install" not in out
+        assert "not a usable project name" in out
+        written = (target / ".trw" / "config.yaml").read_text(encoding="utf-8")
+        assert f"installation_id: {installer.sanitize_project_name(target.name)}" in written

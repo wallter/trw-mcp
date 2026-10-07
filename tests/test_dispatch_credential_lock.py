@@ -6,7 +6,7 @@ import base64
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -185,27 +185,38 @@ def test_an_impossible_expiry_is_an_unknown_one_which_locks(exp: object) -> None
 def test_a_long_first_run_frees_the_others_once_it_has_refreshed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """sol r2: waiters must not queue behind the refreshing child's whole run once the login is fresh."""
+    """sol r2: waiters must not queue behind the refreshing child's whole run once the login is fresh.
+
+    Causal, not wall-clock: the refreshing child writes the fresh login and then blocks until the test
+    releases it, and the test releases it only after both other dispatches have returned. They can only
+    return while it is still running if the refresh freed the lock; queued behind its whole run they would
+    wait out their bound and come back refused. (A 3 s sleep against a 4 s timeout went red at -n 12.)
+    """
     login = Path.home() / ".claude" / ".credentials.json"
     _claude_login(Path.home(), datetime.now(timezone.utc) + timedelta(minutes=2))
     fresh = json.dumps({"claudeAiOauth": {"expiresAt": int((time.time() + 6 * 3600) * 1000), "accountUuid": "acct-1"}})
-    expired, refreshes = tmp_path / "token-expired", tmp_path / "refreshes"
+    expired, refreshes, release = tmp_path / "token-expired", tmp_path / "refreshes", tmp_path / "release"
     expired.write_text("1")
     refresh = (
         f'if [ -f "{expired}" ]; then rm -f "{expired}"; echo x >> "{refreshes}"; '
-        f"echo '{fresh}' > \"{login}\"; sleep 3; fi\n"
+        f"echo '{fresh}' > \"{login}\"; "
+        f'while [ ! -f "{release}" ]; do sleep 0.05; done; fi\n'
     )
     install_stub(tmp_path, monkeypatch, refresh + """echo '{"result": "Verdict: PASS"}'\n""")
 
-    started = time.monotonic()
     with ThreadPoolExecutor(max_workers=3) as pool:
-        results = list(
-            pool.map(lambda _i: dispatch(DispatchRequest(client="claude", prompt="r", timeout_s=4)), range(3))
-        )
+        futures = [pool.submit(dispatch, DispatchRequest(client="claude", prompt="r", timeout_s=60)) for _ in range(3)]
+        try:
+            pending = as_completed(futures)
+            first_two = [next(pending).result(), next(pending).result()]
+            assert not release.exists()  # the refreshing child is still running
+            assert [r.ok for r in first_two] == [True, True], "a waiter queued behind the refreshing run"
+        finally:
+            release.write_text("go")
+        results = [f.result() for f in futures]
 
-    assert [r.ok for r in results] == [True, True, True]  # none timed out waiting 2 s behind a 3 s run
+    assert [r.ok for r in results] == [True, True, True]
     assert refreshes.read_text().count("x") == 1
-    assert time.monotonic() - started < 6
 
 
 def test_the_lock_reads_the_login_the_child_uses_not_the_parents_codex_home(

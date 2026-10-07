@@ -429,3 +429,50 @@ def test_novel_arg_pattern_uses_persisted_baseline_not_process_local_first_seen(
     )
     assert "novel_arg_pattern" not in second_fired
     assert "first_observation_after_deploy" not in second_fired
+
+
+@pytest.mark.parametrize(
+    ("server", "tool", "args", "exempt"),
+    [
+        ("trw", "trw_status", {"feedback": "the doctor warns wrongly"}, True),
+        ("trw", "trw_status", {"detail": "surface"}, False),
+        ("trw", "trw_status", {"feedback": ""}, False),
+        ("trw", "trw_learn", {"feedback": "x"}, False),
+        ("trw", "mcp__trw__trw_status", {"feedback": "x"}, False),  # exact tool identity, no suffix match
+        ("foreign_server", "trw_status", {"feedback": "x"}, False),  # a foreign server's same-named tool
+    ],
+)
+def test_only_trws_own_status_feedback_call_is_exempt_from_novelty(
+    server: str, tool: str, args: dict[str, Any], exempt: bool
+) -> None:
+    from trw_mcp.security.anomaly_detector import is_novelty_exempt
+
+    assert is_novelty_exempt(server, tool, args) is exempt
+
+
+def test_an_exempt_call_fires_no_novel_arg_pattern_but_a_normal_one_still_does(tmp_path: Path) -> None:
+    """Feedback #141: the free-text feedback argument is a novel hash every time; real novelty is still reported."""
+    cfg = AnomalyDetectorConfig(
+        sigma_threshold=DEFAULT_SIGMA_THRESHOLD,
+        window_seconds=DEFAULT_WINDOW_SECONDS,
+        checkout_root=tmp_path,
+        shadow_clock_path=tmp_path / "security" / "clock.yaml",
+    )
+    det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    det.seed_baseline(known_pairs={("trw", "trw_status")})
+    now = datetime.now(tz=timezone.utc)
+
+    def obs(args: dict[str, Any], *, exempt: bool) -> list[str]:
+        return det.observe(
+            AnomalyObservation(
+                ts=now,
+                server="trw",
+                tool="trw_status",
+                session_id="s",
+                args_hash=hash_tool_args(args),
+                novelty_exempt=exempt,
+            )
+        )
+
+    assert "novel_arg_pattern" not in obs({"feedback": "report"}, exempt=True)
+    assert "novel_arg_pattern" in obs({"detail": "surface"}, exempt=False)

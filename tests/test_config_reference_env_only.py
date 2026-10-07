@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 _TRW_NAME_RE = re.compile(r"^TRW_[A-Z0-9_]+$")
 
@@ -120,7 +122,7 @@ def _all_trw_env_only_reads() -> set[str]:
     all_wrapper_names: set[str] = set()
 
     for path in _iter_py_files():
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = source_index.tree(path)
         scan = _scan_file(tree)
         per_file[path] = scan
         found |= scan.direct_names

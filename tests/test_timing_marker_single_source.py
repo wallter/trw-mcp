@@ -27,6 +27,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 from tests._timing import MARKER, apply_timing_policy, assert_budget
 
@@ -219,7 +220,7 @@ def suite_scan() -> _SuiteScan:
     ceilings: list[str] = []
     names: set[str] = set()
     for p, f in _test_files():
-        tests = _tests(ast.parse(f.read_text(encoding="utf-8")))
+        tests = _tests(source_index.tree(f))
         bare.extend(_key(p, f, t) for t in _bare_asserts(tests))
         budget.extend(_key(p, f, t) for t in _budget_calls(tests))
         ceilings.extend(_key(p, f, t) for t in _fixed_ceilings(tests))
@@ -409,7 +410,7 @@ def test_every_timing_helper_copy_has_the_same_code() -> None:
     assert MONOREPO_ROOT is not None
 
     def code(path: Path) -> str:
-        body = ast.parse(path.read_text(encoding="utf-8")).body
+        body = source_index.tree(path).body
         return ast.dump(
             ast.Module(
                 body=body[1:] if ast.get_docstring(ast.Module(body=body, type_ignores=[])) else body, type_ignores=[]

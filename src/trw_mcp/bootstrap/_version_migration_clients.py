@@ -355,7 +355,27 @@ def _remove_stale_client_surface(
         # that key proves it; a skill-dir mirror keeps the documented suffix rule (its bare .claude key holds the
         # same bytes).
         exact = (not surface.is_dir_artifact) if surface.exact_proof is None else surface.exact_proof
+        # An agent file needs positive provenance before it is judged at all: TRW's own retired list, or a manifest
+        # record of TRW writing it. An unrecorded ``trw-custom.md`` may be the project's own, so it is neither
+        # retired nor given an rm command (review round 3).
+        if not surface.is_dir_artifact and not _agent_has_provenance(entry, manifest_hashes, target_dir, exact=exact):
+            rel = entry.relative_to(target_dir).as_posix()
+            logger.info("sweep_skipped_no_provenance", path=rel, reason="unrecorded")
+            result.setdefault("preserved", []).append(f"{rel} (not_installer_owned)")  # kept, never an rm command
+            continue
         remove_proven(entry, manifest_hashes, target_dir, result, exact=exact)
+
+
+def _agent_has_provenance(
+    entry: Path, manifest_hashes: dict[str, str] | None, target_dir: Path, *, exact: bool
+) -> bool:
+    """True when TRW's retired list names this agent file or the manifest records TRW writing it."""
+    from ._ownership_proof import recorded_digests
+    from ._retired_artifacts import RETIRED_AGENT_STEMS
+
+    if entry.stem in RETIRED_AGENT_STEMS:
+        return True
+    return bool(recorded_digests(entry, manifest_hashes or {}, target_dir, exact=exact))
 
 
 def _is_channel_artifact(entry: Path, manifest_hashes: dict[str, str] | None, target_dir: Path) -> bool:

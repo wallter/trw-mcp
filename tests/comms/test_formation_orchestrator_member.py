@@ -269,6 +269,62 @@ def test_cli_add_orchestrator_from_the_pinned_session(
     assert _cli(formation_command="add-orchestrator", member_id="usurper", run_path=None) == 1
 
 
+def test_cli_add_orchestrator_rebinds_to_the_new_pin_after_the_lead_pin_changes(
+    formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Feedback #144: the same member moves to the session that now owns the orchestrator run's pin."""
+    from tests._formation_test_support import pin_session
+
+    env = formation_env
+    enable_comms(monkeypatch)
+    create(env.orchestrator_run, env.payload(), trw_dir=env.trw_dir)
+    pin_session(monkeypatch, env.orchestrator_run, ORCH_PIN)
+    assert _cli(formation_command="add-orchestrator", member_id="swarm-lead", run_path=None) == 0
+
+    pin_session(monkeypatch, env.orchestrator_run, "new-lead-pin")  # the lead reconnected under a new pin
+    monkeypatch.setenv("TRW_SESSION_ID", "some-other-shell")
+    args = {"formation_command": "add-orchestrator", "run_path": None, "session_id": "new-lead-pin"}
+    assert _cli(member_id="swarm-lead", **args) == 0
+
+    manifest = formation.read_manifest(env.manifest_path())
+    assert manifest.member("swarm-lead").pin_key == "new-lead-pin"
+    assert [m.member_id for m in manifest.members].count("swarm-lead") == 1
+    # another member id is still a replacement, refused
+    assert _cli(member_id="usurper", **args) == 1
+    # a session that owns no run has no authority, even when named
+    assert _cli(member_id="swarm-lead", **{**args, "session_id": "owns-nothing"}) == 1
+    assert formation.read_manifest(env.manifest_path()).member("swarm-lead").pin_key == "new-lead-pin"
+
+
+@pytest.mark.parametrize("new_pin", ["worker-pin", "another-pin"])
+def test_an_owner_bound_worker_slot_is_never_rewritten_into_the_orchestrator(
+    formation_env: FormationFixture, new_pin: str
+) -> None:
+    """Feedback #144 review: a worker the owner run joined keeps its globs, PRD ids and role; no rebind may replace it."""
+    env = formation_env
+    created = create(env.orchestrator_run, env.payload(), trw_dir=env.trw_dir)
+    join(created.formation_id, "impl-1", env.orchestrator_run, pin_key="worker-pin", trw_dir=env.trw_dir)
+    before = formation.read_manifest(env.manifest_path())
+
+    with pytest.raises(FormationError, match="refusing to replace"):
+        add_orchestrator(created.formation_id, env.orchestrator_run, "impl-1", pin_key=new_pin, trw_dir=env.trw_dir)
+
+    after = formation.read_manifest(env.manifest_path())
+    assert after.revision == before.revision
+    worker = after.member("impl-1")
+    assert worker.role == "implementer" and worker.owned_paths == ["src/alpha"] and worker.prd_ids == ["PRD-CORE-900"]
+
+
+def test_rebinding_the_orchestrator_slot_moves_only_its_pin(formation_env: FormationFixture) -> None:
+    env = formation_env
+    created = create(env.orchestrator_run, env.payload(), trw_dir=env.trw_dir)
+    first = add_orchestrator(created.formation_id, env.orchestrator_run, "lead", pin_key=ORCH_PIN, trw_dir=env.trw_dir)
+    moved = add_orchestrator(created.formation_id, env.orchestrator_run, "lead", pin_key="p2", trw_dir=env.trw_dir)
+
+    a, b = first.member("lead"), moved.member("lead")
+    assert b.pin_key == "p2" and b.model_dump(exclude={"pin_key"}) == a.model_dump(exclude={"pin_key"})
+
+
 def test_cli_init_binds_the_pinned_runs_key_never_the_env_value(
     formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:

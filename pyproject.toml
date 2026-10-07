@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "9.1.1"
+version = "9.2.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -93,7 +93,7 @@ dependencies = [
     # 5.1.0 also carries `trw_memory.security.credentials` (the one credential detector,
     # E2E-INC-036), imported UNGUARDED by telemetry/anonymizer.py; if this ships after
     # trw-memory 5.1.0 is published, raise the floor to the release that carries it.
-    "trw-memory>=5.2.2,<6.0.0",
+    "trw-memory>=5.2.3,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -146,6 +146,7 @@ dev = [
     "hypothesis>=6.0.0",
     "ruff>=0.15.0,<0.16",  # CI installs .[dev]; a newer minor adds rules the repo has not adopted yet
     "pip-audit>=2.7.0",
+    "setuptools>=83.0.0",  # PYSEC-2026-3447: a Python 3.11 venv bundles setuptools 79.0.1, which the CI pip-audit step flags
     "vulture>=2.11",
     "deptry>=0.21.0",
     "defusedxml>=0.7.1",  # PRD-SEC-020 FR06: .github/scripts/{timing_job,verify_suite}.py parse fork-PR-triggered JUnit XML with this instead of stdlib xml.etree
@@ -381,6 +382,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 norecursedirs = [".hypothesis", "__pycache__", ".git", ".venv", "dist", "build"]
 addopts = "--strict-markers --timeout=120 -p no:benchmark --dist loadgroup"
+# Keep only a failed test's tmp_path, and only the last session's: at -n 8 a full run writes tens of thousands of
+# temp trees, and the default (every tmp_path of the last 3 sessions) left them all on disk.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1
 markers = [
     "unit: Fast tests with no filesystem I/O or multi-tool interaction",
     "integration: Tests that write files or call multiple tools together",

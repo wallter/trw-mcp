@@ -11,6 +11,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests import _source_index as source_index
+
 _PACKAGE = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 _CALL = re.compile(r"\b(trw_[a-z_]+)\(([^()]*)\)")
 _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
@@ -19,7 +21,7 @@ _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
 def _tool_params() -> dict[str, set[str]]:
     params: dict[str, set[str]] = {}
     for path in (_PACKAGE / "tools").rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("trw_"):
                 if any(".tool" in ast.unparse(d) for d in node.decorator_list):
                     names = {a.arg for a in (*node.args.args, *node.args.kwonlyargs)} - {"ctx", "self"}

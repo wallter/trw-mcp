@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
-from tests._timing import assert_budget
+from tests._timing import assert_budget, serial_timing_only
 from tests.conftest import extract_tool_fn, make_test_server
 
 #: PRD-CORE-280 slice e (batch 23b): ``_run_learn_journal_drain``'s replay now
@@ -449,6 +449,7 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Pat
 
 @pytest.mark.timeout(600)
 @requires_local_timing
+@serial_timing_only
 def test_drain_wall_time_is_bounded_independent_of_pending_backlog_budget(
     tmp_path: Path, fake_store_router: dict
 ) -> None:
@@ -457,6 +458,15 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog_budget(
     REVERT CHECK: this test is why the FR01 budget condition exists. Remove the
     elapsed-time break in ``state/learn_journal.drain_pending`` and the K=50 arm
     replays all fifty records inline, blowing the bound by an order of magnitude.
+
+    Serial only (test-perf P1e): the bound is assembled from samples taken moments
+    apart (baseline, then one-record re-measured before each arm), so a neighbouring
+    xdist worker's burst landing inside the K=50 arm alone breaks it -- 1,386 ms against
+    a 266 ms bound in a loaded ``-n 4`` full run (load ~9, under the trust ceiling),
+    passing alone. The release timing stages run it serially (canary.py's timing stage at
+    ``-n 1``, the C1-timing gate at ``-n 0``). The drain's own budget logic is pinned in
+    every run, parallel included, with a fake clock by
+    ``test_learn_journal_drain_liveness.py::TestWallClockBudget``.
     """
     run = _run_pending_backlog_arms(tmp_path, fake_store_router)
     measured = run["measured"]

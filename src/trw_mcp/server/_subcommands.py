@@ -72,8 +72,8 @@ from trw_mcp.server._subcommands_release import (
 from trw_mcp.server._subcommands_release import (
     _run_version_status as _run_version_status,
 )
+from trw_mcp.server._update_report import attention_count, report_kept, report_removed
 from trw_mcp.server._update_report import print_claude_md as _print_claude_md
-from trw_mcp.server._update_report import report_kept, report_removed
 
 logger = structlog.get_logger(__name__)
 
@@ -135,6 +135,8 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
         _print_cli_line(f"Target IDE: {ide}")
     if codex_touched:
         _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
+    needs = attention_count(result, target)
+    _print_cli_line("Status: ready" if not needs else f"Status: ready, {needs} item(s) need attention (see above)")
     if not dry_run:
         _print_cli_line("")
         # G3 (installer refinement 5.1.0): `-v` is registered on the TOP-LEVEL
@@ -493,5 +495,6 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "factory": _lazy_verb("trw_mcp.server._cli_factory", "run_factory"),
     "decision": _lazy_verb("trw_mcp.tools._decision_cli", "run_decision"),
     "assess": _lazy_verb("trw_mcp.tools._assess_cli", "run_assess"),
+    "config": _lazy_verb("trw_mcp.tools._config_cli", "run_config"),
     **{verb: _lazy_verb("trw_mcp.shared_server._cli", f"run_{verb}") for verb in ("swap", "status", "env")},
 }

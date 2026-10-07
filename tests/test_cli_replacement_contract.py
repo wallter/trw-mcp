@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -90,11 +91,19 @@ CONTRACT_ARGV: dict[str, tuple[str, ...]] = {
 
 #: A command whose documented exit code in the contract fixture is not 0. ``telemetry pipeline-health`` exits
 #: 0 healthy / 1 degraded / 2 unknown; the fixture has no store, so every probe is unmeasured -> 2 (E2E-INC-073).
-CONTRACT_EXIT: dict[str, int] = {"telemetry pipeline-health": 2, "telemetry surface-diff": 2}  # surface-diff: INC-074
+#: ``instructions sync --dry-run`` exits 1 when anything would change (INC-126 b), and a fresh project's always would.
+CONTRACT_EXIT: dict[str, int] = {
+    "telemetry pipeline-health": 2,
+    "telemetry surface-diff": 2,  # INC-074
+    "instructions sync": 1,
+}
 
 #: Environment a command needs to reach its result path in the ``--json`` check.
 CONTRACT_ENV: dict[str, dict[str, str]] = {
     "probe run": {"TRW_PROBE_ENABLED": "1"},
+    # The sync targets follow the clients detect_ide finds, and a `cursor` launcher on PATH is one of its signals:
+    # a developer box with Cursor installed previewed no change (exit 0) where CI previews two (exit 1).
+    "instructions sync": {"PATH": os.defpath},
 }
 
 

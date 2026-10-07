@@ -9,6 +9,9 @@ import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 @pytest.mark.integration
 class TestCeremonyStateMutationWiring:

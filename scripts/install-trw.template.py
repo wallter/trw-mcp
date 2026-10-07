@@ -895,6 +895,20 @@ def sanitize_project_name(name: str) -> str:
     return result.strip("-")[:64].rstrip("-")
 
 
+def _reusable_prior_name(ui: UI, prior_config: dict[str, object]) -> str:
+    """The prior ``installation_id`` when it is a usable project name, else ``""`` after saying why (feedback #156).
+
+    The id is a sanitized project name, not a token: a one-character or unsanitized value ('a') is an accident
+    of an old install and was copied forward as "Project: a" on every reinstall.
+    """
+    prior = str(prior_config.get("project_name") or "")
+    if prior and len(prior) >= 2 and sanitize_project_name(prior) == prior:
+        return prior
+    if prior:
+        ui.warn(f"installation_id '{prior}' in .trw/config.yaml is not a usable project name; choosing a new one.")
+    return ""
+
+
 def validate_api_key(key: str) -> bool:
     """Check *key* matches ``trw_`` or ``trw_dk_`` prefix, base64url body, max 128.
 
@@ -1814,9 +1828,9 @@ _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
 #: it once per client unless it drops the repeats the way it does for ``WARNING:`` notices (E2E row 10).
 _CONFIG_WARNING_LINE_RE = re.compile(r"^TRW: WARNING \u2014\s*")
 #: A child line naming a retired file `update-project` deleted in place (``server/_update_report.py::print_retired``),
-#: or an edit it made to the operator's own CLAUDE.md (``print_claude_md``). Either may touch the operator's files, so
+#: an edit it made to the operator's own CLAUDE.md (``print_claude_md``) or AGENTS.md block, a ``Note:`` (hook timeouts rewritten) or the ``Status: ready, N item(s)`` line (``print_refreshed``, ``_summarize_update_result``). Either may touch the operator's files, so
 #: the spinner must not swallow it (FB-INSTALL-03).
-_RETIRED_LINE_RE = re.compile(r"^(?:Removed retired TRW file|CLAUDE\.md):\s*")
+_RETIRED_LINE_RE = re.compile(r"^(?:(?:Removed retired TRW file|CLAUDE\.md|AGENTS\.md|Note):|Status: ready,)\s*")
 #: A per-file progress line, used only to advance the spinner's counter.
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
@@ -2237,14 +2251,14 @@ _DAEMON_STOP_SOURCE = (
     "from trw_memory import __version__\n"
     "from trw_memory.daemon import DaemonPaths, read_checkout_grant, stop_outdated_daemon\n"
     "from trw_memory.exceptions import DaemonAuthError\n"
-    "from trw_mcp.server._doctor_launcher_divergence import present_managed_configs\n"
+    "from trw_mcp.server._doctor_launcher_divergence import reconnect_client_configs\n"
     "try:\n"
     "    token = read_checkout_grant(Path(sys.argv[1]))\n"
     "except DaemonAuthError:\n"
     "    token = None\n"
     "result = stop_outdated_daemon(\n"
     "    DaemonPaths.resolve(create=False), __version__, older_only=sys.argv[2] == '1', token=token)\n"
-    "configs = present_managed_configs(Path(sys.argv[1]))\n"
+    "configs = reconnect_client_configs(Path(sys.argv[1]))\n"
     f"print({_DAEMON_STOP_LINE_PREFIX!r} + json.dumps("
     "{'outcome': result.outcome, 'detail': result.detail, 'configs': configs}))\n"
 )
@@ -2825,7 +2839,8 @@ def show_success_banner(
     *,
     telemetry_enabled: bool = False,
     learning_sharing_enabled: bool = False,
-    health_ok: bool = True,
+    health_ok: bool | None = True,
+    dispatch_line: str = "",
 ) -> None:
     """Display the post-install success banner with summary.
 
@@ -2840,23 +2855,26 @@ def show_success_banner(
     # newer one.
     version = _MCP_EFFECTIVE_VERSION or TRW_VERSION
     # E2E-INC-131 c: never say "ready" over a doctor FAIL. The failure and its remedy were printed just above.
+    # health_ok is tri-state (feedback #155): None means the doctor did not finish, which is not a failure.
+    ok = health_ok is True
+    check_word = "did not complete" if health_ok is None else "FAILED"
     headline = (
-        f"TRW Framework v{version} installed, but its health check FAILED (see above; run 'trw-mcp doctor')"
-        if not health_ok
-        else f"TRW Framework v{version} is ready"
+        f"TRW Framework v{version} is ready"
+        if ok
+        else f"TRW Framework v{version} installed, but its health check {check_word} (see above; run 'trw-mcp doctor')"
     )
     if ui.quiet:
         # FR04: the consent state MUST print on every path — use print() directly
         # because UI.info() is suppressed under --quiet.
-        verdict = "installed." if health_ok else "installed, but its health check FAILED (run 'trw-mcp doctor')."
-        print(f"{GREEN if health_ok else YELLOW}[TRW]{NC} TRW Framework v{version} {verdict} {state_line}.")
+        verdict = "installed." if ok else f"installed, but its health check {check_word} (run 'trw-mcp doctor')."
+        print(f"{GREEN if ok else YELLOW}[TRW]{NC} TRW Framework v{version} {verdict} {state_line}.")
         return
 
     if ui.interactive:
         print()
-        mark, color = ("\u2713", GREEN) if health_ok else ("!", YELLOW)
+        mark, color = ("\u2713", GREEN) if ok else ("!", YELLOW)
         # The failure headline is longer than the box is wide, so it is split over rows.
-        head_rows = [headline] if health_ok else [f"TRW Framework v{version} installed,", "but its health check FAILED"]
+        head_rows = [headline] if ok else [f"TRW Framework v{version} installed,", f"but its health check {check_word}"]
         draw_box([f"{color}{BOLD}{mark if i == 0 else ' '} {row}{NC}" for i, row in enumerate(head_rows)], color=color)
         print()
 
@@ -2887,6 +2905,8 @@ def show_success_banner(
         if features:
             feat_str = ", ".join(features)
             print(f"  {DIM}Extras: {feat_str}{NC}")
+        if dispatch_line:  # PRD-INFRA-210 FR09
+            print(f"  {DIM}{dispatch_line}{NC}")
         # PRD-SEC-004-FR04: echo the resolved consent state.
         print(f"  {DIM}{state_line}{NC}")
         print()
@@ -2916,7 +2936,7 @@ def show_success_banner(
         print(f"  {DIM}Full docs: {DOCS_BASE}/quickstart{NC}")
     else:
         print()
-        print(f"{(GREEN if health_ok else YELLOW)}{BOLD}{headline}{NC}")
+        print(f"{(GREEN if ok else YELLOW)}{BOLD}{headline}{NC}")
         print()
         if backend_results:
             for br in backend_results:
@@ -2933,6 +2953,8 @@ def show_success_banner(
             ui.info(next_step)
         # PRD-SEC-004-FR04: echo the resolved consent state.
         ui.info(state_line)
+        if dispatch_line:
+            ui.info(dispatch_line)
         ui.info(f"Docs: {DOCS_BASE}/quickstart")
 
 
@@ -4954,37 +4976,142 @@ def phase_project_setup(
     return resolved_targets
 
 
+# A doctor that does not finish is INCOMPLETE, never FAILED (feedback #155).
+_DOCTOR_TIMEOUT_SECONDS = 60
+
+
+def _load_note() -> str:
+    """``load average 1.2/3.4/5.6 on 8 CPUs`` for a doctor that timed out; ``""`` where the OS reports none."""
+    try:
+        one, five, fifteen = os.getloadavg()
+    except (AttributeError, OSError):  # trw-fail-silent-allow: no load figure on this OS; the note is advisory
+        return ""
+    return f"load average {one:.1f}/{five:.1f}/{fifteen:.1f} on {os.cpu_count() or '?'} CPUs"
+
+
+def _run_doctor_command(ui: UI, cmd: list[str]) -> subprocess.CompletedProcess[str] | None:
+    """Run the doctor; ``None`` (already reported, neutrally) if it never finished."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=_DOCTOR_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        load = _load_note()
+        ui.step_warn(
+            f"'trw-mcp doctor' did not complete in {_DOCTOR_TIMEOUT_SECONDS}s"
+            + (f" ({load})" if load else "")
+            + "; this says nothing about the install. Run 'trw-mcp doctor' to check it."
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        ui.step_warn(f"Could not run 'trw-mcp doctor' ({exc}); run it manually to check the install.")
+    return None
+
+
+#: The Dispatch line the setup step printed this run (PRD-INFRA-210 FR09): shown beside ``Extras:`` in the banner.
+_DISPATCH_LINE = ""
+
+
+def dispatch_line() -> str:
+    """The step's one ``Dispatch: ...`` line from this run, or ``""`` when the step did not report one."""
+    return _DISPATCH_LINE
+
+
+def build_dispatch_args(*, with_dispatch: bool, no_dispatch: bool, models: list[str], efforts: list[str]) -> list[str]:
+    """The ``trw-mcp config dispatch`` arguments the installer's flags and environment ask for (PRD-INFRA-210 FR08/FR10).
+
+    ``--with-dispatch`` / ``--no-dispatch`` win over ``TRW_WITH_DISPATCH`` (1/true/yes enable, 0/false/no disable,
+    anything else is unset). Pins are forwarded as given; ``TRW_DISPATCH_MODELS`` / ``TRW_DISPATCH_EFFORTS`` stay in
+    the inherited environment, which the step reads itself.
+    """
+    env = _env_flag("TRW_WITH_DISPATCH")
+    enable = with_dispatch or (env is True and not no_dispatch)
+    disable = no_dispatch or (env is False and not with_dispatch)
+    args = ["--enable"] * (enable and not disable) + ["--disable"] * (disable and not enable)
+    for flag, pins in (("--dispatch-model", models), ("--dispatch-effort", efforts)):
+        for pin in pins:
+            args += [flag, pin]
+    return args
+
+
+_STEP_WARNING_PREFIX = "config dispatch: warning: "
+_SECRET_LIKE = re.compile(r"trw_(?:dk_)?[A-Za-z0-9_-]{16,}")
+
+
+def _safe_step_text(text: str) -> str:
+    """A step warning made safe to print: control characters dropped, any API key (env or ``trw_...`` shaped) masked."""
+    for name in ("TRW_API_KEY", "TRW_PLATFORM_API_KEY"):
+        secret = os.environ.get(name, "").strip()
+        if secret:
+            text = text.replace(secret, "[redacted]")
+    text = _SECRET_LIKE.sub("[redacted]", text)
+    return "".join(ch for ch in text if ch.isprintable()).strip()
+
+
+def run_dispatch_step(ui: UI, trw_cmd: list[str], target_dir: Path, extra: tuple[str, ...]) -> None:
+    """Run ``trw-mcp config dispatch`` (PRD-INFRA-210 FR08): advisory, one warning on any failure, never raises.
+
+    Interactive runs pass ``--offer`` and read the printed Dispatch line (``--json`` is a machine mode that never
+    asks); every other run asks for ``--json`` and reads its ``line``. The step's own warnings are shown.
+    """
+    global _DISPATCH_LINE
+    _DISPATCH_LINE = ""
+    machine = not ui.interactive
+    cmd = [*trw_cmd, "config", "dispatch", str(target_dir), *(["--offer"] if ui.interactive else []), *extra]
+    cmd += ["--json"] * machine
+    failure = "it could not run"
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        if proc.returncode != 0:
+            failure = f"it exited {proc.returncode}"
+        elif machine:
+            payload = json.loads(proc.stdout)
+            _DISPATCH_LINE = str(payload.get("line") or "")
+            for warning in payload.get("warnings", []):
+                ui.step_warn(f"Dispatch setup: {_safe_step_text(str(warning))}")
+            return
+        else:
+            lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip().startswith("Dispatch:")]
+            _DISPATCH_LINE = _safe_step_text(lines[-1]) if lines else ""
+            # An invalid pin or a refused write exits 0 and says so on stderr: relay each, never drop it.
+            for raw in proc.stderr.splitlines():
+                if raw.startswith(_STEP_WARNING_PREFIX):
+                    ui.step_warn(f"Dispatch setup: {_safe_step_text(raw.removeprefix(_STEP_WARNING_PREFIX))}")
+            return
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError) as exc:
+        failure = f"it failed ({type(exc).__name__})"
+    ui.step_warn(f"Dispatch setup was not completed ({failure}); run 'trw-mcp config dispatch .' to set it up.")
+
+
 def run_install_doctor(
     ui: UI,
     python: str,
     target_dir: Path,
     pip_target: str = "",
-) -> bool:
+    dispatch_args: tuple[str, ...] = (),
+) -> bool | None:
     """PRD-INFRA-170-FR06: run ``trw-mcp doctor`` at install end.
 
-    Returns True when the deployed framework is healthy (no FAIL check). On any
+    Returns True when the deployed framework is healthy (no FAIL check) and False when a check FAILed. On any
     FAIL check, emit a LOUD, non-silent warning naming the failing checks and the
     single remediation command — never a silent green success line. A WARN row
     does not fail the install, but it is never reported as "passed" either: the
     line gives the count and the names, so it matches the doctor's own verdict.
-    Fail-open: a doctor that cannot run or parse warns but never aborts the install.
+
+    Returns None (incomplete) when the doctor could not run, ran out of time, or printed nothing parseable: that says
+    nothing about the framework, so the banner stays neutral (feedback #155). Never aborts the install.
     """
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     # trw_assess (jev) first: inherit the machine key (~/.trw/jev.env) in one line, or offer once (interactive only)
     # to promote a key found only in this project's .env. Never writes the key into a project file; advisory.
     subprocess.run([*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive], check=False)
-    cmd = [*trw_cmd, "doctor", str(target_dir), "--format", "json"]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        ui.step_warn(f"Could not run 'trw-mcp doctor' ({exc}); verify the install manually.")
-        return False
+    run_dispatch_step(ui, trw_cmd, target_dir, dispatch_args)  # PRD-INFRA-210 FR08: after assess, advisory
+    proc = _run_doctor_command(ui, [*trw_cmd, "doctor", str(target_dir), "--format", "json"])
+    if proc is None:
+        return None
     try:
         payload = json.loads(proc.stdout)
         checks = payload.get("checks", [])
-    except (ValueError, AttributeError):
-        ui.step_warn("Could not parse 'trw-mcp doctor' output; verify the install manually.")
-        return False
+    except (ValueError, AttributeError):  # trw-fail-silent-allow: reported via step_warn; the verdict is incomplete
+        ui.step_warn("Could not parse 'trw-mcp doctor' output; run 'trw-mcp doctor' manually to check the install.")
+        return None
     failed = [
         (str(check.get("name", "?")), str(check.get("message", "")).strip())
         for check in checks
@@ -5295,9 +5422,10 @@ def phase_configure(
     api_key = ""
     telemetry_enabled = False
 
+    prior_name = _reusable_prior_name(ui, prior_config)
     if interactive:
-        if prior_config.get("project_name"):
-            project_name = str(prior_config["project_name"])
+        if prior_name:
+            project_name = prior_name
             ui.step_ok(f"Project: {project_name} (installation_id in .trw/config.yaml, from prior install)")
         else:
             draw_divider("Project Identity")
@@ -5330,9 +5458,7 @@ def phase_configure(
         telemetry_enabled = _resolve_interactive_telemetry(ui, opt_telemetry=opt_telemetry, prior_config=prior_config)
     else:
         # Script mode: use flags
-        project_name = (
-            sanitize_project_name(opt_name) if opt_name else str(prior_config.get("project_name") or default_name)
-        )
+        project_name = sanitize_project_name(opt_name) if opt_name else (prior_name or default_name)
         # PRD-FIX-067-FR02: Check prior_config before opt_api_key
         if prior_config.get("api_key"):
             api_key = str(prior_config["api_key"])
@@ -5688,6 +5814,31 @@ def main() -> None:
         default=None,
         help="Client surface(s) to configure, e.g. codex or cursor-ide,codex,antigravity-cli (prompted in interactive mode)",
     )
+    # ── trw_dispatch setup (PRD-INFRA-210 FR08/FR10) ─────────────────
+    parser.add_argument(
+        "--with-dispatch",
+        action="store_true",
+        help="Turn trw_dispatch on without asking (same as TRW_WITH_DISPATCH=1)",
+    )
+    parser.add_argument(
+        "--no-dispatch",
+        action="store_true",
+        help="Turn trw_dispatch off without asking (same as TRW_WITH_DISPATCH=0)",
+    )
+    parser.add_argument(
+        "--dispatch-model",
+        action="append",
+        default=[],
+        metavar="CLIENT=MODEL",
+        help="Pin a dispatch model for a client, repeatable (also TRW_DISPATCH_MODELS=CLIENT=MODEL,...)",
+    )
+    parser.add_argument(
+        "--dispatch-effort",
+        action="append",
+        default=[],
+        metavar="CLIENT=LEVEL",
+        help="Pin a dispatch effort for a client, repeatable (also TRW_DISPATCH_EFFORTS=CLIENT=LEVEL,...)",
+    )
     # ── Proprietary package install (PRD-INFRA-126) ──────────────────
     parser.add_argument(
         "--with-proprietary",
@@ -6007,7 +6158,20 @@ def main() -> None:
         # the --upgrade path too: an upgrade now refreshes deployed assets
         # (_deployed_framework_is_stale), and an upgrade that left the framework
         # broken is exactly the case a green "Upgrade complete" would hide.
-        health_ok = run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
+        health_ok = run_install_doctor(
+            ui,
+            python,
+            target_dir,
+            pip_target=args.pip_target,
+            dispatch_args=tuple(
+                build_dispatch_args(
+                    with_dispatch=args.with_dispatch,
+                    no_dispatch=args.no_dispatch,
+                    models=args.dispatch_model,
+                    efforts=args.dispatch_effort,
+                )
+            ),
+        )
 
         # Semantic-retrieval readiness. Marker-free and gated only on the
         # operator's own opt-out: it runs on EVERY run that wants embeddings,
@@ -6094,6 +6258,7 @@ def main() -> None:
             telemetry_enabled=telemetry_state,
             learning_sharing_enabled=sharing_state,
             health_ok=health_ok,
+            dispatch_line=dispatch_line(),
         )
 
         # PRD-INFRA-142 FR01: emit a single install_complete funnel event.

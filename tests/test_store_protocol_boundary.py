@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import trw_mcp
+from tests import _source_index as source_index
 
 pytestmark = pytest.mark.unit
 
@@ -20,7 +21,7 @@ def test_trw_mcp_never_reaches_past_store_access() -> None:
     offenders: list[str] = []
     root = Path(trw_mcp.__file__).parent
     for path in sorted(root.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(source_index.tree(path)):
             if isinstance(node, ast.ImportFrom):
                 modules = [f"{node.module}.{alias.name}" for alias in node.names]
             elif isinstance(node, ast.Import):

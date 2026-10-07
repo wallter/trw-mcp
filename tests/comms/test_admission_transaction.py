@@ -16,7 +16,7 @@ import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
 from tests._layout import requires_local_timing
-from tests._timing import assert_budget
+from tests._timing import assert_budget, serial_timing_only
 from tests.comms._wait_transport_support import held_wait
 from tests.comms.test_policy import SendScene, scene
 
@@ -521,6 +521,10 @@ def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
 
 
 @requires_local_timing
+# A p95 wall-clock budget for lock hold and operation cost: it measures the host, so it runs only alone
+# (canary timing stage -n 1, C1-timing -n 0). It missed beside 7 other workers at -n 8 (2026-10-06); the
+# deterministic half (one lock per transaction, never nested) is the unmarked test above, in every run.
+@serial_timing_only
 def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope_budget(
     scene: SendScene, monkeypatch: pytest.MonkeyPatch
 ) -> None:

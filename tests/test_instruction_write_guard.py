@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._layout import requires_local_timing
 from tests._structlog_capture import captured_structlog  # noqa: F401 -- pytest fixture
 from tests._timing import assert_budget
@@ -1420,7 +1421,7 @@ def _names_a_surface(target: str, expr: ast.expr) -> bool:
 
 def _scan_source_for_instruction_writes(source: str, *, module: str) -> list[_WriteSite]:
     """Return every site in *source* that writes a user instruction surface."""
-    tree = ast.parse(source)
+    tree = source_index.parse(source)
     assignments: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -1491,7 +1492,7 @@ def _collect_parametrized_writes(root: Path) -> list[_ParametrizedWrite]:
     """Find every write whose target is a parameter with no local assignment."""
     found: list[_ParametrizedWrite] = []
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         module = str(path.relative_to(root))
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -1534,7 +1535,7 @@ def _widen_via_call_sites(root: Path, parametrized: list[_ParametrizedWrite]) ->
     widened: list[_WriteSite] = []
     for path in sorted(root.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = source_index.parse(source)
         module = str(path.relative_to(root))
         assignments: dict[str, str] = {}
         for node in ast.walk(tree):
@@ -1585,7 +1586,7 @@ def _scan_instruction_writes(root: Path) -> list[_WriteSite]:
 
 def _referenced_names(path: Path) -> set[str]:
     """Return every identifier referenced anywhere in *path*'s AST."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = source_index.tree(path)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):

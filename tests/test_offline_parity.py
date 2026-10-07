@@ -11,8 +11,13 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._memory_fixtures import DaemonCheckout
 from tests.conftest import _run_async, make_test_server
+
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
 
 
 def _prepare_trw_dir(tmp_path: Path) -> Path:

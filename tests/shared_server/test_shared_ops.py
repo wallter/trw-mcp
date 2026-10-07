@@ -181,6 +181,7 @@ def test_a_seeded_env_still_blocks_what_the_source_quarantined(paths: SharedPath
         assert dev.get("L-fine", namespace="default") is not None
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_a_source_ledger_that_cannot_be_read_refuses_the_whole_seed(paths: SharedPaths) -> None:
     """Never a store without its ledger: an unreadable source ledger leaves dev with neither."""
     from trw_memory.security.quarantine_ledger import ledger_for_config
@@ -291,6 +292,7 @@ def test_a_source_ledger_behind_an_untraversable_directory_refuses_the_seed(path
     assert not (target / "memory.db").exists() and not dev_ledger.exists()
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_a_review_queue_that_cannot_be_copied_keeps_the_seeded_ledger_and_names_the_retry(
     paths: SharedPaths,
 ) -> None:

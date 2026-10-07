@@ -107,8 +107,9 @@ def add_orchestrator(
     """Register the caller as the orchestrator member of an existing formation.
 
     Orchestrator-only (the caller's pinned run must own the manifest). Idempotent
-    for the same id and pin: nothing is written and the revision does not move. A
-    second, different orchestrator binding is refused rather than replaced, and an
+    for the same id and pin: nothing is written and the revision does not move. The
+    same member id under a NEW pin rebinds the orchestrator (its session's pin changed);
+    a different member id is refused rather than replaced, and an
     id already used by any other member (a worker slot, even an unjoined admitted
     one) is refused; remove that slot first.
     """
@@ -123,24 +124,43 @@ def add_orchestrator(
                 f"run {expected}; the calling run is {caller_run_path or '(unresolved)'}"
             )
         existing = next((m for m in manifest.members if _bound_to_owner(manifest, m)), None)
+        rebound_from: str | None = None
+        others = list(manifest.members)
         if existing is not None:
-            if existing.member_id == member_id and existing.pin_key == pin_key:
+            if (
+                existing.member_id == member_id
+                and existing.pin_key == pin_key
+                and is_orchestrator_slot(manifest, existing)
+            ):
                 return manifest
-            raise FormationError(
-                f"formation {formation_id!r} already binds the orchestrator run to member {existing.member_id!r} "
-                f"(pin {existing.pin_key!r}); refusing to replace it"
-            )
-        if any(m.member_id == member_id for m in manifest.members):
+            if not is_orchestrator_slot(manifest, existing) or existing.member_id != member_id:
+                # A worker slot the owner run joined is never rewritten into an orchestrator: that would drop its
+                # ownership globs and PRD ids and exempt it from completion checks.
+                raise FormationError(
+                    f"formation {formation_id!r} already binds the orchestrator run to member "
+                    f"{existing.member_id!r} (role {existing.role!r}, pin {existing.pin_key!r}); refusing to replace it"
+                )
+            # The orchestrator slot under a NEW pin: the lead session's MCP pin changed (feedback #144). The caller
+            # run was proven above to own this manifest, and the CLI proved the new pin owns it. Only the pin moves.
+            if not pin_key:
+                orchestrator_member(expected, member_id, pin_key)  # raises the one named refusal
+            rebound_from = existing.pin_key
+            others = [m for m in manifest.members if m is not existing]
+        if any(m.member_id == member_id for m in others):
             raise FormationError(
                 f"member id {member_id!r} is already in formation {formation_id!r}; remove that slot "
                 "or choose another id for the orchestrator"
             )
-        member = orchestrator_member(expected, member_id, pin_key)
+        member = (
+            existing.model_copy(update={"pin_key": pin_key})
+            if rebound_from is not None and existing is not None
+            else orchestrator_member(expected, member_id, pin_key)
+        )
         try:
             revised = FormationManifest.model_validate(
                 {
                     **manifest.model_dump(mode="json"),
-                    "members": [*(m.model_dump(mode="json") for m in manifest.members), member.model_dump(mode="json")],
+                    "members": [*(m.model_dump(mode="json") for m in others), member.model_dump(mode="json")],
                     "revision": manifest.revision + 1,
                     "updated_utc": datetime.now(timezone.utc).isoformat(),
                 }
@@ -148,5 +168,10 @@ def add_orchestrator(
         except ValueError as exc:
             raise FormationError(f"adding the orchestrator member would make the manifest invalid: {exc}") from exc
         box[0] = revised
-    logger.info("formation_orchestrator_added", formation_id=formation_id, member_id=member_id)
+    logger.info(
+        "formation_orchestrator_added",
+        formation_id=formation_id,
+        member_id=member_id,
+        rebound_from_pin=rebound_from,
+    )
     return revised

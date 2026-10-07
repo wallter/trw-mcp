@@ -22,6 +22,8 @@ from trw_mcp.dispatch._types import DispatchRequest
 from trw_mcp.models.config._fields_dispatch import DEFAULT_DISPATCH_MAX_TURNS
 
 __all__ = [
+    "configured_effort",
+    "configured_models",
     "operator_set",
     "policy_record",
     "require_effort",
@@ -117,6 +119,30 @@ def operator_set(dispatch_cfg: object, name: str) -> bool:
     if isinstance(marked, frozenset):
         return name in marked
     return hasattr(dispatch_cfg, name)
+
+
+def configured_models(dispatch_cfg: object) -> object:
+    """The operator's ``dispatch_default_models`` map, or None when the operator set none."""
+    return (
+        getattr(dispatch_cfg, "dispatch_default_models", None)
+        if operator_set(dispatch_cfg, "dispatch_default_models")
+        else None
+    )
+
+
+def configured_effort(dispatch_cfg: object, client: str) -> object:
+    """Operator effort for *client*: its ``dispatch_default_efforts`` entry, else the global default (PRD-INFRA-210-FR02)."""
+    efforts = getattr(dispatch_cfg, "dispatch_default_efforts", None)
+    per_client = (
+        efforts.get(client)
+        if operator_set(dispatch_cfg, "dispatch_default_efforts") and isinstance(efforts, dict)
+        else None
+    )
+    if per_client:
+        return per_client
+    if operator_set(dispatch_cfg, "dispatch_default_effort"):
+        return getattr(dispatch_cfg, "dispatch_default_effort", None)
+    return None
 
 
 def resolve_max_turns(configured: object, role: str | None) -> tuple[int | None, str]:

@@ -27,6 +27,9 @@ from trw_mcp.state._ceremony_progress_state import (
 from trw_mcp.state.nudge_analysis import compute_nudge_analysis
 from trw_mcp.tools._ceremony_status import append_ceremony_status
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 def _checkpoint_pending_workspace(tmp_path: Path) -> Path:
     """A .trw workspace where session_start is done but checkpoint is pending."""

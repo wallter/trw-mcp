@@ -19,6 +19,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 from trw_mcp._checkout_write import record_run_write
+from trw_mcp._yaml_memo import memo_parse
 from trw_mcp.channels._manifest_models import ChannelEntry
 
 log = structlog.get_logger(__name__)
@@ -247,6 +248,13 @@ def migrate_retired_entry_keys(path: Path) -> int:
     return dropped
 
 
+def _load_safe(text: str, name: str) -> Any:
+    """*text* through the safe loader, its error marks naming *name* as reading the open file did."""
+    stream = io.StringIO(text)
+    stream.name = name
+    return YAML(typ="safe").load(stream)
+
+
 def load(path: Path) -> ChannelManifest:
     """Load and validate a channel manifest from *path*.
 
@@ -259,10 +267,11 @@ def load(path: Path) -> ChannelManifest:
     if not path.exists():
         raise ManifestMissingError(f"Manifest not found: {path}")
 
-    yaml = YAML(typ="safe")
+    with path.open("r", encoding="utf-8") as fh:
+        text, name = fh.read(), fh.name
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            raw: Any = yaml.load(fh)
+        # Memoised by content hash inside an install (``trw_mcp._yaml_memo``): one install loads this per client.
+        raw: Any = memo_parse("channel-manifest", text, lambda body: _load_safe(body, name))
     except YAMLError as exc:
         # A syntactically malformed manifest is a VALIDATION failure, not an
         # unhandled crash: callers (channel_doctor, the bootstrap merge)

@@ -319,3 +319,97 @@ def test_mcp_dispatch_takes_effort_and_no_longer_takes_use_pty() -> None:
     params = inspect.signature(_mcp_dispatch()).parameters
     assert "effort" in params
     assert "use_pty" not in params
+
+
+# -- PRD-INFRA-210-FR01/FR02: per-client effort map ---------------------------------
+
+
+def test_efforts_map_loads_and_counts_as_operator_set() -> None:
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = TRWConfig(_env_file=None, dispatch_default_efforts={"codex": "medium"}).dispatch
+    assert cfg.dispatch_default_efforts == {"codex": "medium"}
+    assert "dispatch_default_efforts" in cfg.operator_set
+
+
+@pytest.mark.parametrize("bad", [{"codexx": "medium"}, {"codex": "extreme"}])
+def test_efforts_map_rejects_unknown_client_or_level(bad: dict[str, str]) -> None:
+    from pydantic import ValidationError
+
+    from trw_mcp.models.config import TRWConfig
+
+    with pytest.raises(ValidationError, match="dispatch_default_efforts"):
+        TRWConfig(_env_file=None, dispatch_default_efforts=bad)
+
+
+@pytest.mark.parametrize(
+    ("client", "request_effort", "per_client", "global_effort", "expected", "source"),
+    [
+        ("codex", None, {"codex": "medium"}, "high", "medium", "config"),
+        ("claude", None, {"codex": "medium"}, "high", "high", "config"),
+        ("agy", None, {"codex": "medium"}, "high", "high", "config"),
+        ("codex", "low", {"codex": "medium"}, "high", "low", "request"),
+        ("claude", "low", {"codex": "medium"}, "high", "low", "request"),
+        ("agy", "low", {"codex": "medium"}, "high", "low", "request"),
+        ("codex", None, {"codex": "high"}, None, "high", "config"),
+        ("claude", None, {"codex": "high"}, None, None, "none"),
+        ("codex", None, {}, None, "low", "default"),
+    ],
+)
+def test_per_client_effort_precedence(
+    client: str,
+    request_effort: str | None,
+    per_client: dict[str, str],
+    global_effort: str | None,
+    expected: str | None,
+    source: str,
+) -> None:
+    cfg = _Cfg(dispatch_default_efforts=per_client, dispatch_default_effort=global_effort)
+    req = _resolve(client=client, effort=request_effort, cfg=cfg)
+    assert (req.effort, req.effort_source) == (expected, source)
+
+
+def test_per_client_effort_reaches_the_codex_argv() -> None:
+    from trw_mcp.dispatch._commands import build_command
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = TRWConfig(_env_file=None, dispatch_default_efforts={"codex": "medium"}, dispatch_default_effort="high")
+    req = _resolve(client="codex", cfg=cfg.dispatch)
+    assert 'model_reasoning_effort="medium"' in build_command(req)
+
+
+# -- feedback #133: a confined read-only agy lane is steered off run_command --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("client", "read_only", "expects"),
+    [
+        ("agy", True, True),
+        ("agy", False, False),
+        ("codex", True, False),
+        ("claude", True, False),
+    ],
+)
+def test_host_confined_read_only_lane_gets_the_no_run_command_preamble(
+    client: str, read_only: bool, expects: bool
+) -> None:
+    req = resolve_dispatch_request(
+        client=client,
+        prompt="review the diff",
+        role="code-review",
+        model=None,
+        cwd=Path("/tmp"),
+        timeout_s=None,
+        read_only=read_only,
+        isolate=True,
+        use_pty=False,
+        dispatch_cfg=_Cfg(),
+    )
+    assert ("run_command" in req.prompt) is expects
+    assert req.prompt.endswith("review the diff")
+
+
+def test_the_preamble_does_not_widen_the_confinement() -> None:
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS
+
+    assert CLIENT_SPECS["agy"].host_confinement is True

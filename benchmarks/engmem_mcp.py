@@ -296,12 +296,33 @@ async def _run_against(
     namespace: str,
     library: Any,
 ) -> dict[str, Any]:
+    """Score the arms with backend sync stubbed out for exactly this run.
 
-    from fastmcp import Client
-
+    The stub is a module global, so it is restored on the way out: left in place it outlived the run in
+    whatever process called it, and in a pytest worker every later test that resolves backend sync
+    silently ran the no-op (the deferred boot step "created no sync task").
+    """
     import trw_mcp.server._boot_deferred as boot_deferred
 
+    original = boot_deferred._resolve_backend_sync
     boot_deferred._resolve_backend_sync = lambda: None  # never sync from a benchmark
+    try:
+        return await _score_through_mcp(size, args, events, queries, successor_of, namespace, library)
+    finally:
+        boot_deferred._resolve_backend_sync = original
+
+
+async def _score_through_mcp(
+    size: int,
+    args: argparse.Namespace,
+    events: Any,
+    queries: Any,
+    successor_of: Any,
+    namespace: str,
+    library: Any,
+) -> dict[str, Any]:
+    from fastmcp import Client
+
     from trw_mcp.server._app import create_app
     from trw_mcp.server._tools import _tool_registrars
 

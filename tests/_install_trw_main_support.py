@@ -45,6 +45,7 @@ class MainRun:
             "project_setup": [],
             "configure": [],
             "semantic": [],
+            "banner": [],
             "warnings": [],
         }
         self.order: list[str] = []  # the stubbed phases, in the order main() ran them
@@ -141,7 +142,7 @@ def drive_main(
     if not stop_daemon:
         monkeypatch.setattr(installer, "stop_outdated_memory_daemon", lambda *_a, **_k: run.order.append("stop_daemon"))
     monkeypatch.setattr(installer, "_check_all_backends", lambda *_a, **_k: [])
-    monkeypatch.setattr(installer, "show_success_banner", lambda *_a, **_k: None)
+    monkeypatch.setattr(installer, "show_success_banner", _record("banner", None))
     monkeypatch.setattr(installer, "_emit_install_complete_event", lambda *_a, **_k: None)
 
     original_step_warn = installer.UI.step_warn

@@ -22,6 +22,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.telemetry.sender import BatchSender, stamp_consent
 
@@ -529,7 +530,7 @@ def test_every_send_root_is_its_payloads_trw_or_a_named_exception() -> None:
     offenders = [
         v
         for path in sorted(_SRC.rglob("*.py"))
-        for v in _violations(ast.parse(path.read_text(encoding="utf-8")), path.relative_to(_SRC).as_posix(), ALLOWLIST)
+        for v in _violations(source_index.tree(path), path.relative_to(_SRC).as_posix(), ALLOWLIST)
     ]
     assert not offenders, offenders
 
@@ -538,7 +539,7 @@ def test_every_allowlist_entry_still_names_a_real_exception() -> None:
     """A stale entry would silently pre-authorize a future violation at that qualname."""
     stale = []
     for module, qualname in ALLOWLIST:
-        tree = ast.parse((_SRC / module).read_text(encoding="utf-8"))
+        tree = source_index.tree(_SRC / module)
         if not any(v.startswith(f"{module}::{qualname} ") for v in _violations(tree, module, {})):
             stale.append((module, qualname))
     assert not stale, stale

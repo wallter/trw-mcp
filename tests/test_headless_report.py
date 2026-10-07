@@ -30,6 +30,7 @@ _KEYS = {
     "files_changed",
     "next_steps",
     "log_path",
+    "dispatch",
 }
 
 
@@ -203,3 +204,63 @@ def test_headless_flag_is_accepted_by_the_template_cli_as_script(tmp_path: Path)
     assert "unrecognized arguments" not in done.stderr
     assert "Directory not found" in done.stderr  # parsed, then refused the missing target: nothing was asked
     assert done.returncode == 1
+
+
+# -- PRD-INFRA-210-FR09: the additive ``dispatch`` object -------------------------------------------------------------
+
+
+def test_dispatch_key_defaults_to_the_effective_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS, SUPPORTED_CLIENTS
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for key in tuple(os.environ):
+        if key.startswith("TRW_DISPATCH_"):
+            monkeypatch.delenv(key)
+    doc = _doc(tmp_path)
+    block = doc["dispatch"]
+    assert doc["schema_version"] == 1
+    assert (block["enabled"], block["decided_by"], block["default_client"]) == (False, "default", "codex")  # type: ignore[index]
+    rows = {r["client"]: r for r in block["clients"]}  # type: ignore[index]
+    assert list(rows) == list(SUPPORTED_CLIENTS)
+    assert (rows["codex"]["model"], rows["codex"]["effort"]) == (
+        CLIENT_SPECS["codex"].default_model,
+        CLIENT_SPECS["codex"].default_effort,
+    )
+    json.dumps(doc)  # the whole document stays JSON-serialisable
+
+
+def test_dispatch_key_reports_a_prior_enabled_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "config.yaml").write_text("dispatch_tools_exposed: true\n", encoding="utf-8")
+    block = _doc(tmp_path)["dispatch"]
+    assert (block["enabled"], block["decided_by"]) == (True, "prior")  # type: ignore[index]
+
+
+def test_dispatch_key_takes_the_steps_own_result_when_given(tmp_path: Path) -> None:
+    step = {
+        "enabled": True,
+        "decided_by": "flag",
+        "default_client": "codex",
+        "clients": [],
+        "writes": [],
+        "warnings": [],
+    }
+    assert _doc(tmp_path, dispatch=step)["dispatch"] == step
+
+
+def test_report_cli_reads_the_step_result_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    step = {"enabled": True, "decided_by": "prompt", "default_client": "codex", "clients": []}
+    (tmp_path / ".trw").mkdir()
+    result = tmp_path / "dispatch.json"
+    result.write_text(json.dumps(step), encoding="utf-8")
+    assert hr.main(["report", "--dir", str(tmp_path), "--dispatch-json", str(result)]) == 0
+    assert json.loads(capsys.readouterr().out)["dispatch"] == step
+
+
+def test_a_credential_in_a_supplied_dispatch_result_is_redacted(tmp_path: Path) -> None:
+    secret = "sk-ant-api03-" + "A1b2C3d4E5f6G7h8I9j0" * 2
+    step = {"enabled": True, "warnings": [f"--dispatch-effort: bad {secret}"], "clients": [{"model": secret}]}
+    doc = _doc(tmp_path, dispatch=step)
+    assert secret not in json.dumps(doc)
+    assert doc["dispatch"]["enabled"] is True  # type: ignore[index]

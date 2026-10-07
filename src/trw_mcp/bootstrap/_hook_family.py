@@ -25,7 +25,7 @@ from pathlib import Path
 
 from trw_mcp.server._doctor_hook_family import defined_functions, sourced_libs, verify_calls
 
-from ._retire import as_retirement, record_retirement, retire_file
+from ._retire import as_retirement, describe_removal, record_retirement, retire_file
 from ._safe_remove import remove_if_hash
 from ._version_manifest import _framework_content_hashes, _is_user_modified
 
@@ -194,10 +194,13 @@ def settle_edited_libs(
                     _settle_occupied_name(target_dir, rel, at, edited[lib], result)
             continue
         result.setdefault("retired", []).append(rel)  # or the dirty-file restore puts the old lib back
-        warnings.append(
-            f"{rel}: your edited copy was moved to {at or '.trw/trash'} and"
-            f" {'a file written there meanwhile was kept' if lib in retained else 'the bundled lib installed'}, because"
-            f" the {len(deps[lib])} hooks that source it were updated and need its functions"
+        now = "a file written there meanwhile was kept" if lib in retained else "the bundled lib installed"
+        why = f"the {len(deps[lib])} hooks that source it were updated and need its functions"
+        describe_removal(
+            result,
+            rel,
+            f"{rel}: your edited copy was moved to {at or '.trw/trash'} and {now}, because {why}",
+            f"{rel}: your edited copy would be moved to .trw/trash and {now}, because {why}",
         )
     for lib, reason in sorted(refused.items()):
         warnings.append(
@@ -259,9 +262,13 @@ def _refresh_stranded_hooks(
                 if outcome.status == "retained"
                 else "the bundled hook installed"
             )
-            result.setdefault("warnings", []).append(
-                f"{rel}: your edited hook calls {calls}, which the updated {', '.join(libs)} no longer defines;"
-                f" it was moved to {at} and {now} (to restore it, copy it back and re-add the missing functions)"
+            gone_calls = f"your edited hook calls {calls}, which the updated {', '.join(libs)} no longer defines"
+            describe_removal(
+                result,
+                rel,
+                f"{rel}: {gone_calls}; it was moved to {at} and {now}"
+                " (to restore it, copy it back and re-add the missing functions)",
+                f"{rel}: {gone_calls}; it would be moved to .trw/trash and {now}",
             )
         else:
             result.setdefault("warnings", []).append(

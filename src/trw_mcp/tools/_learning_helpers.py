@@ -206,6 +206,7 @@ def check_and_handle_dedup(
                 "impact": params.impact,
                 "type": getattr(params.type, "value", params.type),
                 "confidence": getattr(params.confidence, "value", params.confidence),
+                "evidence_level": getattr(params.evidence_level, "value", params.evidence_level),
                 "protection_tier": getattr(params.protection_tier, "value", params.protection_tier),
                 "assertions": params.assertions or [],  # PRD-CORE-086 FR05
             }
@@ -350,6 +351,7 @@ def _merge_patch(merged_entry: dict[str, object], revision: str | None) -> Learn
             # the primary backend (recall source of truth) keeps the stronger tier.
             "protection_tier": str(merged_entry.get("protection_tier") or "normal"),
             "confidence": str(merged_entry.get("confidence") or "unverified"),
+            "evidence_level": str(merged_entry.get("evidence_level") or "unknown"),
             "type": str(merged_entry.get("type") or "pattern"),
             "if_revision": revision,
         }

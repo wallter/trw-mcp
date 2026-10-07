@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
 from tests._stdio_harness import pinned_server_env
 
 _TESTS = Path(__file__).resolve().parent
@@ -40,7 +41,7 @@ def _spawns_server(call: ast.Call) -> bool:
 
 
 def unpinned_spawns(source: str, path: str) -> list[str]:
-    tree = ast.parse(source)
+    tree = source_index.parse(source)
     lines = source.splitlines()
     bad = []
     for node in ast.walk(tree):

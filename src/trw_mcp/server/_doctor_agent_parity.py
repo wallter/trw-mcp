@@ -130,6 +130,8 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
         for the machine-readable output.
     """
     from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.bootstrap._retired_artifacts import trw_agent_provenance
+    from trw_mcp.bootstrap._utils import printable
     from trw_mcp.exceptions import AgentFormatError
 
     expected = _bundled_agent_stems()
@@ -161,6 +163,7 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
     unsupported: list[str] = []
     tombstoned = _tombstoned_paths(target)
     removed_total = 0
+    unexpected: list[str] = []
 
     for client in dict.fromkeys(clients):
         try:
@@ -192,6 +195,7 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
         removed = [stem for stem in absent if fmt.destination_for(stem) in tombstoned]
         missing = [stem for stem in absent if stem not in removed]
         removed_total += len(removed)
+        retired_agents, unknown_agents = trw_agent_provenance(target, dest, fmt.filename_suffix)
         rows.append(
             AgentParityRow(
                 client=client,
@@ -201,8 +205,15 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
                 expected=len(expected),
                 missing=missing,
                 removed=removed,
+                unexpected=[*retired_agents, *unknown_agents],
             )
         )
+        # Filenames come from disk: escaped at the human-message boundary so a hostile name cannot drive the terminal.
+        unexpected.extend(
+            f"{printable(name)} is retired (TRW no longer ships it; see the retired_artifacts check)"
+            for name in retired_agents
+        )
+        unexpected.extend(f"{printable(name)} is not shipped by TRW (TRW leaves it alone)" for name in unknown_agents)
         if missing:
             shortfalls.append(f"{client} is missing {', '.join(missing)} from {fmt.destination_dir}/")
 
@@ -216,6 +227,12 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
         if removed_total
         else ""
     )
+    if unexpected and not shortfalls:
+        return (
+            "WARN",
+            "; ".join(unexpected) + "." + removed_note,
+            rows,
+        )
     if shortfalls:
         return "WARN", "; ".join(shortfalls) + ". Run 'trw-mcp update-project' to reinstall them." + removed_note, rows
     installed_clients = ", ".join(str(row["client"]) for row in rows if row.get("supported"))

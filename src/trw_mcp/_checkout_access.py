@@ -235,6 +235,7 @@ def _retire_locked(path: Path, current: tuple[int, int]) -> tuple[tuple[int, int
         if siblings:
             return None
         del _inode_paths[previous]
+    _drain_releases_locked()  # a destroyed connection's queued release must not read as a live hold
     if previous in _held_inodes or _uncertain_holds > 0:
         # A connection still holds the old inode (or one whose inode is unknown is open): closing would drop its
         # locks. The descriptor stays pinned with no path naming it; eviction closes it once it is unheld.

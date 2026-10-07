@@ -65,17 +65,17 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.1.1 -->
+<!-- whats-new: 9.2.0 -->
 
+- **Dispatch setup in the installer.** Turn on `trw_dispatch` and pin a model and effort per client while installing, or later with `trw-mcp config dispatch`.
+- **`trw-mcp config set`.** Change one setting safely: validated exactly as TRW loads it, secrets refused, and your file's quotes and layout kept.
+- **Prompts never wait on recall.** The prompt hook runs inside a time budget and skips recall instead of stalling your client.
+- **Clearer installs and updates.** Each changed file is named once with its reason, one status line sums up, and a doctor timeout no longer reads as FAILED.
+- **Your data stays yours.** `backup restore` never touches another project's data, and doctor suggests deleting only files TRW provably shipped.
 - **Handoffs another session can trust.** The `trw-handoff` skill writes a sealed record with labelled claims and verbatim constraints, and `receive` checks it before acting.
 - **Set up once per computer.** Sign in and configure `trw_assess` once; new projects reuse `~/.trw` instead of asking again.
-- **Safer installs.** Installing for Claude Code plus another client keeps its hooks, and `doctor` fails loudly when a registered TRW hook is missing.
-- **A sensible default.** New installs configure Claude Code, Codex and Antigravity CLI, and you can opt in to pre-approving TRW's own Codex hooks.
-- **TRW progress in Claude Code's status line.** Phase, checkpoint age, build, review and deliver evidence on one line; `trw-mcp local status --json` gives any client the same snapshot.
-- **A cap on dispatch fan-out.** Opt in to `dispatch_max_concurrent_children` to limit how many dispatched agents run at once.
-- **Learning keeps working across upgrades.** A memory daemon stricter than the server no longer blocks `trw_learn` and `trw_recall`.
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.2. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.3. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
 

@@ -95,7 +95,7 @@ def flush_outbox(*, limit: int) -> dict[str, Any]:
 
     backend_url, api_key = _submit._backend()
     if not backend_url or not api_key:
-        return {"error": _submit._NOT_CONFIGURED, "results": []}
+        return {"error": _submit._not_configured(backend_url, api_key), "results": []}
     trw_dir = resolve_trw_dir()
     results: list[dict[str, Any]] = []
     # A record whose delivery is already known (its sent/ copy could not be written) is never resent.

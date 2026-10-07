@@ -16,6 +16,9 @@ from tests._tools_ceremony_support import (
 )
 from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 
 @pytest.mark.integration
 class TestDeliverTelemetryIntegration:

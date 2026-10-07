@@ -34,9 +34,22 @@ import shutil
 from pathlib import Path
 
 import pytest
+from trw_memory import _write_census
 from trw_memory._write_census import CLASS_TAGS, Site, census, raw_write_sites, report
 
 import trw_mcp
+from tests import _source_index as source_index
+
+
+@pytest.fixture(autouse=True)
+def _parse_through_the_source_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``raw_write_sites`` lives in trw-memory's src, so route its ``ast.parse`` through the shared index.
+
+    The matcher (``ordered_sites``) is the real one and the planted cases still copy real files and plant real
+    writes: only the parse of an unchanged file is shared, keyed by content hash.
+    """
+    monkeypatch.setattr(_write_census, "ast", source_index.cached_ast)
+
 
 #: The trees FR05 audits, relative to the ``trw_mcp`` package directory.
 _AUDITED_TREES = (
@@ -252,6 +265,14 @@ _AUDITED_WRITES: dict[Site, tuple[str, str]] = {
     ("tools/_assess_cli.py", "_ask_on_tty", 1): (
         "own-state-stays",
         "opens the controlling terminal /dev/tty read-write to ask one yes/no question; writes no file.",
+    ),
+    ("tools/_config_dispatch_step.py", "_ask_line", 1): (
+        "own-state-stays",
+        "opens the controlling terminal /dev/tty read-write to ask one pin question; writes no file.",
+    ),
+    ("tools/_config_writer.py", "_candidate_layer", 1): (
+        "own-state-stays",
+        "writes the candidate config text into a private tempfile.TemporaryDirectory scratch file so the loader's own reader can parse it; never inside a checkout.",
     ),
     ("tools/_deferred_locking.py", "_try_acquire_deferred_lock", 1): (
         "unscheduled-checkout-write",

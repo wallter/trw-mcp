@@ -40,24 +40,27 @@ class UnsupportedClientError(ValueError):
     """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
-def _client_effort(spec: ClientSpec, req: DispatchRequest) -> str | None:
-    """The effort value to put on *spec*'s command line, or ``None`` to pass nothing.
+def applied_effort(spec: ClientSpec, effort: str | None, model: str | None) -> str | None:
+    """The effort value *spec*'s command line would carry for a resolved *effort*, or ``None`` for none.
 
-    Nothing is passed when the request carries no effort, when the client documents
-    no effort flag, or when the explicit model is a Haiku model: Haiku accepts no
-    effort parameter at all, so sending one is an error rather than a no-op. A level
-    the client does not accept is CLAMPED DOWN to the strongest level it does accept
-    (``xhigh`` on a ``low|medium|high`` client runs at ``high``) -- the same clamp
-    TRW's effort adapter applies, and never upward, so a request is not silently
-    made more expensive than it asked for.
+    Nothing is passed when there is no effort, when the client documents no effort flag, or when the
+    model is a Haiku model: Haiku accepts no effort parameter at all, so sending one is an error rather
+    than a no-op. A level the client does not accept is CLAMPED DOWN to the strongest level it does
+    accept (``xhigh`` on a ``low|medium|high`` client runs at ``high``) -- the same clamp TRW's effort
+    adapter applies, and never upward, so a request is not silently made more expensive than it asked for.
     """
-    if req.effort is None or not (spec.effort_flag or spec.effort_config_key):
+    if effort is None or not (spec.effort_flag or spec.effort_config_key):
         return None
-    if req.model and "haiku" in req.model.lower():
+    if model and "haiku" in model.lower():
         return None
-    ceiling = EFFORT_LEVELS.index(req.effort)
+    ceiling = EFFORT_LEVELS.index(effort)
     supported = [level for level in spec.effort_levels if EFFORT_LEVELS.index(level) <= ceiling]
     return supported[-1] if supported else None
+
+
+def _client_effort(spec: ClientSpec, req: DispatchRequest) -> str | None:
+    """:func:`applied_effort` for a built request."""
+    return applied_effort(spec, req.effort, req.model)
 
 
 def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:

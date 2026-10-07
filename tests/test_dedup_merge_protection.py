@@ -72,6 +72,9 @@ class TestMergePreservesProtection:
             "type": "incident",
         }
 
+        survivor = reader.read_yaml(path)
+        survivor["evidence_level"] = "observed"  # verified confidence needs a supporting survivor (feedback #145)
+        writer.write_yaml(path, survivor)
         merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
 

@@ -635,6 +635,7 @@ def _learn_duplicate(  # type: ignore[no-untyped-def]
     writer=None,
     evidence: list[str] | None = None,
     detail: str = "a longer restatement of the survivor",
+    **fields: str,
 ):
     verdict = MagicMock(action="merge", existing_id="L-survivor", similarity=0.9)
     with (
@@ -652,6 +653,7 @@ def _learn_duplicate(  # type: ignore[no-untyped-def]
                 impact=0.5,
                 source_type="agent",
                 source_identity="",
+                **fields,
             ),
             entries_dir,
             FileStateReader(),
@@ -778,3 +780,40 @@ def test_a_merge_leaves_no_lock_file_in_the_entries_directory(tmp_path: Path) ->
 
     assert sorted(p.name for p in entries_dir.iterdir() if p.name.endswith(".lock")) == []
     assert (entries_dir / "existing.yaml").is_file()
+
+
+class _InvariantStore(FakeMemoryStore):
+    """A store that refuses ``confidence='verified'`` on unsubstantiated evidence, as the real one does."""
+
+    def correct(self, learning_id, patch):  # type: ignore[no-untyped-def]
+        from trw_memory.security._evidence_invariant import violates_evidence_invariant
+
+        entry = self.get(learning_id)
+        assert entry is not None
+        updates = {"confidence": patch.confidence} if patch.confidence else {}
+        if patch.evidence_level:
+            updates["evidence_level"] = patch.evidence_level
+        if violates_evidence_invariant(entry.model_copy(update=updates)):
+            return {"learning_id": learning_id, "status": "error", "error": "confidence='verified' requires evidence"}
+        return super().correct(learning_id, patch)
+
+
+@pytest.mark.parametrize(
+    ("survivor_level", "confidence"),
+    [("unknown", "unverified"), ("observed", "verified")],
+)
+def test_a_verified_duplicate_merges_without_tripping_the_evidence_invariant(
+    tmp_path: Path, survivor_level: str, confidence: str
+) -> None:
+    """Feedback #145: the survivor keeps its evidence_level; verified is taken only where it supports it."""
+    store = _InvariantStore()
+    entries_dir = _merge_setup(tmp_path, store)
+    assert store.correct("L-survivor", LearningPatch(evidence_level=survivor_level))["status"] == "updated"  # type: ignore[arg-type]
+
+    result = _learn_duplicate(tmp_path, entries_dir, store, "L-dup", confidence="verified", evidence_level="observed")
+
+    assert result is not None and result["status"] == "merged"
+    merged = store.get("L-survivor")
+    assert merged is not None
+    got = tuple(str(getattr(v, "value", v)) for v in (merged.confidence, merged.evidence_level))
+    assert got == (confidence, survivor_level)

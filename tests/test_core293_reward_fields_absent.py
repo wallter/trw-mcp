@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import trw_mcp
+from tests import _source_index as source_index
 
 RETIRED = re.compile(r"\b(q_value|q_observations|helpful_count|unhelpful_count)\b")
 
@@ -44,7 +45,7 @@ def test_no_retired_reward_field_in_code() -> None:
     root = Path(trw_mcp.__file__).parent
     hits: list[str] = []
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         docstrings = _docstring_ids(tree)
         for node in ast.walk(tree):
             texts = _names(node)

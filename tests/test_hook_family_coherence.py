@@ -301,6 +301,7 @@ def test_an_edited_file_already_described_is_not_also_called_unchanged(
             "errors": [],
             "warnings": [f"{edited}: your edited copy was moved to .trw/trash/x/data and the bundled lib installed"],
             "retired": [edited, ".claude/hooks/old.sh"],
+            "retired_described": [edited],
         }
 
     monkeypatch.setattr(bootstrap, "update_project", fake_update)

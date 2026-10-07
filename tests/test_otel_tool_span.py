@@ -256,6 +256,7 @@ def test_dedup_action_matches_the_decision(
         impact=0.5,
         type="pattern",
         confidence="low",
+        evidence_level="unknown",
         protection_tier="normal",
         assertions=[],
     )

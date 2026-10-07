@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from trw_mcp.dispatch._client_aliases import CLIENT_ALIASES, MODEL_SHORTHANDS
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS, SUPPORTED_CLIENTS
+from trw_mcp.dispatch._commands import applied_effort
+from trw_mcp.dispatch._policy import configured_effort, configured_models, resolve_effort, resolve_model
 from trw_mcp.dispatch._roles import ROLE_TABLE
 
 #: Plain-English roles -> (registry role or None, writes allowed).
@@ -112,16 +115,46 @@ def resolve_role(role: str | None) -> tuple[str | None, bool | None]:
     raise TargetError(f"unknown role {role!r}; use one of: {', '.join(valid)}")
 
 
-def list_clients(default_models: dict[str, str] | None = None) -> dict[str, object]:
-    """Every dispatchable client with install state, aliases, and roles."""
-    models = default_models or {}
-    clients = []
+def resolved_dispatch_defaults(dispatch_cfg: object) -> list[dict[str, object]]:
+    """Per supported client: what a dispatch with no ``--model``/``--effort``/``--role`` would launch with.
+
+    ``installed`` is a PATH lookup only (no client process is started). ``model``/``effort`` and their
+    sources come from the same resolvers a real dispatch uses, with ``role=None`` (PRD-INFRA-210-FR03).
+    ``applied_effort`` is what the launch would really carry: the resolved level clamped to what the
+    client accepts, or None when the client has no effort carrier (or the model takes none).
+    """
+    rows: list[dict[str, object]] = []
     for cid in SUPPORTED_CLIENTS:
         spec = CLIENT_SPECS[cid]
-        installed = any(shutil.which(b) for b in spec.binary_names)
-        entry: dict[str, object] = {"client": cid, "installed": installed}
-        if default_model := models.get(cid) or spec.default_model:
-            entry["default_model"] = default_model
+        model, model_source = resolve_model(None, cid, None, configured_models(dispatch_cfg))
+        effort, effort_source = resolve_effort(None, None, configured_effort(dispatch_cfg, cid), client=cid)
+        rows.append(
+            {
+                "client": cid,
+                "installed": any(shutil.which(b) for b in spec.binary_names),
+                "model": model,
+                "model_source": model_source,
+                "effort": effort,
+                "effort_source": effort_source,
+                "applied_effort": applied_effort(spec, effort, model),
+            }
+        )
+    return rows
+
+
+def list_clients(default_models: dict[str, str] | None = None, dispatch_cfg: object | None = None) -> dict[str, object]:
+    """Every dispatchable client with install state, resolved defaults, aliases, and roles."""
+    cfg = dispatch_cfg if dispatch_cfg is not None else SimpleNamespace(dispatch_default_models=default_models or {})
+    clients = []
+    for row in resolved_dispatch_defaults(cfg):
+        cid = str(row["client"])
+        entry: dict[str, object] = {"client": cid, "installed": row["installed"]}
+        if row["model"]:
+            entry["default_model"] = row["model"]
+        if row["effort"]:
+            entry["default_effort"] = row["effort"]
+            entry["applied_effort"] = row["applied_effort"]  # what a launch carries: clamped, or None without a carrier
+        entry["model_source"], entry["effort_source"] = row["model_source"], row["effort_source"]
         aliases = sorted(a for a, c in CLIENT_ALIASES.items() if c == cid)
         aliases += sorted(s for s, (c, _m) in MODEL_SHORTHANDS.items() if c == cid)
         if aliases:

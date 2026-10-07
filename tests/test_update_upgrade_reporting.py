@@ -117,6 +117,43 @@ class TestKeptPathsArePlaceable:
         assert "WARNING: kept ./AGENTS.md:" in capsys.readouterr().out
 
 
+class TestKeptReportIsConsolidated:
+    """Feedback #158/#142: one canonical record per path, grouped by reason, never named twice."""
+
+    def test_a_path_already_named_retired_is_not_also_reported_kept(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        both = ".claude/agent-memory/trw-implementer"
+        _run_update(
+            _args(tmp_path),
+            _result(
+                preserved=[f"{both} (not_installer_owned)", ".claude/hooks/x.sh (not_installer_owned)"],
+                retired_present=[both],
+            ),
+        )
+
+        out = capsys.readouterr().out
+        assert both not in out
+        assert ".claude/hooks/x.sh" in out
+
+    def test_files_kept_for_one_reason_are_one_line_with_a_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        paths = [f".claude/agents/trw-{n}.md" for n in ("a", "b", "c")]
+        _run_update(_args(tmp_path), _result(preserved=[f"{p} (not_installer_owned)" for p in paths]))
+
+        kept = [line for line in capsys.readouterr().out.splitlines() if line.startswith("WARNING: kept")]
+        assert len(kept) == 1
+        assert "kept 3 files" in kept[0]
+        assert all(kept[0].count(p) == 1 for p in paths)
+
+    def test_a_single_kept_file_keeps_the_per_path_line(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _run_update(_args(tmp_path), _result(preserved=["FRAMEWORK.md (uncommitted_changes)"]))
+        assert "WARNING: kept ./FRAMEWORK.md: it has uncommitted changes in git" in capsys.readouterr().out
+
+
 # ── installer-meta.yaml: TRW's own stamp is refreshed, an edited one kept ─
 
 

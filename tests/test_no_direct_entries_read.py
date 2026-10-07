@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests import _source_index as source_index
 from tests._auto_recall_hook_harness import _HOOK_PATHS, _copy_hook_to_temp
 from tests._layout import PACKAGE_ROOT, requires_monorepo
 
@@ -57,6 +58,7 @@ MAINTENANCE_READERS: dict[str, str] = {
     "trw_mcp/tools/_learning_helpers.py::_resolve_merge_survivor": "dedup merge survivor lookup",
     "trw_mcp/tools/_learning_module_helpers.py::_sync_learning_yaml_backup": "the mirror's writer",
     "trw_mcp/tools/orchestration.py::register_orchestration_tools": "mkdir of the entries dir; reads none",
+    "trw_mcp/server/_doctor_user_yaml.py::_copies_by_id": "doctor census of user-tier sidecar copies; reports ids and paths only",
     "trw_mcp/telemetry/publisher.py::_load_hashes": "publish dedup hashes",
 }
 #: Mirror readers whose content DOES leave the process -- unfiltered. FR03 follow-up:
@@ -81,7 +83,7 @@ def mirror_readers(src: Path) -> set[str]:
     """Every function under *src* that reads the entries mirror, as ``path::function``."""
     found: set[str] = set()
     for path in sorted(src.rglob("*.py")):
-        for func in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for func in ast.walk(source_index.tree(path)):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             calls = {

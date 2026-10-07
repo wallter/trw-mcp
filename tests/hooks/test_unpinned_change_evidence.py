@@ -26,6 +26,9 @@ import trw_mcp.tools._delivery_helpers  # noqa: F401  (import-cycle order guard)
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.tools._delivery_event_checks import unpinned_session_changed_files
 
+# The deliver paths here assume a client with a change-evidence writer; declared, never inherited from the shell.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
+
 _REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _BUNDLED_HOOK = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "post-tool-event.sh"
 _PROJECTED_HOOK = _REPO_ROOT / ".claude" / "hooks" / "post-tool-event.sh"

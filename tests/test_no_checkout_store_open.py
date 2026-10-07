@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_index as source_index
+
 pytestmark = pytest.mark.unit
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
@@ -65,7 +67,7 @@ def _scan(root: Path = _SRC) -> tuple[dict[str, list[str]], dict[str, list[str]]
     openers: dict[str, list[str]] = {}
     for path in sorted(root.rglob("*.py")):
         module = path.relative_to(root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = source_index.tree(path)
         names_the_store = False
         opens: set[str] = set()
         found: set[str] = set()

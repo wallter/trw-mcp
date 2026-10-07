@@ -393,6 +393,7 @@ def test_record_corrupt_does_not_crash_update(initialized_repo, userdir, payload
     assert exc is None, f"a corrupt retry record crashes update-project: {exc!r}"
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores mode bits")
 def test_record_unwritable_userdir(initialized_repo, tmp_path_factory, monkeypatch) -> None:
     from trw_mcp.bootstrap._refused_restore import record_refused
 
@@ -438,7 +439,9 @@ def test_record_dangling_symlink_counted_as_purged(initialized_repo, tmp_path_fa
     rec = record_refused(repo, snap, [".claude/link.md"])
     notes: list[str] = []
     retry_refused(repo, notes)
-    found = [p for p in (repo / ".trw").rglob("link.md") if p.is_symlink()]
+    # rglob("*"), not rglob("link.md"): on Python 3.11 a literal last segment is matched with exists(), which
+    # follows the link, so a dangling one is never yielded and a kept link read as discarded.
+    found = [p for p in (repo / ".trw").rglob("*") if p.name == "link.md" and p.is_symlink()]
     print(f"\ndangling: notes={notes} saved={found} snap_exists={snap.exists()}")
     assert found or (snap / ".claude" / "link.md").is_symlink(), "the user's symlink was discarded as 'purged'"
 

@@ -364,6 +364,8 @@ def test_a_file_that_held_only_trws_block_leaves_no_capture_behind(
     claude.write_text(trw_only, encoding="utf-8")
     agents_before = (repo / "AGENTS.md").read_bytes()
     monkeypatch.setattr(sys, "platform", platform)
+    if platform == "darwin":  # every macOS home has ~/.Trash; the isolated home makes one only on a real Mac
+        (Path.home() / ".Trash").mkdir(exist_ok=True)
 
     out = _uninstall(repo, capsys)
 

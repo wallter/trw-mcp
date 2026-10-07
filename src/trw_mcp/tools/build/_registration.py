@@ -219,6 +219,7 @@ def register_build_tools(server: FastMCP) -> None:
                 status,
                 scope=scope,
                 session_id=resolve_pin_key(ctx=ctx, explicit=None),
+                static_not_run=static_not_run,
             )
             _record_session_observation(trw_dir, status)
         else:
@@ -230,6 +231,7 @@ def register_build_tools(server: FastMCP) -> None:
                 scope=scope,
                 session_id=resolve_pin_key(ctx=ctx, explicit=None),
                 session_only=True,
+                static_not_run=static_not_run,
             )
         _record_step("persist", _persist_started)
 
@@ -333,6 +335,8 @@ def register_build_tools(server: FastMCP) -> None:
             from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
             _build_ok = status.tests_passed and effective_static_checks_clean
+            # A static check that was not run beside passing tests is unknown, not failed (feedback #131).
+            _build_state: bool | None = None if static_not_run and status.tests_passed else _build_ok
             # PRD-CORE-294 FR04(a): the only failure detail this tool has --
             # the reported failures plus the scope label -- anchors the
             # learning-transition candidate; unused on a passing build.
@@ -341,8 +345,8 @@ def register_build_tools(server: FastMCP) -> None:
                 result,
                 trw_dir,
                 tool_name="build_check",
-                tool_success=_build_ok,
-                build_passed=_build_ok,
+                tool_success=status.tests_passed if static_not_run else _build_ok,
+                build_passed=_build_state,
                 failure_hints=_failure_hints,
             )
         except _SkipCeremonyStatus:

@@ -17,16 +17,75 @@
 # Fail-open: never blocks prompts. Output target: <150 tokens per phase line
 # plus at most auto_recall_max_tokens of recall.
 #
-# Performance: ~71ms baseline (infer_phase); a full 6.4k-entry scan + IDF scan
-# measures ~190ms warm against the 500ms deadline (PRD-FIX-124 NFR01).
+# Time budget (feedback #159/#160/#161): the client kills a UserPromptSubmit hook at its `timeout` (10 s) and
+# discards ALL of its output, so the Python this hook starts is bounded IN-PROCESS. The hook computes one
+# absolute deadline (epoch ms, TRW_HOOK_BUDGET_MS from now, default 7000) at entry and exports it as
+# TRW_HOOK_DEADLINE_MS; every python it launches (the recall module, the no-jq JSON fallback in lib-trw.sh)
+# arms a daemon watchdog thread before its heavy imports that exits 0 at the deadline, writing nothing
+# partial. Recall gets a tighter deadline of its own (TRW_AUTO_RECALL_DEADLINE_MS, default 2000 ms from the
+# start of the recall step), ONE instant shared by every interpreter candidate. A python that never reaches
+# its watchdog (a hung interpreter start) is killed by a shell backstop (_trw_wait_bounded in lib-trw.sh):
+# that single child pid, nothing else. The pure-shell steps are fast and stay unbounded. An overrun skips
+# recall injection, logs decision=deadline, and still emits the rest of the output. macOS has no timeout(1).
 set -e
 trap 'exit 0' EXIT
+_ups_default_budget_ms=7000
+_ups_default_recall_ms=2000
 
-_hook_dir="$(cd "$(dirname "$0")" && pwd)"
+# _ups_ms VALUE DEFAULT: a budget in milliseconds as a plain decimal, never octal (`08`, `0400`), at most
+# 60000; anything unparsable, zero, or longer than five digits falls back to DEFAULT or the cap.
+_ups_ms() {
+  _um_v=$1
+  case "$_um_v" in '' | *[!0-9]*)
+    printf '%s' "$2"
+    return 0
+    ;;
+  esac
+  while :; do
+    case "$_um_v" in 0?*) _um_v=${_um_v#0} ;; *) break ;; esac
+  done
+  if [ "${#_um_v}" -gt 5 ]; then
+    printf '%s' 60000
+  elif [ "$_um_v" -le 0 ]; then
+    printf '%s' "$2"
+  elif [ "$_um_v" -gt 60000 ]; then
+    printf '%s' 60000
+  else
+    printf '%s' "$_um_v"
+  fi
+}
+
+_hook_dir="$(cd "$(dirname "$0")" && pwd)" || exit 0
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
 init_hook_timer
+
+# The deadline, the private directory (every capture file lives in it, the raw prompt among them) and the
+# cleanup: one idempotent function on EXIT and on INT/TERM/HUP, so a signal during cleanup cannot cut it short.
+_TRW_UPS_WORK=""
+_TRW_BG_PID=""
+_ups_done=""
+_ups_cleanup() {
+  [ -z "$_ups_done" ] || return 0
+  _ups_done=1
+  trap '' INT TERM HUP
+  [ -z "${_TRW_BG_PID:-}" ] || kill -KILL "$_TRW_BG_PID" 2>/dev/null || true
+  [ -z "${_TRW_UPS_WORK:-}" ] || rm -rf "$_TRW_UPS_WORK" 2>/dev/null || true
+}
+# Installed BEFORE the directory exists (its name is still empty, which cleanup skips), so a signal in the gap
+# between mktemp creating it and the variable being set cannot leak it.
+trap '_ups_cleanup; exit 0' EXIT
+trap 'exit 0' INT TERM HUP
+# A client that closed its end of stdout must cost a failed write, not this process: cleanup still runs.
+trap '' PIPE
+if command -v _trw_now_ms >/dev/null 2>&1; then
+  _trw_now_ms
+  TRW_HOOK_DEADLINE_MS=$((_trw_now + $(_ups_ms "${TRW_HOOK_BUDGET_MS:-}" "$_ups_default_budget_ms")))
+  export TRW_HOOK_DEADLINE_MS
+  _TRW_UPS_WORK=$(mktemp -d "${TMPDIR:-/tmp}/trw-ups.XXXXXX" 2>/dev/null) || _TRW_UPS_WORK=""
+  export _TRW_UPS_WORK
+fi
 
 # FR07: Read stdin JSON and extract prompt text (replaces cat >/dev/null)
 _payload=$(cat) || exit 0
@@ -175,16 +234,51 @@ _auto_recall_min_score="0.35"
 _auto_recall_scan_cap=10000
 _config_file="$_project_root/.trw/config.yaml"
 if [ -f "$_config_file" ]; then
-  _val=$(grep -m1 'auto_recall_enabled:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_enabled="$_val"
-  _val=$(grep -m1 'auto_recall_max_results:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_max_results="$_val"
-  _val=$(grep -m1 'auto_recall_max_tokens:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_max_tokens="$_val"
-  _val=$(grep -m1 'auto_recall_min_score:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_min_score="$_val"
-  _val=$(grep -m1 'auto_recall_scan_cap:' "$_config_file" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  [ -n "$_val" ] && _auto_recall_scan_cap="$_val"
+  # One read of the file, no forks (feedback #160). A line is `key: value`: leading blanks are dropped, a line
+  # that starts with `#` is a comment, the key is the text before the first colon and must equal a tunable
+  # exactly, the value is the text after it up to a ` #` comment, with blanks and quote characters dropped.
+  # (No `${..${..}}` nesting below: doctor's static call scanner reads a `${..}` up to its first `}`.)
+  # The first line holding each key wins.
+  _cfg_seen=""
+  _cfg_tab=$(printf '\t')
+  while IFS= read -r _cfg_line || [ -n "$_cfg_line" ]; do
+    _cfg_ws=${_cfg_line%%[! $_cfg_tab]*}
+    _cfg_line=${_cfg_line#"$_cfg_ws"}
+    case "$_cfg_line" in '#'* | '' | *:*) ;; *) continue ;; esac
+    case "$_cfg_line" in '#'* | '') continue ;; esac
+    _cfg_key=${_cfg_line%%:*}
+    case "$_cfg_key" in
+      auto_recall_enabled | auto_recall_max_results | auto_recall_max_tokens | auto_recall_min_score | auto_recall_scan_cap) ;;
+      *) continue ;;
+    esac
+    case " $_cfg_seen " in *" $_cfg_key "*) continue ;; esac
+    _cfg_seen="$_cfg_seen $_cfg_key"
+    _val=${_cfg_line#*:}
+    _cfg_ws=${_val%%[! $_cfg_tab]*}
+    _val=${_val#"$_cfg_ws"}
+    case "$_val" in '#'*) _val="" ;; esac
+    _val=${_val%%[ $_cfg_tab]#*}
+    while :; do
+      case "$_val" in
+        *[\"\']*)
+          _val_pre=${_val%%[\"\']*}
+          _val_rest=${_val#"$_val_pre"?}
+          _val=$_val_pre$_val_rest
+          ;;
+        *) break ;;
+      esac
+    done
+    _cfg_ws=${_val##*[! $_cfg_tab]}
+    _val=${_val%"$_cfg_ws"}
+    [ -n "$_val" ] || continue
+    case "$_cfg_key" in
+      auto_recall_enabled) _auto_recall_enabled="$_val" ;;
+      auto_recall_max_results) _auto_recall_max_results="$_val" ;;
+      auto_recall_max_tokens) _auto_recall_max_tokens="$_val" ;;
+      auto_recall_min_score) _auto_recall_min_score="$_val" ;;
+      auto_recall_scan_cap) _auto_recall_scan_cap="$_val" ;;
+    esac
+  done <"$_config_file"
 fi
 # Env var overrides
 [ -n "$TRW_AUTO_RECALL_ENABLED" ] && _auto_recall_enabled="$TRW_AUTO_RECALL_ENABLED"
@@ -192,6 +286,7 @@ fi
 [ -n "$TRW_AUTO_RECALL_MAX_TOKENS" ] && _auto_recall_max_tokens="$TRW_AUTO_RECALL_MAX_TOKENS"
 [ -n "$TRW_AUTO_RECALL_MIN_SCORE" ] && _auto_recall_min_score="$TRW_AUTO_RECALL_MIN_SCORE"
 [ -n "$TRW_AUTO_RECALL_SCAN_CAP" ] && _auto_recall_scan_cap="$TRW_AUTO_RECALL_SCAN_CAP"
+_auto_recall_deadline_ms=$(_ups_ms "${TRW_AUTO_RECALL_DEADLINE_MS:-}" "$_ups_default_recall_ms")
 # The learning_recall_enabled master switch outranks auto_recall_enabled and its env
 # override. The guard keeps a project whose lib-trw.sh predates the helper working.
 if command -v trw_learnings_injection_allowed >/dev/null 2>&1 && ! trw_learnings_injection_allowed; then
@@ -213,11 +308,9 @@ fi
 #
 # FR05: the scorer's diagnostic goes to stderr (stdout is injected into the
 # model's context and must carry recall text only). Capture it so it can also be
-# forwarded to the durable hook log, then replay it for interactive debugging.
-# A symlinked context dir gets no capture file: the redirect below would create
-# it wherever the link points (PRD-FIX-156-FR03).
-_diag_file="$_context_dir/.auto_recall_diag.$$"
-_trw_ancestor_symlinked "$_context_dir" && _diag_file=/dev/null
+# forwarded to the durable hook log, then replay it for interactive debugging. The
+# capture lives in the hook's private temp directory, never in the checkout
+# (PRD-FIX-156-FR03: nothing here can be redirected through a planted symlink).
 # Interpreter order, as the intent guard resolves it: $TRW_PYTHON, the project venv, the
 # interpreter behind the `trw-mcp` launcher on PATH, then PATH python3.
 _recall_launcher_py=""
@@ -225,34 +318,98 @@ _recall_launcher=$(command -v trw-mcp 2>/dev/null) &&
   _recall_launcher_py=$(head -n 1 "$_recall_launcher" 2>/dev/null | sed -n 's/^#!\([^ ]*\).*/\1/p')
 _recall_output=""
 _recall_ran=""
-for _recall_py in "${TRW_PYTHON:-}" "$_project_root/.venv/bin/python" "$_project_root/.venv/bin/python3" \
-  "$_recall_launcher_py" "$(command -v python3 2>/dev/null)"; do
-  [ -n "$_recall_py" ] && [ -x "$_recall_py" ] || continue
-  _recall_rc=0
-  _recall_output=$(
-    # The prompt travels on stdin ("-"): as an argument, one past ARG_MAX (128 KB on Linux) fails the exec
-    # and recall silently never runs. printf is a builtin, so the shell itself has no such limit.
-    printf '%s' "$_prompt" | "$_recall_py" -m trw_mcp.state._auto_recall_hook "$_project_root" - "$_injected_file" \
+_recall_deadline_hit=""
+_recall_budget_ms=""
+_recall_skip=""
+_recall_record=""
+_recall_pending=""
+_diag_file=""
+if [ -z "${_TRW_UPS_WORK:-}" ]; then
+  _recall_skip=no_workdir
+else
+  _recall_in="$_TRW_UPS_WORK/recall.in"
+  _recall_out="$_TRW_UPS_WORK/recall.out"
+  _recall_pending="$_TRW_UPS_WORK/recall.ids"
+  _diag_file="$_TRW_UPS_WORK/recall.diag"
+  # The prompt travels on stdin ("-"): as an argument, one past ARG_MAX (128 KB on Linux) fails the exec
+  # and recall silently never runs. printf is a builtin, so the shell itself has no such limit.
+  printf '%s' "$_prompt" >"$_recall_in" 2>/dev/null || : >"$_recall_in"
+  # ONE recall deadline, an absolute instant fixed before the first candidate and shared by all of them: a
+  # candidate that cannot start never resets the clock. It sits a second inside the hook deadline, which
+  # is reserved for emitting and logging. The module's own 500 ms scan deadline starts only after
+  # interpreter start, imports and the store read, so it cannot bound those.
+  _trw_now_ms
+  _recall_deadline=$((_trw_now + _auto_recall_deadline_ms))
+  _recall_cap=$((TRW_HOOK_DEADLINE_MS - 1000))
+  [ "$_recall_deadline" -le "$_recall_cap" ] || _recall_deadline=$_recall_cap
+  _recall_budget_ms=$((_recall_deadline - _trw_now))
+  # The module runs as `python -c <boot> <module> ...`: the boot arms the watchdog, then runs <module>.
+  _recall_boot="$_TRW_PY_WATCHDOG
+import runpy, sys
+runpy.run_module(sys.argv.pop(1), run_name=\"__main__\", alter_sys=True)
+"
+  for _recall_py in "${TRW_PYTHON:-}" "$_project_root/.venv/bin/python" "$_project_root/.venv/bin/python3" \
+    "$_recall_launcher_py" "$(command -v python3 2>/dev/null)"; do
+    [ -n "$_recall_py" ] && [ -x "$_recall_py" ] || continue
+    _trw_now_ms
+    if [ "$_trw_now" -ge "$_recall_deadline" ]; then
+      _recall_deadline_hit=1
+      _recall_ran=1
+      break
+    fi
+    # Every module, new or released, reads its history from and appends its new ids to the dedup argument.
+    # That argument is a scratch COPY of the real file, so each sees the true history and none ever writes
+    # (or is even told) the real path; it is moved over only once the text has reached the client.
+    _trw_safe_read "$_injected_file" >"$_recall_pending" 2>/dev/null || : >"$_recall_pending"
+    TRW_HOOK_DEADLINE_MS=$_recall_deadline "$_recall_py" -c "$_recall_boot" trw_mcp.state._auto_recall_hook \
+      "$_project_root" - "$_recall_pending" \
       "$_auto_recall_max_results" "$_auto_recall_max_tokens" "$_auto_recall_min_score" "$_auto_recall_scan_cap" \
-      2>"$_diag_file"
-  ) || _recall_rc=$?
-  # 1 = the module could not start under this interpreter (trw_mcp not installed): try the next.
-  [ "$_recall_rc" = "1" ] || { _recall_ran=1; break; }
-  _recall_output=""
-done
-
-_diag=""
-if [ -f "$_diag_file" ]; then
-  _diag=$(grep -m1 '^event=AutoRecall' "$_diag_file" 2>/dev/null) || _diag=""
-  cat "$_diag_file" >&2 2>/dev/null || true
-  _trw_safe_rm "$_diag_file" || true
+      <"$_recall_in" >"$_recall_out" 2>"$_diag_file" &
+    _TRW_BG_PID=$!
+    _recall_rc=0
+    _trw_wait_bounded "$_recall_deadline" || _recall_rc=$?
+    if [ "$_recall_rc" = "124" ]; then
+      _recall_deadline_hit=1
+      _recall_ran=1
+      break
+    fi
+    # 1 = the module could not start under this interpreter (trw_mcp not installed): try the next.
+    [ "$_recall_rc" != "1" ] || continue
+    _recall_ran=1
+    _recall_record=$(grep -m1 '^event=AutoRecall .* elapsed_ms=[0-9][0-9]*$' "$_diag_file" 2>/dev/null) || _recall_record=""
+    if [ -z "$_recall_record" ] && [ "$_recall_rc" = "0" ]; then
+      # A clean exit with no complete record is the in-process watchdog: the deadline cut the module off.
+      _recall_deadline_hit=1
+    else
+      _recall_output=$(cat "$_recall_out" 2>/dev/null) || _recall_output=""
+    fi
+    break
+  done
 fi
-# FR05 still holds with no interpreter: exactly one record per prompt.
-[ -n "$_recall_ran" ] || _diag="event=AutoRecall keywords=0 scanned=0 top_score=0.000 top_id=none threshold=$_auto_recall_min_score injected=0 decision=no_interpreter elapsed_ms=0"
 
+# This shell is the only writer of the log record: the module's record is read from its capture, or replaced
+# when a deadline cut it off (a half-written record is no record).
+_diag=""
+if [ -n "$_recall_deadline_hit" ]; then
+  _diag="event=AutoRecall keywords=0 scanned=0 top_score=0.000 top_id=none threshold=$_auto_recall_min_score injected=0 decision=deadline elapsed_ms=$_recall_budget_ms"
+else
+  _diag=$_recall_record
+  if [ -n "$_diag_file" ] && [ -f "$_diag_file" ]; then
+    cat "$_diag_file" >&2 2>/dev/null || true
+  fi
+  # FR05 still holds with no interpreter: exactly one record per prompt.
+  [ -n "$_recall_ran" ] || _diag="event=AutoRecall keywords=0 scanned=0 top_score=0.000 top_id=none threshold=$_auto_recall_min_score injected=0 decision=${_recall_skip:-no_interpreter} elapsed_ms=0"
+fi
+
+# The text goes out first; the scratch history (the old ids plus the new) replaces the real dedup file only if
+# the client's pipe took it, so a hook cancelled or cut off before this point never marks a learning delivered.
 if [ -n "$_recall_output" ]; then
-  printf '%s\n' "$_recall_output"
-  _emitted_any=1
+  if printf '%s\n' "$_recall_output"; then
+    _emitted_any=1
+    if [ -s "$_recall_pending" ]; then
+      _trw_safe_write "$_injected_file" <"$_recall_pending" || true
+    fi
+  fi
 fi
 
 if [ "$_emitted_any" = "1" ]; then

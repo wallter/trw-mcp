@@ -12,6 +12,7 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from tests import _source_index as source_index
 from tests._otel_support import assert_keys_registered, assert_no_canary, assert_no_unkeyed_digest
 from tests.test_deliver_outcome_record import _EXITS, _ORACLE, _evaluate, _observed, _records, _run_dir
 
@@ -214,7 +215,7 @@ def test_gate_and_evidence_modules_never_import_opentelemetry() -> None:
     targets = [*src.glob("tools/_deliver*.py"), *src.glob("state/_evidence*.py"), src / "models" / "gate_decision.py"]
     offenders = []
     for path in targets:
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        for node in ast.walk(source_index.tree(path)):
             names = []
             if isinstance(node, ast.Import):
                 names = [a.name for a in node.names]

@@ -15,6 +15,7 @@ import ast
 from pathlib import Path
 
 import trw_mcp
+from tests import _source_index as source_index
 
 _PRIMITIVE = "state/_run_yaml_update.py"
 
@@ -58,8 +59,7 @@ def test_run_yaml_is_written_only_through_the_locked_primitive() -> None:
     offenders = {
         str(path.relative_to(root)): found
         for path in sorted(root.rglob("*.py"))
-        if str(path.relative_to(root)) != _PRIMITIVE
-        and (found := _run_yaml_writes(ast.parse(path.read_text(encoding="utf-8"))))
+        if str(path.relative_to(root)) != _PRIMITIVE and (found := _run_yaml_writes(source_index.tree(path)))
     }
     assert not offenders, (
         f"run.yaml written outside {_PRIMITIVE}: {offenders}. "

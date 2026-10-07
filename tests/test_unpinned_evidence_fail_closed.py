@@ -22,14 +22,8 @@ from trw_mcp.tools._delivery_event_checks import (
     unpinned_session_changed_files,
 )
 
-
-@pytest.fixture(autouse=True)
-def _client_with_a_change_evidence_writer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests read hook-written change records, which only a client with a registered writer produces.
-
-    Set explicitly: the ambient environment must not decide it (E2E-INC-115 b).
-    """
-    monkeypatch.setenv("TRW_CLIENT_PROFILE", "claude-code")
+# These tests read hook-written change records, which only a client with a registered writer produces.
+pytestmark = pytest.mark.usefixtures("claude_code_client")
 
 
 _SID = "sid"

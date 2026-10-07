@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.bootstrap._hook_interpreter import record_hook_interpreter
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(sys.platform == "win32", reason="POSIX sh hook"),
@@ -25,6 +27,7 @@ pytestmark = [
 
 _DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 _MONOREPO = Path(__file__).resolve().parents[2]
+_SRC = Path(__file__).resolve().parents[1] / "src"
 _HOOK_FILES = (
     _DATA / "claude_code" / "hooks" / "pre-tool-distill-hint.sh",
     _DATA / "claude_code" / "hooks" / "lib-distill-hint.sh",
@@ -41,6 +44,11 @@ def _project(tmp_path: Path) -> Path:
     for source in _HOOK_FILES:
         shutil.copy2(source, hooks / source.name)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
+    # What init-project does: name the interpreter running trw-mcp as the hooks' interpreter. Without the pointer
+    # the hook falls back to `command -v trw-mcp`'s shebang, then python3 on PATH -- whatever this host has there
+    # (on a host with the installer's bash launcher shim it was a python3 that cannot import trw_mcp, so the hint
+    # program raised before writing its channel event and the root assertion below failed on that host only).
+    record_hook_interpreter(root)
     (root / "src" / "pkg").mkdir(parents=True)
     (root / "src" / "pkg" / "mod.py").write_text("X = 1\n", encoding="utf-8")
     return root
@@ -52,7 +60,9 @@ def _run_hook_from(cwd: Path, root: Path, env_extra: dict[str, str]) -> None:
     # copy on the path so this test exercises that writer in every runner, not only where distill is installed
     # (a runner without it passed while the writer still wrote under the shell's CWD).
     distill = [str(_MONOREPO / d) for d in ("trw-distill", "trw-distill/src") if (_MONOREPO / d).is_dir()]
-    env["PYTHONPATH"] = os.pathsep.join([*distill, *filter(None, [env.get("PYTHONPATH", "")])])
+    # ... and the trw_mcp under test, absolute: the child runs in a subdirectory, where a relative PYTHONPATH entry
+    # resolves to nothing and an editable install may point at another checkout.
+    env["PYTHONPATH"] = os.pathsep.join([*distill, str(_SRC), *filter(None, [env.get("PYTHONPATH", "")])])
     env.update(env_extra)
     payload = {
         "tool_name": "Edit",

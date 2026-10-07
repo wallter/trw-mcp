@@ -48,12 +48,13 @@ _LEGACY_TIMEOUT_FLOOR = 600
 _LEGACY_SHIPPED_TIMEOUTS = frozenset({500, 3000, 5000, 10000})
 
 
-def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[object]) -> None:
+def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[object]) -> int:
     """Give a TRW hook (matched by command) the bundled timeout when its own is a legacy millisecond value.
 
     The only in-place rewrite the merge does: a value at or below 600 s is the user's choice and is kept, except
-    the exact values TRW itself shipped (:data:`_LEGACY_SHIPPED_TIMEOUTS`).
+    the exact values TRW itself shipped (:data:`_LEGACY_SHIPPED_TIMEOUTS`). Returns how many it rewrote.
     """
+    changed = 0
     bundled_timeouts = {
         str(hook.get("command")): hook["timeout"]
         for entry in bundled_list
@@ -74,6 +75,8 @@ def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[obj
                 and command in bundled_timeouts
             ):
                 hook["timeout"] = bundled_timeouts[command]
+                changed += 1
+    return changed
 
 
 def _merge_settings_json(
@@ -155,6 +158,7 @@ def _merge_settings_json(
     # newly bundled hooks. Identity is the entry's hook command(s), which are
     # unique per hook script in this repo's convention; the merge is additive and
     # idempotent, and never reorders an existing entry; the one rewrite is a TRW hook's legacy millisecond timeout.
+    retimed = 0
     bundled_hooks = bundled.get("hooks", {})
     existing_hooks = existing.get("hooks", {})
     if isinstance(bundled_hooks, dict) and isinstance(existing_hooks, dict):
@@ -165,7 +169,7 @@ def _merge_settings_json(
                 continue
             if not isinstance(hook_list, list):
                 continue
-            _migrate_legacy_timeouts(existing_list, hook_list)
+            retimed += _migrate_legacy_timeouts(existing_list, hook_list)
             known = {_hook_entry_identity(entry) for entry in existing_list}
             for entry in hook_list:
                 identity = _hook_entry_identity(entry)
@@ -173,6 +177,10 @@ def _merge_settings_json(
                     existing_list.append(entry)
                     known.add(identity)
         existing["hooks"] = existing_hooks
+    if retimed:
+        result.setdefault("notes", []).append(
+            f".claude/settings.json: set {retimed} legacy hook timeout(s) to TRW's bundled value"
+        )
 
     # statusLine is a single object, not a hook list: ownership (PRD-CORE-354 FR06)
     # decides whether TRW may add, rewrite or remove it.

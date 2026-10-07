@@ -22,7 +22,11 @@ import shlex
 from pathlib import Path
 from typing import Literal
 
+import structlog
+
 from ._utils import printable
+
+logger = structlog.get_logger(__name__)
 
 #: A doctor-row (status, message) pair -- matches ``_doctor_environment.Row``
 #: without importing the server layer from bootstrap (Class E: bootstrap must
@@ -62,6 +66,91 @@ def _trw_agent_memory_dirs(target_dir: Path) -> tuple[str, ...]:
     return tuple(f"{RETIRED_AGENT_MEMORY_DIR}/{name}" for name in names)
 
 
+_RETIRED_AGENT_WHY = "TRW no longer ships this agent and removes only an unchanged copy it wrote, so this one, edited or unrecorded, stayed"
+
+
+#: ``trw-*`` agents TRW once shipped and withdrew. A name here is positive provenance that a copy on disk is TRW's.
+RETIRED_AGENT_STEMS = frozenset(
+    {
+        "trw-code-simplifier",
+        "trw-requirement-writer",
+        "trw-tester",
+        "trw-traceability-checker",
+        # The seven reviewer agents commit 2a9bc8d90b withdrew; they carry no ``trw-`` prefix.
+        "reviewer-correctness",
+        "reviewer-integration",
+        "reviewer-performance",
+        "reviewer-security",
+        "reviewer-spec-compliance",
+        "reviewer-style",
+        "reviewer-test-quality",
+    }
+)
+
+
+def _recorded_agent_stems(target_dir: Path) -> set[str]:
+    """Stems of agents the project's manifest records TRW as having written (a ``content_hashes`` entry)."""
+    from ._version_manifest import _manifest_content_hashes, _manifest_key_path, _read_manifest
+
+    hashes = _manifest_content_hashes(_read_manifest(target_dir)) or {}
+    return {Path(p).stem for p in map(_manifest_key_path, hashes) if p.startswith(".claude/agents/")}
+
+
+def trw_agent_provenance(target_dir: Path, dest: Path, suffix: str) -> tuple[list[str], list[str]]:
+    """``(retired, unknown)`` ``trw-*`` file names in the agent directory *dest* that TRW does not ship.
+
+    *retired* have positive provenance (:data:`RETIRED_AGENT_STEMS`, or the manifest records TRW writing them):
+    only those are ever advised away. *unknown* is a ``trw-*`` name with no provenance, which may be the
+    project's own: reported, never advised away. An unavailable or empty bundle yields ``([], [])`` and a log
+    line, so no installed agent can look retired because the roster could not be read (feedback #139).
+    """
+    from ._utils import _DATA_DIR
+
+    shipped = {path.stem for path in (_DATA_DIR / "agents").glob("*.md")} if (_DATA_DIR / "agents").is_dir() else set()
+    if not shipped:
+        logger.warning("retired_agents_not_judged", reason="bundle_unavailable", bundle=str(_DATA_DIR / "agents"))
+        return [], []
+    try:
+        names = sorted(entry.name for entry in dest.iterdir() if entry.is_file())
+    except OSError:  # trw-fail-silent-allow: an absent or unreadable agent dir holds nothing to report; advice only
+        return [], []
+    provenance = RETIRED_AGENT_STEMS | _recorded_agent_stems(target_dir)
+    from ._version_manifest import _manifest_content_hashes, _read_manifest
+    from ._version_migration_clients import _is_channel_artifact
+
+    hashes = _manifest_content_hashes(_read_manifest(target_dir)) or {}
+    candidates = [
+        n
+        for n in names
+        if n.endswith(suffix)
+        and n.removesuffix(suffix) not in shipped
+        # TRW's namespace, or a name TRW itself withdrew (the reviewer-* agents carry no trw- prefix).
+        and (n.startswith("trw-") or n.removesuffix(suffix) in RETIRED_AGENT_STEMS)
+        # An agent an active channel renders (CC-05 / OpenCode / Antigravity explorers) is that channel's, not retired.
+        and not _is_channel_artifact(dest / n, hashes, target_dir)
+    ]
+    return (
+        [n for n in candidates if n.removesuffix(suffix) in provenance],
+        [n for n in candidates if n.removesuffix(suffix) not in provenance],
+    )
+
+
+def _retired_agents(target_dir: Path) -> list[tuple[str, str]]:
+    """Every client's agent directory entry that is a ``trw-*`` agent with provenance of being TRW's, now withdrawn."""
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.models.config._profiles import builtin_client_ids
+
+    found: dict[str, str] = {}
+    for client in builtin_client_ids():
+        fmt = agent_format_for(client)
+        if not fmt.supports_agents or fmt.destination_dir is None:
+            continue
+        retired, _unknown = trw_agent_provenance(target_dir, target_dir / fmt.destination_dir, fmt.filename_suffix)
+        for name in retired:
+            found.setdefault(f"{fmt.destination_dir}/{name}", _RETIRED_AGENT_WHY)
+    return list(found.items())
+
+
 _RETIRED_SKILL_WHY = (
     "TRW retired this skill and removes only unchanged copies it wrote, so this one, edited or unrecorded, stayed"
 )
@@ -69,6 +158,21 @@ _CURATED_OUT_SKILL_WHY = (
     "TRW no longer ships this skill to this client and removes only unchanged copies it wrote, so this one,"
     " edited or unrecorded, stayed"
 )
+
+
+def curated_out_reason(rel: str) -> str:
+    """Why a removed client-mirror skill file went: TRW ships the skill, but no longer to that client; else ``""``."""
+    from ._utils import _DATA_DIR
+    from ._version_migration_clients import client_skill_lists
+
+    for root, listed in client_skill_lists().items():
+        prefix = f"{root}/"
+        if listed is None or not rel.startswith(prefix):
+            continue
+        name = rel[len(prefix) :].split("/", 1)[0]
+        if name.startswith("trw-") and name not in listed and (_DATA_DIR / "skills" / name).is_dir():
+            return "TRW no longer ships this skill to this client"
+    return ""
 
 
 def _retired_skill_mirrors(target_dir: Path) -> list[tuple[str, str]]:
@@ -192,6 +296,7 @@ def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
 def _present(target_dir: Path) -> list[tuple[str, str]]:
     present = [(rel, why) for rel, why in _retired_artifacts(target_dir) if (target_dir / rel).exists()]
     present.extend(_retired_skill_mirrors(target_dir))
+    present.extend(_retired_agents(target_dir))
     if _is_retired_cursor_cli_rule(target_dir):
         present.append((RETIRED_CURSOR_CLI_RULE, _CURSOR_CLI_RULE_WHY))
     return present
@@ -201,6 +306,11 @@ def _advice_text(target_dir: Path, rel: str) -> str:
     """``[<what it holds>; ]remove it manually: <command>`` for *rel*."""
     holds, command = _removal_advice(target_dir, rel)
     return f"{holds + '; ' if holds else ''}remove it manually: {command}"
+
+
+def retired_artifact_paths(target_dir: Path) -> list[str]:
+    """The relative paths of every retired artifact present, the structured twin of :func:`retired_artifact_notices`."""
+    return [rel for rel, _why in _present(target_dir)]
 
 
 def retired_artifact_notices(target_dir: Path) -> list[str]:
@@ -213,13 +323,13 @@ def retired_artifact_notices(target_dir: Path) -> list[str]:
 
 
 def retired_artifact_row(target_dir: Path) -> _Row:
-    """Doctor status/message pair: WARN naming each present artifact and its removal command, else PASS."""
+    """Doctor status/message pair: WARN naming each present artifact (one per line) and its removal command, else PASS."""
     present = _present(target_dir)
     if not present:
         return "PASS", "no retired dead files present"
     return (
         "WARN",
-        "; ".join(
+        "\n".join(  # one artifact per line (feedback #141); each name is escaped, so none can forge a line
             f"{printable(rel)} is retired and unused ({why}); {_advice_text(target_dir, rel)}" for rel, why in present
         ),
     )
