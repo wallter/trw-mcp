@@ -65,6 +65,7 @@ class _ManagedTables:
     exact: frozenset[tuple[str, ...]]  # dirs update writes into directly; a marker here does not make a repo of them
     owned: frozenset[tuple[str, ...]]  # TRW-owned dirs; the whole subtree is TRW's
     containers: frozenset[tuple[str, ...]]  # ``skills`` dirs: only canonical-named children are TRW's
+    skill_roots: frozenset[tuple[str, ...]]  # every client's ``<client dir>/skills``, TRW writes there or not
     canonical_skills: frozenset[str]
     skill_subdirs: frozenset[tuple[str, ...]]  # dirs (relative to a container) the bundled skill corpus fills
 
@@ -94,6 +95,14 @@ def _managed_tables() -> _ManagedTables:
         Path(rel).parts for rel in _TRANSACTION_DIRS
     }
     containers = {parts for parts in registered if parts[-1] == "skills"}
+    # A third-party skills installer links its skills into EVERY client's skills dir, whether or not TRW installs
+    # skills there (Grok's `.grok/skills`): a client dir is any dot-dir some registered surface lives in. Derived,
+    # so a new client is covered without an edit here. Only the link exemption reads this, never a write.
+    skill_roots = containers | {
+        (parts[0], "skills")
+        for parts in registered
+        if len(parts) >= 2 and parts[0].startswith(".") and parts[0] != ".trw"
+    }
     skills_root = canonical_skills_dir()
     canonical: set[str] = set()
     subdirs: set[tuple[str, ...]] = set()
@@ -107,6 +116,7 @@ def _managed_tables() -> _ManagedTables:
         exact=frozenset(map(_fold, exact | containers)),
         owned=frozenset(map(_fold, owned)),
         containers=frozenset(map(_fold, containers)),
+        skill_roots=frozenset(map(_fold, skill_roots)),
         canonical_skills=frozenset(name.casefold() for name in canonical),
         skill_subdirs=frozenset(map(_fold, subdirs)),
     )
@@ -192,7 +202,7 @@ def _is_user_skill_link(path: Path, root: Path) -> bool:
     ):  # trw-fail-silent-allow: relative_to ValueError is the answer "outside the project root", not managed
         return False
     tables = _managed_tables()
-    return len(parts) >= 2 and parts[:-1] in tables.containers and parts[-1] not in tables.canonical_skills
+    return len(parts) >= 2 and parts[:-1] in tables.skill_roots and parts[-1] not in tables.canonical_skills
 
 
 def _has_git_marker(path: Path, *, denied_is_marker: bool = False) -> bool:

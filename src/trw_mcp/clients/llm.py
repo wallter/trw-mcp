@@ -62,10 +62,10 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 
 
 _MODEL_MAP: dict[str, str] = {
-    "fast": "claude-haiku-4-5-20251001",
+    "fast": "claude-haiku-5-5",
     "balanced": "claude-sonnet-5-5",
     "frontier": "claude-opus-5-5",
-    "haiku": "claude-haiku-4-5-20251001",
+    "haiku": "claude-haiku-5-5",
     "sonnet": "claude-sonnet-5-5",
     "opus": "claude-opus-5-5",
 }

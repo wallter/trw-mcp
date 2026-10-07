@@ -134,7 +134,7 @@ class TestModelAliasResolution:
     """Tests for model alias -> full model ID resolution."""
 
     def test_haiku_alias(self) -> None:
-        assert _resolve_model("haiku") == "claude-haiku-4-5-20251001"
+        assert _resolve_model("haiku") == "claude-haiku-5-5"
 
     def test_sonnet_alias(self) -> None:
         # Bumped 4-6 -> 5 (2026-07-26); bumped again to 5.5 (2026-09-28).
@@ -167,7 +167,7 @@ class TestAsk:
 
         mock_async_client.messages.create.assert_called_once()
         call_kwargs = mock_async_client.messages.create.call_args[1]
-        assert call_kwargs["model"] == "claude-haiku-4-5-20251001"
+        assert call_kwargs["model"] == "claude-haiku-5-5"
         assert call_kwargs["messages"] == [{"role": "user", "content": "Say hello"}]
 
     @pytest.mark.asyncio
@@ -316,11 +316,11 @@ class TestCapabilityAliasCurrency:
         assert _MODEL_MAP["balanced"] == "claude-sonnet-5-5"
 
     def test_fast_aliases_unchanged(self) -> None:
-        """Haiku is deliberately NOT bumped — 4.5 is the current Haiku."""
+        """Haiku aliases moved from the dated 4.5 pin to Haiku 5.5 (2026-10-07)."""
         from trw_mcp.clients.llm import _MODEL_MAP
 
-        assert _MODEL_MAP["haiku"] == "claude-haiku-4-5-20251001"
-        assert _MODEL_MAP["fast"] == "claude-haiku-4-5-20251001"
+        assert _MODEL_MAP["haiku"] == "claude-haiku-5-5"
+        assert _MODEL_MAP["fast"] == "claude-haiku-5-5"
 
     def test_superseded_explicit_ids_still_resolve(self) -> None:
         """FR09: pinning an older generation explicitly keeps working."""
@@ -369,17 +369,30 @@ class TestRequestShape:
 
     @pytest.mark.asyncio
     async def test_effort_omitted_on_model_that_rejects_it(self) -> None:
-        """Haiku 4.5 — this client's own default — errors on ``effort``.
-
-        Sending it anyway would break every default internal call, so the
-        parameter must be absent rather than merely ignored.
-        """
+        """Haiku 4.5 errors on ``effort``; the parameter must be absent, not merely ignored."""
         mock_async_client, client = _make_wired_client("Response")
 
-        await client.ask("test")  # default model is haiku
+        await client.ask("test", model="claude-haiku-4-5")
 
         call_kwargs = mock_async_client.messages.create.call_args[1]
         assert "output_config" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_haiku_5_5_request_shape_has_no_rejected_parameter(self) -> None:
+        """Default model is now Haiku 5.5: effort low is sent, and nothing the 5.5 API rejects is.
+
+        Rejected on 5.5 (facts doc): ``thinking.budget_tokens``, non-default ``temperature`` /
+        ``top_p`` / ``top_k``, and a trailing assistant (prefill) message.
+        """
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test", system="sys")  # default model is haiku -> claude-haiku-5-5
+
+        kw = mock_async_client.messages.create.call_args[1]
+        assert kw["model"] == "claude-haiku-5-5"
+        assert kw["output_config"] == {"effort": "low"}
+        assert not {"thinking", "temperature", "top_p", "top_k"} & set(kw)
+        assert kw["messages"][-1]["role"] == "user"
 
     @pytest.mark.asyncio
     async def test_rejected_model_id_is_logged_distinctly(self) -> None:

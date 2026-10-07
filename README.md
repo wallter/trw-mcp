@@ -65,13 +65,13 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.2.0 -->
+<!-- whats-new: 9.2.1 -->
 
 - **Dispatch setup in the installer.** Turn on `trw_dispatch` and pin a model and effort per client while installing, or later with `trw-mcp config dispatch`.
-- **`trw-mcp config set`.** Change one setting safely: validated exactly as TRW loads it, secrets refused, and your file's quotes and layout kept.
+- **`trw-mcp config set` and `unset`.** Change or remove one setting safely: validated exactly as TRW loads it, secrets refused, and every other line of your file kept.
 - **Prompts never wait on recall.** The prompt hook runs inside a time budget and skips recall instead of stalling your client.
-- **Clearer installs and updates.** Each changed file is named once with its reason, one status line sums up, and a doctor timeout no longer reads as FAILED.
-- **Your data stays yours.** `backup restore` never touches another project's data, and doctor suggests deleting only files TRW provably shipped.
+- **Installs that remember you.** The installer asks each question once and keeps your answers, and an update refreshes every client in one pass with one status line.
+- **Ready for Claude Haiku 5.5.** It is priced, keeps its effort level in dispatch, and is the fast LLM route.
 - **Handoffs another session can trust.** The `trw-handoff` skill writes a sealed record with labelled claims and verbatim constraints, and `receive` checks it before acting.
 - **Set up once per computer.** Sign in and configure `trw_assess` once; new projects reuse `~/.trw` instead of asking again.
 

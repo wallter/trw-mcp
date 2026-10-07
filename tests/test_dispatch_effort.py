@@ -117,10 +117,59 @@ def test_no_effort_leaves_every_clients_argv_unchanged(client: str) -> None:
     assert _effort_tokens(client, argv) == [] if client in _FLAG_CLIENTS else True
 
 
-@pytest.mark.parametrize("model", ["haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001"])
+@pytest.mark.parametrize(
+    "model",
+    [
+        "haiku",  # ambiguous alias: 5.5 on the Anthropic API, 4.5 on Bedrock/Vertex/Foundry -> drop effort
+        "HAIKU",
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001",
+        "anthropic.claude-haiku-4-5",
+        "claude-3-5-haiku-20241022",
+        "claude-3-haiku-20240307",
+    ],
+)
 def test_a_haiku_model_gets_no_effort(model: str) -> None:
     """Haiku accepts no effort parameter at all; sending one is an error, not a no-op."""
     assert _effort_tokens("claude", build_command(_request("claude", model=model, effort="high"))) == []
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-haiku-5-5", "anthropic.claude-haiku-5-5", "global.anthropic.claude-haiku-5-5", "claude-haiku-6"],
+)
+def test_haiku_5_and_later_keep_their_effort(model: str) -> None:
+    """Haiku 5.5 is the first Haiku with effort (low..max); dropping it would silently run at the default."""
+    assert _effort_tokens("claude", build_command(_request("claude", model=model, effort="high"))) == ["high"]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("haiku", True),
+        ("claude-haiku-4-5-20251001", True),
+        ("claude-3-5-haiku-20241022", True),
+        ("claude-haiku-5-5", False),
+        ("claude-haiku-5-5-20260101", False),
+        ("claude-opus-5-5", False),
+        ("claude-sonnet-4-5", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_model_takes_no_effort_predicate(model: str | None, expected: bool) -> None:
+    from trw_mcp.dispatch._commands import model_takes_no_effort
+
+    assert model_takes_no_effort(model) is expected
+
+
+def test_require_effort_refusal_skips_haiku_4_but_not_haiku_5() -> None:
+    """The second consumer of the predicate (_policy): require-effort must still refuse a 5.5 launch lacking effort."""
+    from trw_mcp.dispatch._policy import require_effort as refusal
+
+    assert refusal("claude", "claude-haiku-4-5", "none") is None
+    assert refusal("claude", "haiku", "none") is None
+    assert refusal("claude", "claude-haiku-5-5", "none") is not None
 
 
 def test_a_non_haiku_model_keeps_its_effort() -> None:

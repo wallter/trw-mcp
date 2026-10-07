@@ -67,6 +67,8 @@ _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max
 _ANTHROPIC_EFFORT_CAPABILITIES: dict[str, frozenset[ExecutionEffort]] = {
     "claude-opus-5-5": _FULL_EFFORT,
     "claude-sonnet-5-5": _FULL_EFFORT,
+    # Haiku 5.5 is the first Haiku with effort (low..max, default medium; O, effort page 2026-10-07).
+    "claude-haiku-5-5": _FULL_EFFORT,
     "claude-fable-5-1": _FULL_EFFORT,
     "claude-mythos-5-1": _FULL_EFFORT,
     "claude-fable-5": _FULL_EFFORT,

@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -143,8 +145,69 @@ def _local_status_machine(args: argparse.Namespace, fmt: str) -> None:
         sys.exit(1)
 
 
+_TOPLEVEL_TIMEOUT_SECONDS = 5.0
+
+
+def _enclosing_project(cwd: Path) -> Path | None:
+    """The VCS toplevel of *cwd* when it differs from *cwd* and holds a ``.trw/`` dir, else ``None``.
+
+    Bounded by a timeout; a missing binary, a non-repo cwd or any failure is ``None`` (keep the cwd).
+    """
+    import shutil
+    import subprocess
+
+    tool = shutil.which("git")
+    if tool is None:
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, resolved binary, no shell
+            [tool, "rev-parse", "--show-toplevel"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=_TOPLEVEL_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # trw-fail-silent-allow: no git or a hung call means "use the cwd"
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    top = Path(proc.stdout.strip()).resolve()
+    if top == cwd.resolve() or not (top / ".trw").is_dir():
+        return None
+    return top
+
+
+@contextmanager
+def enclosing_project_bound() -> Iterator[None]:
+    """Bind the project enclosing the cwd for one CLI verb (``local``, ``feedback``).
+
+    With no install target and no ``TRW_PROJECT_ROOT``, a cwd inside a checkout whose toplevel has a
+    ``.trw/`` resolves to that toplevel (via ``project_bound``, this command only). Every other caller of
+    ``resolve_project_root`` is unchanged.
+    """
+    import os
+
+    from trw_mcp.state._project_root_binding import install_target, project_bound
+
+    top = None
+    if install_target() is None and not os.environ.get("TRW_PROJECT_ROOT"):
+        top = _enclosing_project(Path.cwd())
+    if top is None:
+        yield
+        return
+    with project_bound(top):
+        yield
+
+
 def _run_local(args: argparse.Namespace) -> None:
-    """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
+    """Handle ``local``: run the verb against the project that encloses the cwd."""
+    with enclosing_project_bound():
+        _run_local_verb(args)
+
+
+def _run_local_verb(args: argparse.Namespace) -> None:
+    """Offline ceremony fallback (PRD-FIX-073)."""
     if getattr(args, "local_command", None) == "status":
         fmt = "json" if getattr(args, "json", False) else str(getattr(args, "status_format", "text") or "text")
         if fmt in {"json", "line"}:
@@ -281,7 +344,14 @@ def _run_local(args: argparse.Namespace) -> None:
         else:
             # Same result shape the MCP tool returns; an unconfigured backend is
             # reported, not raised, so the operator sees what to set.
-            print(f"Feedback not submitted: {feedback_result.get('error', 'unknown error')}")
+            # Nothing was sent, so a script looping over submissions must see a failure (exit 1, reason on
+            # stderr). A record in the local outbox is a retry aid (`trw-mcp feedback flush`), not a delivery.
+            reason = f"Feedback not submitted: {feedback_result.get('error', 'unknown error')}"
+            outbox_id = feedback_result.get("outbox_id")
+            if outbox_id:
+                reason += f" (kept in the local outbox as {outbox_id}; retry with `trw-mcp feedback flush`)"
+            print(reason, file=sys.stderr)
+            sys.exit(1)
     elif local_cmd == "deliver":
         run_path_str = getattr(args, "run_path", None)
         run_path = Path(run_path_str) if run_path_str else None

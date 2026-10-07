@@ -101,8 +101,8 @@ def _usd_cost_estimate(
 
     The incoming id is matched by *family* rather than by exact key. One model
     reaches this function under several spellings — a dated snapshot
-    (``claude-haiku-4-5-20251001``, which is exactly what ``clients/llm.py``
-    stamps for its own default model), a ``[1m]`` long-context rendering, a
+    (``claude-haiku-4-5-20251001``, which clients/llm.py used to stamp for its
+    default model), a ``[1m]`` long-context rendering, a
     Vertex ``@``-pin, or a Bedrock provider prefix. The previous exact
     ``models.get(model_id)`` matched none of those, so a priced model could
     report ``$0.00`` — indistinguishable from a genuinely free call.
@@ -128,6 +128,11 @@ def _usd_cost_estimate(
         return 0.0
     in_rate = float(entry.get("input_per_1k", 0.0) or 0.0)
     out_rate = float(entry.get("output_per_1k", 0.0) or 0.0)
+    threshold = entry.get("long_prompt_threshold_tokens")
+    if isinstance(threshold, int) and input_tokens > threshold:
+        # Long-prompt tier (Haiku 5.5: prompts over 100K bill the whole call at the higher rates).
+        in_rate = float(entry.get("long_prompt_input_per_1k", in_rate) or in_rate)
+        out_rate = float(entry.get("long_prompt_output_per_1k", out_rate) or out_rate)
     return round(((input_tokens / 1000.0) * in_rate) + ((output_tokens / 1000.0) * out_rate), 8)
 
 

@@ -15,7 +15,7 @@ from trw_mcp.agents.task_policy import TASK_POLICY
 from trw_mcp.agents.tier_resolver import resolve_tier
 from trw_mcp.dispatch._client_spec_types import EFFORT_LEVELS, ClientSpec
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS, UnknownClientError, client_spec_for
-from trw_mcp.dispatch._commands import _client_effort, build_command
+from trw_mcp.dispatch._commands import _client_effort, build_command, model_takes_no_effort
 from trw_mcp.dispatch._roles import role_task_class
 from trw_mcp.dispatch._slots import slot_settings
 from trw_mcp.dispatch._types import DispatchRequest
@@ -79,7 +79,7 @@ def require_effort(client: str, model: str | None, effort_source: str) -> str | 
         return None
     if not (spec.effort_flag or spec.effort_config_key):
         return None
-    if model and "haiku" in model.lower():
+    if model_takes_no_effort(model):
         return None
     return (
         f"dispatch_require_effort is on and no effort resolved for {client!r}: pass --effort "

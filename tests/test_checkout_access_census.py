@@ -84,6 +84,11 @@ _ALLOWLIST: dict[str, str] = {
         "own-state -- retire_file hashes a stale TRW artifact through an O_NOFOLLOW|O_NONBLOCK fd "
         "(size-capped) before deleting it in place; no checkout content is read into TRW state."
     ),
+    "bootstrap/_retire_whole.py": (
+        "own-state -- retire_whole hashes the files of a stale TRW skill directory through O_NOFOLLOW|O_NONBLOCK fds "
+        "(size-capped) to prove them before removing the directory in place, and scans a leftover .trw-retiring-* "
+        "dir the same way before advising its removal; nothing read is kept in TRW state."
+    ),
     "bootstrap/_trash.py": (
         "own-state -- remove_if_hash anchors dir fds for rename/link and reads/writes only TRW's own "
         "trash capture (meta.json, data); _checkout_access pinning would hold fds on captured user bytes."

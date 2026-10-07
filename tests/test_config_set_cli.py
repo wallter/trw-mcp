@@ -588,3 +588,54 @@ def test_a_new_file_is_never_wider_than_the_umask_allows(
     finally:
         os.umask(old)
     assert stat.S_IMODE((home / ".trw" / "config.yaml").stat().st_mode) == 0o600
+
+
+def test_a_set_that_would_also_change_an_aliased_sibling_is_refused(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same post-render invariant guards ``set``: it may change only its target."""
+    _home, project = env
+    cfg = project / ".trw" / "config.yaml"
+    cfg.write_text("old: &m {codex: gpt-x}\ndispatch_default_models: *m\n", encoding="utf-8")
+    before = _sha(cfg)
+    code, _out, err = _set(project, "dispatch_default_models.codex", "gpt-y", capsys)
+    assert code == 2 and "other keys" in err and _sha(cfg) == before
+
+
+def test_an_unrelated_set_survives_a_tagged_scalar(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    _home, project = env
+    cfg = project / ".trw" / "config.yaml"
+    cfg.write_text("project_namespace: !!str 123\n", encoding="utf-8")
+    assert _set(project, "debug", "true", capsys)[0] == 0
+    assert cfg.read_text(encoding="utf-8") == "project_namespace: !!str 123\ndebug: true\n"
+
+
+@pytest.mark.parametrize("value", [".nan", ".inf"])
+def test_non_finite_floats_can_be_set_and_are_not_mistaken_for_an_alias(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    _home, project = env
+    code, _out, err = _set(project, "ambiguity_rate_max", value, capsys)
+    assert "alias" not in err and "merge" not in err
+    if code == 2:  # the field's own bounds may refuse a non-finite value; that must be its reason, not the guard's
+        assert "ambiguity_rate_max rejected" in err
+    else:
+        assert value in (project / ".trw" / "config.yaml").read_text(encoding="utf-8")
+
+
+def test_setting_a_tagged_value_is_accepted(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    """The requested value is normalised through the same safe load as the reload before they are compared."""
+    _home, project = env
+    code, _out, err = _set(project, "project_namespace", "!!str 123", capsys)
+    assert code == 0, err
+    assert (project / ".trw" / "config.yaml").read_text(encoding="utf-8") == "project_namespace: !!str 123\n"
+
+
+def test_a_recursive_alias_next_to_a_set_is_a_controlled_outcome(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _home, project = env
+    cfg = project / ".trw" / "config.yaml"
+    cfg.write_text("old: &a [*a]\ndebug: false\n", encoding="utf-8")
+    code, _out, err = _set(project, "debug", "true", capsys)
+    assert "RecursionError" not in err and "Traceback" not in err and code in (0, 2)

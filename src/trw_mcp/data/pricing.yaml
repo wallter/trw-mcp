@@ -15,7 +15,11 @@
 # Sonnet 5.5's -- so that rate is not modeled here at all.
 # Do not assume 0.1x when adding a row; check the vendor page.
 # (Verified 2026-09-10; Opus 5.5 row added 2026-09-22; Sonnet 5.5 row added
-# 2026-09-28.)
+# 2026-09-28; Haiku 5.5 row added 2026-10-07.)
+#
+# Optional per-row long-prompt tier: long_prompt_threshold_tokens plus
+# long_prompt_input_per_1k / long_prompt_output_per_1k. When a call's input_tokens
+# exceed the threshold, the WHOLE call is priced at the long-prompt rates.
 #
 # Keys are bare model aliases. The lookup normalises the incoming id
 # before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
@@ -27,7 +31,7 @@
 # `pricing_model_unknown` once per distinct id. Add the row rather than
 # leaving a real cost reported as free.
 
-version: "2026-09-28"
+version: "2026-10-07"
 
 models:
   # --- Frontier tier -------------------------------------------------
@@ -148,6 +152,21 @@ models:
 
   # --- Haiku tier ----------------------------------------------------
   # Corrected 2026-07-26: previously 0.0008/0.004 ($0.80/$4.00 per MTok).
+  # Haiku 5.5 (released 2026-10-07; O, pricing page). Cache read is 0.1x input and the
+  # 5-minute cache write 1.25x, the standard convention. Prompts over 100K tokens are
+  # billed at $0.50 in / $2.50 out per MTok; the long_prompt_* keys below carry that tier
+  # and _usd_cost_estimate applies it when the call's input_tokens exceed the threshold.
+  # The vendor does not say what counts toward the 100K (cache tokens? the whole prompt?),
+  # so the reader uses input_tokens as reported -- an under-estimate if cache reads count.
+  claude-haiku-5-5:
+    input_per_1k: 0.0001
+    output_per_1k: 0.0005
+    cache_write_per_1k: 0.000125
+    cache_read_per_1k: 0.00001
+    long_prompt_threshold_tokens: 100000
+    long_prompt_input_per_1k: 0.0005
+    long_prompt_output_per_1k: 0.0025
+
   claude-haiku-4-5:
     input_per_1k: 0.001
     output_per_1k: 0.005

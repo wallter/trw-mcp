@@ -109,6 +109,25 @@ class TestUsdCostEstimate:
         bare = _usd_cost_estimate(model_id="claude-haiku-4-5", input_tokens=1000, output_tokens=1000)
         assert dated == pytest.approx(bare, abs=1e-9)
 
+    @pytest.mark.parametrize(
+        "model_id",
+        ["claude-haiku-5-5", "anthropic.claude-haiku-5-5", "global.anthropic.claude-haiku-5-5", "claude-haiku-5-5[1m]"],
+    )
+    def test_haiku_5_5_is_priced_at_its_own_row(self, model_id: str) -> None:
+        # $0.10 in / $0.50 out per MTok: 10K in + 2K out = 0.001 + 0.001.
+        usd = _usd_cost_estimate(model_id=model_id, input_tokens=10_000, output_tokens=2_000)
+        assert usd == pytest.approx(0.002, abs=1e-9)
+
+    def test_haiku_5_5_long_prompt_tier_applies_above_100k_only(self) -> None:
+        at = _usd_cost_estimate(model_id="claude-haiku-5-5", input_tokens=100_000, output_tokens=1_000)
+        over = _usd_cost_estimate(model_id="claude-haiku-5-5", input_tokens=100_001, output_tokens=1_000)
+        assert at == pytest.approx(100 * 0.0001 + 0.0005, abs=1e-9)  # boundary is still the base rate
+        assert over == pytest.approx(100.001 * 0.0005 + 0.0025, abs=1e-9)  # $0.50 in / $2.50 out
+
+    def test_haiku_4_5_row_is_not_hijacked_by_the_5_5_row(self) -> None:
+        usd = _usd_cost_estimate(model_id="claude-haiku-4-5", input_tokens=1000, output_tokens=1000)
+        assert usd == pytest.approx(0.006, abs=1e-9)
+
     def test_provider_prefixed_and_long_context_ids_are_priced(self) -> None:
         """Bedrock, region-prefixed Bedrock, and the Claude Code ``[1m]`` rendering."""
         expected = _usd_cost_estimate(model_id="claude-opus-5", input_tokens=1000, output_tokens=1000)

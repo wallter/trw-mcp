@@ -75,6 +75,10 @@ ENV_ONLY_VARS: tuple[EnvOnlyVar, ...] = (
         "Installer pins for `trw-mcp config dispatch`: comma-separated CLIENT=LEVEL, written to the machine config.",
     ),
     EnvOnlyVar(
+        "TRW_RETIRED_KEY_WARNING",
+        "Set to 'off' to skip the stderr copy of the retired/unrecognised config-key warnings (the installer sets it on steps whose output it does not capture).",
+    ),
+    EnvOnlyVar(
         "TRW_ENTITLEMENT_KEY",
         "HMAC key used to verify entitlement tokens; unset falls back to a derived default.",
     ),

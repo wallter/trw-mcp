@@ -14,6 +14,7 @@ assert on what the flow decided (``calls["doctor"]``,
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -76,6 +77,8 @@ def drive_main(
     semantic: str | None = "ok",
     stop_daemon: bool = False,
     interactive: bool = False,
+    tty_answers: list[str] | None = None,
+    abort_in_project_setup: bool = False,
 ) -> MainRun:
     """Run the real ``main()`` against *target* with all I/O phases stubbed.
 
@@ -125,6 +128,12 @@ def drive_main(
         monkeypatch.setattr(
             installer, "find_trw_cmd", lambda *_a, **_k: [installer.sys.executable, "-B", "-m", "trw_mcp.server"]
         )
+    elif abort_in_project_setup:
+
+        def _abort(*_a: Any, **_k: Any) -> Any:
+            raise SystemExit(1)  # step 5 stops before step 6 would save the config
+
+        monkeypatch.setattr(installer, "phase_project_setup", _abort)
     else:
         monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
     monkeypatch.setattr(installer, "run_install_doctor", _record("doctor", None))
@@ -144,6 +153,15 @@ def drive_main(
     monkeypatch.setattr(installer, "_check_all_backends", lambda *_a, **_k: [])
     monkeypatch.setattr(installer, "show_success_banner", _record("banner", None))
     monkeypatch.setattr(installer, "_emit_install_complete_event", lambda *_a, **_k: None)
+
+    if tty_answers is not None:
+        scripted = list(tty_answers)
+
+        class _Tty(io.StringIO):
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setattr(installer, "_open_tty", lambda: _Tty((scripted.pop(0) if scripted else "") + "\n"))
 
     original_step_warn = installer.UI.step_warn
 

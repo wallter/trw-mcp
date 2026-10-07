@@ -20,6 +20,8 @@ its env, cwd or tool filters through Codex's recursive configuration merge.
 
 from __future__ import annotations
 
+import re
+
 from trw_mcp.dispatch._client_spec_types import EFFORT_LEVELS, ClientSpec
 from trw_mcp.dispatch._client_specs import (
     SUPPORTED_CLIENTS,
@@ -40,6 +42,34 @@ class UnsupportedClientError(ValueError):
     """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
+_HAIKU_GENERATION = re.compile(r"haiku-(\d{1,2})(?!\d)")
+
+
+def model_takes_no_effort(model: str | None) -> bool:
+    """True when sending an effort flag with *model* would be an error rather than a no-op.
+
+    Haiku 4.x and 3.x reject effort; Haiku 5 and later (the first Haiku with low..max effort) accept
+    it. The generation is the one-or-two-digit number right after ``haiku-`` (``claude-haiku-5-5``,
+    ``anthropic.claude-haiku-5-5``); ``claude-3-5-haiku-...`` has none, and a dated suffix such as
+    ``-20251001`` is longer than two digits so it is not read as a generation.
+
+    The bare ``haiku`` alias is AMBIGUOUS: Claude Code resolves it to Haiku 5.5 on the Anthropic API
+    but to Haiku 4.5 on Bedrock, Vertex, Foundry and Claude Platform on AWS (cc-model-config, O*), and
+    TRW cannot see which backend the child will use. Dropping effort is the only choice that cannot fail
+    a launch: omitting it on 5.5 just runs at the default (``medium``), whereas sending it to 4.5 is a
+    400. So an id with no parseable generation is treated as no-effort. ``claude --help`` documents
+    ``--effort`` for the session without saying what it does on a model lacking effort, so that
+    behaviour was not verified.
+    """
+    if not model:
+        return False
+    lowered = model.lower()
+    if "haiku" not in lowered:
+        return False
+    match = _HAIKU_GENERATION.search(lowered)
+    return match is None or int(match.group(1)) < 5
+
+
 def applied_effort(spec: ClientSpec, effort: str | None, model: str | None) -> str | None:
     """The effort value *spec*'s command line would carry for a resolved *effort*, or ``None`` for none.
 
@@ -51,7 +81,7 @@ def applied_effort(spec: ClientSpec, effort: str | None, model: str | None) -> s
     """
     if effort is None or not (spec.effort_flag or spec.effort_config_key):
         return None
-    if model and "haiku" in model.lower():
+    if model_takes_no_effort(model):
         return None
     ceiling = EFFORT_LEVELS.index(effort)
     supported = [level for level in spec.effort_levels if EFFORT_LEVELS.index(level) <= ceiling]

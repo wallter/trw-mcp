@@ -383,12 +383,11 @@ def test_remove_proven_reports_only_the_files_it_actually_captured(tmp_path: Pat
 
     remove_proven(skill, hashes, tmp_path, result)
 
-    assert result["retired"] == [".agents/skills/trw-sprint-init/SKILL.md"]
-    assert (skill / "notes.md").read_bytes() == b"mine\n", "an unrecorded file keeps its bytes and its directory"
-    assert any(
-        "notes.md" in w and w.endswith("rm .agents/skills/trw-sprint-init/notes.md") for w in result["warnings"]
-    ), result["warnings"]
-    assert not (skill / "SKILL.md").exists()
+    # A skill directory is retired as one unit: a file the user added keeps the whole skill, and nothing is deleted.
+    assert not result.get("retired")
+    assert (skill / "notes.md").read_bytes() == b"mine\n"
+    assert (skill / "SKILL.md").read_bytes() == b"shipped\n"
+    assert result["retired_kept"] == [".agents/skills/trw-sprint-init"]
 
 
 @pytest.mark.parametrize(

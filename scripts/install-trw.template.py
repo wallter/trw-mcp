@@ -28,6 +28,7 @@ Re-run with a newer version of this script to upgrade.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import contextlib
 import hashlib
@@ -36,6 +37,7 @@ import json
 import os
 import random
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -44,7 +46,7 @@ import tempfile
 import threading
 import time
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from email.parser import BytesParser
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -473,12 +475,21 @@ def _has_controlling_tty() -> bool:
     return True
 
 
-def prompt_yes_no(question: str, default: str = "n") -> bool:
-    """Prompt for yes/no. Returns True for yes."""
+def _open_tty_available() -> bool:
+    """True when a terminal can be asked (the same test :func:`_ask_yes_no` makes)."""
+    tty = _open_tty()
+    if tty is None:
+        return False
+    tty.close()
+    return True
+
+
+def _ask_yes_no(question: str, default: str = "n") -> bool | None:
+    """Ask on the terminal; ``None`` when there is no terminal to ask on (nothing was asked)."""
     hint = "[Y/n]" if default == "y" else "[y/N]"
     tty = _open_tty()
     if tty is None:
-        return default == "y"
+        return None
     try:
         sys.stdout.write(f"    {question} {hint} ")
         sys.stdout.flush()
@@ -486,6 +497,273 @@ def prompt_yes_no(question: str, default: str = "n") -> bool:
     finally:
         tty.close()
     return answer.lower().startswith("y")
+
+
+def prompt_yes_no(question: str, default: str = "n") -> bool:
+    """Prompt for yes/no. Returns True for yes."""
+    answer = _ask_yes_no(question, default)
+    return default == "y" if answer is None else answer
+
+
+# ── Ask once, then remember ──────────────────────────────────────────────────────────────────────────────────
+#
+# An interactive answer, yes or no, is recorded in the ``installer_answers`` map of the project's
+# ``.trw/config.yaml`` (a project choice) or of ``~/.trw/config.yaml`` (a machine choice), through
+# ``trw-mcp config set`` once trw-mcp is installed. A re-run reuses it without asking and says so in one line.
+# An explicit flag wins over a record, ``--reconfigure`` asks everything once more, and a run that has no
+# terminal asks and records nothing (headless and ``--json`` runs behave as they always did).
+
+_ANSWERS_FIELD = "installer_answers"
+_KEY = r"""(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))"""
+_BLOCK_ANSWER = re.compile(rf"^\s+{_KEY}\s*:\s*(true|false)\s*(?:#.*)?$", re.IGNORECASE)
+_FLOW_ANSWER = re.compile(rf"\s*{_KEY}\s*:\s*(true|false)\s*$", re.IGNORECASE)
+_ROOT_ANSWER = re.compile(rf"^\s*({_KEY})\s*:\s*(.*)$")
+_NO_YAML_PARSER = object()
+_WARNED_UNREADABLE_ANSWERS = False
+
+
+def _answer(match: re.Match[str]) -> tuple[str, bool]:
+    return (match.group(1) or match.group(2) or match.group(3), match.group(4).lower() == "true")
+
+
+def _load_yaml_document(text: str) -> object:
+    """Load YAML safely when an optional YAML library is available in this interpreter."""
+    try:
+        import yaml  # type: ignore[import-not-found]
+    except ImportError:
+        try:
+            from ruamel.yaml import YAML
+        except ImportError:
+            return _NO_YAML_PARSER
+        try:
+            return YAML(typ="safe").load(text)
+        except Exception:  # trw-fail-silent-allow: unparseable YAML falls back to the hand parser, which warns if it cannot read the answers either
+            return None
+    try:
+        return yaml.safe_load(text)
+    except Exception:  # trw-fail-silent-allow: unparseable YAML falls back to the hand parser, which warns if it cannot read the answers either
+        return None
+
+
+def _answer_mapping(document: object) -> dict[str, bool] | None:
+    """Return parsed answers, or None when the YAML shape cannot safely be read."""
+    if not isinstance(document, dict):
+        return None
+    if _ANSWERS_FIELD not in document:
+        return {}
+    values = document[_ANSWERS_FIELD]
+    if not isinstance(values, dict):
+        return None
+    return {key: value for key, value in values.items() if isinstance(key, str) and isinstance(value, bool)}
+
+
+def _warn_unreadable_installer_answers() -> None:
+    global _WARNED_UNREADABLE_ANSWERS
+    if not _WARNED_UNREADABLE_ANSWERS:
+        print(
+            "[TRW] Could not read installer_answers from config.yaml; saved answers will be treated as unknown.",
+            file=sys.stderr,
+        )
+        _WARNED_UNREADABLE_ANSWERS = True
+
+
+def bound_key(base: str, *context: str) -> str:
+    """*base* bound to the context a consent was given in: a different context is a different key, so it re-asks."""
+    return f"{base}_{hashlib.sha256(chr(0).join(context).encode()).hexdigest()[:12]}"
+
+
+def _read_installer_answers(config_path: Path) -> dict[str, bool]:
+    """The ``installer_answers`` entries of one config.yaml, in every shape ``config set`` can leave them.
+
+    Block form, quoted keys, and flow form (``installer_answers: {a: true, b: false}``, possibly wrapped over
+    several lines), which the round-trip writer keeps when that is how the file already spelled it.
+    """
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:  # trw-fail-silent-allow: no readable config means no recorded answers; the question is asked
+        return {}
+    document = _load_yaml_document(text)
+    if document is not _NO_YAML_PARSER:
+        parsed = _answer_mapping(document)
+        if parsed is not None:
+            return parsed
+    lines = text.splitlines()
+    answers: dict[str, bool] = {}
+    inside = False
+    found_field = False
+    fallback_unreadable = False
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace():
+            root = _ROOT_ANSWER.match(line.split("#", 1)[0])
+            if root is None:
+                inside = False
+                continue
+            head = root.group(2) or root.group(3) or root.group(4)
+            rest = root.group(5).strip()
+            inside = head == _ANSWERS_FIELD
+            found_field = found_field or inside
+            rest = rest.strip()
+            if inside and rest.startswith("{"):  # flow mapping: gather up to its closing brace
+                body = rest
+                while "}" not in body and index < len(lines):
+                    body += " " + lines[index].split("#", 1)[0].strip()
+                    index += 1
+                if "}" not in body:
+                    fallback_unreadable = True
+                    inside = False
+                    continue
+                pairs = body[1 : body.index("}")].split(",")
+                for pair in pairs:
+                    if not pair.strip():
+                        continue
+                    flow = _FLOW_ANSWER.match(pair)
+                    if flow:
+                        key, value = _answer(flow)
+                        answers[key] = value
+                    else:
+                        fallback_unreadable = True
+                inside = False
+            elif inside and rest:
+                fallback_unreadable = True
+            continue
+        block = _BLOCK_ANSWER.match(line) if inside else None
+        if block:
+            key, value = _answer(block)
+            answers[key] = value
+        elif inside and line.strip() and not line.lstrip().startswith("#"):
+            fallback_unreadable = True
+    if _ANSWERS_FIELD in text and (not found_field or fallback_unreadable):
+        _warn_unreadable_installer_answers()
+        return {}
+    return answers
+
+
+class AnswerStore:
+    """The recorded installer answers of one run: read at the start, written as soon as trw-mcp can write them."""
+
+    def __init__(self, project_config: Path, machine_config: Path, *, reconfigure: bool = False) -> None:
+        self.reconfigure = reconfigure
+        self._files = {"project": project_config, "machine": machine_config}
+        self._this_run: dict[tuple[str, str], bool] = {}
+        self._pending: list[tuple[str, str]] = []
+        #: Set once trw-mcp is installed: called after every answer so one that is given is on file before the
+        #: next step can abort. ``None`` before that; an exit hook flushes whatever is still pending.
+        self.writer: Callable[[], None] | None = None
+
+    def recorded(self, key: str, scope: str = "project") -> bool | None:
+        """The answer to reuse: this run's own, else the one on file (none under ``--reconfigure``)."""
+        if (scope, key) in self._this_run:
+            return self._this_run[(scope, key)]
+        if self.reconfigure:
+            return None
+        return _read_installer_answers(self._files[scope]).get(key)
+
+    def remember(self, key: str, value: bool, scope: str = "project") -> None:
+        self._this_run[(scope, key)] = value
+        self._pending = [entry for entry in self._pending if entry != (scope, key)] + [(scope, key)]
+        if self.writer is not None:
+            self.writer()
+
+    def flush(self, ui: UI, trw_cmd: list[str], target_dir: Path) -> None:
+        """Write every pending answer. A write that fails stays pending (the next flush retries it) and is reported."""
+        for scope, key in list(self._pending):  # an entry leaves _pending only once it is on file
+            value = str(self._this_run[(scope, key)]).lower()
+            cmd = [*trw_cmd, "config", "set", f"{_ANSWERS_FIELD}.{key}", value]
+            cmd += ["--scope", scope, "--target-dir", str(target_dir)]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+                failed = proc.returncode != 0
+            except (OSError, subprocess.SubprocessError):
+                failed = True
+            if not failed:
+                self._pending.remove((scope, key))
+                continue
+            on_file = _read_installer_answers(self._files[scope]).get(key)
+            if on_file is not None and str(on_file).lower() != value:
+                ui.step_warn(
+                    f"Could not record your new answer for '{key}' in the {scope} config: your PREVIOUS answer "
+                    f"({str(on_file).lower()}) is still on file and still applies to later runs. To change it now, run: "
+                    + " ".join(shlex.quote(part) for part in cmd)
+                )
+            else:
+                ui.step_warn(f"Could not record your answer for '{key}' in the {scope} config; it will be asked again.")
+
+
+_ANSWERS: AnswerStore | None = None
+
+
+def set_answer_store(store: AnswerStore | None) -> None:
+    """Install the run's answer store (called from main())."""
+    global _ANSWERS
+    _ANSWERS = store
+
+
+def recorded_answer(key: str, scope: str = "project") -> bool | None:
+    """The recorded answer for *key* that this run would reuse, or ``None`` (ask)."""
+    return _ANSWERS.recorded(key, scope) if _ANSWERS is not None else None
+
+
+def ask_once(
+    ui: UI,
+    key: str,
+    question: str,
+    *,
+    label: str,
+    change: str,
+    default: str = "n",
+    scope: str = "project",
+    state: tuple[str, str] = ("yes", "no"),
+    remember_yes: bool = True,
+) -> bool:
+    """Ask *question* unless it was answered before: the recorded answer, else the terminal.
+
+    A caller's own flag is resolved before this is called, so a flag always wins over a record.
+
+    A reused answer prints one line naming it and how to change it. Without a terminal nothing is asked and
+    nothing is recorded: the default applies, as it always did.
+    """
+    known = recorded_answer(key, scope)
+    if known is not None:
+        ui.step_ok(f"{label}: {state[0] if known else state[1]} (your earlier answer; change with {change})")
+        return known
+    answer = _ask_yes_no(question, default)
+    if answer is None:
+        return default == "y"
+    if _ANSWERS is not None and (not answer or remember_yes):
+        _ANSWERS.remember(key, answer, scope)
+    return answer
+
+
+def flush_answers(ui: UI, python: str, target_dir: Path, pip_target: str = "") -> None:
+    """Record the answers given so far (a no-op when there are none)."""
+    if _ANSWERS is not None and _ANSWERS._pending:
+        _ANSWERS.flush(ui, find_trw_cmd(python, pip_target=pip_target), target_dir)
+
+
+def persist_answers_as_given(ui: UI, python: str, target_dir: Path, pip_target: str = "") -> None:
+    """From now on write each answer the moment it is given, and again on exit if any write is still pending.
+
+    Called once trw-mcp is installed. An answer used to wait for the end of the run, so a run that aborted in
+    project setup lost every answer it had been given (the next, unattended run then took the default).
+    """
+    if _ANSWERS is None:
+        return
+    store = _ANSWERS
+
+    def write_now() -> None:
+        (target_dir / ".trw").mkdir(exist_ok=True)  # config set writes a project's .trw/config.yaml; it must exist
+        store.flush(ui, find_trw_cmd(python, pip_target=pip_target), target_dir)
+
+    # The exit hook first: an interrupt during the first write must still find the rest pending and retry them.
+    atexit.register(lambda: store._pending and write_now())
+    store.writer = write_now
+    if store._pending:
+        write_now()
 
 
 def prompt_input(prompt_text: str, default: str = "") -> str:
@@ -1526,7 +1804,7 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     # site-packages and can corrupt OS-managed packages. It is NEVER applied
     # silently — only when the operator opted in via --allow-system-python (or
     # an interactive confirmation, resolved into _ALLOW_SYSTEM_PYTHON).
-    if _allow_system_python(ui) and _run_quiet([*base, "--break-system-packages"]):
+    if _allow_system_python(ui, python) and _run_quiet([*base, "--break-system-packages"]):
         ui.step_warn(f"Installed {label} with --break-system-packages (--allow-system-python)")
         return True
 
@@ -1607,7 +1885,7 @@ def set_allow_system_python(allowed: bool | None) -> None:
     _ALLOW_SYSTEM_PYTHON = allowed
 
 
-def _allow_system_python(ui: UI) -> bool:
+def _allow_system_python(ui: UI, python: str = "") -> bool:
     """Return whether --break-system-packages may be applied (FR03).
 
     Consent is explicit and never silent. Resolution order:
@@ -1624,7 +1902,17 @@ def _allow_system_python(ui: UI) -> bool:
             "This Python is externally managed (PEP 668). Installing into it "
             "with --break-system-packages can corrupt OS packages."
         )
-        decision = prompt_yes_no("Allow --break-system-packages on this system Python?", default="n")
+        # A machine choice, per interpreter: the same Python asks once, however many projects install into it.
+        key = "system_python_" + hashlib.sha256(os.path.realpath(python or sys.executable).encode()).hexdigest()[:12]
+        decision = ask_once(
+            ui,
+            key,
+            "Allow --break-system-packages on this system Python?",
+            label="System Python (--break-system-packages)",
+            change="--allow-system-python or --reconfigure",
+            scope="machine",
+            state=("allowed", "refused"),
+        )
         _ALLOW_SYSTEM_PYTHON = decision
         return decision
     # Non-interactive without explicit opt-in: deny.
@@ -3182,14 +3470,27 @@ def phase_prompt_features(
     """
     if install_ai is not None:
         return bool(install_ai)
-    if (prior_extras or {}).get("ai", False):
+    detected = bool((prior_extras or {}).get("ai", False))
+    reconfiguring = _ANSWERS is not None and _ANSWERS.reconfigure
+    # Order: flag (above), --reconfigure, the recorded answer, and only then what is importable: an `anthropic`
+    # another project put in a shared interpreter is not this project's consent.
+    if not reconfiguring and recorded_answer("ai_extras") is None and detected:
         print(f"  {GREEN}\u2713{NC} AI extras (from prior install)")
         return True
-    draw_divider("Optional Features")
-    print()
-    ui.hint("AI extras add LLM-powered analysis of patterns across sessions.")
-    ui.doc_link("concepts")
-    return prompt_yes_no("Install AI/LLM features?")
+    if recorded_answer("ai_extras") is None:
+        draw_divider("Optional Features")
+        print()
+        ui.hint("AI extras add LLM-powered analysis of patterns across sessions.")
+        ui.doc_link("concepts")
+    return ask_once(
+        ui,
+        "ai_extras",
+        "Install AI/LLM features?",
+        label="AI extras",
+        change="--ai / --no-ai or --reconfigure",
+        default="y" if detected else "n",
+        state=("on", "off"),
+    )
 
 
 def _wheel_version(wheel: Path) -> str:
@@ -4375,6 +4676,17 @@ def _surface_proprietary_pip_failure(
     )
 
 
+def _backend_origin(url: str) -> str:
+    """``scheme://host[:port]`` of *url*, lower-cased, default port dropped: the identity a consent is bound to."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url.strip())
+    host = (parts.hostname or url.strip()).lower()
+    default = {"https": 443, "http": 80}.get(parts.scheme.lower())
+    port = f":{parts.port}" if parts.port and parts.port != default else ""
+    return f"{parts.scheme.lower()}://{host}{port}"
+
+
 def phase_install_proprietary(
     ui: UI,
     step: int,
@@ -4404,12 +4716,26 @@ def phase_install_proprietary(
     ui.step_header(step, total, "Installing proprietary packages")
     # FR02 \u2014 confirmation prompt. License key never echoed.
     if not auto_confirm:
-        ui.info("Proprietary install will fetch from:")
-        ui.info(f"  {backend_url}/proprietary/entitlement")
-        for pkg in PROPRIETARY_PACKAGES_TUPLE:
-            requested = pins.get(pkg, "latest")
-            ui.info(f"  - {pkg} ({requested})")
-        if not prompt_yes_no("Continue with proprietary install?", default="y"):
+        consent_key = bound_key(
+            "proprietary_install",
+            _backend_origin(backend_url),
+            *(f"{pkg}=={pins.get(pkg, 'latest')}" for pkg in PROPRIETARY_PACKAGES_TUPLE),
+        )
+        if recorded_answer(consent_key) is None:
+            ui.info("Proprietary install will fetch from:")
+            ui.info(f"  {backend_url}/proprietary/entitlement")
+            for pkg in PROPRIETARY_PACKAGES_TUPLE:
+                requested = pins.get(pkg, "latest")
+                ui.info(f"  - {pkg} ({requested})")
+        if not ask_once(
+            ui,
+            consent_key,
+            "Continue with proprietary install?",
+            label="Proprietary install",
+            change="--with-proprietary or --reconfigure",
+            default="y",
+            state=("go ahead", "skip"),
+        ):
             ui.step_warn("Proprietary install skipped by user")
             return []
     installed: list[str] = []
@@ -4720,7 +5046,15 @@ def _resolve_proprietary_from_marker(
         return True
     ui.info(f"This project already has proprietary packages installed ({packages}).")
     ui.hint(f"Record: {marker_path}")
-    if prompt_yes_no("Upgrade the proprietary packages as well?", default="y"):
+    if ask_once(
+        ui,
+        "proprietary_upgrade",
+        "Upgrade the proprietary packages as well?",
+        label="Proprietary packages upgrade",
+        change="--with-proprietary, TRW_WITH_PROPRIETARY=0 or --reconfigure",
+        default="y",
+        state=("yes", "no"),
+    ):
         return True
     ui.step_warn("Proprietary packages left at their current versions")
     return False
@@ -4805,6 +5139,93 @@ def _deployed_framework_is_stale(target_dir: Path, python: str, pip_target: str 
     return bool(isinstance(mismatches, list) and mismatches)
 
 
+_REFUSAL_LINE_CHARS = 1200  # one shown line: room for a sentence that ends in its remedy
+_REFUSAL_TOTAL_CHARS = 8000  # EVERYTHING emitted for one failure, markers included
+_REFUSAL_PATHS_SHOWN = 15
+_REFUSAL_COMMAND_CHARS = 1500  # a recovery command longer than this is not printed: it is never cut
+
+
+def _clip(text: str, limit: int) -> str:
+    """*text* sanitised (control characters dropped, API keys masked) and cut to *limit* characters.
+
+    For prose and paths only. A line that is a command to run is never passed through here: a cut in the middle of
+    a quoted path would hand the user a command that means something else.
+    """
+    safe = _safe_step_text(text[: limit * 4])  # bound the work on a megabyte line before sanitising
+    return safe if len(safe) <= limit else safe[: max(limit - 6, 0)] + " [...]"
+
+
+def _within(lines: list[str], budget: int) -> list[str]:
+    """The last of *lines* that fit in *budget* characters together (an error's last lines say the most)."""
+    kept: list[str] = []
+    for line in reversed(lines):
+        if len(line) > budget:
+            break
+        kept.append(line)
+        budget -= len(line)
+    return kept[::-1]
+
+
+def _refusal_lines(output: list[str], recovery: list[str] | None = None) -> list[str]:
+    """What to show of a failed project command: its error block, sanitised, within ONE total character budget.
+
+    A refusal is a block: ``Error: <sentence>:``, one ``<path> -> <target>`` line per symlink, ``Clients affected:``
+    and ``Fix:``. The header, the clients line, the Fix line and the closing line are reserved first, whole; the
+    first few paths fill what is left. *recovery* is the real command prefix and project directory
+    (``[*launcher, "update-project", <dir>]``): the closing line names ``<launcher> update-project --dry-run <dir>``,
+    which prints the whole refusal, quoted for a shell and never clipped.
+    """
+    start = next((i for i, line in enumerate(output) if line.lower().startswith("error")), None)
+    if start is None:  # an error that does not start a line: the same one budget applies
+        return _within(
+            [_clip(ln, _REFUSAL_LINE_CHARS) for ln in output if "error" in ln.lower()][-10:], _REFUSAL_TOTAL_CHARS
+        )
+    block = output[start:]
+    header, rest = block[0], block[1:]
+    paths = [ln for ln in rest if " -> " in ln]
+    head = [_clip(header, _REFUSAL_LINE_CHARS)]
+    tail = [
+        _clip(ln, _REFUSAL_LINE_CHARS)
+        for ln in [
+            *[ln for ln in rest if ln.startswith("Clients affected:")][:1],
+            *[ln for ln in rest if ln.startswith("Fix:")][-1:],
+        ]
+    ]
+    others = [
+        _clip(ln, _REFUSAL_LINE_CHARS)
+        for ln in rest
+        if ln not in paths and not ln.startswith(("Clients affected:", "Fix:"))
+    ][:3]
+
+    def closing(omitted: int) -> str:
+        command = shlex.join([*recovery[:-1], "--dry-run", recovery[-1]]) if recovery else ""
+        if command and len(command) <= _REFUSAL_COMMAND_CHARS:
+            return f"...and {omitted} more; `{command}` lists them all"
+        return f"...and {omitted} more; run update-project --dry-run in the project directory to list them all"
+
+    reserved = sum(map(len, [*head, *tail])) + len(closing(len(paths)))  # the widest closing line
+    budget = _REFUSAL_TOTAL_CHARS - reserved
+    shown: list[str] = []
+    for line in [*others, *paths[:_REFUSAL_PATHS_SHOWN]]:
+        clipped = _clip(line, _REFUSAL_LINE_CHARS)
+        if len(clipped) > budget:
+            break
+        shown.append(clipped)
+        budget -= len(clipped)
+    omitted = len(paths) - sum(1 for ln in shown if " -> " in ln)
+    return [*head, *shown, *([closing(omitted)] if omitted > 0 else []), *tail]
+
+
+def uncaptured_env() -> dict[str, str]:
+    """The environment for a trw-mcp subprocess whose stderr goes straight to the terminal.
+
+    trw-mcp prints the retired/unrecognised config-key warning on stderr unless ``TRW_RETIRED_KEY_WARNING=off``.
+    The installer shows it once, from the CAPTURED ``update-project`` output, so a command that is not captured
+    runs with it off, and a captured one (update-project, the doctor, the dispatch step) must not.
+    """
+    return {**os.environ, "TRW_RETIRED_KEY_WARNING": "off"}
+
+
 def _run_project_command(ui: UI, label: str, cmd: list[str], ok_msg: str, fail_msg: str) -> None:
     """Run one init/update-project call; on failure stop the installer before any further project write.
 
@@ -4818,9 +5239,13 @@ def _run_project_command(ui: UI, label: str, cmd: list[str], ok_msg: str, fail_m
     ui.stop_spinner(ok, ok_msg, fail_msg)
     if ok:
         return
-    for line in [line for line in output if "error" in line.lower()][-10:]:
+    verb = cmd.index("update-project") if "update-project" in cmd else -1
+    recovery = cmd[: verb + 2] if 0 <= verb < len(cmd) - 1 else None  # the real launcher, the verb, the project dir
+    for line in _refusal_lines(output, recovery):
         ui.error(line)
-    ui.step_fail(f"{fail_msg}; stopping before any further change to the project")
+    clients = _safe_step_text(next((ln.partition(":")[2] for ln in output if ln.startswith("Clients affected:")), ""))
+    blocked_by = f" (blocked by files in {clients[:300]})" if clients else ""
+    ui.step_fail(f"{fail_msg}{blocked_by}; stopping before any further change to the project")
     sys.exit(1)
 
 
@@ -4908,7 +5333,7 @@ def phase_project_setup(
     resolved_targets: list[str] | None = ide
     is_update = (target_dir / ".trw").is_dir() and has_prior_install
     if resolved_targets is None:
-        if has_prior_install and interactive and prior_targets:
+        if has_prior_install and interactive and prior_targets and not (_ANSWERS is not None and _ANSWERS.reconfigure):
             resolved_targets = _normalize_ide_targets(prior_targets)
             ui.step_ok(f"Client surfaces: {_format_ide_list(resolved_targets)} (from prior install)")
         elif interactive:
@@ -4927,23 +5352,43 @@ def phase_project_setup(
         return []
 
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
-    first_action = "update-project" if is_update else "init-project"
-
-    for idx, selected_ide in enumerate(resolved_targets):
-        action = first_action if idx == 0 else "update-project"
-        label = "Updating" if action == "update-project" else "Initializing"
-        success_message = (
-            f"{_ide_label(selected_ide)} configured"
-            if len(resolved_targets) > 1
-            else f"Project {'updated' if is_update else 'initialized'}"
-        )
+    if is_update:
+        # An update records only the clients it has not seen (`--ide X` runs each one's first-time setup and records
+        # it), then ONE plain update-project refreshes every recorded client itself. Per-client runs each reported on
+        # the whole project, so their reports repeated; the plain run is what the --upgrade branch has always done.
+        # A recorded client the user deselected is not run per client; target_platforms is append-only, so the plain
+        # run still maintains it.
+        recorded = _normalize_ide_targets([str(t) for t in prior_targets])
+        for selected_ide in (ide for ide in resolved_targets if ide not in recorded):
+            _run_project_command(
+                ui,
+                f"Adding {_ide_label(selected_ide)}...",
+                [*trw_cmd, "update-project", str(target_dir), "--ide", selected_ide],
+                f"{_ide_label(selected_ide)} configured",
+                f"Project update-project failed for {_ide_label(selected_ide)}",
+            )
+        labels = ", ".join(_ide_label(t) for t in dict.fromkeys([*recorded, *resolved_targets]))
         _run_project_command(
             ui,
-            f"{label} project for {_ide_label(selected_ide)}...",
-            [*trw_cmd, action, str(target_dir), "--ide", selected_ide],
-            success_message,
-            f"Project {action} failed for {_ide_label(selected_ide)}",
+            f"Updating project for {labels}...",
+            [*trw_cmd, "update-project", str(target_dir)],
+            f"Project updated for {labels}",
+            f"Project update-project failed for {labels}",
         )
+    else:
+        for idx, selected_ide in enumerate(resolved_targets):
+            action = "init-project" if idx == 0 else "update-project"
+            label = "Initializing" if action == "init-project" else "Updating"
+            success_message = (
+                f"{_ide_label(selected_ide)} configured" if len(resolved_targets) > 1 else "Project initialized"
+            )
+            _run_project_command(
+                ui,
+                f"{label} project for {_ide_label(selected_ide)}...",
+                [*trw_cmd, action, str(target_dir), "--ide", selected_ide],
+                success_message,
+                f"Project {action} failed for {_ide_label(selected_ide)}",
+            )
 
     config_path = target_dir / ".trw" / "config.yaml"
     refreshed_config = _load_prior_config(target_dir, ui)
@@ -5003,6 +5448,63 @@ def _run_doctor_command(ui: UI, cmd: list[str]) -> subprocess.CompletedProcess[s
     except (OSError, subprocess.SubprocessError) as exc:
         ui.step_warn(f"Could not run 'trw-mcp doctor' ({exc}); run it manually to check the install.")
     return None
+
+
+#: Packages TRW renamed: (old distribution, what replaced it). A copy of the old one left in the interpreter is dead
+#: weight, so the install says so and names the command that removes it, the way it reports an orphan trw-mcp.
+_RENAMED_PACKAGES = (("trw-harness", "trw-metaharness"),)
+
+
+def _renamed_package_entries(target: Path, old: str) -> list[Path]:
+    """The entries of *target* that belong to the distribution *old*, and nothing else.
+
+    Only the exact package directory and its ``<name>-<version>.dist-info`` (anchored: ``trw_harness_plugin`` is a
+    different package), narrowed to the top-level entries that distribution's RECORD lists when it has one.
+    """
+    module = old.replace("-", "_")
+    dist_info = [
+        entry
+        for entry in sorted(target.glob(f"{module}-*.dist-info"))
+        if re.fullmatch(rf"{module}-[^/]+\.dist-info", entry.name)
+    ]
+    owned: set[str] = set()
+    for entry in dist_info:
+        owned.add(entry.name)
+        try:
+            lines = (entry / "RECORD").read_text(encoding="utf-8").splitlines()
+        except OSError:  # trw-fail-silent-allow: no RECORD: the exact package directory is the distribution's by name
+            owned.add(module)
+            continue
+        tops = {Path(ln.split(",", 1)[0]).parts[0] for ln in lines if ln and not ln.startswith(("/", ".."))}
+        if module in tops:  # the RECORD itself lists the package directory
+            owned.add(module)
+    return sorted(target / name for name in owned if (target / name).exists())
+
+
+def report_leftover_packages(ui: UI, python: str, pip_target: str = "") -> None:
+    """Warn about a renamed package still installed in *python*, with its exact uninstall command. Advisory only."""
+    for old, new in _RENAMED_PACKAGES:
+        try:
+            code, out = _run_python_output(
+                [python, "-B", "-c", f"import importlib.metadata as m; print(m.version({old!r}))"],
+                target_dir=pip_target,
+            )
+        except OSError:  # trw-fail-silent-allow: advisory; a probe that cannot run reports nothing
+            continue
+        version = out.strip()
+        if code == 0 and version:
+            # Found through a --pip-target dir, `pip uninstall` would look in the interpreter's own environment and
+            # miss it: name the exact directories to remove instead. Otherwise it is the interpreter's own copy.
+            held = _renamed_package_entries(Path(pip_target), old) if pip_target else []
+            remove = (
+                "rm -rf " + " ".join(shlex.quote(str(path)) for path in held)
+                if held
+                else f"{shlex.quote(python)} -m pip uninstall {old}"
+            )
+            ui.step_warn(
+                f"Leftover {old} {version} (renamed {new}) is still installed in "
+                f"{pip_target if held else python}; remove it with: {remove}"
+            )
 
 
 #: The Dispatch line the setup step printed this run (PRD-INFRA-210 FR09): shown beside ``Extras:`` in the banner.
@@ -5101,7 +5603,11 @@ def run_install_doctor(
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     # trw_assess (jev) first: inherit the machine key (~/.trw/jev.env) in one line, or offer once (interactive only)
     # to promote a key found only in this project's .env. Never writes the key into a project file; advisory.
-    subprocess.run([*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive], check=False)
+    subprocess.run(
+        [*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive],
+        check=False,
+        env=uncaptured_env(),
+    )
     run_dispatch_step(ui, trw_cmd, target_dir, dispatch_args)  # PRD-INFRA-210 FR08: after assess, advisory
     proc = _run_doctor_command(ui, [*trw_cmd, "doctor", str(target_dir), "--format", "json"])
     if proc is None:
@@ -5229,7 +5735,7 @@ def phase_semantic_readiness(
     return status
 
 
-def resolve_embeddings_choice(flag: bool | None, prior_config: dict[str, object]) -> bool:
+def resolve_embeddings_choice(flag: bool | None, prior_config: dict[str, object], *, interactive: bool = False) -> bool:
     """Whether this install wants embeddings: the flag, else a prior opt-out, else on.
 
     A prior ``embeddings_enabled: false`` is honoured on a re-run without a flag,
@@ -5238,7 +5744,13 @@ def resolve_embeddings_choice(flag: bool | None, prior_config: dict[str, object]
     """
     if flag is not None:
         return flag
-    return prior_config.get("embeddings") is not False
+    prior = prior_config.get("embeddings") is not False
+    if interactive and _ANSWERS is not None and _ANSWERS.reconfigure:
+        # --reconfigure asks the PREFERENCE, whether or not anything needs installing; Enter keeps the earlier one.
+        answer = _ask_yes_no("Enable semantic embeddings (recommended)?", "y" if prior else "n")
+        if answer is not None:
+            return answer
+    return prior
 
 
 def persist_embeddings_choice(config_path: Path, enabled: bool) -> None:
@@ -5312,10 +5824,26 @@ def phase_migrate_store(
         ui.error(f"  Check with `trw-mcp doctor`, then move them with: {manual}")
         return False
     unread = f"{db} holds learnings trw-mcp 6 no longer reads"
-    if not migrate or (
-        interactive
-        and not prompt_yes_no("Move this checkout's learnings into the user store now (backed up first)?", default="y")
-    ):
+    # Bound to this source and this destination; only a decline is kept. An approval is acted on once: reusing it
+    # would silently migrate again after a rollback put the learnings back.
+    consent = bound_key(
+        "migrate_learnings",
+        os.path.realpath(db),
+        os.path.realpath(os.environ.get("TRW_USER_DIR") or str(Path.home() / ".trw")),
+    )
+    # A remembered refusal binds an unattended run too; with no answer on file an unattended run keeps its default.
+    declined = not migrate
+    if not declined and (interactive or recorded_answer(consent) is not None):
+        declined = not ask_once(
+            ui,
+            consent,
+            "Move this checkout's learnings into the user store now (backed up first)?",
+            label="Move this checkout's learnings into the user store",
+            change="--reconfigure, or run the command below",
+            default="y",
+            remember_yes=False,
+        )
+    if declined:
         ui.step_warn(f"{unread}; move them with: {manual}")
         return True
     ui.start_spinner("Moving this checkout's learnings into the user store...")
@@ -5382,7 +5910,7 @@ def _resolve_interactive_telemetry(
         ui.step_ok("Telemetry disabled (--no-telemetry)")
         return False
 
-    if "telemetry" in prior_config:
+    if "telemetry" in prior_config and not (_ANSWERS is not None and _ANSWERS.reconfigure):
         recorded = bool(prior_config["telemetry"])
         state = "enabled" if recorded else "disabled"
         ui.step_ok(f"Telemetry {state} (your earlier choice; --telemetry or --no-telemetry changes it)")
@@ -5424,7 +5952,7 @@ def phase_configure(
 
     prior_name = _reusable_prior_name(ui, prior_config)
     if interactive:
-        if prior_name:
+        if prior_name and not (_ANSWERS is not None and _ANSWERS.reconfigure):
             project_name = prior_name
             ui.step_ok(f"Project: {project_name} (installation_id in .trw/config.yaml, from prior install)")
         else:
@@ -5448,7 +5976,17 @@ def phase_configure(
             ui.hint("Connect to trwframework.com to sync learnings across")
             ui.hint("machines, view analytics, and collaborate with your team.")
             ui.doc_link_url(_PRIVACY_DOC_URL)
-            api_key = _prompt_api_key(ui)
+            if opt_api_key and validate_api_key(opt_api_key):
+                api_key = opt_api_key  # an explicit key is the answer: it beats a recorded decline
+                ui.step_ok("API key: accepted (--api-key)")
+            elif recorded_answer("platform_connect") is False:
+                ui.step_ok(
+                    "Platform: offline (your earlier answer; connect with --api-key, `trw-mcp auth login` or --reconfigure)"
+                )
+            else:
+                api_key = _prompt_api_key(ui)
+                if not api_key and _ANSWERS is not None and _open_tty_available():
+                    _ANSWERS.remember("platform_connect", False)
 
         # PRD-SEC-004-FR02: telemetry consent is ALWAYS explicit. A configured
         # API key (whether from prior install, bootstrap, or fresh device auth)
@@ -5488,12 +6026,19 @@ def phase_configure(
 
     # Write to config (including feature flags for future reinstall detection)
     config_path = target_dir / ".trw" / "config.yaml"
+    # target_platforms is append-only: update_config rewrites the block, so this run's clients are added to the
+    # recorded ones, never put in their place (selecting only Claude Code must not un-record the other three).
+    recorded = _load_prior_config(target_dir).get("target_platforms")
+    recorded_ids = [str(t) for t in recorded if t] if isinstance(recorded, list) else []
+    kept_targets = (
+        _unique([*recorded_ids, *target_platforms]) if target_platforms else []
+    )  # none: leave the block alone
     if update_config(
         config_path,
         project_name,
         api_key,
         telemetry_enabled,
-        target_platforms=target_platforms or None,
+        target_platforms=kept_targets or None,
         rewrite_platform_urls=not preserve_prior_platform_urls,
     ):
         # PRD-SEC-005-FR01: store the bearer credential in the ignored, 0600
@@ -5745,6 +6290,11 @@ def main() -> None:
         help="Skip embeddings: recall is keyword-only, recorded as embeddings_enabled: false",
     )
     parser.add_argument(
+        "--reconfigure",
+        action="store_true",
+        help="Ask every question once more and record the new answers (earlier answers are otherwise reused)",
+    )
+    parser.add_argument(
         "--no-migrate",
         dest="migrate",
         action="store_false",
@@ -5958,6 +6508,11 @@ def main() -> None:
         sys.exit(1)
 
     ui = UI(interactive=interactive, quiet=args.quiet)
+    set_answer_store(
+        AnswerStore(
+            target_dir / ".trw" / "config.yaml", Path.home() / ".trw" / "config.yaml", reconfigure=args.reconfigure
+        )
+    )
 
     index_preflight(ui)
 
@@ -6028,13 +6583,17 @@ def main() -> None:
     # Detect already-installed extras via runtime imports
     prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
 
-    # Feature selection (interactive: prompt now; script: already resolved)
+    # Feature selection (interactive: prompt now; script: already resolved). A run with no terminal never asks, but it
+    # applies an answer an earlier interactive run recorded, so an unattended re-run does not drop the extras.
     if interactive:
         install_ai = phase_prompt_features(ui, install_ai, prior_extras=prior_extras)
+    elif args.install_ai is None and recorded_answer("ai_extras") is True:
+        install_ai = True
+        ui.step_ok("AI extras: on (your earlier answer; change with --no-ai or --reconfigure)")
 
     install_ai = bool(install_ai)
     has_extras = install_ai
-    embeddings = resolve_embeddings_choice(args.embeddings, prior_config)
+    embeddings = resolve_embeddings_choice(args.embeddings, prior_config, interactive=interactive)
     has_config = interactive or args.name or resolved_api_key or bool(prior_config)
 
     # ── Step count (stable from here on) ─────────────────────────────
@@ -6079,6 +6638,10 @@ def main() -> None:
             )
             or python
         )
+        # trw-mcp is installed now: from here every answer is written the moment it is given, so a run that aborts
+        # later (project setup, say) does not lose them.
+        persist_answers_as_given(ui, python, target_dir, args.pip_target)
+        report_leftover_packages(ui, python, args.pip_target)
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
@@ -6145,8 +6708,13 @@ def main() -> None:
             pip_target=args.pip_target,
         )
         if args.trust_codex_hooks and (target_dir / ".codex" / "hooks.json").is_file():  # explicit consent; prints each
-            subprocess.run([*find_trw_cmd(python, args.pip_target), "trust-codex-hooks", str(target_dir)], check=False)
+            subprocess.run(
+                [*find_trw_cmd(python, args.pip_target), "trust-codex-hooks", str(target_dir)],
+                check=False,
+                env=uncaptured_env(),
+            )
 
+        flush_answers(ui, python, target_dir, args.pip_target)  # trw-mcp and the project config exist now
         # After update-project: a checkout upgraded from 5.x keeps learnings nothing reads.
         store_migrated = phase_migrate_store(
             ui, python, target_dir, migrate=args.migrate, interactive=interactive, pip_target=args.pip_target
@@ -6194,10 +6762,14 @@ def main() -> None:
                 offline=args.offline,
             )
         else:
-            ui.step_ok("Embeddings off (--no-embeddings or a prior opt-out): recall is keyword-only")
+            ui.step_ok(
+                "Embeddings: off, recall is keyword-only (--no-embeddings or your earlier answer; "
+                "change with --embeddings or --reconfigure)"
+            )
         if semantic == SEMANTIC_DECLINED:
             embeddings = False
         persist_embeddings_choice(target_dir / ".trw" / "config.yaml", embeddings)
+        flush_answers(ui, python, target_dir, args.pip_target)  # before any failure exit below loses them
 
         # Step N+1 (conditional): Configure
         platform_status = "offline"
@@ -6247,6 +6819,7 @@ def main() -> None:
         telemetry_state = bool(resolved.get("telemetry")) or platform_status == "telemetry"
         sharing_state = bool(resolved.get("learning_sharing_enabled"))
 
+        flush_answers(ui, python, target_dir, args.pip_target)  # the answers given since project setup
         # Done!
         show_success_banner(
             ui,

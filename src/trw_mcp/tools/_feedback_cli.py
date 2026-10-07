@@ -34,6 +34,14 @@ def add_feedback_subcommands(subparsers: argparse._SubParsersAction[argparse.Arg
 
 
 def run_feedback(args: argparse.Namespace) -> None:
+    """Run ``feedback`` against the project enclosing the cwd, so it finds what ``local feedback`` queued."""
+    from trw_mcp.server._subcommands_misc import enclosing_project_bound
+
+    with enclosing_project_bound():
+        _run_feedback(args)
+
+
+def _run_feedback(args: argparse.Namespace) -> None:
     """Dispatch ``feedback list|flush``; exit 1 when a flush left anything unsent."""
     command = str(getattr(args, "feedback_command", None) or "")
     as_json = bool(getattr(args, "as_json", False))

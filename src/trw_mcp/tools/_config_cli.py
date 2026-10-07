@@ -1,6 +1,7 @@
 """``trw-mcp config``: the one supported writer for ``config.yaml`` keys (PRD-INFRA-210).
 
-``config set KEY VALUE [--scope project|machine] [--target-dir DIR]`` changes one key in one layer.
+``config set KEY VALUE [--scope project|machine] [--target-dir DIR]`` changes one key in one layer;
+``config unset KEY`` removes one (a retired key too).
 The key is a public ``TRWConfig`` field, or ``FIELD.SUBKEY`` for a dict-typed field (one entry,
 siblings kept). Credentials are refused: they live in the credentials file, not a ``config.yaml``
 (PRD-SEC-005). The value is one YAML scalar or flow node; it is validated against the field before
@@ -17,7 +18,13 @@ import sys
 from pathlib import Path
 
 from trw_mcp.tools._config_dispatch_step import run_dispatch_step, run_dispatch_verb
-from trw_mcp.tools._config_writer import ConfigSetRefusedError, SetResult, _field_for, set_config_value
+from trw_mcp.tools._config_writer import (
+    ConfigSetRefusedError,
+    SetResult,
+    _field_for,
+    set_config_value,
+    unset_config_value,
+)
 
 __all__ = [
     "PICKUP_LINE",
@@ -26,6 +33,7 @@ __all__ = [
     "run_config",
     "run_dispatch_step",
     "set_config_value",
+    "unset_config_value",
 ]
 
 PICKUP_LINE = "Connected clients apply this on their next TRW tool call; reconnect (/mcp) only if trw_dispatch still does not appear"
@@ -33,7 +41,7 @@ _SCOPES = ("project", "machine")
 
 
 def add_config_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    """Register ``config set`` and ``config dispatch``."""
+    """Register ``config set``, ``config unset`` and ``config dispatch``."""
     config = subparsers.add_parser("config", help="Write a config.yaml key with validation (config set)")
     verbs = config.add_subparsers(dest="config_command")
     setter = verbs.add_parser("set", help="Set one public config key in the project or machine config.yaml")
@@ -41,6 +49,12 @@ def add_config_subcommands(subparsers: argparse._SubParsersAction[argparse.Argum
     setter.add_argument("value", help="one YAML scalar or flow value, e.g. true, medium, '{codex: medium}'")
     setter.add_argument("--scope", choices=_SCOPES, default="project", help="project (default) or machine")
     setter.add_argument("--target-dir", type=Path, default=Path("."), help="project whose .trw/ is written")
+    remover = verbs.add_parser(
+        "unset", help="Remove a config key (or FIELD.SUBKEY) from the project or machine config.yaml; retired keys too"
+    )
+    remover.add_argument("key", help="a config key, a retired key, or FIELD.SUBKEY for one entry of a dict field")
+    remover.add_argument("--scope", choices=_SCOPES, default="project", help="project (default) or machine")
+    remover.add_argument("--target-dir", type=Path, default=Path("."), help="project whose .trw/ is written")
     step = verbs.add_parser("dispatch", help="Installer step: offer trw_dispatch and pin per-client model and effort")
     step.add_argument("target", nargs="?", default=".", type=Path)
     step.add_argument("--offer", action="store_true", help="ask on the terminal (never in headless or --json runs)")
@@ -99,12 +113,27 @@ def _set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _unset(args: argparse.Namespace) -> int:
+    try:
+        result = unset_config_value(args.key, scope=args.scope, target_dir=args.target_dir)
+    except ConfigSetRefusedError as exc:
+        print(f"config unset: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"config unset: write failed ({type(exc).__name__})", file=sys.stderr)
+        return 1
+    print(f"{args.key}: {'removed from' if result.changed else 'already absent in'} {result.path}")
+    return 0
+
+
 def run_config(args: argparse.Namespace) -> None:
-    """Dispatch ``config set|dispatch``."""
+    """Dispatch ``config set|unset|dispatch``."""
     command = getattr(args, "config_command", None)
     if command == "set":
         sys.exit(_set(args))
+    if command == "unset":
+        sys.exit(_unset(args))
     if command == "dispatch":
         sys.exit(run_dispatch_verb(args))
-    print("usage: trw-mcp config {set,dispatch}", file=sys.stderr)
+    print("usage: trw-mcp config {set,unset,dispatch}", file=sys.stderr)
     sys.exit(2)

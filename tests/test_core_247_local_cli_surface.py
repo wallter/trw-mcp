@@ -6,7 +6,7 @@ second redaction, validation, ranking, or persistence path exists to drift from
 it. That is asserted three ways:
 
 1. the shared callables are observed to be invoked exactly once per CLI run;
-2. both subcommands exit 0 against a real ``.trw`` in a subprocess (the real
+2. recall exits 0 and an unsent feedback exits 1 against a real ``.trw`` in a subprocess (the real
    argparse dispatch, not a hand-built ``Namespace``); and
 3. an AST scan of the CLI/marshalling modules proves neither imports a
    redaction, ranking, or storage primitive of its own.
@@ -91,8 +91,10 @@ def test_local_feedback_and_recall_call_the_shared_implementations(
     assert recall_calls[0][0] == "degraded mode"
 
 
-def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkout: DaemonCheckout) -> None:
-    """FR03 acceptance: both subcommands exit 0 against a live ``.trw`` (a pinned checkout).
+def test_local_recall_exits_zero_and_unsent_feedback_exits_one_through_the_real_cli(
+    daemon_checkout: DaemonCheckout,
+) -> None:
+    """FR03 acceptance: recall exits 0 and an unsent feedback exits 1 against a live ``.trw`` (a pinned checkout).
 
     Real argparse dispatch in a subprocess, so a subparser that was declared but
     never routed would fail here even though the unit test above passes.
@@ -134,11 +136,11 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkou
         cwd=str(daemon_checkout.trw_dir.parent),
         env=pinned_server_env(),
     )
-    # An unconfigured backend is a reported result, never a traceback: the CLI
-    # inherits submit_feedback's never-raises contract.
-    assert feedback.returncode == 0, feedback.stderr
+    # An unsent submission is a reported result, never a traceback (submit_feedback's never-raises
+    # contract), and a script must see it: exit 1 with the reason on stderr.
+    assert feedback.returncode == 1, feedback.stderr
     assert "Traceback" not in feedback.stderr
-    assert "Feedback" in feedback.stdout
+    assert "Feedback not submitted" in feedback.stderr
 
 
 def test_local_usage_lists_recall_and_feedback() -> None:

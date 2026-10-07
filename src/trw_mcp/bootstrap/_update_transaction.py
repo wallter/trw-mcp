@@ -248,6 +248,35 @@ def _symlink_kind(target_dir: Path, links: list[tuple[str, str]]) -> str:
     return kinds.pop() if len(kinds) == 1 else "file or directory"
 
 
+def _overlaps(path: str, surface: str) -> bool:
+    """True when *path* is a registered *surface*, lies under it, or is an ancestor of it (a linked parent dir)."""
+    return path == surface or path.startswith(f"{surface}/") or surface.startswith(f"{path}/")
+
+
+def _clients_holding(links: list[tuple[str, str]]) -> str:
+    """``Claude Code (.claude/skills), Grok Build CLI (.grok/skills)``: who owns each refused path, or ``""``.
+
+    A client owns a path when the path is one of the surfaces it registers, lies under one, or is an ancestor of
+    one (a symlinked ``.claude`` blocks every client with a surface below it). Only a path no registered surface
+    covers (Grok's own ``.grok/skills``, which TRW never writes) falls back to the clients that register something
+    in the same top-level directory. The registry is the source, so a new client is named without an edit here.
+    """
+    from trw_mcp.client_profiles.catalog import client_surfaces
+    from trw_mcp.models.config._profiles import builtin_client_ids, resolve_client_profile
+
+    surfaces = {c: [s.relpath for s in client_surfaces(c) if not s.home_scoped] for c in builtin_client_ids()}
+    where: dict[str, dict[str, None]] = {}
+    for rel, _target in links:
+        owners = [c for c, rels in surfaces.items() if any(_overlaps(rel, r) for r in rels)]
+        if not owners:
+            top = Path(rel).parts[0]
+            owners = [c for c, rels in surfaces.items() if any(r.split("/")[0] == top for r in rels)]
+        place = "/".join(Path(rel).parts[:2])
+        for client in owners:
+            where.setdefault(resolve_client_profile(client).display_name, {})[place] = None
+    return ", ".join(f"{name} ({', '.join(places)})" for name, places in where.items())
+
+
 def _validate_transaction_surface(target_dir: Path, *, denied_is_marker: bool = False) -> None:
     """Fail closed before update/restore when any managed path is redirected.
 
@@ -261,10 +290,13 @@ def _validate_transaction_surface(target_dir: Path, *, denied_is_marker: bool = 
     if not links:
         return
     listing = "\n".join(f"  {rel} -> {link_target}" for rel, link_target in links)
+    clients = _clients_holding(links)
+    clients_line = f"Clients affected: {clients}\n" if clients else ""
     raise OSError(
         "transaction directory contains a symlinked directory (or a managed surface is a symlink); "
         "TRW never writes through symlinks and updated nothing:\n"
         f"{listing}\n"
+        f"{clients_line}"
         f"Fix: replace each symlink with a real {_symlink_kind(target_dir, links)} (copy its contents in), then re-run."
     )
 

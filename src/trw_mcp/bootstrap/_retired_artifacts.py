@@ -293,10 +293,69 @@ def _removal_advice(target_dir: Path, relpath: str) -> tuple[str, str]:
     return "it holds no files", f"rm -r {quoted}"
 
 
+#: The ``why`` of an interrupted retirement: a ``.trw-retiring-*`` sibling a crash left behind (see ``_retire_whole``).
+_INTERRUPTED = "interrupted retirement"
+
+
+def _interrupted_advice(target_dir: Path, rel: str) -> str:
+    """Advise removal only for proven TRW bytes, using the pre-rename ownership keys."""
+    from ._artifact_names import RETIRING_PREFIX
+    from ._ownership_proof import _shipped_digest, recorded_digests
+    from ._retire_whole import scan_leftover
+    from ._version_manifest import _manifest_content_hashes, _read_manifest
+
+    path = Path(rel)
+    name, separator, token = path.name.removeprefix(RETIRING_PREFIX).rpartition("-")
+    original = path.with_name(name if separator and name else path.name.removeprefix(RETIRING_PREFIX))
+    recovery = (
+        f"it may hold your changes; review it and restore the remaining files to "
+        f"{printable(str(target_dir.resolve() / original))} without overwriting existing files"
+    )
+    if not separator or not name or not token or any(c not in "0123456789abcdef" for c in token):
+        return recovery
+    try:
+        found = scan_leftover(target_dir, path)
+    except OSError as exc:
+        return f"{recovery} (could not verify: {printable(str(exc))})"
+    hashes = _manifest_content_hashes(_read_manifest(target_dir)) or {}
+    files = {name: digest for name, digest in found.items() if not name.endswith("/")}
+    if not files or any(
+        len(digest) != 64
+        or digest
+        not in (
+            recorded_digests(target_dir / original / name, hashes, target_dir)
+            | _shipped_digest(target_dir / original / name, target_dir)
+        )
+        for name, digest in files.items()
+    ):
+        return recovery
+    return f"remove it with rm -r {_shell_quote(str(target_dir.resolve() / rel))}"
+
+
+def _interrupted_retirements(target_dir: Path) -> list[tuple[str, str]]:
+    """``.trw-retiring-*`` directories under any skills directory. Reported, never deleted: a crash leftover may hold
+    the mismatch the run refused to remove."""
+    from ._artifact_names import RETIRING_PREFIX
+
+    found: list[tuple[str, str]] = []
+    for root in (".claude/skills", *CLIENT_SKILL_ROOTS):
+        try:
+            entries = sorted((target_dir / root).iterdir())
+        except OSError:  # trw-fail-silent-allow: an absent or unreadable skills directory holds nothing to report
+            continue
+        found.extend(
+            (f"{root}/{e.name}", _INTERRUPTED)
+            for e in entries
+            if e.name.startswith(RETIRING_PREFIX) and e.is_dir() and not e.is_symlink()
+        )
+    return found
+
+
 def _present(target_dir: Path) -> list[tuple[str, str]]:
     present = [(rel, why) for rel, why in _retired_artifacts(target_dir) if (target_dir / rel).exists()]
     present.extend(_retired_skill_mirrors(target_dir))
     present.extend(_retired_agents(target_dir))
+    present.extend(_interrupted_retirements(target_dir))
     if _is_retired_cursor_cli_rule(target_dir):
         present.append((RETIRED_CURSOR_CLI_RULE, _CURSOR_CLI_RULE_WHY))
     return present
@@ -317,7 +376,12 @@ def retired_artifact_notices(target_dir: Path) -> list[str]:
     """One line per retired artifact present, naming what replaced it and its removal command."""
     # Names come from disk (REMOVE-S8a), so a name's control bytes are escaped before they reach a terminal.
     return [
-        f"retired_artifact_present: {printable(rel)} is no longer used by TRW ({why}); {_advice_text(target_dir, rel)}"
+        (
+            f"retired_artifact_present: interrupted retirement left {printable(rel)}; "
+            f"{_interrupted_advice(target_dir, rel)}"
+            if why == _INTERRUPTED
+            else f"retired_artifact_present: {printable(rel)} is no longer used by TRW ({why}); {_advice_text(target_dir, rel)}"
+        )
         for rel, why in _present(target_dir)
     ]
 
@@ -330,6 +394,11 @@ def retired_artifact_row(target_dir: Path) -> _Row:
     return (
         "WARN",
         "\n".join(  # one artifact per line (feedback #141); each name is escaped, so none can forge a line
-            f"{printable(rel)} is retired and unused ({why}); {_advice_text(target_dir, rel)}" for rel, why in present
+            (
+                f"interrupted retirement left {printable(rel)}; {_interrupted_advice(target_dir, rel)}"
+                if why == _INTERRUPTED
+                else f"{printable(rel)} is retired and unused ({why}); {_advice_text(target_dir, rel)}"
+            )
+            for rel, why in present
         ),
     )

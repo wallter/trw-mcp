@@ -29,6 +29,7 @@ from trw_mcp.models.config._field_admission_hint_delivery import HINT_DELIVERY_A
 from trw_mcp.models.config._field_admission_hint_hub import HINT_HUB_ADMISSIONS
 from trw_mcp.models.config._field_admission_hint_recall_budget import HINT_RECALL_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_hint_sidecar_ancestor import HINT_SIDECAR_ANCESTOR_ADMISSIONS
+from trw_mcp.models.config._field_admission_installer import INSTALLER_ADMISSIONS
 from trw_mcp.models.config._field_admission_instruction_writes import INSTRUCTION_WRITE_ADMISSIONS
 from trw_mcp.models.config._field_admission_memory_truth import MEMORY_TRUTH_ADMISSIONS
 from trw_mcp.models.config._field_admission_nudge_pool import NUDGE_POOL_ADMISSIONS
@@ -347,6 +348,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **DISPATCH_FANOUT_SAFETY_ADMISSIONS,
     # trw-jev slice 1: assess_support pack exposure (own table).
     **ASSESS_ADMISSIONS,
+    **INSTALLER_ADMISSIONS,
     # W38 (7.0.0 security P1): platform-contact kill switch (own table).
     **PLATFORM_EGRESS_ADMISSIONS,
     # PRD-CORE-311-FR03: remote-backup upload consent gate (own table).

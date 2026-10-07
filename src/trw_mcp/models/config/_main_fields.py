@@ -28,6 +28,7 @@ from trw_mcp.models.config._fields_delivery import _DeliveryFields
 from trw_mcp.models.config._fields_dispatch import _DispatchFields
 from trw_mcp.models.config._fields_feedback import _FeedbackFields
 from trw_mcp.models.config._fields_formation import _FormationFields
+from trw_mcp.models.config._fields_installer import _InstallerFields
 from trw_mcp.models.config._fields_instruction_surfaces import _InstructionSurfaceFields
 from trw_mcp.models.config._fields_learn_journal import _LearnJournalFields
 from trw_mcp.models.config._fields_memory import _MemoryFields
@@ -62,6 +63,7 @@ class _TRWConfigFields(
     _FormationFields,
     _CommsFields,
     _AssessFields,
+    _InstallerFields,
     _InstructionSurfaceFields,
     _FeedbackFields,
     _NudgeFields,

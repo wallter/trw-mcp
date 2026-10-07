@@ -15,6 +15,7 @@ from pathlib import Path
 import structlog
 
 from ._retire import Retirement, record_retirement, retire_tree
+from ._retired_artifacts import CLIENT_SKILL_ROOTS
 
 logger = structlog.get_logger(__name__)
 
@@ -69,6 +70,24 @@ def recorded_digests(
     return {digest for key, digest in manifest_hashes.items() if rel.endswith("/" + key)}
 
 
+def _shipped_digest(path: Path, root: Path) -> set[str]:
+    """The sha256 of the bundled file ``skills/<skill>/<file>`` that *path* (under some ``.../skills/<skill>/``) is a
+    copy of, or empty: bytes identical to what TRW ships are TRW's, whatever the manifest recorded for this client."""
+    from ._utils import _DATA_DIR
+
+    parts = path.relative_to(root).parts
+    if "skills" not in parts[:-2]:
+        return set()
+    tail = parts[parts.index("skills") + 1 :]
+    shipped = _DATA_DIR.joinpath("skills", *tail)
+    try:
+        if shipped.is_symlink() or not shipped.is_file():
+            return set()
+        return {hashlib.sha256(shipped.read_bytes()).hexdigest()}
+    except OSError:  # trw-fail-silent-allow: an unreadable bundle file proves nothing; the file stays kept
+        return set()
+
+
 def remove_proven(
     artifact: Path,
     manifest_hashes: dict[str, str] | None,
@@ -84,8 +103,22 @@ def remove_proven(
     if artifact.is_dir() and not any(f.is_file() for f in artifact.rglob("*")):
         outcome = Retirement([], [], [(rel, "nothing in it is recorded as TRW's")])  # an empty dir proves nothing
     else:
-        outcome = retire_tree(artifact, root, lambda f: recorded_digests(f, hashes, root, exact=exact))
-        record_retirement(result, outcome)
+        # A skill directory goes as one unit (never SKILL.md without its companion), and a file whose bytes are the
+        # ones TRW ships for that skill is TRW's even where the manifest has no record of this client's copy.
+        whole = artifact.is_dir() and artifact.parent.name == "skills"
+        outcome = retire_tree(
+            artifact,
+            root,
+            lambda f: recorded_digests(f, hashes, root, exact=exact),
+            whole=whole,
+            shipped=lambda f: _shipped_digest(f, root),
+        )
+        if whole and outcome.kept_dirs and artifact.parent.relative_to(root).as_posix() in CLIENT_SKILL_ROOTS:
+            # A client mirror kept whole is named by its ``retired_artifact_present`` notice (path, replacement, ``rm -r``):
+            # a second line from here is the double report of a retired skill. It is still recorded as kept.
+            result.setdefault("retired_kept", []).extend(p for p, _why in outcome.kept)
+        else:
+            record_retirement(result, outcome)
     if outcome.kept:
         result.setdefault("preserved", []).append(f"{rel} (not_installer_owned)")
         logger.info("sweep_removal_preserved", path=rel, reason="not_installer_owned")

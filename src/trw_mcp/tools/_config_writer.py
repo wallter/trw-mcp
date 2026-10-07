@@ -23,7 +23,9 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, NamedTuple, get_origin
 
-__all__ = ["ConfigSetRefusedError", "SetResult", "set_config_value"]
+from trw_mcp.tools._config_edit_guard import check_only_target_changed, remove_key_lines
+
+__all__ = ["ConfigSetRefusedError", "SetResult", "set_config_value", "unset_config_value"]
 
 
 class ConfigSetRefusedError(Exception):
@@ -39,6 +41,12 @@ def _refuse(message: str) -> ConfigSetRefusedError:
     return ConfigSetRefusedError(message)
 
 
+def _known_fields() -> set[str]:
+    from trw_mcp.models.config import TRWConfig
+
+    return set(TRWConfig.model_fields)
+
+
 def _plain(node: Any) -> Any:
     """A ruamel node as plain dict/list/scalars (for validation and comparison)."""
     if isinstance(node, dict):
@@ -48,8 +56,12 @@ def _plain(node: Any) -> Any:
     return node
 
 
-def _field_for(key: str) -> tuple[str, str | None]:
-    """``(field, subkey)`` for a settable key; raises a refusal for unknown, secret or non-dict dotted keys."""
+def _field_for(key: str, *, allow_unknown: bool = False) -> tuple[str, str | None]:
+    """``(field, subkey)`` for a settable key; raises a refusal for unknown, secret or non-dict dotted keys.
+
+    *allow_unknown* (``config unset``) lets a retired or misspelt key through so it can be removed; it is
+    never settable.
+    """
     from pydantic import SecretStr
 
     from trw_mcp.models.config import TRWConfig
@@ -57,6 +69,8 @@ def _field_for(key: str) -> tuple[str, str | None]:
     field, dot, sub = key.partition(".")
     info = TRWConfig.model_fields.get(field)
     if info is None or field.startswith("_"):
+        if allow_unknown and not field.startswith("_") and (bool(dot) is bool(sub)):
+            return field, (sub if dot else None)
         raise _refuse(f"unknown config key {field!r}; `trw-mcp config-reference` lists the public keys")
     extra = info.json_schema_extra
     if (isinstance(extra, dict) and extra.get("secret")) or SecretStr in _annotation_types(info.annotation):
@@ -160,7 +174,7 @@ class _Held:
             if exc.errno in {errno.ELOOP, getattr(errno, "EMLINK", -1)}:
                 raise _refuse(f"{self.path} is a symlink; refusing to read through it") from None
             raise
-        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+        with os.fdopen(fd, "r", encoding="utf-8", newline="") as handle:  # newline="": keep CRLF bytes as they are
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
                 raise _refuse(f"{self.path} is not a regular file")
@@ -330,6 +344,57 @@ def set_config_value(key: str, raw_value: str, *, scope: str, target_dir: Path, 
         )
 
 
+#: Passed as the value to remove the key instead of setting it.
+_REMOVE: Any = object()
+
+
+def unset_config_value(key: str, *, scope: str, target_dir: Path, home: Path | None = None) -> SetResult:
+    """Remove ``key`` (or one ``FIELD.SUBKEY`` entry) from one layer; ``changed`` is False when it was already absent.
+
+    Same lock, no-follow read, identity recheck and layout preservation as :func:`set_config_value`. A
+    retired or misspelt key may be removed (``config set`` refuses it); secrets are refused the same way.
+    An absent file is reported absent and never created.
+    """
+    field, sub = _field_for(key, allow_unknown=True)
+    home_dir = Path.home() if home is None else home
+    root, path = _layer_path(scope, target_dir, home_dir)
+    if not path.parent.is_dir():
+        return SetResult(path, False)
+    with _layer_lock(path.parent):
+        return _write_locked(
+            field,
+            sub,
+            _REMOVE,
+            scope,
+            root,
+            path,
+            (home_dir / ".trw" / "config.yaml", target_dir / ".trw" / "config.yaml"),
+        )
+
+
+def _removal_plan(layer: Any, field: str, sub: str | None, path: Path) -> tuple[bool, bool]:
+    """``(present, drop_field)``: whether the key exists, and whether removing it empties (so drops) its map."""
+    if field not in layer:
+        return False, False
+    if sub is None:
+        return True, False
+    holder = layer[field]
+    if not isinstance(holder, dict):
+        raise _refuse(f"{field} in {path} is not a mapping; refusing to rewrite it")
+    if sub not in holder:
+        return False, False
+    only_key = len(holder) == 1 and not getattr(holder, "merge", None)  # a map that still merges others is not empty
+    return True, only_key
+
+
+def _round_trip_remove(layer: Any, field: str, sub: str | None, drop_field: bool) -> None:
+    """Flow-style fallback: delete through the round-trip (comments inside flow containers are not preserved)."""
+    if sub is None or drop_field:
+        del layer[field]
+    else:
+        del layer[field][sub]
+
+
 def _write_locked(
     field: str, sub: str | None, value: Any, scope: str, root: Path, path: Path, layers: tuple[Path, Path]
 ) -> SetResult:
@@ -348,19 +413,27 @@ def _edit_and_publish(
     raw, identity, existing_mode = held.read()
     data, text, indent, seq_offset = _parse_layer(raw, path)
     layer = data if data is not None else CommentedMap()
-    holder, name = layer, field
-    if sub is not None:
-        holder = layer.get(field)
-        if holder is None:
-            holder = CommentedMap()
-        if not isinstance(holder, dict):
-            raise _refuse(f"{field} in {path} is not a mapping; refusing to rewrite it")
-        name = sub
-    changed = name not in holder or _plain(holder[name]) != _plain(value)
-    if changed:
-        holder[name] = value
+    surgery: str | None = None
+    if value is _REMOVE:
+        changed, drop_field = _removal_plan(layer, field, sub, path)
+        if changed:
+            surgery = remove_key_lines(text, layer, field, sub, drop_field=drop_field)
+            if surgery is None:
+                _round_trip_remove(layer, field, sub, drop_field)
+    else:
+        holder, name = layer, field
         if sub is not None:
-            layer[field] = holder
+            holder = layer.get(field)
+            if holder is None:
+                holder = CommentedMap()
+            if not isinstance(holder, dict):
+                raise _refuse(f"{field} in {path} is not a mapping; refusing to rewrite it")
+            name = sub
+        changed = name not in holder or _plain(holder[name]) != _plain(value)
+        if changed:
+            holder[name] = value
+            if sub is not None:
+                layer[field] = holder
     if not changed:
         return SetResult(path, False)
     yaml = YAML()
@@ -373,7 +446,15 @@ def _edit_and_publish(
     if data is None and text.strip():  # comment-only file: keep its comments, append the new key
         rendered = text if text.endswith("\n") else text + "\n"
         rendered += buf.getvalue()
-    _validate(field, layers[0], layers[1], scope, rendered, value)
+    if surgery is not None:
+        rendered = surgery
+    elif value is _REMOVE and not layer:  # a flow-style fallback emptied the map: no literal `{}`
+        rendered = ""
+    problem = check_only_target_changed(rendered, raw, field, sub, value, removing=value is _REMOVE)
+    if problem:
+        raise _refuse(f"cannot change {field}{'.' + sub if sub else ''} alone in {path}: {problem}; edit it by hand")
+    if value is not _REMOVE or field in _known_fields():  # a retired key has no field to validate
+        _validate(field, layers[0], layers[1], scope, rendered, value)
     if not held.unchanged(identity):  # re-checked under the lock: never publish over a file we did not read
         raise _refuse(f"{path} changed while it was being edited; nothing was written")
     try:  # an existing file keeps its exact mode; a new one is 0644 narrowed by the umask, never wider

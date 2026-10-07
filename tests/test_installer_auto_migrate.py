@@ -178,7 +178,7 @@ def test_an_interactive_run_asks_first(
     fakes = _Fakes(installer, monkeypatch, holds=True)
     fakes.reply = (0, f"memory migrate: migrated; manifest {_MANIFEST}\n", "")
     asked: list[str] = []
-    monkeypatch.setattr(installer, "prompt_yes_no", lambda question, default="n": asked.append(default) or answer)
+    monkeypatch.setattr(installer, "_ask_yes_no", lambda question, default="n": asked.append(default) or answer)
 
     assert _phase(installer, project, interactive=True) is True
 

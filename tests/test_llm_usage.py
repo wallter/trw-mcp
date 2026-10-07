@@ -131,7 +131,7 @@ class TestLLMClientLogsUsageOnSuccess:
 
         record = json.loads(log_path.read_text().strip())
         # haiku alias resolves to full model ID
-        assert record["model"] == "claude-haiku-4-5-20251001"
+        assert record["model"] == "claude-haiku-5-5"
 
     async def test_llm_client_appends_multiple_records(self, tmp_path: Path) -> None:
         """Multiple ask() calls append multiple lines to the JSONL file."""

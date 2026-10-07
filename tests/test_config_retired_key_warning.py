@@ -70,7 +70,7 @@ def test_a_key_warns_at_most_once_per_process(capsys: pytest.CaptureFixture[str]
 
     assert warn_unrecognised_config_keys({"gone_field": 1}, set()) == []
     assert capsys.readouterr().err == ""
-    assert first.count("gone_field") == 1
+    assert len(first.strip().splitlines()) == 1  # one line (it names the key twice: the key and its unset command)
 
 
 def test_a_retired_key_names_its_replacement(

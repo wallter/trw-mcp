@@ -71,6 +71,10 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     }
 
 
+#: A skill directory mid-retirement (``_retire_whole``): TRW's own scratch name, never a user's skill.
+RETIRING_PREFIX = ".trw-retiring-"
+
+
 def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
     """Return sorted lists of user-created artifact names not in bundled data."""
     bundled = _get_bundled_names(data_dir)
@@ -97,7 +101,11 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
 
     skills_dir = target_dir / ".claude" / "skills"
     if skills_dir.is_dir():
-        result["skills"] = sorted(d.name for d in skills_dir.iterdir() if d.is_dir() and d.name not in bundled_skills)
+        result["skills"] = sorted(
+            d.name
+            for d in skills_dir.iterdir()
+            if d.is_dir() and d.name not in bundled_skills and not d.name.startswith(RETIRING_PREFIX)
+        )
 
     agents_dir = target_dir / ".claude" / "agents"
     if agents_dir.is_dir():

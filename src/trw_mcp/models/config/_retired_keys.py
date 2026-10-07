@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
+import os
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files as _pkg_files
@@ -119,11 +120,22 @@ def warn_retired_env_vars(environ: Mapping[str, str]) -> list[str]:
         _WARNED.add(name)
         replacement = retired[name[4:].lower()]
         logger.warning("config_env_var_retired", env_var=name, replacement=replacement or None)
-        print(
-            f"TRW: WARNING — environment variable '{name}' has no effect: {_retired_detail(replacement)}.",
-            file=sys.stderr,
-        )
+        if not _stderr_warnings_off():
+            print(
+                f"TRW: WARNING — environment variable '{name}' has no effect: {_retired_detail(replacement)}.",
+                file=sys.stderr,
+            )
     return fresh
+
+
+def _stderr_warnings_off() -> bool:
+    """Whether ``TRW_RETIRED_KEY_WARNING=off`` asks for no stderr copy of these warnings.
+
+    The installer shows the warning once from the captured ``update-project`` output and sets this for the
+    steps it runs uncaptured, whose stderr would otherwise print it again. The structured log event is
+    still emitted; only the stderr line is skipped. Any other value (or unset) leaves the warning on.
+    """
+    return os.environ.get("TRW_RETIRED_KEY_WARNING", "").strip().lower() == "off"
 
 
 def _reset_warned_keys() -> None:
@@ -198,8 +210,12 @@ def warn_unrecognised_config_keys(
         # are invisible to an operator whose logs are routed elsewhere, and this
         # is the first time this project tells a user that a knob they set does
         # not exist. Key name only — never the value they set.
-        print(
-            f"TRW: WARNING — {sources.get(key, _PROJECT_CONFIG_LABEL)} sets '{key}', which has no effect: {detail}.",
-            file=sys.stderr,
-        )
+        label = sources.get(key, _PROJECT_CONFIG_LABEL)
+        scope = "project" if label == _PROJECT_CONFIG_LABEL else "machine"
+        if not _stderr_warnings_off():
+            print(
+                f"TRW: WARNING — {label} sets '{key}', which has no effect: {detail}. "
+                f"Remove it: trw-mcp config unset {key} --scope {scope}",
+                file=sys.stderr,
+            )
     return unrecognised

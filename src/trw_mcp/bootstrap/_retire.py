@@ -65,6 +65,8 @@ class Retirement(NamedTuple):
     removed: list[str]
     git: list[str]
     kept: list[tuple[str, str]]
+    #: ``kept`` entries that name a whole directory (a skill kept as one unit), so the removal command is ``rm -r``.
+    kept_dirs: frozenset[str] = frozenset()
 
 
 def as_retirement(rel: str, outcome: Retired) -> Retirement:
@@ -144,7 +146,36 @@ def _bounded_sha256(path: Path) -> tuple[str | None, str]:
         os.close(fd)
 
 
-def retire_file(path: Path, root: Path, proven: Collection[str], *, managed: bool | None = None) -> Retired:
+def _judge(
+    path: Path, root: Path, proven: Collection[str], managed: bool | None, shipped: Collection[str] = ()
+) -> tuple[Retired | None, str, Literal["removed", "git"]]:
+    """Whether *path* may be deleted, without touching it: ``(None, digest, status)`` when it may, else the
+    final :class:`Retired` (kept or absent) with an empty digest.
+
+    *proven* is what the manifest RECORDED for this path: it proves the bytes and makes the path TRW-managed, so the
+    git-clean route opens. *shipped* are the bytes TRW ships for the name: they prove ownership on byte equality
+    only and never make a same-named file of the user's managed."""
+    refusal = path_refusal(path, root)
+    if refusal:
+        return Retired("kept", refusal), "", "removed"
+    try:
+        digest, why = _bounded_sha256(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return Retired("absent"), "", "removed"
+    except OSError as exc:
+        return Retired("kept", f"unreadable: {exc}"), "", "removed"
+    if digest is None:
+        return Retired("kept", why), "", "removed"
+    if digest in proven or digest in shipped:
+        return None, digest, "removed"
+    if (bool(proven) if managed is None else managed) and git_recoverable(path, root, digest):
+        return None, digest, "git"
+    return Retired("kept", "not TRW's unchanged bytes, and it differs from git HEAD (or is not tracked)"), "", "removed"
+
+
+def retire_file(
+    path: Path, root: Path, proven: Collection[str], *, managed: bool | None = None, shipped: Collection[str] = ()
+) -> Retired:
     """Delete *path* in place when its sha256 is in *proven* or, for a TRW-managed file, git holds it clean.
 
     *managed* says TRW wrote this path (default: *proven* is non-empty, i.e. a record exists). A path TRW never
@@ -153,31 +184,17 @@ def retire_file(path: Path, root: Path, proven: Collection[str], *, managed: boo
     The hash is taken immediately before the unlink; a save landing inside that window is not recoverable,
     which is why a file that is neither proven nor git-clean is never touched.
     """
-    refusal = path_refusal(path, root)
-    if refusal:
-        return Retired("kept", refusal)
-    try:
-        digest, why = _bounded_sha256(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return Retired("absent")
-    except OSError as exc:
-        return Retired("kept", f"unreadable: {exc}")
-    if digest is None:
-        return Retired("kept", why)
-    if digest in proven:
-        status: Literal["removed", "git"] = "removed"
-    elif (bool(proven) if managed is None else managed) and git_recoverable(path, root, digest):
-        status = "git"
-    else:
-        return Retired("kept", "not TRW's unchanged bytes, and it differs from git HEAD (or is not tracked)")
+    refused, digest, status = _judge(path, root, proven, managed, shipped)
+    if refused is not None:
+        return refused
     removal = remove_if_hash(path, root, digest)  # rename-capture, re-prove the hash; a save in between is put back
     if removal.status == "absent":
         return Retired("absent")
     if removal.status != "removed":
         return Retired("kept", removal.reason)
     if removal.retained_at is not None:  # the capture is TRW's own proven bytes (or git-held): drop it, no trash
-        _, refused = delete_proven_unchanged_captures(root, [removal.retained_at])
-        if refused:  # the bytes changed after the capture: they are in trash, not removed
+        _, refused_paths = delete_proven_unchanged_captures(root, [removal.retained_at])
+        if refused_paths:  # the bytes changed after the capture: they are in trash, not removed
             return Retired(
                 "kept", f"kept at {removal.retained_at.relative_to(root).as_posix()} (changed during removal)"
             )
@@ -187,10 +204,26 @@ def retire_file(path: Path, root: Path, proven: Collection[str], *, managed: boo
     return Retired(status)
 
 
-def retire_tree(artifact: Path, root: Path, allowed: Callable[[Path], set[str]]) -> Retirement:
+def retire_tree(
+    artifact: Path,
+    root: Path,
+    allowed: Callable[[Path], set[str]],
+    *,
+    whole: bool = False,
+    shipped: Callable[[Path], set[str]] | None = None,
+) -> Retirement:
     """:func:`retire_file` for every regular file under *artifact* (a file or a directory), then ``rmdir`` the
-    emptied directories deepest first, so one kept file (or one created after the listing) keeps its directory."""
+    emptied directories deepest first, so one kept file (or one created after the listing) keeps its directory.
+
+    *whole* retires a directory as one unit: when any file in it cannot be proven TRW's (a file the user added, an
+    edited one), NOTHING is deleted and the directory is kept and named once. A skill retired file by file left a
+    directory with its ``SKILL.md`` gone and a companion behind (the 9.2.0 ``.github/skills/trw-commit``).
+    The removal itself is all or nothing too (:func:`_retire_whole`).
+
+    *allowed* is the recorded proof per file; *shipped* the bytes TRW ships under that name (equality proves, see
+    :func:`_judge`)."""
     out = Retirement([], [], [])
+    shipped_for = shipped or (lambda _p: set())
 
     def shown(p: Path) -> str:
         try:
@@ -204,10 +237,25 @@ def retire_tree(artifact: Path, root: Path, allowed: Callable[[Path], set[str]])
     except OSError as exc:  # an inspection failure keeps the artifact and reports it; never abort the update
         out.kept.append((shown(artifact), f"could not inspect: {exc}"))
         return out
+    if whole and is_tree:
+        unproven = [
+            e
+            for e in entries
+            if not (e.is_dir() and not e.is_symlink())
+            and (verdict := _judge(e, root, allowed(e), None, shipped_for(e))[0]) is not None
+            and verdict.status == "kept"
+        ]
+        if unproven:
+            n = len(unproven)
+            why = f"{n} file{'s' if n != 1 else ''} in it cannot be shown to be TRW's, so the skill was kept whole"
+            return Retirement([], [], [(shown(artifact), why)], frozenset({shown(artifact)}))
+        from ._retire_whole import retire_whole
+
+        return retire_whole(artifact, root, entries, allowed, shipped_for, shown)
     for entry in entries:
         if is_tree and entry.is_dir() and not entry.is_symlink():
             continue
-        outcome = retire_file(entry, root, allowed(entry))
+        outcome = retire_file(entry, root, allowed(entry), shipped=shipped_for(entry))
         if outcome.status == "removed":
             out.removed.append(shown(entry))
         elif outcome.status == "git":
@@ -250,7 +298,7 @@ def record_retirement(result: dict[str, list[str]], outcome: Retirement) -> None
         *(
             f"{p}: {why}"
             if why.startswith("kept at ")
-            else f"{p} ({why}): kept; to remove it yourself run: rm {shlex.quote(p)}"
+            else f"{p} ({why}): kept; to remove it yourself run: rm {'-r ' if p in outcome.kept_dirs else ''}{shlex.quote(p)}"
             for p, why in outcome.kept
         ),
     ]
