@@ -69,7 +69,10 @@ def test_post_scan_writes_survive_retirement(
     assert entry.read_bytes() == mine
     assert entry.is_symlink() == (change == "symlink")
     assert outside.read_bytes() == mine
-    assert not result.removed and not result.git
+    expected_removed = (
+        [f".agents/skills/trw-gone/{directory + '/' if directory else ''}SKILL.md"] if change == "added" else []
+    )
+    assert result.removed == expected_removed and not result.git
     assert len(result.kept) == 1
     assert "files were added or changed during retirement" in result.kept[0][1]
     assert str(survivor.relative_to(tmp_path)) in result.kept[0][1]
@@ -122,3 +125,70 @@ def test_leftover_advice_and_doctor_require_ownership_of_every_file(
     else:
         assert f"rm -r {leftover}" in notice
     assert {p.relative_to(leftover): p.read_bytes() for p in leftover.rglob("*") if p.is_file()} == before
+
+
+def test_partial_whole_skill_retirement_reports_unlinked_files_and_directory_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.bootstrap._retire import record_retirement
+
+    skill = tmp_path / ".agents/skills/trw-gone"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_bytes(b"owned\n")
+    digest = hashlib.sha256(b"owned\n").hexdigest()
+    real_rmdir = os.rmdir
+    injected = False
+
+    def add_late_file(name: str | bytes, *args: object, **kwargs: object) -> None:
+        nonlocal injected
+        if str(name).startswith(".trw-retiring-") and not injected:
+            injected = True
+            (skill.parent / str(name) / "late.md").write_bytes(b"user\n")
+        real_rmdir(name, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rmdir", add_late_file)
+    outcome = _retire_whole.retire_whole(
+        skill,
+        tmp_path,
+        [skill / "SKILL.md"],
+        lambda _path: {digest},
+        lambda _path: set(),
+        lambda path: path.relative_to(tmp_path).as_posix(),
+    )
+    result: dict[str, list[str]] = {"warnings": []}
+    record_retirement(result, outcome)
+
+    assert injected
+    assert outcome.removed == [".agents/skills/trw-gone/SKILL.md"]
+    assert outcome.kept_dirs == frozenset({".agents/skills/trw-gone"})
+    assert result["retired"] == [".agents/skills/trw-gone/SKILL.md"]
+    assert any("rm -r .agents/skills/trw-gone" in warning for warning in result["warnings"])
+    assert (skill / "late.md").read_bytes() == b"user\n"
+
+
+def test_stopped_retirement_reports_files_removed_when_original_name_is_taken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = tmp_path / ".agents/skills/trw-gone"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_bytes(b"owned\n")
+    digest = hashlib.sha256(b"owned\n").hexdigest()
+    remove = _retire_whole._remove_verified
+
+    def remove_then_name_taken(dir_fd: int, found: dict[str, str], removed: list[str]) -> None:
+        remove(dir_fd, found, removed)
+        skill.mkdir()
+        raise OSError("concurrent stop")
+
+    monkeypatch.setattr(_retire_whole, "_remove_verified", remove_then_name_taken)
+    outcome = _retire_whole.retire_whole(
+        skill,
+        tmp_path,
+        [skill / "SKILL.md"],
+        lambda _: {digest},
+        lambda _: set(),
+        lambda path: path.relative_to(tmp_path).as_posix(),
+    )
+
+    assert outcome.removed == [".agents/skills/trw-gone/SKILL.md"]
+    assert "already removed" in outcome.kept[0][1]

@@ -78,7 +78,11 @@ def scaffold_run_directory(
     Returns:
         Dict with ``run_id``, ``run_path``, and ``status``.
     """
-    resolved_trw = trw_dir or (Path.cwd() / ".trw")
+    if trw_dir is None:
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        trw_dir = resolve_trw_dir()
+    resolved_trw = trw_dir
     resolved_runs = runs_root or (resolved_trw / "runs")
 
     if run_id is None:
@@ -250,6 +254,7 @@ def write_local_learning(
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.state._constants import LOCAL_CLI_SOURCE_IDENTITY, RECONCILE_PENDING_TAG
+    from trw_mcp.state._paths import resolve_trw_dir
     from trw_mcp.tools._learn_impl import execute_learn
     from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _validate_learn_enums
 
@@ -270,7 +275,7 @@ def write_local_learning(
         execute_learn(
             summary=summary,
             detail=detail,
-            trw_dir=trw_dir or (Path.cwd() / ".trw"),
+            trw_dir=trw_dir if trw_dir is not None else resolve_trw_dir(),
             config=get_config(),
             tags=marked_tags,
             evidence=evidence,

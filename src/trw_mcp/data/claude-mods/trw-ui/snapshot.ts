@@ -121,8 +121,8 @@ export function parseSnapshot(text: string): ParseResult {
         scope: enumOf(b.scope, BUILD_SCOPE),
         testCount: nonNegInt(b.test_count),
       },
-      review: { state: enumOf(r.state, REVIEW), scope: clean(r.scope, 16) || 'run' },
-      deliver: { state: enumOf(dl.state, DELIVER), scope: clean(dl.scope, 16) || 'run' },
+      review: { state: enumOf(r.state, REVIEW), scope: clean(r.scope, 16) || 'unknown' },
+      deliver: { state: enumOf(dl.state, DELIVER), scope: clean(dl.scope, 16) || 'unknown' },
       gate: { state: enumOf(g.state, GATE), summary: clean(g.summary, 100) },
       aggregate: {
         build: aggregateWord(ag.build_check_result),
@@ -233,28 +233,124 @@ export function buildView(s: Snap): Row[] {
   return rows
 }
 
-// One line for the band. A tick only for a state the server reported positively
-// with a known scope; everything else is "?" or "–".
+// The one-line label (footer and band). Same text as trw-mcp services/status_line.py,
+// pinned by the shared table in label-golden.ts: no times, no positive ticks,
+// only the exceptions that are present.
 export const DEGRADED_BAND = 'TRW ⚠ MCP not seen'
-const POSITIVE_SCOPES = ['run', 'session']
+const TASK_MAX = 24
+const SCOPED = ['run', 'session']
 
-// Same rules as trw-mcp services/status_line.py: degraded wins; a tick or cross
-// needs run/session scope; an unrecognised state or scope is "?"; none is "–".
-function mark(state: string, scope: string, marks: Record<string, string>): string {
-  if (!(state in marks)) return '?'
-  if (state !== 'none' && !POSITIVE_SCOPES.includes(scope)) return '?'
-  return marks[state]
+export type Segment = { text: string; tone: Tone }
+
+function cp(text: string): string[] {
+  return [...text]
+}
+
+// Control characters (C0, DEL, C1) become spaces, whitespace collapses, and the
+// result is cut to `max` code points with "…".
+function cleanCut(v: unknown, max: number): string {
+  if (typeof v !== 'string') return ''
+  const t = v.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').replace(/\s+/g, ' ').trim()
+  const chars = cp(t)
+  return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : t
+}
+
+type Parts = { fixed: Segment | null; delivered: boolean; phase: string; task: string; exc: Segment[] }
+
+function parts(s: Snap): Parts {
+  const none: Parts = { fixed: null, delivered: false, phase: '', task: '', exc: [] }
+  if (s.degraded === 'yes') return { ...none, fixed: { text: DEGRADED_BAND, tone: 'warn' } }
+  if (s.run.state === 'none') return { ...none, fixed: { text: 'TRW', tone: 'dim' } }
+  if (s.run.state !== 'ok') return { ...none, fixed: { text: 'TRW ?', tone: 'dim' } }
+  const exc: Segment[] = []
+  if (s.build.state === 'failed' && SCOPED.includes(s.build.scope)) exc.push({ text: 'build ✗', tone: 'bad' })
+  if (s.review.state === 'block' && SCOPED.includes(s.review.scope)) exc.push({ text: 'review ✗', tone: 'bad' })
+  if (s.inbox.state === 'ok' && s.inbox.pending !== null && s.inbox.pending > 0) exc.push({ text: `✉${s.inbox.pending}`, tone: 'warn' })
+  return {
+    fixed: null,
+    delivered: s.deliver.state === 'called' && SCOPED.includes(s.deliver.scope),
+    phase: cleanCut(s.run.phase, TASK_MAX) || '?',
+    task: cleanCut(s.run.task, TASK_MAX),
+    exc,
+  }
+}
+
+function compose(p: Parts, keepTask: boolean, keepPhase: boolean): Segment[] {
+  const out: Segment[] = []
+  if (p.delivered) {
+    out.push({ text: 'TRW ✓', tone: 'dim' })
+    if (keepTask && p.task) out.push({ text: ` ${p.task}`, tone: 'dim' })
+  } else {
+    out.push({ text: keepPhase ? `TRW ▸ ${p.phase}` : 'TRW', tone: 'ok' })
+    if (keepTask && p.task) out.push({ text: ` · ${p.task}`, tone: 'dim' })
+  }
+  for (const x of p.exc) out.push({ text: ` · ${x.text}`, tone: x.tone })
+  return out
+}
+
+function width(segs: Segment[]): number {
+  return segs.reduce((n, x) => n + cp(x.text).length, 0)
+}
+
+// Cut the tail to `max` columns, ending in "…"; only called when something is cut.
+function clipTail(segs: Segment[], max: number): Segment[] {
+  const out: Segment[] = []
+  let room = Math.max(0, max - 1)
+  for (const x of segs) {
+    const chars = cp(x.text)
+    if (chars.length <= room) {
+      out.push(x)
+      room -= chars.length
+      continue
+    }
+    if (room > 0) out.push({ ...x, text: chars.slice(0, room).join('') })
+    break
+  }
+  if (out.length) out[out.length - 1] = { ...out[out.length - 1], text: out[out.length - 1].text + '…' }
+  else out.push({ text: '…', tone: 'dim' })
+  return out
+}
+
+// The label in at most `max` columns (undefined = unbounded): drop the task, then
+// the phase, keep the exceptions, and clip the tail only when it still does not fit.
+export function labelSegments(s: Snap, max?: number): Segment[] {
+  const p = parts(s)
+  if (p.fixed) {
+    const one = [p.fixed]
+    return max === undefined || width(one) <= max ? one : clipTail(one, max)
+  }
+  const tries = [compose(p, true, true), compose(p, false, true), compose(p, false, false)]
+  if (max === undefined) return tries[0]
+  for (const t of tries) if (width(t) <= max) return t
+  return clipTail(tries[2], max)
+}
+
+export function labelText(s: Snap, max?: number): string {
+  return labelSegments(s, max).map(x => x.text).join('')
 }
 
 export function bandText(s: Snap): string {
-  if (s.degraded === 'yes') return DEGRADED_BAND
-  const phase = s.run.state === 'ok' ? s.run.phase || 'run' : s.run.state === 'none' ? 'no run' : '?'
-  const ckpt = s.checkpoint.state === 'unknown' ? '?' : s.checkpoint.state === 'none' ? '–' : ageText(s.checkpoint.ageS) + (s.checkpoint.state === 'stale' ? '!' : '')
-  const b = mark(s.build.state, s.build.scope, { passed: '✓', failed: '✗', none: '–' })
-  const r = mark(s.review.state, s.review.scope, { pass: '✓', warn: '!', block: '✗', none: '–' })
-  const d = mark(s.deliver.state, s.deliver.scope, { called: '✓', none: '–' })
-  return `TRW ▸ ${phase} · ckpt ${ckpt} · build ${b} · review ${r} · deliver ${d}`
+  return labelText(s)
 }
+
+// What the PromptHint line keeps of Claude Code's own hint text.
+export type HintMode = 'keep' | 'trim' | 'hide'
+export function hintText(hint: unknown, mode: HintMode): string {
+  const h = clean(hint, 120)
+  if (mode === 'hide') return ''
+  if (mode === 'trim') return h.replace(/\(shift\+tab to cycle\)/i, '').replace(/^[\s·]+|[\s·]+$/g, '').replace(/\s{2,}/g, ' ')
+  return h
+}
+
+// Columns the engine's own permission-mode badge takes on the line (drawn outside
+// any render site, so unknowable here). Observed: the cycling modes (bypass, accept
+// edits, plan) add "(shift+tab to cycle)" to the hint and the longest badge is
+// "⏵⏵ bypass permissions on · "; the default mode's "⏸ manual mode on · " is shorter.
+export function footerReserve(rawHint: unknown): number {
+  return typeof rawHint === 'string' && /shift\+tab/i.test(rawHint) ? 30 : 22
+}
+// Below this many columns the footer passes Claude Code's own line through untouched.
+export const FOOTER_MIN_COLUMNS = 46
 
 export function fallbackText(kind: string): string {
   switch (kind) {
@@ -339,4 +435,18 @@ export function doorbell(i: DoorbellInput): DoorbellOutput {
     mem.lastWakeAt = i.nowMs
   }
   return out
+}
+
+// The footer line's layout as a pure function: null means "draw nothing of our own".
+export type FooterLayout = { width: number; hint: string; segs: Segment[] }
+export function footerLayout(columns: unknown, rawHint: unknown, mode: HintMode, label: (room: number) => Segment[]): FooterLayout | null {
+  const cols = typeof columns === 'number' ? columns : Number(columns)
+  if (!Number.isFinite(cols) || cols < FOOTER_MIN_COLUMNS) return null
+  const width = Math.floor(cols) - footerReserve(rawHint)
+  const segs = label(Math.max(8, width - 2))
+  const labelLen = segs.reduce((n, x) => n + [...x.text].length, 0)
+  const room = Math.max(0, width - labelLen - 2)
+  const chars = [...hintText(rawHint, mode)]
+  const hint = chars.length > room ? (room > 1 ? chars.slice(0, room - 1).join('') + '…' : '') : chars.join('')
+  return { width, hint, segs }
 }

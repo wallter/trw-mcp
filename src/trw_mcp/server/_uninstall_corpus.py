@@ -189,6 +189,7 @@ _LAZY_TRW_ENTRIES: frozenset[str] = frozenset(
         "delivery", "cache", "profiles", "distill", "telemetry", "memory", "memory.db", "learnings",
         "state", "meta", "meta_tune", "findings", "feedback", "requirements", "worktrees",
         "hooks", "intel-cache.json", "code-index", "backups", "INSTRUCTIONS.md", "client-profile.env",
+        "handoffs",
     }
 )  # fmt: skip
 _TRW_GENERATED_SUFFIXES: tuple[str, ...] = (".lock", ".jsonl", ".db", ".retired")

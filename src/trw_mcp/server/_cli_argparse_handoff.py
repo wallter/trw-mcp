@@ -20,7 +20,7 @@ def add_handoff_subcommands(
     """Register ``handoff new|readback-new|validate|digest|seal|render|check``."""
     parser = subparsers.add_parser(
         "handoff",
-        help="Draft, validate, digest, seal, render or check an Agent Handoff Record (AHR 1.0-rc.1)",
+        help="Draft, validate, digest, seal, render or check an Agent Handoff Record (AHR 1.0-rc.2)",
     )
     sub = parser.add_subparsers(dest="handoff_command")
 
@@ -38,6 +38,13 @@ def add_handoff_subcommands(
         metavar="PATH",
         help="A file inside the repository the receiver reads (repeatable, in reading order; a file: URI is "
         "repo-relative); digested over its raw bytes. https: and trw: URIs are carried undigested",
+    )
+    new.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="A repository-relative path or glob (*, **, ?) the receiver may change (repeatable): objective.paths",
     )
     new.add_argument("--to-scope", default="next-session", help="Scope of the unaddressed receiver")
     new.add_argument(

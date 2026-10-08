@@ -116,6 +116,10 @@ REFUSALS: dict[str, _R] = {
         "name an existing file under the project root (repo-relative path); remote refs are refused"
     ),
     "ahr_ref_unverified": _R("report next_read as <repo-relative path>#sha256:<hex of the file's current bytes>"),
+    "ahr_onward_not_offered": _R(
+        "offer the onward handoff first: trw_send(handoff={'path': <it>}), then report with it",
+        persisted_as="ahr_lifecycle_refused",
+    ),
     "ahr_expiry_exceeds_ttl": _R("set expires_at within the message TTL", bound="comms_message_ttl_seconds"),
     "ahr_report_needs_outcome": _R(
         "an AHR report needs handoff={'outcome': 'met'|'returned'|'escalated'}", persisted_as="invalid_inbox_arguments"

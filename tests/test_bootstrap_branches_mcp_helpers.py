@@ -189,7 +189,8 @@ enabled = true
 
         warnings = "\n".join(result["warnings"])
         assert "trw-reviewer.toml pins legacy generated model gpt-5.4" in warnings
-        assert "Remove the model key to inherit" in warnings
+        assert "remove the model key to inherit" in warnings.lower()
+        assert "trw-mcp update-project --rerender .codex/agents/trw-reviewer.toml" in warnings
         assert agent_path.read_text(encoding="utf-8") == original
 
     def test_codex_direct_trw_http_url_warns(self, tmp_path: Path) -> None:

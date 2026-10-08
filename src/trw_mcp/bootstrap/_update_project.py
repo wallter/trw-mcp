@@ -23,8 +23,10 @@ from trw_mcp.state._project_root_binding import installing_into
 
 from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
+from ._antigravity_cli import global_config_transaction
 from ._client_integrations import run_update_integrations
 from ._namespace_pin import pin_empty_checkout
+from ._ide_targets import _rewrite_hook_env_for_installed_profiles as _rewrite_hook_env_for_installed_profiles
 from ._template_claude_md import link_claude_md_after_update
 
 # --- from _update_phases (split out for the eLOC ratchet) ---
@@ -90,7 +92,6 @@ from ._utils import (
     _verify_installation,
     _write_installer_metadata,
     _write_version_yaml,
-    is_git_repo,
     resolve_client_write_targets,
     resolve_ide_targets,
 )
@@ -109,7 +110,6 @@ from ._version_migration import (
 )
 from ._version_manifest import (
     _manifest_content_hashes as _manifest_content_hashes,
-    manifest_refusal,
     preserve_uncommitted_changes as preserve_uncommitted_changes,
 )
 from ._client_adoption import adopt_for_update
@@ -224,20 +224,6 @@ def _run_post_update_phases(
     return retired_pins
 
 
-def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list[str]) -> list[str]:
-    """Refresh every resolved client's ``.trw/runtime/hook-env.d/<key>.sh`` on every sync.
-
-    Fail-open per client. Returns the operator-facing warnings
-    :func:`write_hook_env_for_clients` raises (empty when there is nothing to
-    report).
-    """
-    from ._file_ops import write_hook_env_for_clients
-
-    warnings: list[str] = []
-    write_hook_env_for_clients(target_dir / ".trw", ide_targets, warnings=warnings)
-    return warnings
-
-
 def _rollback_preserves(root: Path, rel: str) -> bool:
     """True for what the rollback itself never removes: a pruned name (a ``.git`` marker) or anything inside a
     pruned nested dir. Those were never snapshotted, so the proof check must not move them either."""
@@ -313,7 +299,7 @@ def _apply_update(
     # context-locally (B71-118): process-wide os.environ would make every other
     # thread in this process (an MCP request, an overlapping install) resolve
     # *root* as its own project for the whole writer phase.
-    with installing_into(root), recording_writes():
+    with installing_into(root), recording_writes(), global_config_transaction(result):
         # Set only when the whole writer phase finished: an interrupt (a BaseException
         # such as KeyboardInterrupt) bypasses the handler below and never records an
         # error, so the rollback below keys on this too — parked links come back on
@@ -383,6 +369,7 @@ def update_project(
     on_progress: ProgressCallback = None,
     allow_dirty_bundle: bool = False,
     reprovision: list[str] | None = None,
+    rerender: list[str] | None = None,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -416,6 +403,8 @@ def update_project(
             target work tree even when git reports uncommitted changes in it (FR05).
         reprovision: Repo-relative paths (or ``["all"]``) whose tombstone this run
             should clear, so the writers recreate them (PRD-INFRA-192 FR10).
+        rerender: Render only these repo-relative managed files, keeping previous
+            bytes in timestamped .trw/trash captures; repeatable at the CLI.
 
     Returns:
         Dict with ``updated``, ``created``, ``cleaned`` (repo-relative paths from
@@ -431,27 +420,11 @@ def update_project(
         pip_install=pip_install,
     )
 
-    # Symmetry with init_project: refuse to scaffold into a non-repo / wrong dir.
-    # is_git_repo is symlink-safe (a plain .exists() follows symlinks).
-    if not is_git_repo(target_dir):
-        result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
-        logger.error(
-            "project_update_failed",
-            project_root=str(target_dir),
-            error="not a git repository",
-        )
-        return result
+    from ._rerender import rerender_project, validate_update_target
 
-    if not (target_dir / ".trw").exists():
-        result["errors"].append(
-            f"{target_dir} does not have TRW installed (.trw/ not found). Run `trw-mcp init-project` first."
-        )
+    if not validate_update_target(target_dir, result):
         return result
-
-    if refusal := manifest_refusal(target_dir):
-        result["errors"].append(refusal)
-        return result
-
+    result["clients"] = resolve_client_write_targets(target_dir, ide_override=ide)
     effective_data = data_dir or _DATA_DIR
     dirty, bundle_dirty = dirty_state(target_dir, effective_data, result)
     # TRW_ALLOW_DIRTY_BUNDLE=1 is the CLI's route to the flag until the
@@ -463,6 +436,12 @@ def update_project(
             + " (commit or discard them, or set TRW_ALLOW_DIRTY_BUNDLE=1)"
         )
         return result
+
+    if rerender:
+        if pip_install or reprovision:
+            result["errors"].append("--rerender cannot be combined with --pip-install or --reprovision")
+            return result
+        return rerender_project(target_dir, rerender, data_dir or _DATA_DIR, ide, result, dry_run=dry_run)
 
     external = ["pip_install"] if pip_install else []
     external += ["git_post_commit_hook", "hook_interpreter", "memory_namespace_pin", "auto_maintenance"]

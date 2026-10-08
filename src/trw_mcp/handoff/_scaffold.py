@@ -1,4 +1,4 @@
-"""Draft AHR 1.0-rc.1 handoff records: the mechanics filled in, the judgement left as a sentinel.
+"""Draft AHR 1.0-rc.2 handoff records: the mechanics filled in, the judgement left as a sentinel.
 
 Belongs to the :mod:`trw_mcp.handoff` package (``trw-mcp handoff new``). The tool owns what an
 agent should never hand-compute: the id, UTC timestamps, git state, sender identity, the
@@ -98,6 +98,8 @@ def _base_ref(
     state: GitState, root: Path | None, out_path: Path, handoff_id: str
 ) -> tuple[dict[str, Any], tuple[Path, str] | None]:
     ref: dict[str, Any] = {"commit": state.commit} if state.commit else {}
+    if state.branch:
+        ref["branch"] = state.branch[:280]
     ref["tree_state"] = state.tree_state
     if not state.changed or root is None:
         return ref, None
@@ -115,11 +117,21 @@ def _judgement(tier: str) -> dict[str, Any]:
         "action": f"{_T} the first thing the receiver does",
         "done_when": f"{_T} the check that shows it is done",
     }
+    # Both shapes are drafted so no agent has to guess the evidence object (the commonest seal failure in the
+    # 2026-10-06 skill eval): a `verified` claim keeps `evidence` and drops `basis`; any other label the reverse.
     claim = {
         "id": "c1",
         "text": f"{_T} what is true now",
         "label": f"{_T} verified | observed | inferred | unknown",
-        "basis": f"{_T} how you know it (verified: replace basis with evidence[])",
+        "basis": f"{_T} observed/inferred: what you saw or your premises (delete for verified and unknown)",
+        "evidence": [
+            {
+                "procedure": f"{_T} verified only: the command another agent can re-run (else delete evidence)",
+                "scope": f"{_T} what the check covered and what it did not",
+                "result": "supports",
+                "at": f"{_T} UTC time the check ran, e.g. {utc(datetime.now(UTC))}",
+            }
+        ],
     }
     fields: dict[str, Any] = {
         "tier_reason": f"{_T} why this tier (name any rollback record relied on)",
@@ -165,6 +177,7 @@ def build_draft(
     next_read: list[str],
     to_scope: str,
     to_id: str | None = None,
+    paths: list[str] | None = None,
     root: Path | None,
     git: GitState,
     now: datetime,
@@ -183,7 +196,7 @@ def build_draft(
     stamp = utc(now)
     to = _recipient(tier, to_id, to_scope)
     doc: dict[str, Any] = {
-        "ahr": "1.0-rc.1",
+        "ahr": "1.0-rc.2",
         "type": "handoff",
         "handoff_id": handoff_id,
         "subject": subject,
@@ -196,4 +209,6 @@ def build_draft(
         "next_read": pointers,
     }
     doc |= _judgement(tier)
+    if paths:  # R-REC-3: what the receiver may change; validate refuses absolute, `..` and control characters
+        doc["objective"]["paths"] = list(dict.fromkeys(paths))
     return Draft({key: doc[key] for key in _ORDER if key in doc}, sidecar)

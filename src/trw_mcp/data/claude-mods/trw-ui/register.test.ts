@@ -4,7 +4,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { register } from './register'
-import { bandText, buildView, doorbell, FRESH_MEMORY, parseSnapshot, wakeText } from './snapshot'
+import { GOLDEN } from './label-golden'
+import { bandText, buildView, doorbell, footerLayout, FRESH_MEMORY, hintText, labelText, parseSnapshot, wakeText } from './snapshot'
 
 const SID = 'sess-current'
 const NOW = Date.parse('2026-10-03T12:00:00Z')
@@ -116,7 +117,7 @@ test('parse: unknown enum values and missing blocks become unknown, never a pass
     expect(p.snap.review.state).toBe('unknown')
     expect(p.snap.run.state).toBe('unknown')
     expect(p.snap.inbox.pending).toBe(null)
-    expect(bandText(p.snap)).toContain('build ?')
+    expect(bandText(p.snap)).not.toContain('✓')
   }
 })
 
@@ -148,7 +149,7 @@ test('view: labels say preview, project-wide, scope and list unknown fields', ()
   // The aggregate build "passed" must not turn this run's build row green.
   const agg = parseSnapshot(snapshot({ evidence: { build: { state: 'unknown', scope: 'unknown' } } }))
   if (!agg.ok) throw new Error('fixture must parse')
-  expect(bandText(agg.snap)).toContain('build ?')
+  expect(bandText(agg.snap)).not.toContain('✓')
 })
 
 // --------------------------------------------------------------- rendering
@@ -269,20 +270,131 @@ test('doorbell: notify ignores another session\'s snapshot', async ($, on) => {
   expect(r.submits.length).toBe(0)
 })
 
-test('band: degraded, scope and none rules match the Python renderer', () => {
+test('label: same rules as the Python renderer (no times, no ticks, exceptions only)', () => {
   const band = (over: Record<string, any>) => {
     const p = parseSnapshot(snapshot(over))
     if (!p.ok) throw new Error('parse')
     return bandText(p.snap)
   }
   expect(band({ degraded: { state: 'yes' } })).toBe('TRW ⚠ MCP not seen')
-  const ev = (review: any, deliver: any) => ({
-    evidence: { build: { state: 'passed', scope: 'run' }, review, deliver, as_of: '' },
+  expect(band({ run: { state: 'none' } })).toBe('TRW')
+  expect(band({ run: { state: 'bogus' } })).toBe('TRW ?')
+  const ev = (build: any, review: any, deliver: any) => ({ evidence: { build, review, deliver, as_of: '' } })
+  const active = band(ev({ state: 'passed', scope: 'run' }, { state: 'pass', scope: 'run' }, { state: 'none', scope: 'run' }))
+  expect(active).toBe('TRW ▸ implement · build-trw-ui')
+  expect(active).not.toMatch(/ckpt|✓|–|\d+[smhd]\b/)
+  expect(band(ev({ state: 'passed', scope: 'run' }, { state: 'pass', scope: 'run' }, { state: 'called', scope: 'run' }))).toBe('TRW ✓ build-trw-ui')
+  expect(band(ev({ state: 'failed', scope: 'run' }, { state: 'block', scope: 'run' }, { state: 'none', scope: 'run' }))).toBe(
+    'TRW ▸ implement · build-trw-ui · build ✗ · review ✗',
+  )
+  expect(band({ inbox: { state: 'ok', pending: 3, formation_id: null, as_of: new Date(NOW).toISOString() } })).toContain('· ✉3')
+})
+
+test('label: the shared golden table (same cases as the Python renderer)', () => {
+  for (const c of GOLDEN.cases) {
+    const p = parseSnapshot(JSON.stringify(c.snapshot))
+    if (!p.ok) throw new Error('parse: ' + c.name)
+    const got = labelText(p.snap, c.width === null ? undefined : c.width)
+    expect(`${c.name}: ${got}`).toBe(`${c.name}: ${c.expect}`)
+  }
+})
+
+test('hint: keep, trim or hide Claude Code\'s own hint text', () => {
+  expect(hintText('(shift+tab to cycle) · ← for agents', 'keep')).toBe('(shift+tab to cycle) · ← for agents')
+  expect(hintText('(shift+tab to cycle) · ← for agents', 'trim')).toBe('← for agents')
+  expect(hintText('(shift+tab to cycle)', 'trim')).toBe('')
+  expect(hintText('anything', 'hide')).toBe('')
+})
+
+test('footer: the label is drawn right-justified on the prompt-hint line', async ($, on) => {
+  const r = rig(on)
+  await start($, r)
+  await r.clock.settle()
+  const hint = await $.ui.mount({
+    plugin: 'trw-ui',
+    surface: 'terminal',
+    component: 'PromptHint',
+    requestId: 'hint',
+    viewport: { columns: 120, rows: 40 },
+    props: { isDraft: false, isWorking: false, hint: '(shift+tab to cycle)' } as any,
   })
-  expect(band(ev({ state: 'pass', scope: 'run' }, { state: 'called', scope: 'session' }))).toContain('build ✓ · review ✓ · deliver ✓')
-  expect(band(ev({ state: 'pass', scope: 'project_aggregate' }, { state: 'called', scope: 'project' }))).toContain('review ? · deliver ?')
-  expect(band(ev({ state: 'block', scope: 'unknown' }, { state: 'none', scope: 'run' }))).toContain('review ? · deliver –')
-  expect(band(ev({ state: 'warn', scope: 'run' }, { state: 'none', scope: 'run' }))).toContain('review !')
+  expect(await hint.find({ type: 'Text', text: /TRW ▸ implement/ })).toBeDefined()
+  expect(await hint.find({ type: 'Text', text: /shift\+tab/ })).toBeDefined()
+  await hint.unmount()
+})
+
+test('footer: hint=trim drops "(shift+tab to cycle)"', { options: { hint: 'trim' } }, async ($, on) => {
+  const r = rig(on)
+  await start($, r)
+  await r.clock.settle()
+  const hint = await $.ui.mount({
+    plugin: 'trw-ui',
+    surface: 'terminal',
+    component: 'PromptHint',
+    requestId: 'hint',
+    viewport: { columns: 120, rows: 40 },
+    props: { isDraft: false, isWorking: false, hint: '(shift+tab to cycle)' } as any,
+  })
+  expect(await hint.find({ type: 'Text', text: /shift\+tab/ })).toBeUndefined()
+  expect(await hint.find({ type: 'Text', text: /TRW/ })).toBeDefined()
+  await hint.unmount()
+})
+
+async function mountHint($: any, viewport: any, hint = '(shift+tab to cycle)') {
+  return $.ui.mount({
+    plugin: 'trw-ui',
+    surface: 'terminal',
+    component: 'PromptHint',
+    requestId: 'hint',
+    viewport,
+    props: { isDraft: false, isWorking: false, hint } as any,
+  })
+}
+
+test('footer layout: narrow or unmeasured terminals draw nothing; long hints are cut; label first', () => {
+  const lbl = (room: number) => [{ text: 'TRW ▸ implement', tone: 'ok' as const }].filter(() => room >= 8)
+  expect(footerLayout(40, '(shift+tab to cycle)', 'keep', lbl)).toBe(null)
+  expect(footerLayout(undefined, '', 'keep', lbl)).toBe(null)
+  expect(footerLayout('x', '', 'keep', lbl)).toBe(null)
+  const wide = footerLayout(120, '(shift+tab to cycle) · ← for agents', 'keep', lbl)
+  if (!wide) throw new Error('layout')
+  expect(wide.width).toBe(90)
+  expect(wide.hint).toBe('(shift+tab to cycle) · ← for agents')
+  const cut = footerLayout(80, 'x'.repeat(200), 'keep', lbl)
+  if (!cut) throw new Error('layout')
+  expect([...cut.hint].length + 'TRW ▸ implement'.length + 2).toBeLessThanOrEqual(cut.width)
+  expect(cut.hint.endsWith('…')).toBe(true)
+  expect(footerLayout(120, '⏸ manual', 'keep', lbl)?.width).toBe(98)
+})
+
+test('footer: a long hint is cut, the label keeps its room', async ($, on) => {
+  const r = rig(on)
+  await start($, r)
+  await r.clock.settle()
+  const h = await mountHint($, { columns: 80, rows: 30 }, 'x'.repeat(200))
+  expect(await h.find({ type: 'Text', text: /TRW ▸/ })).toBeDefined()
+  expect(await h.find({ type: 'Text', text: /x{60}/ })).toBeUndefined()
+  await h.unmount()
+})
+
+test('footer: hint=hide shows only the label', { options: { hint: 'hide' } }, async ($, on) => {
+  const r = rig(on)
+  await start($, r)
+  await r.clock.settle()
+  const h = await mountHint($, { columns: 120, rows: 30 })
+  expect(await h.find({ type: 'Text', text: /shift/ })).toBeUndefined()
+  expect(await h.find({ type: 'Text', text: /TRW/ })).toBeDefined()
+  await h.unmount()
+})
+
+test('footer: on by default it keeps the label fresh even with the doorbell off', { options: { doorbell: 'off' } }, async ($, on) => {
+  const r = rig(on)
+  await start($, r)
+  const first = r.runs.length
+  expect(first).toBe(1)
+  await r.clock.advance(60000)
+  expect(r.runs.length).toBeGreaterThan(first)
+  expect(r.toasts.length).toBe(0)
 })
 
 test('doorbell: notify polls with the pane closed', async ($, on) => {
@@ -297,7 +409,7 @@ test('doorbell: notify polls with the pane closed', async ($, on) => {
 })
 
 // `test(..., { options }, body)` gives the plugin its userConfig values.
-test('doorbell: off option', { options: { doorbell: 'off' } }, async ($, on) => {
+test('doorbell: off option', { options: { doorbell: 'off', footer: 'off' } }, async ($, on) => {
   const r = rig(on)
   r.cli.stdout = () => inbox(5, {}, r.clock.now())
   await start($, r)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://trwframework.com/schemas/ahr/1/ahr.schema.json",
   "title": "Agent Handoff Record (AHR) v1 draft",
-  "description": "AHR v1.0-rc.1. Three document kinds dispatched by `type`: sender-authored handoff, receiver-authored readback, lifecycle event. Structure is normative (SPEC R-CONV-3); cross-field rules X-0..X-21 live in SPEC section 13.",
+  "description": "AHR v1.0-rc.2 (accepts 1.0-rc.1 records). Three document kinds dispatched by `type`: sender-authored handoff, receiver-authored readback, lifecycle event. Structure is normative (SPEC R-CONV-3); cross-field rules X-0..X-21 live in SPEC section 13.",
   "type": "object",
   "required": [
     "type"
@@ -379,6 +379,22 @@
             "$ref": "#/$defs/id"
           },
           "description": "Claim ids this action relies on (X-4)."
+        },
+        "rollback": {
+          "type": "object",
+          "required": [
+            "procedure"
+          ],
+          "description": "How to undo the action; `record` points to a previous success (R-TIER-3(a)). Without `record` it is a plan.",
+          "properties": {
+            "procedure": {
+              "$ref": "#/$defs/text"
+            },
+            "record": {
+              "$ref": "#/$defs/ref"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -460,7 +476,10 @@
       ],
       "properties": {
         "ahr": {
-          "const": "1.0-rc.1"
+          "enum": [
+            "1.0-rc.1",
+            "1.0-rc.2"
+          ]
         },
         "type": {
           "const": "handoff"
@@ -519,6 +538,10 @@
                 },
                 "changed_paths": {
                   "$ref": "#/$defs/ref"
+                },
+                "branch": {
+                  "$ref": "#/$defs/short",
+                  "description": "Branch the commit was on when the sender read the state (R-REC-8)."
                 }
               },
               "additionalProperties": false
@@ -566,6 +589,19 @@
               "minItems": 1,
               "items": {
                 "$ref": "#/$defs/text"
+              }
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "uniqueItems": true,
+              "description": "Repository-relative paths or globs the receiver may change (R-REC-3).",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "pattern": "^(?![/\\\\])(?!.*(^|/)\\.\\.(/|$))[^\\u0000-\\u001f\\u007f\\\\\\u2028\\u2029]+$"
               }
             }
           },
@@ -641,6 +677,27 @@
                 "items": {
                   "$ref": "#/$defs/text"
                 }
+              },
+              "decided_by": {
+                "type": "object",
+                "required": [
+                  "authority"
+                ],
+                "description": "Who made the decision, so a receiver knows who may reopen it (R-REC-7).",
+                "properties": {
+                  "authority": {
+                    "enum": [
+                      "operator",
+                      "lead",
+                      "sender",
+                      "policy"
+                    ]
+                  },
+                  "id": {
+                    "$ref": "#/$defs/id"
+                  }
+                },
+                "additionalProperties": false
               }
             },
             "additionalProperties": false
@@ -845,7 +902,10 @@
       ],
       "properties": {
         "ahr": {
-          "const": "1.0-rc.1"
+          "enum": [
+            "1.0-rc.1",
+            "1.0-rc.2"
+          ]
         },
         "type": {
           "const": "readback"
@@ -1202,7 +1262,10 @@
       ],
       "properties": {
         "ahr": {
-          "const": "1.0-rc.1"
+          "enum": [
+            "1.0-rc.1",
+            "1.0-rc.2"
+          ]
         },
         "type": {
           "const": "event"

@@ -63,6 +63,29 @@ class OpenHandoffDict(TypedDict, total=False):
     path: str
 
 
+class HandoffRecordItemDict(TypedDict):
+    """One unclaimed handoff record: id-shaped fields only, never record free text (SPEC R-SEC-1)."""
+
+    path: str
+    handoff_id: str
+    subject: str
+    tier: str
+    to: str
+    created_at: str
+    digest: str
+    readback: NotRequired[str]  # "in_progress" when a draft or questions read-back exists
+
+
+class HandoffRecordsDict(TypedDict):
+    """The ``handoff_records`` field on the session-start result: present only when one is waiting."""
+
+    total: int
+    items: list[HandoffRecordItemDict]
+    hint: str
+    duplicate_ids: NotRequired[list[str]]  # one handoff_id, two contents: both withheld (R-DOC-4)
+    truncated: NotRequired[bool]  # more candidate files existed than were scanned
+
+
 class MovedCheckoutCandidateDict(TypedDict):
     """A populated same-slug namespace that this checkout may have come from."""
 

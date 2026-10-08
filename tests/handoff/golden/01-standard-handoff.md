@@ -1,8 +1,8 @@
 # Handoff 01J9ZK5W1STD000000000001 — swap\-dirty\-worktree   (tier: standard; Agent\-to\-agent\; uncommitted lane edits in a shared worktree)
 
-Rendered view of 01J9ZK5W1STD000000000001 sha256\:ddcd8aa819205a8baec80e246d0f47bfd0997de14feeda78f1545eac6fad1d45; the JSON record is normative.  
+Rendered view of 01J9ZK5W1STD000000000001 sha256\:f83fe57eda9416905dbca8d7f06b189ac7e1a3119cc0d6a269ea8c633ff13ea2; the JSON record is normative.  
 from worker\-w1 [agent, balanced, s\-7f3a] → integrator [agent]; completer none  
-created 2026\-09\-28T21\:10\:00Z · state as of 2026\-09\-28T21\:09\:30Z @ 47c004499 (dirty; changed: file\:changed\-paths\.txt) · run run\:hotreload\-w1 · expires 2026\-09\-29T21\:10\:00Z · digest sha256\:ddcd8aa819205a8baec80e246d0f47bfd0997de14feeda78f1545eac6fad1d45 · signature —  
+created 2026\-09\-28T21\:10\:00Z · state as of 2026\-09\-28T21\:09\:30Z @ 47c004499 (dirty; changed: file\:changed\-paths\.txt) · run run\:hotreload\-w1 · expires 2026\-09\-29T21\:10\:00Z · digest sha256\:f83fe57eda9416905dbca8d7f06b189ac7e1a3119cc0d6a269ea8c633ff13ea2 · signature —  
 Supersedes: none  
 Status: lifecycle state unknown (rendered from a file, not a store)
 
@@ -31,7 +31,7 @@ Status: lifecycle state unknown (rendered from a file, not a store)
 | id | label | claim | basis or evidence |
 |---|---|---|---|
 | c1 | observed | Refusal path for a dirty worktree is implemented in swap\.py | Read the full diff of swap\.py at 21\:05Z\; not executed\. |
-| c2 | verified | Unit tests for the refusal path pass | pytest tests\/test\_swap\.py \-q; one test file\, not the package suite; supports; 2026\-09\-28T21\:08\:00Z; worker\-w1; file\:pytest\-w1\.txt |
+| c2 | verified | Unit tests for the refusal path pass | ran pytest tests\/test\_swap\.py \-q (supports at 2026\-09\-28T21\:08\:00Z; scope: one test file\, not the package suite; by worker\-w1; output file\:pytest\-w1\.txt) |
 | c3 | inferred | Behaviour with a locked index file is unchanged | The code path was not touched and was not exercised\. |
 | c4 | unknown | Windows path handling after a refusal | — |
 

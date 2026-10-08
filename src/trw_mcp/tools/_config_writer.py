@@ -275,14 +275,21 @@ def _validate(field: str, machine_path: Path, project_path: Path, scope: str, re
     """
     from pydantic import ValidationError
 
+    from trw_mcp.exceptions import ConfigError, StateError
     from trw_mcp.state._namespace_pin_read import read_config_layer
 
     candidate = _candidate_layer(rendered)
-    if scope == "machine":  # the project layer is "the other"; the assess caller passes home as its project
-        other = {} if project_path == machine_path else read_config_layer(project_path)
-        effective: Callable[[], None] = partial(_production_build, candidate, other)
-    else:
-        effective = partial(_production_build, read_config_layer(machine_path), candidate)
+    try:
+        if scope == "machine":  # the project layer is "the other"; the assess caller passes home as its project
+            other = {} if project_path == machine_path else read_config_layer(project_path)
+            effective: Callable[[], None] = partial(_production_build, candidate, other)
+        else:
+            effective = partial(_production_build, read_config_layer(machine_path), candidate)
+    except (StateError, ConfigError) as exc:
+        layer = "project" if scope == "machine" else "machine"
+        raise _refuse(
+            f"cannot validate against the {layer} config layer ({type(exc).__name__}); repair it first"
+        ) from None
     builds: list[tuple[str, Callable[[], object]]] = []
     if field in candidate:
         builds.append(("field", partial(_field_build, field, candidate[field])))
@@ -415,6 +422,8 @@ def _edit_and_publish(
     layer = data if data is not None else CommentedMap()
     surgery: str | None = None
     if value is _REMOVE:
+        if sub is not None and f"{field}.{sub}" in layer:
+            field, sub = f"{field}.{sub}", None  # literal top-level dotted key wins over FIELD.SUBKEY
         changed, drop_field = _removal_plan(layer, field, sub, path)
         if changed:
             surgery = remove_key_lines(text, layer, field, sub, drop_field=drop_field)
@@ -444,12 +453,20 @@ def _edit_and_publish(
     yaml.dump(layer, buf)
     rendered = buf.getvalue()
     if data is None and text.strip():  # comment-only file: keep its comments, append the new key
-        rendered = text if text.endswith("\n") else text + "\n"
+        rendered = text.removeprefix("\ufeff") if text.endswith("\n") else text.removeprefix("\ufeff") + "\n"
         rendered += buf.getvalue()
     if surgery is not None:
         rendered = surgery
     elif value is _REMOVE and not layer:  # a flow-style fallback emptied the map: no literal `{}`
         rendered = ""
+    else:
+        bom = "\ufeff" if text.startswith("\ufeff") else ""
+        source = text.removeprefix(bom)
+        crlf = source.count("\r\n")
+        lone_lf = source.count("\n") - crlf
+        ending = "\r\n" if crlf > lone_lf else "\n"
+        normalized = rendered.replace("\r\n", "\n").replace("\r", "\n")
+        rendered = bom + normalized.replace("\n", ending)
     problem = check_only_target_changed(rendered, raw, field, sub, value, removing=value is _REMOVE)
     if problem:
         raise _refuse(f"cannot change {field}{'.' + sub if sub else ''} alone in {path}: {problem}; edit it by hand")

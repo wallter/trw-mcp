@@ -114,11 +114,9 @@ def _print_warning_block(warnings: Sequence[str]) -> None:
 
 def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_run: bool, ide: str | None) -> None:
     """Render a concise human summary for update-project."""
-    updated = len(result["updated"])
-    created = len(result["created"])
-    preserved = len(result["preserved"])
-    cleaned = len(result.get("cleaned", []))
-    errors = len(result["errors"])
+    updated, created, preserved, cleaned, errors = (
+        len(result.get(key, [])) for key in ("updated", "created", "preserved", "cleaned", "errors")
+    )
 
     codex_touched = any(
         path.startswith((".codex/", ".agents/skills/")) or path == "AGENTS.md"
@@ -131,8 +129,7 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
     _print_cli_line(
         f"Changes: {updated} updated, {created} created, {preserved} preserved, {cleaned} cleaned, {errors} errors"
     )
-    if ide:
-        _print_cli_line(f"Target IDE: {ide}")
+    _print_cli_line(f"Resolved clients: {', '.join(result.get('clients', [])) or ide or 'auto'}")
     if codex_touched:
         _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
     needs = attention_count(result, target)
@@ -215,6 +212,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         ide=getattr(args, "ide", None),
         on_progress=_phase_progress("update_progress", "update_project", detailed=detailed, quiet=quiet),
         reprovision=getattr(args, "reprovision", None),
+        rerender=getattr(args, "rerender", None),
     )
 
     if detailed:

@@ -342,8 +342,10 @@ def _snapshot_transaction_paths(target_dir: Path) -> Path:
             else:
                 shutil.copy2(src, dest, follow_symlinks=False)
     except OSError:
-        release_snapshot(snapshot_root)
-        remove_tree(snapshot_root, purpose="unfinished update snapshot")
+        try:
+            release_snapshot(snapshot_root)
+        finally:
+            remove_tree(snapshot_root, purpose="unfinished update snapshot")
         raise
     return snapshot_root
 
@@ -484,8 +486,13 @@ def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callab
     try:
         # A real repository, so writers that ask git for the top level
         # (REVIEW.md) resolve to the scratch tree exactly as they would in place.
-        if subprocess.run(["git", "init", "-q", str(scratch)], capture_output=True, check=False).returncode:  # noqa: S603,S607
+        try:
+            git_result = subprocess.run(["git", "init", "-q", str(scratch)], capture_output=True, check=False)  # noqa: S603,S607
+        except OSError:
             (scratch / ".git").mkdir()
+        else:
+            if git_result.returncode:
+                (scratch / ".git").mkdir()
         # Render inputs are copied as content: a copied link could reach the real tree.
         for rel in _RENDER_INPUT_DIRS:
             if (target_dir / rel).is_dir():
@@ -502,7 +509,10 @@ def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callab
         with git_view_of(scratch, target_dir):  # the git-clean retire rule must see the real checkout
             apply(scratch)
     finally:
-        remove_tree(scratch, purpose="update dry-run scratch")
+        try:
+            release_snapshot(scratch)
+        finally:
+            remove_tree(scratch, purpose="update dry-run scratch")
     # Writers name absolute paths in their notes; point them at the real target.
     for key, items in result.items():
         result[key] = [

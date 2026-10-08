@@ -24,8 +24,8 @@ trw-mcp handoff check <path> [--digest sha256:<digest>]
 
 Pass `--digest` whenever the user or a checkpoint gave you one. JSON goes to
 stdout (keys `digest`, `validity`, `expiry`, `supersession`, `pointer_checks`,
-`git`) and a short summary to stderr. Exit 0 is clean; 1 means findings; 2 is a
-usage error. It covers:
+`git`) and a short summary to stderr. Exit 0 is clean; 1 means findings (do not
+act yet; only steps 1-3 stop the read-back itself); 2 is a usage error. It covers:
 
 1. **Digest.** The record's recomputed digest against the one you were given.
    A mismatch: stop (step 10).
@@ -54,7 +54,9 @@ usage error. It covers:
    A changed tree state, changed paths that differ from the record's sidecar,
    a recorded commit missing from HEAD's history (`diverged`) or an
    abbreviated recorded commit are findings. Changes to the files the first
-   action reads show up as pointer drift (step 5).
+   action reads show up as pointer drift (step 5). `scope` (only with
+   `objective.paths`) lists paths changed outside them since the record: a
+   warning, not a finding.
 
 If `trw-mcp handoff check` is unavailable, do steps 1-6 by hand
 (`trw-mcp handoff digest`, `trw-mcp handoff validate`, `shasum -a 256` per
@@ -128,7 +130,7 @@ Stop, show the user the findings and your questions, and do not act if:
   a critical trigger (no recorded rollback, production or shared state someone
   else is changing, a hard limit, regulation). Do not take that action under
   this record (R-TIER-5); ask the user for a `critical` record instead;
-- the record is `critical`: the named verifier (the operator) must pass your
+- the record is `critical`: the operator (its verifier) must pass your
   read-back before any action, even when it is `ready`.
 
 The user stands in for the absent sender. Record their answers as a new note or

@@ -28,7 +28,11 @@ def _hold(snap: Path) -> None:
     if fcntl is None:  # no flock (Windows): orphans are then never removed, only named
         return
     fd = os.open(snap / _LOCK, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BaseException:
+        os.close(fd)
+        raise
     _HELD[str(snap)] = fd
 
 

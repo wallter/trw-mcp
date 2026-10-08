@@ -234,24 +234,15 @@ class TestUpdateTargetPlatforms:
             # _update_config_target_platforms — check for warning or no crash
             assert result is not None  # didn't raise
 
-    def test_update_ide_all_writes_all_platforms(self, initialized_repo: Path) -> None:
-        """update_project(dir, ide='all') updates target_platforms to all supported platforms."""
+    def test_update_ide_all_keeps_the_recorded_clients(self, initialized_repo: Path) -> None:
+        """9.2.2 (feedback sub_eJ3qWhIOKC4P0cpE item 4): on a project with recorded clients, ide='all' means
+        those clients; it no longer silently adds every supported client. Adding one takes naming it."""
+        before = _read_target_platforms(initialized_repo)
+        assert before, "the fixture project records at least one client"
         result = update_project(initialized_repo, ide="all")
         assert not result["errors"]
 
-        platforms = _read_target_platforms(initialized_repo)
-        assert sorted(platforms) == sorted(
-            [
-                "claude-code",
-                "copilot",
-                "cursor-ide",
-                "cursor-cli",
-                "opencode",
-                "codex",
-                "antigravity-cli",
-                "grok",
-            ]
-        )
+        assert sorted(_read_target_platforms(initialized_repo)) == sorted(before)
 
 
 # ---------------------------------------------------------------------------

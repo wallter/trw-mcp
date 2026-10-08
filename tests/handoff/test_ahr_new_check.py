@@ -31,7 +31,11 @@ def test_new_draft_fails_only_on_placeholders(repo: Path, capsys: pytest.Capture
         doc if tier == "minimal" else {**doc, "integrity": {"canonicalization": "RFC8785", "digest": digest(doc)}}
     )
     assert findings and {f.rule for f in findings} == {"placeholder"}
-    assert doc["as_of"]["base_ref"] == {"commit": _git(repo, "rev-parse", "HEAD").strip(), "tree_state": "clean"}
+    assert doc["as_of"]["base_ref"] == {
+        "commit": _git(repo, "rev-parse", "HEAD").strip(),
+        "branch": _git(repo, "symbolic-ref", "--short", "HEAD").strip(),
+        "tree_state": "clean",
+    }
     assert doc["created_at"] == doc["as_of"]["at"] and doc["created_at"].endswith("Z")
     assert doc.get("readback", {}).get("required", False) is (tier != "minimal")
 
@@ -301,3 +305,53 @@ def test_check_rejects_non_handoff_and_missing_file(
     readback = Path(STANDARD).with_name("02-readback-for-01.json")
     assert _run(capsys, "check", str(readback))[0] == 2
     assert _run(capsys, "check", str(tmp_path / "absent.json"))[0] == 2
+
+
+# --- rc.2: evidence skeleton, objective.paths, scope warning ---------------------------------------
+
+
+def test_draft_claim_drafts_the_evidence_shape(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The draft names every evidence key, so a `verified` claim is filled, not guessed (2026-10-06 eval)."""
+    (claim,) = load(_new(capsys, "--subject", "s", "--next-read", "a.txt"))["claims"]
+    (evidence,) = claim["evidence"]
+    assert set(evidence) == {"procedure", "scope", "result", "at"} and evidence["result"] == "supports"
+    assert "basis" in claim
+
+
+def test_a_verified_claim_filled_from_the_draft_seals(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = _new(capsys, "--tier", "standard", "--subject", "s", "--next-read", "a.txt")
+    doc = load(path)
+    claim = doc["claims"][0]
+    del claim["basis"]
+    claim |= {"text": "tests/test_a.py passes", "label": "verified"}
+    claim["evidence"][0] |= {"procedure": "pytest tests/test_a.py -q", "scope": "one file", "at": doc["created_at"]}
+    path.write_text(json.dumps(_fill(doc), indent=2), encoding="utf-8")
+    code, out, err = _run(capsys, "seal", str(path))
+    assert code == 0, out + err
+    assert load(path)["claims"][0]["evidence"][0]["procedure"] == "pytest tests/test_a.py -q"
+
+
+def test_paths_reach_the_draft_and_out_of_scope_changes_warn(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path, sealed = _filled_sealed(
+        capsys, "--tier", "standard", "--next-read", "a.txt", "--path", "src/**", "--path", "a.txt"
+    )
+    assert load(path)["objective"]["paths"] == ["src/**", "a.txt"]
+    (repo / "src" / "deep").mkdir(parents=True)
+    (repo / "src" / "deep" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "elsewhere.txt").write_text("not in scope\n", encoding="utf-8")
+    _code, report = _check(capsys, path, "--digest", sealed)
+    assert report["scope"] == {"status": "checked", "outside": ["elsewhere.txt"], "outside_count": 1}
+
+
+def test_a_record_without_paths_has_no_scope_section(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path, sealed = _filled_sealed(capsys, "--tier", "standard", "--next-read", "a.txt")
+    (repo / "elsewhere.txt").write_text("x\n", encoding="utf-8")
+    _code, report = _check(capsys, path, "--digest", sealed)
+    assert "scope" not in report
+
+
+def test_a_path_with_a_parent_segment_is_refused_at_seal(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = _new(capsys, "--tier", "standard", "--subject", "s", "--next-read", "a.txt", "--path", "../outside")
+    path.write_text(json.dumps(_fill(load(path)), indent=2), encoding="utf-8")
+    code, out, err = _run(capsys, "seal", str(path))
+    assert code != 0 and "objective/paths" in out + err

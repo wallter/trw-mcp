@@ -30,12 +30,12 @@ from typing import Any
 from trw_mcp.comms._ahr_state import AHR_MEDIA, TIER_RANK, AhrLog, JsonDoc, Target, start
 from trw_mcp.comms._envelope import AdmissionError
 from trw_mcp.comms._store import StoreError, StoreRefusal
-from trw_mcp.handoff import AhrInputError, AhrParseError, digest, jcs, load, seal
+from trw_mcp.handoff import AhrInputError, AhrParseError, JcsError, digest, jcs, load, loads, seal
 from trw_mcp.handoff._rules import instant
 from trw_mcp.handoff._validate import MAX_INPUT_BYTES
 from trw_mcp.telemetry.otel_ahr import project_event
 
-AHR_SPEC = "1.0-rc.1"
+AHR_SPEC = "1.0-rc.2"
 #: The store's own principal: the actor of ``expired`` (R-TIME-2).
 STORE_PRINCIPAL: JsonDoc = {"id": "trw-comms-store", "kind": "service"}
 #: The single admitted statement (FR08): pinned verbatim by the census.
@@ -44,8 +44,6 @@ _INSERT = (
     "VALUES (?,?,?,?,?,?,?,?,?,?,?)"
 )
 _BOUND = re.compile(r"^(?P<path>.+)#(?P<digest>sha256:[0-9a-f]{64})$")
-#: States that end a record's currency for its subject (R-SUP-1); ``completed`` stays current.
-_ENDED = frozenset({"declined", "withdrawn", "expired", "superseded"})
 #: Replay rule prefixes that mean "the receiver has not shown understanding yet" (R-LC-11, R-RB-4).
 _READBACK_RULES = ("R-LC-11 ", "R-RB-4 ")
 
@@ -104,13 +102,14 @@ def _hashed(text: object) -> tuple[str, Target]:
     relative, path = local_file(text)
     sha = hashlib.sha256()
     try:
-        with path.open("rb") as handle:
+        with path.open("rb") as handle:  # one open, one byte stream: the digest and the sample are the same bytes
+            head = handle.read(MAX_INPUT_BYTES + 1)
+            sha.update(head)
             while chunk := handle.read(1 << 20):
                 sha.update(chunk)
-        sample = path.read_bytes() if path.stat().st_size <= MAX_INPUT_BYTES else b""
     except OSError as exc:
         raise AdmissionError("ahr_ref_not_local") from exc
-    return relative, (sample, "sha256:" + sha.hexdigest())
+    return relative, (head if len(head) <= MAX_INPUT_BYTES else b"", "sha256:" + sha.hexdigest())
 
 
 def _load_record(text: object, kind: str) -> JsonDoc:
@@ -144,9 +143,9 @@ def _stored_target(conn: sqlite3.Connection, ev: JsonDoc, record: bytes | None) 
     ref = ev.get("ref")
     if ref is None:
         return None
-    if ev["event"] == "read_back" and record is not None:
-        readback = dict(json.loads(record))
-        return readback, digest(readback)
+    if ev["event"] in ("read_back", "reported") and record is not None:  # a read-back, or a report's onward handoff
+        stored = dict(json.loads(record))
+        return stored, digest(stored)
     if ev["event"] == "superseded":
         successor = _offered_record(conn, str(ref["uri"]).removeprefix("trw:ahr/"))
         return (successor, digest(successor)) if successor is not None else None
@@ -397,11 +396,32 @@ def answer(conn: sqlite3.Connection, message_id: str, path: object, now: float) 
     log = _logged(conn, message_id)
     relative, target = _hashed(path)
     ref = {"uri": f"file:{relative}", "digest": target[1]}
+    last = log.prev_event
+    if last is not None and last["event"] == "answered" and last.get("ref") == ref:
+        return  # R-LC-1: an exact retry of the latest answer appends nothing
     _append(conn, log, message_id, "answered", _sender(log), now, target=target, ref=ref)
 
 
-def report(conn: sqlite3.Connection, message_id: str, next_read: str, outcome: str, now: float) -> None:
-    """``reported`` with *outcome* and the §14 ``<path>#sha256:<hex>`` ref, verified against the local file."""
+def _onward(sample: bytes) -> JsonDoc | None:
+    """The AHR handoff a report's file holds (R-LC-12, R-TIER-5), or None for a plain result file."""
+    try:
+        doc = loads(sample)
+    except (
+        AhrInputError,
+        AhrParseError,
+    ):  # trw-fail-silent-allow: a result that is not an AHR record is the common case
+        return None
+    return doc if "ahr" in doc and doc.get("type") == "handoff" else None
+
+
+def report(conn: sqlite3.Connection, group_id: str, message_id: str, next_read: str, outcome: str, now: float) -> None:
+    """``reported`` with *outcome* and the §14 ``<path>#sha256:<hex>`` ref, verified against the local file.
+
+    A file holding an AHR handoff is an onward or escalation record (R-LC-12, R-TIER-5): the event
+    refs it by its R-INT-1 digest with the AHR media type, and the pointer may carry either that
+    digest or the file's raw-byte hash. A non-critical onward record must already be offered in
+    this group; a critical one lives on an L3 store, so only its shape is checked here (§15).
+    """
     log = _logged(conn, message_id)
     if log.state in ("reported", "completed"):
         return  # the CORE-322 report (run first) refused a different pointer, so this is the exact retry
@@ -409,10 +429,41 @@ def report(conn: sqlite3.Connection, message_id: str, next_read: str, outcome: s
     if bound is None:
         raise AdmissionError("ahr_ref_unverified")
     relative, target = _hashed(bound["path"])
-    if target[1] != bound["digest"]:
+    onward = _onward(target[0]) if isinstance(target[0], bytes) and target[0] else None
+    if onward is None:
+        if target[1] != bound["digest"]:
+            raise AdmissionError("ahr_ref_unverified")
+        ref: JsonDoc = {"uri": f"file:{relative}", "digest": target[1]}
+        _append(conn, log, message_id, "reported", _receiver(log), now, target=target, ref=ref, outcome=outcome)
+        return
+    try:
+        record_digest = digest(onward)
+    except JcsError as exc:  # an AHR-shaped file that cannot be canonicalized is an invalid record, not a result
+        raise AdmissionError("ahr_invalid") from exc
+    if bound["digest"] not in (target[1], record_digest):
         raise AdmissionError("ahr_ref_unverified")
-    ref = {"uri": f"file:{relative}", "digest": target[1]}
-    _append(conn, log, message_id, "reported", _receiver(log), now, target=target, ref=ref, outcome=outcome)
+    if onward.get("tier") != "critical" and not _offered_here(conn, group_id, onward):
+        raise AdmissionError("ahr_onward_not_offered")
+    ref = {"uri": f"file:{relative}", "digest": record_digest, "media_type": AHR_MEDIA}
+    _append(
+        conn,
+        log,
+        message_id,
+        "reported",
+        _receiver(log),
+        now,
+        target=(onward, record_digest),
+        record=jcs(onward),
+        ref=ref,
+        outcome=outcome,
+    )
+
+
+def _offered_here(conn: sqlite3.Connection, group_id: str, record: JsonDoc) -> bool:
+    """R-LC-12: the onward record's ``offered`` event is in this group's log, for these exact bytes."""
+    stored = _local_handoff(conn, group_id, str(record.get("handoff_id")))
+    offered = None if stored is None else _offered_record(conn, stored)
+    return offered is not None and digest(offered) == digest(record)
 
 
 def complete(conn: sqlite3.Connection, message_id: str, now: float) -> None:
@@ -420,57 +471,3 @@ def complete(conn: sqlite3.Connection, message_id: str, now: float) -> None:
     if log.state == "completed":
         return
     _append(conn, log, message_id, "completed", _sender(log), now)
-
-
-def fetch_record(conn: sqlite3.Connection, message_id: str) -> JsonDoc | None:
-    """The offered record for the receiver's ``fetch`` (the carrier body is only the §14 pointer).
-
-    The stored bytes are returned as data only while they fit the group's body limit, the bound a
-    fetch page is sized for (``6 * body_limit + 4096``), so a large record can never make a page
-    unpackable; a larger one is named and omitted. Runtime caller: ``_inbox_page._project``.
-    """
-    row = conn.execute(
-        "SELECT e.handoff_id,e.record,g.body_limit FROM ahr_events e JOIN admissions a ON a.message_id=e.message_id "
-        "JOIN groups g ON g.group_id=a.group_id WHERE e.message_id=? AND e.seq=1",
-        (message_id,),
-    ).fetchone()
-    if row is None or row[1] is None:
-        return None
-    raw = bytes(row[1])
-    if len(raw) > int(row[2]):
-        return {"handoff_id": str(row[0]), "omitted": "larger than comms_body_max_bytes; ask the sender for the file"}
-    return dict(json.loads(raw))
-
-
-# --- the body-free view (FR07) -----------------------------------------------------------------
-
-
-def _owner(log: AhrLog) -> str | None:
-    """R-LC-14: the sender while offered, the receiver while accepted, the completer while reported."""
-    if log.state == "offered":
-        return log.sender
-    if log.state == "accepted":
-        return log.receiver
-    if log.state == "reported":
-        return log.completer
-    return None
-
-
-def view(conn: sqlite3.Connection, message_id: str, group_id: str) -> JsonDoc | None:
-    """The ``ahr`` block of a handoff view: ids, tier, state, owner, read-back disposition, fork. No content."""
-    handoff_id = handoff_of(conn, message_id)
-    if handoff_id is None:
-        return None
-    log = rebuild(conn, handoff_id)
-    block: JsonDoc = {"handoff_id": handoff_id, "tier": log.tier, "state": log.state, "owner": _owner(log)}
-    mine = log.latest_rb.get(str(log.handoff["to"].get("id")))
-    if mine is not None:
-        block["readback"] = mine[1]["disposition"]
-    peers = conn.execute(
-        "SELECT DISTINCT e.handoff_id FROM ahr_events e JOIN admissions a ON a.message_id=e.message_id "
-        "WHERE e.subject=? AND a.group_id=? AND e.handoff_id!=? LIMIT 16",
-        (log.handoff["subject"], group_id, handoff_id),
-    ).fetchall()
-    if log.state not in _ENDED and any(rebuild(conn, str(peer[0])).state not in _ENDED for peer in peers):
-        block["fork"] = True  # R-SUP-3: two current records for one subject are shown, never resolved silently
-    return block

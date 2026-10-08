@@ -447,6 +447,19 @@ def test_the_system_python_decision_is_per_interpreter(
     assert other.prompts() == 1
 
 
+def test_headless_run_honors_recorded_system_python_consent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], world: tuple[Path, Path]
+) -> None:
+    home, project = world
+    first = Session(monkeypatch, capsys, home, project, ["y"])
+    assert first.installer._allow_system_python(first.ui, "/usr/bin/python3") is True
+    first.finish()
+
+    second = Session(monkeypatch, capsys, home, project, [])
+    second.ui.interactive = False
+    assert second.installer._allow_system_python(second.ui, "/usr/bin/python3") is True
+
+
 # ── Review: a remembered consent is bound to the context it was given in ────────────────────────────────────────
 
 

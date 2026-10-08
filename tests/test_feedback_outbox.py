@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -128,8 +129,21 @@ def test_flush_limit_bounds_the_sends() -> None:
         patch("trw_mcp.models.config.get_config", return_value=_Cfg()),
         patch("trw_mcp.tools.submit_feedback.submit_feedback_via_http", return_value=_OK) as http,
     ):
-        flush_outbox(limit=1)
+        report = flush_outbox(limit=1)
     assert http.call_count == 1 and len(_files("outbox")) == 1
+    assert report["remaining"] == 1
+
+
+def test_flush_exits_nonzero_when_a_report_remains(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.tools import _feedback_cli
+
+    monkeypatch.setattr(_feedback_cli, "flush_outbox", lambda **_kw: {"error": "", "results": [], "remaining": 1})
+    with pytest.raises(SystemExit) as exc:
+        _feedback_cli._run_feedback(argparse.Namespace(feedback_command="flush", limit=1, as_json=False))
+    assert exc.value.code == 1
+    assert "1 report(s) remain" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("brownfield", [False, True], ids=["fresh-install", "merged-custom-gitignore"])
@@ -375,10 +389,10 @@ def test_a_record_is_sent_once_under_a_concurrent_submit_or_flush() -> None:
             from trw_mcp.tools.submit_feedback import submit_feedback
 
             submit_feedback(category="bugfix", subject="Recall hangs", message="a long enough body text")
-    assert inner == [{"error": "", "results": []}]
+    assert inner == [{"error": "", "results": [], "remaining": 1}]
     inner.clear()
     report, http = _flush(send_while_flushing)  # the outer flush holds the record while the inner one runs
-    assert http.call_count == 1 and inner == [{"error": "", "results": []}]
+    assert http.call_count == 1 and inner == [{"error": "", "results": [], "remaining": 1}]
     assert report["results"][0]["sent"] is False
 
 

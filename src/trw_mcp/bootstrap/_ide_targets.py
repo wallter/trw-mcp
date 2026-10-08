@@ -127,6 +127,7 @@ def _update_opencode_artifacts(
         result["updated"].extend(oc_result.get("updated", []))
         result["errors"].extend(oc_result.get("errors", []))
     except Exception as exc:  # justified: fail-open, opencode update is best-effort
+        logger.warning("opencode_config_update_failed", reason=str(exc))
         result.setdefault("warnings", []).append(f"opencode.json update skipped: {exc}")
         return
 
@@ -336,7 +337,7 @@ def _update_antigravity_artifacts(
         result.setdefault("warnings", []).append(f"ANTIGRAVITY.md update skipped: {exc}")
 
     try:
-        mcp_result = generate_antigravity_mcp_config(target_dir)
+        mcp_result = generate_antigravity_mcp_config(target_dir, dry_run="dry_run" in result)
         _absorb_sub_result(result, mcp_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"antigravity MCP config update skipped: {exc}")
@@ -539,3 +540,17 @@ def _update_cursor_cli_artifacts(
         result.setdefault("warnings", []).append(
             f".cursor/hooks.json (cursor-cli) update skipped: {type(exc).__name__}: {exc}"
         )
+
+
+def _rewrite_hook_env_for_installed_profiles(target_dir: Path, ide_targets: list[str]) -> list[str]:
+    """Refresh every resolved client's ``.trw/runtime/hook-env.d/<key>.sh`` on every sync.
+
+    Fail-open per client. Returns the operator-facing warnings
+    :func:`write_hook_env_for_clients` raises (empty when there is nothing to
+    report).
+    """
+    from ._file_ops import write_hook_env_for_clients
+
+    warnings: list[str] = []
+    write_hook_env_for_clients(target_dir / ".trw", ide_targets, warnings=warnings)
+    return warnings

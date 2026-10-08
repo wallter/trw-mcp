@@ -95,7 +95,7 @@ def _identity(st: os.stat_result) -> tuple[int, int, int, int, int]:
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def _remove_verified(dir_fd: int, found: dict[str, str]) -> None:
+def _remove_verified(dir_fd: int, found: dict[str, str], removed: list[str]) -> None:
     """Unlink only scanned files, rechecking bytes and identity; then rmdir deepest first.
 
     Never enumerate for deletion: a late entry makes rmdir fail and stops retirement.
@@ -118,6 +118,7 @@ def _remove_verified(dir_fd: int, found: dict[str, str]) -> None:
             if digest != found[rel] or _identity(before) != _identity(after):  # not st_atime: the hash read moves it
                 raise OSError(f"file changed: {printable(rel)}")
             os.unlink(parts[-1], dir_fd=parent)
+            removed.append(rel)
         finally:
             os.close(parent)
 
@@ -140,8 +141,13 @@ def retire_whole(
     files are unlinked: new or changed entries stop removal and survive."""
     name = shown(artifact)
 
-    def kept(why: str, *, dir_kept: bool = True) -> Retirement:
-        return Retirement([], [], [(name, why)], frozenset({name}) if dir_kept else frozenset())
+    def kept(why: str, *, dir_kept: bool = True, partial: bool = False) -> Retirement:
+        removed_paths = [f"{name}/{rel}" for rel in removed] if partial else []
+        removed_trw = [path for path in removed_paths if statuses.get(path.removeprefix(f"{name}/")) == "removed"]
+        removed_git = [path for path in removed_paths if statuses.get(path.removeprefix(f"{name}/")) == "git"]
+        if partial and removed_paths:
+            why += f"; {len(removed_paths)} verified file(s) were already removed"
+        return Retirement(removed_trw, removed_git, [(name, why)], frozenset({name}) if dir_kept else frozenset())
 
     expected: dict[str, str] = {}
     statuses: dict[str, Literal["removed", "git"]] = {}
@@ -161,6 +167,7 @@ def retire_whole(
     aside_rel = "/".join((*parts[:-1], aside))
     root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     pfd = -1
+    removed: list[str] = []
     try:
         try:
             pfd = _walk(root_fd, parts[:-1], create=False)  # O_NOFOLLOW on every component: a swapped parent is refused
@@ -177,7 +184,7 @@ def retire_whole(
                 problem = "" if found == expected else _difference(expected, found)
                 if not problem:
                     removing = True
-                    _remove_verified(dfd, found)
+                    _remove_verified(dfd, found, removed)
                     current = os.stat(aside, dir_fd=pfd, follow_symlinks=False)
                     if not os.path.samestat(current, os.fstat(dfd)):
                         raise OSError("the aside directory changed")
@@ -192,8 +199,8 @@ def retire_whole(
             )
         if not problem:
             return Retirement(
-                [f"{name}/{rel}" for rel, st in statuses.items() if st == "removed"],
-                [f"{name}/{rel}" for rel, st in statuses.items() if st == "git"],
+                [f"{name}/{rel}" for rel in removed if statuses.get(rel) == "removed"],
+                [f"{name}/{rel}" for rel in removed if statuses.get(rel) == "git"],
                 [],
             )
         try:
@@ -205,22 +212,32 @@ def retire_whole(
                 return kept(
                     f"kept at {printable(aside_rel)} (changed while it was removed: {problem}; it could not be renamed back: {exc.strerror or type(exc).__name__})",
                     dir_kept=False,
+                    partial=removing,
                 )
             if removing:
-                return kept(
-                    f"partly retired, then stopped: {problem}; files already verified and removed stay removed, "
-                    f"and everything left is back at {name}",
-                    dir_kept=False,
+                return Retirement(
+                    [f"{name}/{rel}" for rel in removed if statuses.get(rel) == "removed"],
+                    [f"{name}/{rel}" for rel in removed if statuses.get(rel) == "git"],
+                    [
+                        (
+                            name,
+                            f"partly retired, then stopped: {problem}; files already verified and removed stay removed, "
+                            f"and everything left is back at {name}",
+                        )
+                    ],
+                    frozenset({name}),
                 )
             return kept(f"changed while it was being removed ({problem}), so it was put back as it was")
         except OSError as exc:
             return kept(
                 f"kept at {printable(aside_rel)} (changed while it was removed: {problem}; its name could not be checked: {exc.strerror or type(exc).__name__})",
                 dir_kept=False,
+                partial=removing,
             )
         return kept(
             f"kept at {printable(aside_rel)} (changed while it was removed: {problem}; the name was taken again, so move it back yourself)",
             dir_kept=False,
+            partial=removing,
         )
     finally:
         if pfd >= 0:

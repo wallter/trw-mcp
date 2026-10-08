@@ -32,10 +32,13 @@ HANDOFF_BOARD_LIMIT = 20
 
 # One open-handoff predicate for the count and the page (FR07): a live request whose
 # completion is not verified, and either accepted or admitted within the message TTL.
+# An AHR request whose record ended (R-LC-14: declined, withdrawn, superseded, expired) is not open.
 _OPEN = (
     "FROM admissions a WHERE a.group_id=? AND a.kind='request' AND a.state!='expired' "
     "AND (a.state='acked' OR a.expires_at>?) "
     "AND NOT EXISTS (SELECT 1 FROM milestones m WHERE m.message_id=a.message_id AND m.fact='completed') "
+    "AND NOT EXISTS (SELECT 1 FROM ahr_events t WHERE t.message_id=a.message_id "
+    "AND t.event IN ('declined','withdrawn','superseded','expired')) "
     "AND (a.admitted_at>? OR EXISTS "
     "(SELECT 1 FROM milestones m WHERE m.message_id=a.message_id AND m.fact='accepted'))"
 )
@@ -111,7 +114,7 @@ def derive_handoff(
     and :func:`open_handoffs` (``trw_status`` via ``formation._stall.stall_scan``).
 
     PRD-CORE-349 FR07: an AHR request also carries its body-free ``ahr`` block (handoff id, tier,
-    replayed state, owner by state, read-back disposition, fork), built by ``_ahr_events.view``.
+    replayed state, owner by state, read-back disposition, fork), built by ``_ahr_view.view``.
     """
     if row["kind"] != "request":
         return None
@@ -174,7 +177,7 @@ def handoff_inputs(
 
 def _ahr_view(conn: sqlite3.Connection, message_id: str, group_id: str) -> dict[str, Any] | None:
     """The AHR block for the board; a log that does not replay is the board's not_measured boundary."""
-    from trw_mcp.comms._ahr_events import view  # lazy: keeps the board's import of this module light
+    from trw_mcp.comms._ahr_view import view  # lazy: keeps the board's import of this module light
     from trw_mcp.comms._store import StoreError
 
     try:

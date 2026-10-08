@@ -7,6 +7,7 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 from trw_mcp.models.typed_dicts._ceremony import (
+    HandoffRecordsDict,
     MovedCheckoutDict,
     OpenHandoffDict,
     ReconciledLocalWritesDict,
@@ -152,6 +153,9 @@ class SessionStartResultDict(TypedDict, total=False):
     # some. Present ONLY when that signal fires, so a normal session pays no
     # tokens for it. Carries ``repair_command``; nothing here re-labels a row.
     moved_checkout: MovedCheckoutDict
+    # AHR 1.0-rc.2 application: unclaimed handoff records (valid, unexpired, not superseded, no read-back)
+    # in .trw/handoffs/ and run handoffs/, newest first and capped. Present ONLY when one is waiting.
+    handoff_records: HandoffRecordsDict
     # Unified compounding-pipeline health advisory (PRD-FIX-COMPOUNDING-6 FR03).
     # Compact single-line string injected ONLY when any of the five pipeline
     # signals is degraded (PRD-INFRA-068 lesson: absent on healthy sessions

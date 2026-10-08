@@ -10,9 +10,8 @@ work that another session, agent or harness will continue, or you are starting
 from a handoff record someone gave you.
 
 Invoke: `/trw-handoff [subject]` to write, `/trw-handoff receive <path> [sha256:...]`
-to receive (Codex: `$trw-handoff`, `$trw-handoff receive ...`). Other clients:
-ask for the trw-handoff skill. The JSON record is normative; the Markdown view
-is generated from it and never edited. Field rules, limits, digests and
+to receive (Codex: `$trw-handoff`, `$trw-handoff receive ...`). The JSON record
+is normative; the Markdown view is generated from it and never edited. Field rules, limits, digests and
 supersession: `REFERENCE.md` in this skill. Receiving: `RECEIVE.md`.
 
 The `trw-mcp handoff` verbs do the mechanics (ids, timestamps, git state,
@@ -47,7 +46,8 @@ for the same kind of change. A plan or an untried script does not count.
 Reverting a tracked file whose prior state is committed counts. Destroying
 someone else's uncommitted edits, untracked files, pushed commits, tags,
 package publishes, deploys and history rewrites do not. If you stay below
-`critical` because a rollback exists, name it in `tier_reason`. Never lower a
+`critical` because a rollback exists, name it in `tier_reason` or the action's
+`rollback` (`procedure`, plus `record` where it succeeded before). Never lower a
 tier to skip sealing or the read-back.
 
 At `critical`: `new` addresses `to` to the continuing agent (`<harness>:next`,
@@ -60,6 +60,8 @@ no TRW store admits critical records, so they are that verifier.
 - Look for current records of the same `subject` (`.trw/handoffs/` and
   `.trw/runs/*/*/handoffs/`). List any you received or own in `supersedes`
   with its digest (`REFERENCE.md`, Supersession), and reuse its `subject`.
+- Handing off to your own later session (e.g. before a context compaction):
+  keep the default unaddressed `to` below `critical`.
 - Decide the route now, because `to` is set before sealing. Peer path: an
   enrolled formation member will receive it and the peer comms pack is on
   (`comms_enabled`, default true): pass `--to-id <member id>`. The inbox refuses
@@ -68,28 +70,29 @@ no TRW store admits critical records, so they are that verifier.
 ### 4. Draft, fill, seal, validate, render
 
 ```
-trw-mcp handoff new --tier <tier> --subject <stable-slug> --next-read <path> [--next-read ...] [--to-id <id>]
+trw-mcp handoff new --tier <tier> --subject <stable-slug> --next-read <path> [--next-read ...] [--path <glob> ...] [--to-id <id>]
 trw-mcp handoff seal <file>
-trw-mcp handoff validate <file>
 trw-mcp handoff render <file> > <file-without-.json>.md
 ```
 
 `new` prints the draft's path (under the active run's `handoffs/`, else
 `.trw/handoffs/`) and never overwrites a file. It fills the id, UTC timestamps,
-your sender id, the recipient, git `base_ref` (a dirty tree's changed paths go
+your sender id, the recipient, git `base_ref` with the branch (a dirty tree's changed paths go
 in a `<id>.changed-paths.txt` sidecar, cited with its digest) and a raw-byte
-digest per `--next-read` path. Paths must be inside the repository; `https:`
-and `trw:` URIs get no digest. Outside a git repository `tree_state` is
-`unknown`, which `critical` rejects.
+digest per `--next-read` path, and `--path` globs as `objective.paths` (what
+the receiver may change). Paths must be inside the repository; `https:` and
+`trw:` URIs get no digest. Outside git `tree_state` is `unknown`, which
+`critical` rejects.
 
-Every judgement field holds the `TODO(handoff):` sentinel, including the
-choices a default would hide: each claim's `label` and each risk's `severity`.
-Replace every sentinel by editing the file directly, not with an inline script
-(headless harnesses refuse those). Then `seal`: it adds `integrity`, validates, prints the
-digest, and refuses while any finding (including `placeholder`) remains. Before
-sealing, `validate` on a `standard` or `critical` draft also reports the missing
-`integrity`; that one is expected. Fix findings by rule id. After three repair
-rounds, report what is left instead of hiding it. If the CLI is unavailable,
+Every judgement field holds the `TODO(handoff):` sentinel, including each
+claim's `label` and each risk's `severity`. Fill them in one pass: read the
+draft once, then write the whole record back (one Write, or a few multi-field
+Edits), never one Edit per sentinel and never with an inline script (headless
+harnesses refuse those). The drafted claim shows both shapes: `verified` keeps
+`evidence`, any other label keeps `basis`. Then `seal`: it runs `trw-mcp handoff validate`
+itself, adds `integrity`, prints the digest, and refuses while any finding
+remains. Fix findings by rule id. After three repair rounds,
+report what is left instead of hiding it. If the CLI is unavailable,
 say the record is unvalidated; never call it valid. Seal checks shape, not
 judgement: an honest tier, label, severity or `checked` text is on you.
 
@@ -103,7 +106,8 @@ judgement: an honest tier, label, severity or `checked` text is on you.
   anything known only from someone else's summary is `inferred` at best. Record
   known unknowns.
 - A pending decision is an `unknown` claim plus a `not_done` entry. A decision
-  already made goes in `decisions[]` with its rationale.
+  already made goes in `decisions[]` with its rationale and `decided_by`
+  (`operator`, `lead`, `sender` or `policy`).
 - An empty `not_done`, `risks` or `unknowns` is
   `{"none_known": true, "checked": "<the check you ran>"}`, e.g.
   `git status --porcelain empty; grep TODO in diff: 0 hits`. Never write "none"

@@ -237,10 +237,11 @@ def _set_hook_registration(settings: Path, event: str, entry: dict[str, object],
 
 # PRD-CORE-354 FR06: a ``statusLine`` is TRW-owned only when its command runs the
 # project-relative script (``$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh``, optionally
-# braced/quoted and prefixed ``sh``/``bash``). A user's own ``~/.claude/hooks/statusline.sh`` is not.
+# braced/quoted and prefixed ``sh``/``bash``), followed only by flag-like (``-x``) arguments:
+# ``... && my-thing`` is a user's own command. A user's own ``~/.claude/hooks/statusline.sh`` is not.
 STATUSLINE_CONFIG_KEY = "claude_code_statusline"
 _TRW_STATUSLINE_RE = re.compile(
-    r"""^\s*(?:(?:sh|bash)\s+)?["']?\$\{?CLAUDE_PROJECT_DIR\}?/\.claude/hooks/statusline\.sh["']?(?:\s.*)?$""",
+    r"""^\s*(?:(?:sh|bash)\s+)?["']?\$\{?CLAUDE_PROJECT_DIR\}?/\.claude/hooks/statusline\.sh["']?(?:(?:[ \t]+-[^\s;&|<>`$()]*)*)[ \t]*$""",
     re.DOTALL,
 )
 
@@ -269,28 +270,40 @@ def statusline_shadowed(root: Path) -> bool:
     return False
 
 
-def statusline_enabled(root: Path) -> bool:
-    """Opt-out switch: ``claude_code_statusline: false`` in ``.trw/config.yaml``.
+def statusline_enabled(root: Path) -> bool | None:
+    """Three-state switch: ``claude_code_statusline`` in ``.trw/config.yaml``.
 
-    Read ad hoc (top-level key, owned outside ``TRWConfig`` like ``cc03_hook_enabled``)
-    so an install toggle needs no config-model field. Anything unreadable means enabled.
+    ``True`` adds/rewrites TRW's statusLine, ``False`` removes a TRW-owned one, and
+    ``None`` (absent, non-boolean or unreadable) leaves things as they are: the
+    installer does not install the trw-ui mod, so silently removing an existing
+    display would leave users with none. Read ad hoc (top-level key, owned outside
+    ``TRWConfig`` like ``cc03_hook_enabled``).
     """
     try:
         import yaml
 
         raw = yaml.safe_load((root / ".trw" / "config.yaml").read_text(encoding="utf-8"))
-    except Exception:  # justified: fail-open, a bad config must not block install
-        return True
-    return not (isinstance(raw, dict) and raw.get(STATUSLINE_CONFIG_KEY) is False)
+    except Exception:  # trw-fail-silent-allow: a bad config must not block install; None = leave the statusLine as is
+        return None
+    value = raw.get(STATUSLINE_CONFIG_KEY) if isinstance(raw, dict) else None
+    return value if isinstance(value, bool) else None
 
 
-def _reconcile_statusline(data: dict[str, object], bundled: object, enabled: bool, *, shadowed: bool = False) -> str:
+def _reconcile_statusline(
+    data: dict[str, object], bundled: object, enabled: bool | None, *, shadowed: bool = False
+) -> str:
     """Apply the FR06 ownership rule to ``data["statusLine"]`` in place; returns a note when TRW removes its own."""
     current = data.get("statusLine")
     if current is not None and not is_trw_statusline(current):
         return ""  # the user's own statusLine is never touched
-    if not enabled:
-        data.pop("statusLine", None)
+    if enabled is None:
+        # Absent key: never add, never remove; only bring an existing TRW entry current.
+        if current is not None and is_trw_statusline(bundled):
+            data["statusLine"] = bundled
+    elif not enabled:
+        if current is not None:
+            data.pop("statusLine")
+            return f"removed TRW statusLine: {STATUSLINE_CONFIG_KEY} is false"
     elif shadowed:
         # A user/local statusLine must stay visible: withdraw only an entry TRW itself wrote.
         if current is not None:

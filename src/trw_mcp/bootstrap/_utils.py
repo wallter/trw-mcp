@@ -380,13 +380,15 @@ def _verify_installation(target_dir: Path, result: dict[str, list[str]], *, expe
                 try:
                     agent_config = tomllib.loads(agent_path.read_text(encoding="utf-8"))
                 except (tomllib.TOMLDecodeError, OSError):
+                    logger.warning("codex_agent_pin_unreadable", path=str(agent_path), exc_info=True)
                     continue
                 pinned_model = agent_config.get("model")
                 if pinned_model in {"gpt-5.4", "gpt-5.4-mini"}:
                     result["warnings"].append(
                         f".codex/agents/{agent_name} pins legacy generated model {pinned_model}; "
-                        "the file was preserved because agent files are user-editable. Remove the "
-                        "model key to inherit the active Codex model, or explicitly regenerate it."
+                        "remove the model key to inherit the active model, or run "
+                        f"`trw-mcp update-project --rerender .codex/agents/{agent_name}` "
+                        "(backs up old bytes first)."
                     )
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
@@ -442,6 +444,7 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
     try:
         installed_version = importlib.metadata.version("trw-mcp")
     except importlib.metadata.PackageNotFoundError:
+        logger.warning("installed_package_version_unavailable", outcome="version_check_skipped")
         result["warnings"].append(
             "trw-mcp package not found in Python environment. Install with: pip install -e trw-mcp[dev]"
         )
@@ -603,7 +606,9 @@ def resolve_ide_targets(
         List of IDE identifiers to configure.
     """
     if ide_override == "all":
-        return SUPPORTED_IDES.copy()
+        from ._template_claude_md import _recorded_targets
+
+        return list(_recorded_targets(target_dir)) or SUPPORTED_IDES.copy()
     if ide_override:
         if ide_override in SUPPORTED_IDES:
             return [ide_override]
@@ -613,31 +618,7 @@ def resolve_ide_targets(
     return detected or ["claude-code"]  # default to Claude Code
 
 
-def resolve_client_write_targets(target_dir: Path, ide_override: str | None = None) -> list[str]:
-    """The clients an update should WRITE artifacts for.
-
-    One authority, because the record and raw detection disagree. Detection
-    reports claude-code for any project containing ``.claude/`` — which TRW
-    creates for EVERY client, since hooks and skills are universal artifacts —
-    so a bare update on a Codex project would otherwise scaffold Claude Code's
-    surfaces from TRW's own scaffolding. The recorded client list is honoured
-    when the caller names no override; detection answers only where there is no
-    record (a pre-record install).
-
-    Extracted so the agent update path (``_template_updater._update_agents``)
-    and the client-integration update path (``_update_project``) cannot
-    disagree about which clients an update is for — install and update
-    diverging over exactly this is what PRD-CORE-252-FR03 routes through one
-    function.
-    """
-    if not ide_override:
-        from ._template_claude_md import _recorded_targets
-
-        recorded = _recorded_targets(target_dir)
-        if recorded:
-            return list(recorded)
-    return resolve_ide_targets(target_dir, ide_override=ide_override)
-
+from ._rerender import resolve_client_write_targets as resolve_client_write_targets  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # client instruction file content generators

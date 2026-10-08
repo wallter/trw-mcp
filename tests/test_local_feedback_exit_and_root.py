@@ -93,6 +93,39 @@ def test_subdirectory_resolves_to_toplevel_with_trw(tmp_path: Path, monkeypatch:
     assert _observed_root(monkeypatch, sub) == top.resolve()
 
 
+def test_nearest_nested_trw_project_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    top = _repo(tmp_path / "proj", with_trw=True)
+    nested = top / "packages" / "child"
+    (nested / ".trw").mkdir(parents=True)
+    cwd = nested / "src"
+    cwd.mkdir()
+    assert _observed_root(monkeypatch, cwd) == nested.resolve()
+
+
+def test_status_line_skips_git_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(misc, "_run_local_verb", lambda _args: None)
+
+    def unexpected(_cwd: Path) -> Path | None:
+        raise AssertionError("status line must not probe git")
+
+    monkeypatch.setattr(misc, "_enclosing_project", unexpected)
+    monkeypatch.setattr(Path, "cwd", staticmethod(lambda: (_ for _ in ()).throw(FileNotFoundError("deleted cwd"))))
+    misc._run_local(argparse.Namespace(local_command="status", status_format="line"))
+
+
+def test_local_learn_preserves_zero_impact(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        "trw_mcp.services.orchestration_service.write_local_learning",
+        lambda **kw: seen.update(kw) or {"status": "saved", "id": "L-x"},
+    )
+    args = argparse.Namespace(local_command="learn", summary="s", detail="d", impact=0.0)
+    with pytest.raises(SystemExit) as exc:
+        misc._run_local_verb(args)
+    assert exc.value.code == 0
+    assert seen["impact"] == 0.0
+
+
 def test_toplevel_without_trw_stays_at_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     top = _repo(tmp_path / "outer", with_trw=True)
     nested = _repo(top / "nested", with_trw=False)  # its own repo, no .trw: the outer .trw is not its project

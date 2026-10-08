@@ -191,7 +191,12 @@ def writer_overwrites(target_dir: Path, client: str, content_hashes: Mapping[str
                 _run_writers(integration, scratch, client, content_hashes)
             changes = _diff_transaction_paths(before, scratch)
         finally:
-            remove_tree(before, purpose="adoption probe snapshot")
+            try:
+                from ._refused_restore import release_snapshot
+
+                release_snapshot(before)
+            finally:
+                remove_tree(before, purpose="adoption probe snapshot")
         found.extend(rel for rel, kind in changes.items() if kind == "updated" and not _merged_by_client(rel, client))
 
     scratch_result: dict[str, list[str]] = {"errors": []}

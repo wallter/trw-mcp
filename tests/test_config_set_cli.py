@@ -197,6 +197,38 @@ def test_comment_only_file_keeps_its_comments(env: tuple[Path, Path], capsys: py
     assert cfg.read_text(encoding="utf-8") == "# only a note\ndebug: true\n"
 
 
+def test_set_preserves_crlf_and_utf8_bom(env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]) -> None:
+    _home, project = env
+    cfg = project / ".trw" / "config.yaml"
+    original = "\ufeffdebug: false\r\nalpha: 1\r\n"
+    cfg.write_bytes(original.encode("utf-8"))
+    assert _set(project, "debug", "true", capsys)[0] == 0
+    assert cfg.read_bytes() == "\ufeffdebug: true\r\nalpha: 1\r\n".encode("utf-8")
+
+
+@pytest.mark.parametrize("scope", ["project", "machine"])
+def test_malformed_other_layer_is_a_refusal(env, capsys, scope: str) -> None:
+    home, project = env
+    broken = (home if scope == "project" else project) / ".trw" / "config.yaml"
+    broken.write_text("- not a mapping\n", encoding="utf-8")
+    code, out, err = _set(project, "debug", "true", capsys, "--scope", scope)
+    layer = "machine" if scope == "project" else "project"
+    assert code == 2 and out == "" and layer in err and len(err.strip().splitlines()) == 1
+
+
+def test_post_write_effective_load_failure_is_reported_without_failing_set(
+    env: tuple[Path, Path], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _home, project = env
+    from trw_mcp.tools import _config_cli
+
+    monkeypatch.setattr(_config_cli, "_effective", lambda *_args: (_ for _ in ()).throw(RuntimeError("broken")))
+    code, out, err = _set(project, "debug", "true", capsys)
+    assert code == 0 and "effective: unknown (config does not load: RuntimeError)" in out
+    assert "effective: True" not in out and err == ""
+    assert "debug: true" in (project / ".trw" / "config.yaml").read_text(encoding="utf-8")
+
+
 def test_report_has_effective_value_and_the_pickup_line(
     env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:

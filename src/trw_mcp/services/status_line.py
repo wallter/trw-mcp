@@ -1,33 +1,30 @@
-"""One-line status render for the Claude Code statusLine (PRD-CORE-354 FR03).
+"""One-line status label for the Claude Code statusLine (PRD-CORE-354 FR03).
 
 Pure: ``render_status_line(snapshot, width)`` turns a v1 snapshot from
-:mod:`trw_mcp.services.status_snapshot` into one line such as::
+:mod:`trw_mcp.services.status_snapshot` into a short plain-text label::
 
-    TRW ▸ implement · ckpt 12m · build ✓ · review – · deliver – · ✉2
+    TRW ▸ implement · fix the parser · build ✗ · ✉2
 
-Truthfulness (FR02): a positive tick needs evidence scoped to the run (or, for
-build, to this session). Anything else -- aggregate-only evidence, an unreadable
-source, a scope the renderer does not recognise -- renders as ``?``. The gate
-preview is not rendered: a preview on a one-liner reads as a verdict.
+Exceptions only: no times, no checkpoint age, no positive ticks. Build, review
+and deliver evidence is shown only when it is scoped to the run (or, for build,
+the session) and is a failure or block (FR02: aggregate-only evidence is never
+trusted). The gate preview is not rendered.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
 FALLBACK_LINE = "TRW · status unavailable"
-NO_RUN_LINE = "TRW · no run"
+NO_RUN_LINE = "TRW"
 DEGRADED_LINE = "TRW ⚠ MCP not seen"
+UNKNOWN_LINE = "TRW ?"
 
 _SEP = " · "
-_UNKNOWN = "?"
-_NONE = "–"
+_TASK_MAX = 24
 _POSITIVE_SCOPES = frozenset({"run", "session"})
-
-_BUILD_MARKS = {"passed": "✓", "failed": "✗", "none": _NONE}
-_REVIEW_MARKS = {"pass": "✓", "warn": "!", "block": "✗", "none": _NONE}
-_DELIVER_MARKS = {"called": "✓", "none": _NONE}
 
 
 def _block(snapshot: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -35,85 +32,88 @@ def _block(snapshot: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _format_age(age_s: int) -> str:
-    if age_s < 60:
-        return f"{age_s}s"
-    if age_s < 3600:
-        return f"{age_s // 60}m"
-    if age_s < 86400:
-        return f"{age_s // 3600}h"
-    return f"{age_s // 86400}d"
+def _scoped_state(item: Mapping[str, Any]) -> object:
+    # trw:intentional FR02 -- an outcome not scoped to this run/session is never shown.
+    return item.get("state") if item.get("scope") in _POSITIVE_SCOPES else None
 
 
-def _checkpoint_text(checkpoint: Mapping[str, Any]) -> str:
-    state = checkpoint.get("state")
-    age = checkpoint.get("age_s")
-    if state == "none":
-        return f"ckpt {_NONE}"
-    if state in {"ok", "stale"} and isinstance(age, int) and not isinstance(age, bool) and age >= 0:
-        return f"ckpt {_format_age(age)}{'!' if state == 'stale' else ''}"
-    return f"ckpt {_UNKNOWN}"
-
-
-def _evidence_mark(item: Mapping[str, Any], marks: Mapping[str, str]) -> str:
-    state = item.get("state")
-    if not isinstance(state, str) or state not in marks:
-        return _UNKNOWN
-    if state != "none" and item.get("scope") not in _POSITIVE_SCOPES:
-        # trw:intentional FR02 -- an outcome not scoped to this run/session is never a tick.
-        return _UNKNOWN
-    return marks[state]
-
-
-def _inbox_text(inbox: Mapping[str, Any]) -> str | None:
-    state = inbox.get("state")
+def _exceptions(snapshot: Mapping[str, Any]) -> list[str]:
+    evidence = _block(snapshot, "evidence")
+    found: list[str] = []
+    if _scoped_state(_block(evidence, "build")) == "failed":
+        found.append("build ✗")
+    if _scoped_state(_block(evidence, "review")) == "block":
+        found.append("review ✗")
+    inbox = _block(snapshot, "inbox")
     pending = inbox.get("pending")
-    if state == "unknown":
-        return f"✉{_UNKNOWN}"
-    if state == "ok" and isinstance(pending, int) and not isinstance(pending, bool) and pending > 0:
-        return f"✉{pending}"
-    return None
+    if inbox.get("state") == "ok" and isinstance(pending, int) and not isinstance(pending, bool) and pending > 0:
+        found.append(f"✉{pending}")
+    return found
 
 
-def _fit(head: str, segments: list[tuple[int, str]], width: int | None) -> str:
-    """Join, dropping the lowest-priority segments first, then hard-truncating."""
-    kept = list(segments)
-    line = _SEP.join([head, *(text for _, text in kept)])
-    if width is None or width <= 0:
+_CONTROL = re.compile(r"[\u0000-\u001f\u007f-\u009f]")
+
+
+def _clean_cut(value: object, limit: int = _TASK_MAX) -> str:
+    """Control chars (C0, DEL, C1) -> space, collapse whitespace, cut to *limit* code points."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(_CONTROL.sub(" ", value).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _clip(line: str, width: int | None) -> str:
+    """Clip the tail to *width* columns ending in an ellipsis, only when something is cut."""
+    if width is None or len(line) <= width:
         return line
-    while len(line) > width and kept:
-        drop = min(range(len(kept)), key=lambda i: kept[i][0])
-        kept.pop(drop)
-        line = _SEP.join([head, *(text for _, text in kept)])
-    if len(line) > width:
-        line = line[: max(width - 1, 0)] + "…" if width > 1 else line[:width]
-    return line
+    return line[: max(0, width - 1)] + "…"
+
+
+def _compose(
+    delivered: bool, phase: str, task: str, exceptions: list[str], *, keep_task: bool, keep_phase: bool
+) -> str:
+    if delivered:
+        head = "TRW ✓" + (f" {task}" if keep_task and task else "")
+    else:
+        head = f"TRW ▸ {phase}" if keep_phase else "TRW"
+        if keep_task and task:
+            head += f"{_SEP}{task}"
+    return _SEP.join([head, *exceptions])
 
 
 def render_status_line(snapshot: Mapping[str, Any] | None, width: int | None = None) -> str:
-    """Render *snapshot* as one line no wider than *width* (``None`` = unbounded)."""
+    """Render *snapshot* as one line no wider than *width* (``None`` = unbounded).
+
+    Parity: output matches the shared golden table in the trw-ui mod
+    (``label-golden.ts``) exactly. The one deliberate difference is invalid input
+    (not a v1 snapshot): this renderer returns :data:`FALLBACK_LINE`, while the mod
+    shows ``TRW ?`` there (spec carve-out).
+    """
     if not isinstance(snapshot, Mapping) or snapshot.get("schema_version") != 1:
         return FALLBACK_LINE
     if _block(snapshot, "degraded").get("state") == "yes":
-        return _fit(DEGRADED_LINE, [], width)
+        return _clip(DEGRADED_LINE, width)
     run = _block(snapshot, "run")
     run_state = run.get("state")
     if run_state == "none":
-        return _fit(NO_RUN_LINE, [], width)
-    inbox = _inbox_text(_block(snapshot, "inbox"))
-    phase = run.get("phase") if run_state == "ok" else None
-    head = f"TRW ▸ {phase}" if isinstance(phase, str) and phase else f"TRW ▸ {_UNKNOWN}"
-    evidence = _block(snapshot, "evidence")
-    # (priority, text): higher priority survives width pressure longer.
-    segments: list[tuple[int, str]] = [
-        (5, _checkpoint_text(_block(snapshot, "checkpoint"))),
-        (4, f"build {_evidence_mark(_block(evidence, 'build'), _BUILD_MARKS)}"),
-        (3, f"review {_evidence_mark(_block(evidence, 'review'), _REVIEW_MARKS)}"),
-        (2, f"deliver {_evidence_mark(_block(evidence, 'deliver'), _DELIVER_MARKS)}"),
+        return _clip(NO_RUN_LINE, width)
+    if run_state != "ok":
+        return _clip(UNKNOWN_LINE, width)
+    delivered = _scoped_state(_block(_block(snapshot, "evidence"), "deliver")) == "called"
+    phase = _clean_cut(run.get("phase")) or "?"
+    task = _clean_cut(run.get("task"))
+    exceptions = _exceptions(snapshot)
+    tries = [
+        _compose(delivered, phase, task, exceptions, keep_task=True, keep_phase=True),
+        _compose(delivered, phase, task, exceptions, keep_task=False, keep_phase=True),
+        _compose(delivered, phase, task, exceptions, keep_task=False, keep_phase=False),
     ]
-    if inbox:
-        segments.append((9, inbox))
-    return _fit(head, segments, width)
+    if width is None:
+        return tries[0]
+    for line in tries:
+        if len(line) <= width:
+            return line
+    return _clip(tries[2], width)
 
 
-__all__ = ["DEGRADED_LINE", "FALLBACK_LINE", "NO_RUN_LINE", "render_status_line"]
+__all__ = ["DEGRADED_LINE", "FALLBACK_LINE", "NO_RUN_LINE", "UNKNOWN_LINE", "render_status_line"]

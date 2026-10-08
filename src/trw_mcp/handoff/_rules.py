@@ -1,4 +1,4 @@
-"""AHR 1.0-rc.1 static cross-field rules for handoffs and read-backs (SPEC §13).
+"""AHR 1.0-rc.2 static cross-field rules for handoffs and read-backs (SPEC §13).
 
 A port of ``check_handoff``/``check_readback`` from the reference checker
 (``specs/handoff/tools/ahr_check.py``). The reference checker and the vectors are
@@ -107,6 +107,7 @@ def _handoff_principals(doc: JsonDoc, errs: list[str]) -> None:
 def _handoff_texts(doc: JsonDoc, claims: dict[str, JsonDoc], errs: list[str]) -> None:
     texts = [c["text"] for c in doc["claims"]] + [doc["objective"]["goal"]] + doc["objective"]["done_when"]
     texts += [c.get("basis", "x") for c in doc["claims"]]
+    texts += [a["rollback"]["procedure"] for a in doc["next_actions"] if "rollback" in a]
     texts += [doc[n]["checked"] for n in ("not_done", "risks", "unknowns") if isinstance(doc[n], dict)]
     constraints = doc.get("constraints")
     if isinstance(constraints, dict):

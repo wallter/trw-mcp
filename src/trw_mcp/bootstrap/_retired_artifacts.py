@@ -24,9 +24,17 @@ from typing import Literal
 
 import structlog
 
+from ._artifact_names import CLIENT_SKILL_ROOTS as ALL_CLIENT_SKILL_ROOTS
 from ._utils import printable
 
 logger = structlog.get_logger(__name__)
+
+__all__ = ["CLIENT_SKILL_ROOTS"]
+
+#: Roots with a shipped-skill inventory; Claude is canonical and Grok has no inventory yet.
+CLIENT_SKILL_ROOTS: tuple[str, ...] = tuple(
+    root for root in ALL_CLIENT_SKILL_ROOTS if root not in {".claude/skills", ".grok/skills"}
+)
 
 #: A doctor-row (status, message) pair -- matches ``_doctor_environment.Row``
 #: without importing the server layer from bootstrap (Class E: bootstrap must
@@ -46,8 +54,6 @@ RETIRED_AGENT_MEMORY_DIR = ".claude/agent-memory"
 _AGENT_MEMORY_WHY = (
     "TRW agents no longer write Claude Code agent memory; record anything worth keeping with trw_learn first"
 )
-#: Every client skill directory that mirrors ``.claude/skills`` (the dir surfaces the retirement sweep covers).
-CLIENT_SKILL_ROOTS: tuple[str, ...] = (".agents/skills", ".cursor/skills", ".github/skills", ".opencode/skills")
 
 
 def _trw_agent_memory_dirs(target_dir: Path) -> tuple[str, ...]:
@@ -338,7 +344,7 @@ def _interrupted_retirements(target_dir: Path) -> list[tuple[str, str]]:
     from ._artifact_names import RETIRING_PREFIX
 
     found: list[tuple[str, str]] = []
-    for root in (".claude/skills", *CLIENT_SKILL_ROOTS):
+    for root in ALL_CLIENT_SKILL_ROOTS:
         try:
             entries = sorted((target_dir / root).iterdir())
         except OSError:  # trw-fail-silent-allow: an absent or unreadable skills directory holds nothing to report

@@ -44,6 +44,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _path_isolation
 from tests._memory_fixtures import DaemonCheckout
 from trw_mcp.server._cli_reviewer_policy import classified_command_paths
 
@@ -148,6 +149,9 @@ def isolated_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[
     home = tmp_path / "home"
     project_root.mkdir()
     home.mkdir()
+    # The suite's autouse isolation points every resolve_trw_dir()/resolve_project_root() at tmp_path;
+    # this census runs verbs against `project/`, so point the stand-in resolver there too.
+    _path_isolation.set_current_root(project_root)
     monkeypatch.chdir(project_root)
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(project_root))
     monkeypatch.setenv("HOME", str(home))
@@ -420,11 +424,11 @@ def test_local_recall_succeeds_and_writes_nothing_under_each_bounded_lane(
     project_root = daemon_checkout.trw_dir.parent
     before_fs = _snapshot([project_root])
 
-    # run_local_recall's default trw_dir is Path.cwd() / ".trw" (not
-    # TRW_PROJECT_ROOT) -- without this chdir the CLI reads whatever
-    # directory pytest happened to start in, finds no project_namespace, and
-    # "succeeds" with an empty result that never touched daemon_checkout's
-    # store at all. The same silent-wrong-directory shape as this file's P1.
+    # run_local_recall resolves its .trw through resolve_trw_dir() (9.2.2: the nearest project, not a bare
+    # Path.cwd()). The suite's autouse isolation points that resolver at tmp_path, so aim it at the daemon
+    # checkout's project; otherwise recall reads a project with no namespace and "succeeds" with an empty
+    # result that never touched daemon_checkout's store (the silent-wrong-directory shape of this file's P1).
+    _path_isolation.set_current_root(project_root)
     monkeypatch.chdir(project_root)
     lane_key, lane_value = lane_env
     monkeypatch.setenv(lane_key, lane_value)

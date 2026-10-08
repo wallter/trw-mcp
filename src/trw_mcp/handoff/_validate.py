@@ -1,7 +1,7 @@
 """AHR L1 validation: parse (R-INT-4) -> schema -> tokens/calendar -> X-rules (PRD-CORE-347-FR03/FR06).
 
 Order and messages follow the reference checker ``specs/handoff/tools/ahr_check.py``
-(1.0-rc.1). Validation is pure: it never dereferences a URI, never evaluates record
+(1.0-rc.2). Validation is pure: it never dereferences a URI, never evaluates record
 content, and reads no file except the one ``load`` is given.
 """
 
@@ -64,6 +64,7 @@ _TOKEN_KEYS = frozenset(
         "action_id",
         "risk_id",
         "owner",
+        "paths",
         "producer",
         "depends_on",
         "reverify",
@@ -158,7 +159,8 @@ def _validator() -> Draft202012Validator:
 
 
 def _has_control(value: object) -> bool:
-    return isinstance(value, str) and any(unicodedata.category(c) == "Cc" for c in value)
+    # Cc, plus the line and paragraph separators (U+2028/U+2029), which some regex dialects treat as line ends.
+    return isinstance(value, str) and any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in value)
 
 
 def _tokens(value: object, errs: list[str], *, top: bool = True) -> None:
@@ -281,8 +283,12 @@ def _l1_findings(
     doc: JsonDoc, handoff: JsonDoc | None, allowed_schemes: frozenset[str], held: frozenset[str] = frozenset()
 ) -> list[Finding]:
     schema = _schema_findings(doc, held)
-    if schema or held:  # a draft with sentinels left stops at the schema: X-rules would judge sentinel text
+    if held:  # a draft with sentinels left stops at the schema: X-rules would judge sentinel text
         return schema
+    if schema:  # rc.2: X-0 still runs, so a control or separator character names its rule beside the schema finding
+        token_errs: list[str] = []
+        _tokens(doc, token_errs)
+        return schema + [_finding(e) for e in token_errs]
     try:
         size = len(jcs(doc))
     except JcsError as exc:

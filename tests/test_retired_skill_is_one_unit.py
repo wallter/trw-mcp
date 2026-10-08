@@ -312,7 +312,7 @@ def test_a_parent_swapped_for_a_symlink_is_refused_and_nothing_is_touched(
 
 
 def test_a_skill_outside_the_client_mirrors_kept_whole_is_named_once_by_the_sweep(tmp_path: Path) -> None:
-    """``.claude/skills`` has no ``retired_artifact_present`` notice, so the sweep's own line (with ``rm -r``) stands."""
+    """Claude's canonical skill dir is reported once by the sweep with an ``rm -r`` command."""
     from trw_mcp.bootstrap._ownership_proof import remove_proven
 
     skill = tmp_path / ".claude" / "skills" / "trw-gone"
@@ -363,6 +363,15 @@ def test_an_interrupted_retirement_under_claude_skills_is_reported_and_is_not_a_
     assert retired_artifact_notices(tmp_path) == [
         _interrupted_line(tmp_path, ".claude/skills/.trw-retiring-trw-x-0123abcd")
     ]
+
+
+def test_retirement_scratch_dirs_are_not_custom_skills_under_any_client_root(tmp_path: Path) -> None:
+    from trw_mcp.bootstrap._artifact_names import CLIENT_SKILL_ROOTS, _get_custom_names
+
+    for client_root in CLIENT_SKILL_ROOTS:
+        _ship(tmp_path, f"{client_root}/.trw-retiring-trw-x-0123abcd/SKILL.md", b"scratch\n")
+    custom = _get_custom_names(tmp_path)
+    assert all(not name.startswith(".trw-retiring-") for names in custom.values() for name in names)
 
 
 def test_a_skill_with_an_entry_on_another_device_is_kept_whole_and_reported_once(

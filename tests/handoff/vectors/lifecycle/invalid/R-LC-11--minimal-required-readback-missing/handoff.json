@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "handoff",
   "handoff_id": "01J9ZK5W1MIN000000000021",
   "subject": "docs-typo-sweep",
@@ -65,6 +65,6 @@
   },
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:819cb3bab45d881d2fcd073d0e718d5911cfdd79920bd336599f6d969a3c0ec1"
+    "digest": "sha256:0a0b62854d8b6def5cfcf7df50b0512f2036b90240dc0d1cfe762e0bcd35f358"
   }
 }

@@ -1,4 +1,4 @@
-"""Shared helpers for the vendored AHR 1.0-rc.1 vectors (PRD-CORE-347).
+"""Shared helpers for the vendored AHR 1.0-rc.2 vectors (PRD-CORE-347).
 
 The vectors are copied unchanged from the AHR reference spec's handoff/vectors/ directory
 (valid/ and invalid/; lifecycle/ belongs to PRD-CORE-349). The handoff-selection rule mirrors

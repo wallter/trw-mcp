@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "handoff",
   "handoff_id": "01J9ZK5W1STD000000000005",
   "subject": "swap-dirty-worktree",
@@ -31,7 +31,7 @@
   "supersedes": [
     {
       "handoff_id": "01J9ZK5W1CRT000000000003",
-      "digest": "sha256:19648eb8caf39f3a180996d58d4eeab3d11cb3455afeeeffb9b884464f9874c5"
+      "digest": "sha256:02bea1518764f7c6757ee96ea21af3f079a30252394803dd64023132dd80be36"
     }
   ],
   "objective": {
@@ -164,6 +164,6 @@
   },
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:f49a121379ae10de137225e8037628fa9fe7e8c19fc026fccfeb014ae5ae27f3"
+    "digest": "sha256:177a957e56b09fb806dda0c1149710c6031c1d0f1539096cfd61b2cf05470df4"
   }
 }

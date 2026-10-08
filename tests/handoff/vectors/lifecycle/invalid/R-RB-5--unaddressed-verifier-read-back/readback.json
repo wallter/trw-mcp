@@ -1,10 +1,10 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "readback",
   "readback_id": "01J9ZK5W1RB0000000000014",
   "handoff": {
     "handoff_id": "01J9ZK5W1MIN000000000002",
-    "digest": "sha256:c8b3456f88b907d92c128e0c0ef610da8a64c6bdac4a7180abb5da7aafe9edd6"
+    "digest": "sha256:8b68c8124a1b0d9e5073a63963109bd430a0cb88178ae0158944035497a1fbe3"
   },
   "by": {
     "id": "session-b",
@@ -31,6 +31,6 @@
   "disposition": "ready",
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:418eb1aa4c9cd07352f694670c86a4818a5e5a6b7cb100ac5937c5e34e1e711e"
+    "digest": "sha256:814bcc61717a36754b9aa4935c76043b8627bc57e3fc2f66ef32811f83d17eb4"
   }
 }

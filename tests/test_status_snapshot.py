@@ -117,7 +117,7 @@ def test_no_pin_reports_none_without_guessing(tmp_path: Path) -> None:
     assert snap["inbox"]["state"] == "none"
     assert snap["degraded"]["state"] == "no"
     assert snap["unknown"] == []
-    assert render_status_line(snap) == "TRW · no run"
+    assert render_status_line(snap) == "TRW"
 
 
 def test_no_session_id_is_none_and_degraded_unknown(tmp_path: Path) -> None:
@@ -175,7 +175,7 @@ def test_pinned_run_with_events(tmp_path: Path) -> None:
     assert snap["evidence"]["deliver"]["state"] == "none"
     assert snap["gate_preview"]["state"] in {"ready", "blocked"}
     assert snap["unknown"] == []
-    assert render_status_line(snap) == "TRW ▸ implement · ckpt 12m · build ✓ · review ✓ · deliver –"
+    assert render_status_line(snap) == "TRW ▸ implement · task-a"
 
 
 def test_failed_and_degenerate_builds_are_not_passes(tmp_path: Path) -> None:
@@ -198,7 +198,7 @@ def test_server_logged_run_without_evidence_is_none_not_unknown(tmp_path: Path) 
     assert snap["evidence"]["review"]["state"] == "none"
     assert snap["evidence"]["deliver"]["state"] == "none"
     line = render_status_line(snap)
-    assert "build ✓" not in line and "build ?" not in line
+    assert "build" not in line and "✓" not in line
 
 
 def test_no_positive_tick_from_project_aggregate(tmp_path: Path) -> None:
@@ -224,7 +224,7 @@ def test_no_positive_tick_from_project_aggregate(tmp_path: Path) -> None:
         "scope": "project_aggregate",
     }
     line = render_status_line(snap)
-    assert "build ?" in line and "review ?" in line and "deliver ?" in line and "✓" not in line
+    assert "?" not in line and "✓" not in line and "build" not in line
 
 
 def test_session_build_result_has_session_scope(tmp_path: Path) -> None:
@@ -276,7 +276,7 @@ def test_unreadable_sources_are_unknown_never_a_pass(tmp_path: Path) -> None:
     for dotted in ("checkpoint", "project_aggregate", "gate_preview"):
         assert dotted in snap["unknown"]
     assert {"evidence.build", "evidence.review", "evidence.deliver"} <= set(snap["unknown"])
-    assert render_status_line(snap) == "TRW ▸ implement · ckpt ? · build ? · review ? · deliver ?"
+    assert render_status_line(snap) == "TRW ▸ implement · task-a"
 
 
 def test_corrupt_pin_store_and_run_yaml_are_unknown(tmp_path: Path) -> None:
@@ -302,7 +302,7 @@ def test_stale_checkpoint(tmp_path: Path) -> None:
     _append(run / "meta" / "checkpoints.jsonl", {"ts": _ts(47), "message": "old"})
     snap = _snap(trw_dir)
     assert snap["checkpoint"]["state"] == "stale" and snap["checkpoint"]["age_s"] == 47 * 60
-    assert "ckpt 47m!" in render_status_line(snap)
+    assert "ckpt" not in render_status_line(snap)
 
 
 def test_degraded_latch(tmp_path: Path) -> None:
@@ -478,7 +478,7 @@ def test_formation_inbox_pending_count(scene: SendScene) -> None:
     assert _tree_digest(trw_dir) == before, "the mailbox is read with mode=ro"
     assert snap["inbox"]["state"] == "ok" and snap["inbox"]["pending"] == 2
     assert "hello" not in json.dumps(snap), "no message body crosses the boundary"
-    assert render_status_line(snap).endswith("· ✉2")
+    assert render_status_line(snap).endswith("· ✉2") and "ckpt" not in render_status_line(snap)
 
 
 def test_formation_session_without_a_member_has_no_inbox(scene: SendScene) -> None:
@@ -522,7 +522,7 @@ def test_cli_line_uses_env_session_and_cache(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
     _run_local(args)
     out = capsys.readouterr().out
-    assert out.count("\n") == 1 and out.startswith("TRW ▸ implement · ckpt – · build – · review ✗")
+    assert out.count("\n") == 1 and out.startswith("TRW ▸ implement · task-a") and "review ✗" in out
     assert (trw_dir / "runtime" / "status" / f"{SID}.json").is_file()
     line_file = trw_dir / "runtime" / "status" / f"{SID}.line"
     assert line_file.read_text(encoding="utf-8") == out
@@ -561,3 +561,45 @@ def test_cli_text_default_is_unchanged(tmp_path: Path, monkeypatch: pytest.Monke
     assert exited.value.code == 0
     out = capsys.readouterr().out
     assert out.startswith("Run: 20261004T000000Z-abc\n  Task: task-a\n")
+
+
+def test_status_cache_write_prunes_stale_siblings(tmp_path: Path) -> None:
+    """Long-running sessions: cache files older than 7 days are pruned; fresh, foreign and symlinked ones stay."""
+    import os
+    import time
+
+    from trw_mcp.services.status_snapshot import write_cached_line
+
+    status = tmp_path / "runtime" / "status"
+    status.mkdir(parents=True)
+    old = time.time() - 8 * 24 * 3600
+    stale = [status / "old-1.json", status / "old-1.line"]
+    keep = [status / "fresh.json", status / "notes.txt"]
+    for f in (*stale, *keep, status / "oldnotes.txt"):
+        f.write_text("x", encoding="utf-8")
+    for f in (*stale, status / "oldnotes.txt"):
+        os.utime(f, (old, old))
+    outside = tmp_path / "target.json"
+    outside.write_text("x", encoding="utf-8")
+    os.utime(outside, (old, old))
+    link = status / "link.json"
+    link.symlink_to(outside)
+    assert write_cached_line(tmp_path, "sess-1", "TRW") is not None
+    assert not any(f.exists() for f in stale)
+    assert all(f.exists() for f in keep)
+    assert (status / "oldnotes.txt").exists() and link.is_symlink() and outside.exists()
+    assert (status / "sess-1.line").exists()
+
+
+def test_status_cache_prune_failure_never_fails_the_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.services import status_snapshot
+    from trw_mcp.services.status_snapshot import write_cached_line
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise OSError("scandir failed")
+
+    # status_snapshot.os IS the os module: scope the patch so fixture teardown (tmp cleanup, the TMPDIR
+    # sweep) never runs against the failing scandir -- it did on the Linux leg of the 9.2.2 release check.
+    with monkeypatch.context() as patched:
+        patched.setattr(status_snapshot.os, "scandir", boom)
+        assert write_cached_line(tmp_path, "sess-2", "TRW") is not None

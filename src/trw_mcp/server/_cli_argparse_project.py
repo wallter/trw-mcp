@@ -94,7 +94,7 @@ def add_project_subcommands(
         "--ide",
         choices=_IDE_CHOICES,
         default=None,
-        help="Target IDE (auto-detect if not specified)",
+        help="Target client; all means recorded clients (every supported client when none recorded)",
     )
 
     update_parser.add_argument(
@@ -102,6 +102,13 @@ def add_project_subcommands(
         action="append",
         metavar="PATH",
         help="Clear PATH's deletion tombstone so it is written again (repeatable); 'all' clears every tombstone",
+    )
+
+    update_parser.add_argument(
+        "--rerender",
+        action="append",
+        metavar="PATH",
+        help="Render only named TRW-managed files (repeatable); backs up old bytes under .trw/trash",
     )
 
     trust_parser = subparsers.add_parser(

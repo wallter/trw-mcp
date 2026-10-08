@@ -7,12 +7,16 @@ Generates and smart-merges Antigravity CLI artifacts:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import NamedTuple
 
 import structlog
-
-from trw_mcp._checkout_write import write_checkout_file
 
 from ._file_ops import (
     _new_result,
@@ -206,6 +210,7 @@ def generate_antigravity_mcp_config(
     target_dir: Path,
     *,
     force: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, list[str]]:
     """Deep-merge the TRW MCP server entry into Antigravity's GLOBAL config.
 
@@ -227,7 +232,25 @@ def generate_antigravity_mcp_config(
     """
     result = _new_result()
     settings_path = _antigravity_global_mcp_config_path()
-    existed = settings_path.exists()
+    from ._rerender import publish_with_backup, read_optional
+
+    try:
+        # Home dotfiles deliberately follow links; all subsequent operations use the
+        # resolved target and the usual no-follow, compare-and-publish primitives.
+        settings_path = settings_path.resolve()
+        home = Path.home().resolve()
+        storage_root = home if settings_path.is_relative_to(home) else settings_path.parent
+        while True:
+            try:
+                storage_root.stat()
+                break
+            except FileNotFoundError:
+                storage_root = storage_root.parent
+        old = read_optional(storage_root, settings_path.relative_to(storage_root).as_posix())
+    except OSError as exc:
+        result["errors"].append(f"Failed to read {settings_path}: {exc}")
+        return result
+    existed = old is not None
 
     existing = read_settings_for_merge(
         settings_path, rel_path=_ANTIGRAVITY_GLOBAL_MCP_DISPLAY, result=result, recover=False
@@ -263,21 +286,31 @@ def generate_antigravity_mcp_config(
     new_payload["mcpServers"] = new_servers
     new_text = json.dumps(new_payload, indent=2) + "\n"
 
-    if existed and not force:
-        try:
-            current_text = settings_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            # A corrupt file was recovered above; its bytes can't match the
-            # fresh JSON we're about to write, so treat it as a non-match.
-            current_text = ""
-        if current_text == new_text:
-            result.setdefault("preserved", []).append(_ANTIGRAVITY_GLOBAL_MCP_DISPLAY)
-            return result
+    if old == new_text.encode("utf-8"):
+        result.setdefault("preserved", []).append(_ANTIGRAVITY_GLOBAL_MCP_DISPLAY)
+        return result
+    if dry_run:
+        result.setdefault("warnings", []).append(
+            f"Would write GLOBAL {_ANTIGRAVITY_GLOBAL_MCP_DISPLAY}; "
+            f"existing bytes would be backed up under {storage_root / '.trw/trash'}"
+        )
+        return result
 
     try:
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        # A user-level file outside any checkout: its own directory is the root, so the leaf is checked.
-        write_checkout_file(settings_path.parent, settings_path, new_text)
+        backups: list[Path] = []
+        if not publish_with_backup(
+            storage_root,
+            settings_path.relative_to(storage_root).as_posix(),
+            old,
+            new_text.encode("utf-8"),
+            result,
+            backups=backups,
+        ):
+            return result
+        if (writes := _GLOBAL_WRITES.get()) is not None:
+            writes.append(
+                _GlobalWrite(storage_root, settings_path, new_text.encode("utf-8"), backups[0] if backups else None)
+            )
         _record_write(result, _ANTIGRAVITY_GLOBAL_MCP_DISPLAY, existed=existed)
         result.setdefault("warnings", []).append(
             f"Antigravity CLI only loads MCP servers from the GLOBAL "
@@ -288,3 +321,50 @@ def generate_antigravity_mcp_config(
         result["errors"].append(f"Failed to write {settings_path}: {exc}")
 
     return result
+
+
+class _GlobalWrite(NamedTuple):
+    root: Path
+    path: Path
+    written: bytes
+    backup: Path | None
+
+
+_GLOBAL_WRITES: ContextVar[list[_GlobalWrite] | None] = ContextVar("antigravity_global_writes", default=None)
+
+
+@contextmanager
+def global_config_transaction(result: dict[str, list[str]]) -> Iterator[None]:
+    """Restore global targets from durable backups when the project transaction fails."""
+    writes: list[_GlobalWrite] = []
+    token = _GLOBAL_WRITES.set(writes)
+    completed = False
+    try:
+        yield
+        completed = not result["errors"]
+    finally:
+        _GLOBAL_WRITES.reset(token)
+        if not completed:
+            for receipt in reversed(writes):
+                _restore_global_config(receipt, result)
+
+
+def _restore_global_config(receipt: _GlobalWrite, result: dict[str, list[str]]) -> None:
+    from ._proven_replace import replace_proven
+    from ._trash import remove_if_hash
+
+    root, path, written, backup = receipt
+    try:
+        if backup is None:
+            removed = remove_if_hash(path, root, hashlib.sha256(written).hexdigest())
+            restored = removed.status in ("removed", "absent")
+            detail = removed.reason
+        else:
+            outcome = replace_proven(path, root, written, backup.read_bytes(), mode=stat.S_IMODE(backup.stat().st_mode))
+            restored, detail = outcome.status == "replaced", outcome.reason
+        if restored:
+            result["warnings"].append(f"GLOBAL {path}: restored pre-update state after rollback")
+        else:
+            result["errors"].append(f"GLOBAL {path}: rollback refused ({detail}); recovery backup: {backup}")
+    except OSError as exc:
+        result["errors"].append(f"GLOBAL {path}: rollback failed ({exc}); recovery backup: {backup}")

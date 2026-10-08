@@ -79,6 +79,54 @@ class TestBuildToolCallEvent:
 
 
 class TestUsdCostEstimate:
+    def test_missing_configured_table_falls_back_to_bundled_pricing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.models import config
+        from trw_mcp.telemetry import _tool_call_pricing as pricing
+
+        bundled = Path(__file__).parents[1] / "src/trw_mcp/data/pricing.yaml"
+        monkeypatch.setattr(
+            pricing,
+            "_resolve_pricing_path",
+            lambda configured=None: Path("/missing/pricing.yaml") if configured else bundled,
+        )
+        monkeypatch.setattr(
+            config, "get_config", lambda: type("Config", (), {"pricing_table_path": "/missing/pricing.yaml"})()
+        )
+        table = pricing._load_pricing()
+        assert table["models"]
+
+    def test_relative_config_path_cache_tracks_resolved_project_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from trw_mcp.telemetry import _tool_call_pricing as pricing
+
+        paths = [tmp_path / "one.yaml", tmp_path / "two.yaml"]
+        for index, path in enumerate(paths):
+            path.write_text(f"version: v{index}\nmodels: {{}}\n", encoding="utf-8")
+        from trw_mcp.models import config
+
+        monkeypatch.setattr(config, "get_config", lambda: type("Config", (), {"pricing_table_path": "pricing.yaml"})())
+        iterator = iter(paths)
+        monkeypatch.setattr(pricing, "_resolve_pricing_path", lambda _configured=None: next(iterator))
+        assert pricing._load_pricing()["version"] == "v0"
+        assert pricing._load_pricing()["version"] == "v1"
+
+    def test_pricing_cache_rechecks_resolved_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.telemetry import _tool_call_pricing as pricing
+
+        resolved = pricing._resolve_pricing_path
+        calls = 0
+
+        def counted(configured: str | None = None) -> Path | None:
+            nonlocal calls
+            calls += 1
+            return resolved(configured)
+
+        monkeypatch.setattr(pricing, "_resolve_pricing_path", counted)
+        pricing._load_pricing()
+        pricing._load_pricing()
+        assert calls == 2
+
     def test_zero_when_model_unknown(self) -> None:
         assert _usd_cost_estimate(model_id="gpt-5", input_tokens=1000, output_tokens=1000) == 0.0
 
@@ -123,6 +171,27 @@ class TestUsdCostEstimate:
         over = _usd_cost_estimate(model_id="claude-haiku-5-5", input_tokens=100_001, output_tokens=1_000)
         assert at == pytest.approx(100 * 0.0001 + 0.0005, abs=1e-9)  # boundary is still the base rate
         assert over == pytest.approx(100.001 * 0.0005 + 0.0025, abs=1e-9)  # $0.50 in / $2.50 out
+
+    def test_haiku_cache_tokens_count_toward_long_prompt_tier(self) -> None:
+        usd = _usd_cost_estimate(
+            model_id="claude-haiku-5-5",
+            input_tokens=2_000,
+            output_tokens=1_000,
+            cache_read_tokens=150_000,
+        )
+        assert usd == pytest.approx(0.001 + 0.0025 + 0.0075, abs=1e-9)
+
+    def test_haiku_cache_writes_use_long_prompt_input_rate(self) -> None:
+        usd = _usd_cost_estimate(
+            model_id="claude-haiku-5-5",
+            input_tokens=2_000,
+            output_tokens=1_000,
+            cache_write_tokens=150_000,
+        )
+        assert usd == pytest.approx(0.001 + 0.0025 + 0.09375, abs=1e-9)
+
+    def test_future_haiku_is_never_priced_as_legacy_haiku(self) -> None:
+        assert _usd_cost_estimate(model_id="claude-haiku-6", input_tokens=1000, output_tokens=1000) == 0.0
 
     def test_haiku_4_5_row_is_not_hijacked_by_the_5_5_row(self) -> None:
         usd = _usd_cost_estimate(model_id="claude-haiku-4-5", input_tokens=1000, output_tokens=1000)

@@ -358,10 +358,12 @@ def _render_agent(src: Path, *, client: str) -> str | None:
     try:
         raw = src.read_text(encoding="utf-8")
     except OSError:
+        logger.warning("agent_source_unreadable", path=str(src), outcome="render_skipped", exc_info=True)
         return None
     try:
         return materialize_agent(raw, client=client)
     except (ValueError, AgentFormatError):
+        logger.warning("agent_render_failed", path=str(src), outcome="render_skipped", exc_info=True)
         return None
 
 
@@ -419,6 +421,7 @@ def _framework_content_hashes(src: Path) -> set[str]:
     try:
         return {hashlib.sha256(src.read_bytes()).hexdigest()}
     except OSError:
+        logger.warning("framework_hash_unreadable", path=str(src), outcome="baseline_unavailable", exc_info=True)
         return set()
 
 
@@ -458,6 +461,7 @@ def _is_user_modified(
     try:
         current_hash = hashlib.sha256(dest.read_bytes()).hexdigest()
     except OSError:
+        logger.warning("artifact_hash_unreadable", path=str(dest), outcome="ownership_unavailable", exc_info=True)
         return False
     # Baseline 1: matches a framework rendering → framework-managed, safe to update.
     if framework_hashes and current_hash in framework_hashes:
@@ -587,58 +591,4 @@ def git_dirty_paths(target_dir: Path, pathspecs: list[str]) -> set[str] | None:
     return dirty | flagged_edited_paths(target_dir, pathspecs, env)
 
 
-def preserve_uncommitted_changes(
-    target_dir: Path,
-    snapshot_root: Path,
-    dirty: set[str],
-    manifest_hashes: dict[str, str] | None,
-    result: dict[str, list[str]],
-) -> None:
-    """Undo every write to a dirty path whose pre-run bytes TRW did not record.
-
-    Runs after the writers and before the manifest is recorded, so the
-    ownership recorders see the preserved bytes. A dirty path whose pre-run
-    bytes hash to its ``content_hashes`` record is TRW's own last write and
-    keeps the refresh.
-
-    ``.trw/INSTRUCTIONS.md`` is skipped: its writer refuses a user-authored
-    file and backs up a generated one before replacing it (PRD-CORE-341-FR07),
-    so undoing its refresh protected nothing and re-created the stale file on
-    every run (the retire loop, FR08).
-    """
-    from trw_mcp.state.claude_md._instructions_link import INSTRUCTIONS_RELPATH
-
-    from ._canon_ownership import is_trw_deployed_canon, is_trw_owned_runtime_canon
-    from ._dirty_refresh import refresh_loses_nothing
-    from ._update_transaction import _file_signature, _is_under_pruned_dir, _restore_transaction_file
-
-    # A path retired in place this run was proven TRW's, or is committed in git: restoring it would
-    # re-deploy a withdrawn hook on every update.
-    retired = set(result.get("retired", []))
-    for rel in sorted(dirty):
-        if _is_under_pruned_dir(target_dir, rel):  # never snapshotted, never written: not ours to inspect
-            continue
-        if rel in retired:
-            continue
-        before, after = snapshot_root / rel, target_dir / rel
-        if rel == INSTRUCTIONS_RELPATH or _file_signature(before) == _file_signature(after):
-            continue
-        if is_trw_deployed_canon(snapshot_root, rel):  # the canon's receipt, not content_hashes, records it
-            continue
-        if is_trw_owned_runtime_canon(rel):  # TRW-owned: a hand edit is drift the redeploy repairs
-            continue
-        if (
-            before.is_file()
-            and after.is_file()
-            and not (before.is_symlink() or after.is_symlink())
-            and before.read_bytes() == after.read_bytes()
-        ):
-            continue  # same bytes, different mode: a restored exec bit changes no content of the user's
-        if refresh_loses_nothing(rel, before, after, root=target_dir):
-            continue  # TRW's own last write, .mcp.json's `trw` entry, or AGENTS.md's TRW block only (_dirty_refresh)
-        if before.is_file() and not before.is_symlink():
-            recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
-            if recorded == hashlib.sha256(before.read_bytes()).hexdigest():
-                continue
-        _restore_transaction_file(target_dir, snapshot_root, rel, result.setdefault("warnings", []))
-        result.setdefault("preserved", []).append(f"{rel} (uncommitted_changes)")
+from ._rerender import preserve_uncommitted_changes as preserve_uncommitted_changes  # noqa: E402

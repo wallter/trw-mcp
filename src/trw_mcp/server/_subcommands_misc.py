@@ -149,7 +149,7 @@ _TOPLEVEL_TIMEOUT_SECONDS = 5.0
 
 
 def _enclosing_project(cwd: Path) -> Path | None:
-    """The VCS toplevel of *cwd* when it differs from *cwd* and holds a ``.trw/`` dir, else ``None``.
+    """Nearest ``.trw/`` project from cwd through the git toplevel, else ``None``.
 
     Bounded by a timeout; a missing binary, a non-repo cwd or any failure is ``None`` (keep the cwd).
     """
@@ -173,9 +173,34 @@ def _enclosing_project(cwd: Path) -> Path | None:
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
     top = Path(proc.stdout.strip()).resolve()
-    if top == cwd.resolve() or not (top / ".trw").is_dir():
+    resolved_cwd = cwd.resolve()
+    if top == resolved_cwd:
         return None
-    return top
+    if not resolved_cwd.is_relative_to(top):
+        return None
+    for ancestor in (resolved_cwd, *resolved_cwd.parents):
+        if (ancestor / ".trw").is_dir():
+            return ancestor
+        if ancestor == top:
+            break
+    return None
+
+
+def _nearest_trw_ancestor(cwd: Path, *, max_ancestors: int = 64) -> Path | None:
+    """Find a nearby project without invoking git (used by the status-line hot path)."""
+    try:
+        current = cwd.resolve()
+        for _ in range(max_ancestors):
+            if (current / ".trw").is_dir():
+                return current
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+    # trw-fail-silent-allow: the status-line hot path must fail open; no project found means the caller's fallback
+    except OSError:
+        return None
+    return None
 
 
 @contextmanager
@@ -192,7 +217,11 @@ def enclosing_project_bound() -> Iterator[None]:
 
     top = None
     if install_target() is None and not os.environ.get("TRW_PROJECT_ROOT"):
-        top = _enclosing_project(Path.cwd())
+        try:
+            top = _enclosing_project(Path.cwd())
+        except OSError as exc:
+            print(f"Error: cannot determine current directory ({exc})")
+            sys.exit(1)
     if top is None:
         yield
         return
@@ -202,6 +231,22 @@ def enclosing_project_bound() -> Iterator[None]:
 
 def _run_local(args: argparse.Namespace) -> None:
     """Handle ``local``: run the verb against the project that encloses the cwd."""
+    if getattr(args, "local_command", None) == "status" and getattr(args, "status_format", None) == "line":
+        import os
+
+        from trw_mcp.state._project_root_binding import install_target, project_bound
+
+        if install_target() is None and not os.environ.get("TRW_PROJECT_ROOT"):
+            try:
+                project = _nearest_trw_ancestor(Path.cwd())
+            except OSError:
+                project = None
+            if project is not None:
+                with project_bound(project):
+                    _run_local_verb(args)
+                return
+        _run_local_verb(args)
+        return
     with enclosing_project_bound():
         _run_local_verb(args)
 
@@ -216,6 +261,7 @@ def _run_local_verb(args: argparse.Namespace) -> None:
 
     from trw_memory.exceptions import MemoryError as TrwMemoryError
 
+    from trw_mcp.exceptions import StateError
     from trw_mcp.services.orchestration_service import (
         mark_local_delivered,
         read_local_status,
@@ -256,7 +302,7 @@ def _run_local_verb(args: argparse.Namespace) -> None:
             print(f"  Checkpoints: {status['checkpoints']}")
             print(f"  Events: {status['events']}")
             print(f"  Path: {status['run_path']}")
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, StateError) as exc:
             print(f"Error: {exc}")
             sys.exit(1)
     elif local_cmd == "learn":
@@ -270,7 +316,7 @@ def _run_local_verb(args: argparse.Namespace) -> None:
                 detail=str(getattr(args, "detail", "")),
                 tags=tags,
                 evidence=evidence,
-                impact=float(getattr(args, "impact", 0.5) or 0.5),
+                impact=float(0.5 if getattr(args, "impact", None) is None else args.impact),
                 type=str(getattr(args, "type", "pattern") or "pattern"),
                 confidence=str(getattr(args, "confidence", "unverified") or "unverified"),
                 evidence_level=str(getattr(args, "evidence_level", "unknown") or "unknown"),
@@ -358,7 +404,7 @@ def _run_local_verb(args: argparse.Namespace) -> None:
         as_json = bool(getattr(args, "json", False))
         try:
             status = mark_local_delivered(str(getattr(args, "message", "") or "local delivery"), run_path=run_path)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, StateError) as exc:
             if as_json:
                 # PRD-CORE-300-FR02 slice S0: --json means exactly one parseable
                 # document on stdout, success or failure alike.

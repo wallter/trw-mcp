@@ -65,14 +65,14 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.2.1 -->
+<!-- whats-new: 9.2.2 -->
 
 - **Dispatch setup in the installer.** Turn on `trw_dispatch` and pin a model and effort per client while installing, or later with `trw-mcp config dispatch`.
 - **`trw-mcp config set` and `unset`.** Change or remove one setting safely: validated exactly as TRW loads it, secrets refused, and every other line of your file kept.
 - **Prompts never wait on recall.** The prompt hook runs inside a time budget and skips recall instead of stalling your client.
-- **Installs that remember you.** The installer asks each question once and keeps your answers, and an update refreshes every client in one pass with one status line.
+- **Installs that remember you.** Each question is asked once, a remembered answer holds on unattended runs, and `update-project --rerender` restores a TRW file after backing up yours.
 - **Ready for Claude Haiku 5.5.** It is priced, keeps its effort level in dispatch, and is the fast LLM route.
-- **Handoffs another session can trust.** The `trw-handoff` skill writes a sealed record with labelled claims and verbatim constraints, and `receive` checks it before acting.
+- **Handoffs another session can trust.** The `trw-handoff` skill writes a sealed AHR record with labelled claims, `receive` checks it before acting, and session start lists records waiting for you.
 - **Set up once per computer.** Sign in and configure `trw_assess` once; new projects reuse `~/.trw` instead of asking again.
 
 Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.3. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.

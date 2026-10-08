@@ -28,6 +28,7 @@ import contextlib
 import functools
 import json
 import os
+import shlex
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from importlib.resources import files as _pkg_files
@@ -158,7 +159,7 @@ def config_key_sources(project_config_path: Path) -> dict[str, str]:
 
     machine_path = Path.home() / ".trw" / "config.yaml"
     sources: dict[str, str] = {}
-    for path, label in ((machine_path, str(machine_path)), (project_config_path, _PROJECT_CONFIG_LABEL)):
+    for path, label in ((machine_path, str(machine_path)), (project_config_path, str(project_config_path))):
         # trw-fail-silent-allow: only wording depends on this; the layer was already read once
         with contextlib.suppress(Exception):
             sources.update(dict.fromkeys(read_config_layer(path), label))
@@ -210,12 +211,27 @@ def warn_unrecognised_config_keys(
         # are invisible to an operator whose logs are routed elsewhere, and this
         # is the first time this project tells a user that a knob they set does
         # not exist. Key name only — never the value they set.
-        label = sources.get(key, _PROJECT_CONFIG_LABEL)
-        scope = "project" if label == _PROJECT_CONFIG_LABEL else "machine"
+        source = sources.get(key, _PROJECT_CONFIG_LABEL)
+        source_path = Path(source)
+        is_machine = source_path == Path.home() / ".trw" / "config.yaml"
+        is_project = source == _PROJECT_CONFIG_LABEL or (
+            not is_machine and source_path.name == "config.yaml" and source_path.parent.name == ".trw"
+        )
+        label = _PROJECT_CONFIG_LABEL if is_project else source
+        scope = "project" if is_project else "machine"
+        target = (
+            f" --target-dir {shlex.quote(str(source_path.parent.parent))}"
+            if is_project and source != _PROJECT_CONFIG_LABEL
+            else ""
+        )
+        hint = (
+            f"Remove it: trw-mcp config unset {key} --scope {scope}{target}"
+            if key and key[0].isalpha() and key.replace("_", "").replace("-", "").isalnum() and key in sources
+            else f"Edit {label} by hand"
+        )
         if not _stderr_warnings_off():
             print(
-                f"TRW: WARNING — {label} sets '{key}', which has no effect: {detail}. "
-                f"Remove it: trw-mcp config unset {key} --scope {scope}",
+                f"TRW: WARNING — {label} sets '{key}', which has no effect: {detail}. {hint}",
                 file=sys.stderr,
             )
     return unrecognised

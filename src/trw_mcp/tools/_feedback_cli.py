@@ -50,7 +50,11 @@ def _run_feedback(args: argparse.Namespace) -> None:
         failed = False
     elif command == "flush":
         document = flush_outbox(limit=int(args.limit))
-        failed = bool(document["error"]) or not all(r["sent"] for r in document["results"])
+        failed = (
+            bool(document["error"])
+            or document.get("remaining", 0) > 0
+            or not all(r["sent"] for r in document["results"])
+        )
     else:
         print("usage: trw-mcp feedback {list|flush}", file=sys.stderr)
         sys.exit(2)
@@ -78,6 +82,8 @@ def _run_feedback(args: argparse.Namespace) -> None:
             outcome = f"sent {result['submission_id']}" if result["sent"] else f"not sent: {result['error']}"
             note = f" ({result['note']})" if result.get("note") else ""
             print(f"{result['id']}: {outcome}{note}")
+        if document.get("remaining", 0):
+            print(f"Not flushed: {document['remaining']} report(s) remain pending or claimed")
     sys.exit(1 if failed else 0)
 
 
@@ -123,7 +129,8 @@ def flush_outbox(*, limit: int) -> dict[str, Any]:
         note = "sent without contact_email (never stored locally)" if record.get("contact_email_dropped") else ""
         results.append({"id": _outbox.stem(path), "sent": sent.success, "submission_id": sent.submission_id,
                         "error": sent.error, "note": note})  # fmt: skip
-    return {"error": "", "results": results}
+    remaining = len(_outbox.records(trw_dir, "outbox"))
+    return {"error": "", "results": results, "remaining": remaining}
 
 
 def _stored_payload(stored: object) -> tuple[SubmissionPayload | None, str]:

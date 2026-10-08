@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "handoff",
   "handoff_id": "01J9ZK5W1STD000000000001",
   "subject": "swap-dirty-worktree",
@@ -159,6 +159,6 @@
   },
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:082b4ffac07da21e73c405fe314084142f1603069af47f3c89253a0c9584beec"
+    "digest": "sha256:10d7aa3d733d4a512f0d0194b6e6226eb2021cf21d421fd84c0f45eddac4c35b"
   }
 }

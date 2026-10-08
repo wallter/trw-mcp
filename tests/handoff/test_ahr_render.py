@@ -28,7 +28,7 @@ ORDER = [
 ]
 
 
-@pytest.mark.parametrize("name", ["01-standard-handoff", "03-minimal-unaddressed"])
+@pytest.mark.parametrize("name", ["01-standard-handoff", "03-minimal-unaddressed", "13-standard-rc2-optional-fields"])
 def test_render_matches_golden(name: str) -> None:
     rendered = render_markdown(load(VECTORS / "valid" / f"{name}.json"))
     assert rendered == (GOLDEN / f"{name}.md").read_text(encoding="utf-8")

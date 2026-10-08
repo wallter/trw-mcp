@@ -4,10 +4,31 @@
   "description": "Read-only TRW status pane, optional band and inbox doorbell for Claude Code. Optional adapter: TRW works unchanged without it.",
   "license": "BUSL-1.1",
   "userConfig": {
+    "footer": {
+      "type": "string",
+      "title": "Footer label",
+      "description": "Show the TRW label right-justified on the prompt-hint line, the same row as the permission-mode badge (no extra row).",
+      "options": [
+        "on",
+        "off"
+      ],
+      "default": "on"
+    },
+    "hint": {
+      "type": "string",
+      "title": "Claude Code hint text",
+      "description": "What the footer keeps of Claude Code's own hint beside the label: keep it, trim '(shift+tab to cycle)', or hide it.",
+      "options": [
+        "keep",
+        "trim",
+        "hide"
+      ],
+      "default": "keep"
+    },
     "band": {
       "type": "string",
       "title": "Status band",
-      "description": "Show a one-line TRW band above the prompt (the statusLine already shows the one-liner, so the default is off).",
+      "description": "Show a one-line TRW band above the prompt (an extra row; the footer label already shows status, so the default is off).",
       "options": [
         "off",
         "on"

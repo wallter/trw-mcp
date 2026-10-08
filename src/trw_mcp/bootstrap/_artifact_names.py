@@ -19,6 +19,16 @@ from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
 
+#: Every client skill root covered by retirement and custom-name discovery.
+CLIENT_SKILL_ROOTS: tuple[str, ...] = (
+    ".claude/skills",
+    ".agents/skills",
+    ".cursor/skills",
+    ".github/skills",
+    ".opencode/skills",
+    ".grok/skills",
+)
+
 
 def _opencode_skill_names(opencode_root: Path, skills_source: Path) -> list[str] | None:
     """Inventory skills opencode ships that exist in the canonical corpus; ``None`` when no inventory can be read.
@@ -99,13 +109,22 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
         "opencode_skills": [],
     }
 
-    skills_dir = target_dir / ".claude" / "skills"
-    if skills_dir.is_dir():
-        result["skills"] = sorted(
-            d.name
-            for d in skills_dir.iterdir()
-            if d.is_dir() and d.name not in bundled_skills and not d.name.startswith(RETIRING_PREFIX)
-        )
+    for skill_root in CLIENT_SKILL_ROOTS:
+        skills_dir = target_dir / skill_root
+        if skills_dir.is_dir():
+            custom = [
+                d.name
+                for d in skills_dir.iterdir()
+                if d.is_dir()
+                and d.name not in bundled_skills
+                and d.name not in bundled_opencode_skills
+                and not d.name.startswith(RETIRING_PREFIX)
+            ]
+            if skill_root == ".opencode/skills":
+                result["opencode_skills"] = sorted(custom)
+            else:
+                result["skills"].extend(custom)
+    result["skills"].sort()
 
     agents_dir = target_dir / ".claude" / "agents"
     if agents_dir.is_dir():
@@ -131,12 +150,6 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
     if opencode_agents_dir.is_dir():
         result["opencode_agents"] = sorted(
             f.name for f in opencode_agents_dir.iterdir() if f.suffix == ".md" and f.name not in bundled_opencode_agents
-        )
-
-    opencode_skills_dir = target_dir / ".opencode" / "skills"
-    if opencode_skills_dir.is_dir():
-        result["opencode_skills"] = sorted(
-            d.name for d in opencode_skills_dir.iterdir() if d.is_dir() and d.name not in bundled_opencode_skills
         )
 
     return result

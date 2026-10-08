@@ -210,6 +210,9 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_handoff_readback as _ss_handoff_readback,
 )
 from trw_mcp.tools._ceremony_step_table import (
+    _ss_handoff_records as _ss_handoff_records,
+)
+from trw_mcp.tools._ceremony_step_table import (
     _ss_hook_flags as _ss_hook_flags,
 )
 from trw_mcp.tools._ceremony_step_table import (

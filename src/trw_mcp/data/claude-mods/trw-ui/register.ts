@@ -34,10 +34,13 @@ import {
   buildView,
   doorbell,
   fallbackText,
+  footerLayout,
+  hintText,
   inboxBadge,
+  labelSegments,
   parseSnapshot,
 } from './snapshot'
-import type { DoorbellMode, Memory, Row, Snap } from './snapshot'
+import type { DoorbellMode, HintMode, Memory, Row, Segment, Snap } from './snapshot'
 
 const PANE = 'trw-status'
 const MIN_GAP_MS = 2000
@@ -45,6 +48,10 @@ const CLI_TIMEOUT_MS = 8000
 
 // Module state: shared by the hooks, reset on every reload.
 let bandOn = false
+// The footer label: TRW status right-justified on Claude Code's prompt-hint line,
+// the same row as the permission-mode badge (no extra row, unlike a statusLine).
+let footerOn = true
+let hintMode: HintMode = 'keep'
 let mode: DoorbellMode = 'notify'
 let pollS = 15
 let hiddenPollS = 60
@@ -76,6 +83,8 @@ function effectivePollS(): number {
 function readOptions(options: Record<string, unknown> | undefined): void {
   const o = options ?? {}
   bandOn = o.band === 'on'
+  footerOn = o.footer !== 'off'
+  hintMode = o.hint === 'trim' || o.hint === 'hide' ? o.hint : 'keep'
   mode = o.doorbell === 'off' || o.doorbell === 'wake' ? o.doorbell : 'notify'
   const poll = Number(o.poll_s)
   pollS = Number.isFinite(poll) && poll >= 5 ? Math.min(poll, 600) : 15
@@ -104,7 +113,7 @@ export const register: Register = (on, options) => {
       ticker = $.clock.every(pollS * 1000, () => {
         void tick($)
       })
-      if (mode !== 'off' || visible()) void refresh($, true)
+      if (mode !== 'off' || visible() || footerOn) void refresh($, true)
     } catch {
       // The mod stays quiet rather than break session start.
     }
@@ -114,7 +123,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     try {
-      if (!e.agentId && (visible() || mode !== 'off')) void refresh($, false)
+      if (!e.agentId && (visible() || mode !== 'off' || footerOn)) void refresh($, false)
     } catch {
       // Nothing to do: the next poll tries again.
     }
@@ -138,7 +147,7 @@ export const register: Register = (on, options) => {
     } catch {
       return next(e)
     }
-  })
+  }).catch(async ($, e, next) => next(e))
 
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
@@ -151,11 +160,21 @@ export const register: Register = (on, options) => {
       // The pane is gone either way.
     }
     return result
-  })
+  }).catch(async ($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     try {
       return await paneTree($, e)
+    } catch {
+      return next(e)
+    }
+  })
+
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    try {
+      if (!footerOn) return next(e)
+      const tree = footerTree($, e)
+      return tree === null ? next(e) : tree
     } catch {
       return next(e)
     }
@@ -176,7 +195,7 @@ export const register: Register = (on, options) => {
 
 async function tick($: any): Promise<void> {
   try {
-    if (!visible() && mode === 'off') return
+    if (!visible() && mode === 'off' && !footerOn) return
     // The timer fires every poll_s; a hidden mod spawns the CLI only every
     // effective interval (1 s slack for timer jitter).
     const since = (await $.clock.now()) - lastStartAt
@@ -336,7 +355,9 @@ async function paneTree($: any, e: any): Promise<unknown> {
 // Returns null when the band has nothing to show (the caller passes the event on).
 async function bandTree($: any, e: any): Promise<unknown | null> {
   const showFallback = paneOpen && paneWhere === 'band'
-  if (!showFallback && !bandOn && badge === 0) return null
+  // With the footer on, the inbox count is in the footer label: no extra band row.
+  const bandBadge = badge > 0 && !footerOn
+  if (!showFallback && !bandOn && !bandBadge) return null
   const { Box, Text } = $.ui.resolve(e)
   const lines: unknown[] = []
   if (showFallback) {
@@ -358,7 +379,33 @@ async function bandTree($: any, e: any): Promise<unknown | null> {
           : Text({ children: fallbackText(failure), ...paint('warn') }),
       )
     }
-    if (badge > 0) lines.push(Text({ bold: true, color: 'yellow', children: inboxBadge(badge) }))
+    if (bandBadge) lines.push(Text({ bold: true, color: 'yellow', children: inboxBadge(badge) }))
   }
   return Box({ flexDirection: 'column', paddingX: 1, children: lines })
+}
+
+// The footer label segments when no snapshot could be read: short, quiet, and
+// never the same text as a real state ("TRW" alone means no run is pinned).
+function footerFallback(): Segment[] {
+  if (failure === 'outdated') return [{ text: 'TRW: update trw-mcp', tone: 'warn' }]
+  if (failure === 'loading') return [{ text: 'TRW …', tone: 'dim' }]
+  return [{ text: 'TRW ?', tone: 'dim' }]
+}
+
+// Claude Code's own hint (optionally trimmed) on the left, the TRW label
+// right-justified on the same line. The label is fitted first; the hint gets what
+// is left and is cut, never wrapped, so the line can never grow a second row.
+function footerTree($: any, e: any): unknown {
+  const layout = footerLayout(e.viewport?.columns, e.props?.hint, hintMode, room =>
+    snap ? labelSegments(snap, room) : footerFallback(),
+  )
+  if (layout === null) return null
+  const { Box, Text } = $.ui.resolve(e)
+  const label = layout.segs.map(x => Text({ ...paint(x.tone), wrap: 'truncate', children: x.text }))
+  return Box({
+    flexDirection: 'row',
+    width: layout.width,
+    justifyContent: 'space-between',
+    children: [Text({ dimColor: true, wrap: 'truncate', children: layout.hint }), Box({ flexDirection: 'row', children: label })],
+  })
 }

@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "event",
   "event_id": "EV-0001-001",
   "handoff_id": "01J9ZK5W1STD000000000001",
@@ -12,6 +12,6 @@
     "session": "s-7f3a"
   },
   "at": "2026-09-28T21:10:00Z",
-  "record_digest": "sha256:ddcd8aa819205a8baec80e246d0f47bfd0997de14feeda78f1545eac6fad1d45",
+  "record_digest": "sha256:f83fe57eda9416905dbca8d7f06b189ac7e1a3119cc0d6a269ea8c633ff13ea2",
   "effective_at": "2026-09-28T21:10:00Z"
 }

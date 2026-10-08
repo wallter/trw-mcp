@@ -1,4 +1,4 @@
-"""Draft an AHR 1.0-rc.1 read-back for a handoff record (``trw-mcp handoff readback-new``).
+"""Draft an AHR 1.0-rc.2 read-back for a handoff record (``trw-mcp handoff readback-new``).
 
 Belongs to the :mod:`trw_mcp.handoff` package. The tool fills what the receiver should never
 hand-compute: the read-back id, its author (``by``), the UTC ``at``, the handoff's digest, the
@@ -98,7 +98,7 @@ def build_readback_draft(
         if pc["status"] in ("drift", "missing")
     ]
     doc: JsonDoc = {
-        "ahr": "1.0-rc.1",
+        "ahr": "1.0-rc.2",
         "type": "readback",
         "readback_id": f"rb-{now.astimezone(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}",
         "handoff": {"handoff_id": handoff["handoff_id"], "digest": digest(handoff)},

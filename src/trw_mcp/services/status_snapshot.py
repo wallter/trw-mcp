@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -320,6 +321,29 @@ def read_cached_snapshot(
     return data
 
 
+_STATUS_CACHE_MAX_AGE_S = 7 * 24 * 3600
+_STATUS_CACHE_PRUNE_LIMIT = 200
+
+
+def _prune_status_cache(trw_dir: Path, *, now: float | None = None) -> None:
+    """Delete sibling cache files older than 7 days (<= 200 entries examined, symlinks never followed)."""
+    try:
+        directory = trw_dir.joinpath(*_STATUS_CACHE_SUBDIR)
+        cutoff = (time.time() if now is None else now) - _STATUS_CACHE_MAX_AGE_S
+        with os.scandir(directory) as entries:
+            for examined, entry in enumerate(entries):
+                if examined >= _STATUS_CACHE_PRUNE_LIMIT:
+                    break
+                if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                    continue
+                if not entry.name.endswith((".json", ".line")):
+                    continue
+                if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                    os.unlink(entry.path)
+    except Exception:  # trw-fail-silent-allow: best-effort hygiene; a prune error never fails the cache write
+        logger.debug("status_cache_prune_failed", exc_info=True)
+
+
 def write_cached_snapshot(trw_dir: Path, snapshot: dict[str, Any]) -> Path | None:
     """Atomically replace the snapshot's cache file at 0600. Returns the path, or ``None``."""
     sid = snapshot.get("session_id")
@@ -330,6 +354,7 @@ def write_cached_snapshot(trw_dir: Path, snapshot: dict[str, Any]) -> Path | Non
     data = json.dumps(snapshot, separators=(",", ":")).encode("utf-8")
     # write_beneath: atomic temp+rename, no-follow on every component (the checkout write primitive).
     write_beneath(trw_dir, "/".join((*_STATUS_CACHE_SUBDIR, f"{sid}.json")), data, mode=0o600)
+    _prune_status_cache(trw_dir)
     return cache_path(trw_dir, sid)
 
 
@@ -349,6 +374,7 @@ def write_cached_line(trw_dir: Path, session_id: str | None, line: str) -> Path 
     write_beneath(
         trw_dir, "/".join((*_STATUS_CACHE_SUBDIR, f"{session_id}.line")), (line + "\n").encode("utf-8"), mode=0o600
     )
+    _prune_status_cache(trw_dir)
     return line_cache_path(trw_dir, session_id)
 
 

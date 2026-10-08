@@ -102,6 +102,17 @@ class TestUnrecognisedKeyNamesItsFile:
 
         assert "TRW: WARNING — .trw/config.yaml sets 'no_source_gone_key'" in capsys.readouterr().err
 
+    @pytest.mark.parametrize("key", ["_private_gone_key", "foo.bar"])
+    def test_keys_that_unset_cannot_address_get_a_manual_edit_hint(
+        self, key: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from trw_mcp.models.config._retired_keys import warn_unrecognised_config_keys
+
+        warn_unrecognised_config_keys({key: 1}, set(), key_sources=lambda: {key: ".trw/config.yaml"})
+        warning = capsys.readouterr().err
+        assert "Edit .trw/config.yaml by hand" in warning
+        assert "config unset" not in warning
+
 
 # ── FB-INSTALL-13: "kept (disabled skill)" says what is disabled ─────────
 

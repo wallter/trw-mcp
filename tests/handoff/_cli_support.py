@@ -57,13 +57,19 @@ def _new(capsys: pytest.CaptureFixture[str], *argv: str) -> Path:
     return Path(out.strip())
 
 
-_CHOICES = {"label": "observed", "severity": "medium"}
+_CHOICES = {"label": "observed", "severity": "medium", "at": "2026-01-01T00:00:00Z"}
 
 
 def _fill(value: Any, key: str = "") -> Any:
-    """Replace every sentinel the way an agent would: real text, and a real choice for each enum."""
+    """Replace every sentinel the way an agent would: real text, and a real choice for each enum.
+
+    A drafted claim carries both shapes; like an agent, keep ``evidence`` for ``verified`` and ``basis`` otherwise.
+    """
     if isinstance(value, dict):
-        return {k: _fill(v, k) for k, v in value.items()}
+        filled = {k: _fill(v, k) for k, v in value.items()}
+        if key == "claims" and {"basis", "evidence"} <= filled.keys():
+            filled.pop("basis" if filled.get("label") == "verified" else "evidence")
+        return filled
     if isinstance(value, list):
         return [_fill(v, key) for v in value]
     if isinstance(value, str) and PLACEHOLDER in value:

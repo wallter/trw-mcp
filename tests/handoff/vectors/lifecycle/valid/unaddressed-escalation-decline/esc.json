@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "handoff",
   "handoff_id": "01J9ZK5W1CRT000000000022",
   "subject": "docs-typo-sweep-escalation",
@@ -154,7 +154,7 @@
       "uri": "file:original.json",
       "why": "The lower-tier offer being escalated",
       "kind": "record",
-      "digest": "sha256:c8b3456f88b907d92c128e0c0ef610da8a64c6bdac4a7180abb5da7aafe9edd6"
+      "digest": "sha256:8b68c8124a1b0d9e5073a63963109bd430a0cb88178ae0158944035497a1fbe3"
     }
   ],
   "readback": {
@@ -177,6 +177,6 @@
   },
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:8885d0995cc3770359a6f82771c874c537372f6608ab76ae3dc54e684435e5d9"
+    "digest": "sha256:db42e07a4f9196ec651a10dff312bfe447990cb72bdba786e611273d33b7a6b1"
   }
 }

@@ -82,7 +82,9 @@ def git_state(root: Path | None, *, exclude_dir: Path | None = None, handoff_id:
     head = _git(root, "rev-parse", "--verify", "-q", "HEAD")
     commit = head.stdout.strip() if head.returncode == 0 else None  # an unborn branch has no HEAD yet
     changed = _porcelain(root, exclude_dir, handoff_id)
-    return GitState(commit, "dirty" if changed else "clean", changed)
+    named = _git(root, "symbolic-ref", "--short", "-q", "HEAD")  # fails on a detached HEAD: no branch
+    branch = named.stdout.strip() if named.returncode == 0 and named.stdout.strip() else None
+    return GitState(commit, "dirty" if changed else "clean", changed, branch)
 
 
 def commits_since(root: Path, commit: str) -> int | None:
@@ -91,3 +93,11 @@ def commits_since(root: Path, commit: str) -> int | None:
         return None
     done = _git(root, "rev-list", "--count", f"{commit}..HEAD")
     return int(done.stdout.strip()) if done.returncode == 0 and done.stdout.strip().isdigit() else None
+
+
+def paths_since(root: Path, commit: str) -> tuple[str, ...] | None:
+    """Repo-relative paths changed by commits on HEAD after ``commit``; ``None`` when it is not an ancestor."""
+    if _git(root, "merge-base", "--is-ancestor", commit, "HEAD").returncode != 0:
+        return None
+    done = _git(root, "diff", "--name-only", "-z", f"{commit}..HEAD")
+    return tuple(p for p in done.stdout.split("\0") if p) if done.returncode == 0 else None

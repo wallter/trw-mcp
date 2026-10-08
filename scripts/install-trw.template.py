@@ -766,7 +766,7 @@ def persist_answers_as_given(ui: UI, python: str, target_dir: Path, pip_target: 
         write_now()
 
 
-def prompt_input(prompt_text: str, default: str = "") -> str:
+def prompt_input(prompt_text: str, default: str = "", *, require_answer: bool = False) -> str:
     """Prompt for text input."""
     display = f"    {prompt_text}"
     if default:
@@ -774,11 +774,16 @@ def prompt_input(prompt_text: str, default: str = "") -> str:
     display += " "
     tty = _open_tty()
     if tty is None:
+        if require_answer:
+            raise EOFError("No terminal available")
         return default
     try:
         sys.stdout.write(display)
         sys.stdout.flush()
-        answer = tty.readline().strip() or default
+        raw = tty.readline()
+        if require_answer and not raw:
+            raise EOFError("Terminal input ended")
+        answer = raw.strip() or default
     finally:
         tty.close()
     return answer
@@ -1915,6 +1920,11 @@ def _allow_system_python(ui: UI, python: str = "") -> bool:
         )
         _ALLOW_SYSTEM_PYTHON = decision
         return decision
+    key = "system_python_" + hashlib.sha256(os.path.realpath(python or sys.executable).encode()).hexdigest()[:12]
+    remembered = recorded_answer(key, scope="machine")
+    if remembered is not None:
+        _ALLOW_SYSTEM_PYTHON = remembered
+        return remembered
     # Non-interactive without explicit opt-in: deny.
     _ALLOW_SYSTEM_PYTHON = False
     return False
@@ -5019,11 +5029,9 @@ def _resolve_proprietary_from_marker(
     at the previous release. The marker this install wrote is the record that
     says otherwise, and reading it is what makes it more than a write-only file.
 
-    Non-interactive: yes, with an INFO line naming the marker so the decision is
-    never invisible. Interactive: prompt, defaulting to yes. Two ways to decline
-    without deleting the marker: answer no, or export
-    ``TRW_WITH_PROPRIETARY=0`` (an explicit falsy value, which is the only
-    opt-out a headless run has).
+    A remembered decline also binds non-interactive runs. Without a recorded
+    answer, non-interactive runs default to yes with an INFO line naming the
+    marker; interactive runs prompt. ``TRW_WITH_PROPRIETARY=0`` opts out too.
 
     ``offline`` short-circuits: the proprietary path is an entitlement POST plus
     a wheel download, and ``--offline`` already refuses to be combined with
@@ -5038,6 +5046,11 @@ def _resolve_proprietary_from_marker(
         return False
     entitled = read_proprietary_marker(target_dir)
     if not entitled:
+        return False
+    if recorded_answer("proprietary_upgrade") is False:
+        ui.step_warn(
+            "Proprietary upgrade skipped (your earlier answer; change with --with-proprietary or --reconfigure)"
+        )
         return False
     marker_path = target_dir / PROPRIETARY_MARKER_RELPATH
     packages = ", ".join(f"{name} {version}" for name, version in sorted(entitled.items()))
@@ -5815,7 +5828,7 @@ def phase_migrate_store(
     db = target_dir / ".trw" / "memory" / "memory.db"
     if not db.is_file():
         return True
-    manual = f"trw-mcp memory migrate --to user --apply --target-dir {target_dir}"
+    manual = shlex.join(["trw-mcp", "memory", "migrate", "--to", "user", "--apply", "--target-dir", str(target_dir)])
     code, _ = _run_python_output([python, "-B", "-c", _HOLDS_ROWS_SOURCE, str(db)], target_dir=pip_target)
     if code == _HOLDS_NO_ROWS:
         return True
@@ -5871,8 +5884,24 @@ def phase_migrate_store(
     for line in [line for line in (out + err).splitlines() if line.strip() and not line.startswith(_MIGRATED_PREFIX)]:
         (ui.info if code == 0 else ui.error)(f"  {line}")
     if code == 0:
-        ui.step_ok(f"Migration manifest: {manifest}")
-        ui.info(f"  Undo: trw-mcp memory migrate --to user --rollback {manifest} --target-dir {target_dir}")
+        if manifest:
+            ui.step_ok(f"Migration manifest: {manifest}")
+            undo = shlex.join(
+                [
+                    "trw-mcp",
+                    "memory",
+                    "migrate",
+                    "--to",
+                    "user",
+                    "--rollback",
+                    manifest,
+                    "--target-dir",
+                    str(target_dir),
+                ]
+            )
+            ui.info(f"  Undo: {undo}")
+        else:
+            ui.step_warn("Migration succeeded without a manifest path; no rollback command is available.")
         return True
     if code == _MIGRATE_RETRY:
         ui.step_fail(f"{unread}: the move did not finish (busy or uncertain), and nothing was cut over.")
@@ -5984,8 +6013,9 @@ def phase_configure(
                     "Platform: offline (your earlier answer; connect with --api-key, `trw-mcp auth login` or --reconfigure)"
                 )
             else:
-                api_key = _prompt_api_key(ui)
-                if not api_key and _ANSWERS is not None and _open_tty_available():
+                prompted_key = _prompt_api_key(ui)
+                api_key = prompted_key or ""
+                if prompted_key == "" and _ANSWERS is not None:
                     _ANSWERS.remember("platform_connect", False)
 
         # PRD-SEC-004-FR02: telemetry consent is ALWAYS explicit. A configured
@@ -6069,7 +6099,7 @@ def _prompt_project_name(ui: UI, default: str) -> str:
     return name
 
 
-def _prompt_api_key(ui: UI) -> str:
+def _prompt_api_key(ui: UI) -> str | None:
     """Interactive API key prompt -- asks consent, then tries device auth, falls back to manual paste.
 
     Device authorization (RFC 8628) opens a browser for passwordless login and
@@ -6078,8 +6108,10 @@ def _prompt_api_key(ui: UI) -> str:
     without the operator saying yes first. Declining (or a non-interactive run,
     where ``prompt_yes_no``'s own no-TTY fallback returns the default "n") skips
     straight to the manual-paste fallback with zero calls made.
+    Empty string means an explicit skip; None means no answer or a failed attempt.
     """
-    if prompt_yes_no("Sign in via browser (device authorization)?", default="n"):
+    device_attempted = prompt_yes_no("Sign in via browser (device authorization)?", default="n")
+    if device_attempted:
         try:
             result = _device_auth_login(API_BASE, interactive=True)
             if result and isinstance(result.get("api_key"), str) and result["api_key"]:
@@ -6088,17 +6120,22 @@ def _prompt_api_key(ui: UI) -> str:
                     ui.step_ok("Authenticated via device flow")
                     return key
         except Exception:  # device auth is best-effort, fall back to manual
-            pass
+            ui.step_warn("Device authorization failed; try manual entry or connect on a later run.")
 
     # Fallback: manual key entry
     print()
     ui.hint("Or paste an API key manually:")
     max_attempts = 3
     for attempt in range(max_attempts):
-        raw = prompt_input("Platform API key (Enter to skip):").strip()
+        try:
+            raw = prompt_input("Platform API key (Enter to skip):", require_answer=True).strip()
+        # trw-fail-silent-allow: a failed prompt is "no answer", never a saved decline (installer-answers-2)
+        except (EOFError, OSError):
+            ui.step_warn("API key input unavailable; no connection preference was saved.")
+            return None
         if not raw:
             ui.step_ok("No API key -- offline mode")
-            return ""
+            return None if device_attempted or attempt else ""
         if validate_api_key(raw):
             ui.step_ok("API key accepted")
             return raw
@@ -6109,7 +6146,7 @@ def _prompt_api_key(ui: UI) -> str:
             )
         else:
             ui.step_warn("Invalid format -- skipping API key")
-    return ""
+    return None
 
 
 def _device_auth_login(api_url: str, interactive: bool = True) -> dict[str, Any] | None:
@@ -6672,7 +6709,7 @@ def main() -> None:
                 target_dir=args.pip_target,
                 # An explicit --with-proprietary / TRW_WITH_PROPRIETARY is the consent (PRD-INFRA-126 FR02);
                 # only a path inferred from the marker, or an interactive run that never asked, still prompts.
-                auto_confirm=not interactive or proprietary_requested,
+                auto_confirm=proprietary_requested,
                 project_dir=target_dir,
             )
             write_proprietary_marker(target_dir, proprietary_installed)

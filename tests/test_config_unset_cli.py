@@ -76,6 +76,15 @@ def test_a_dotted_key_removes_one_entry_and_keeps_siblings(
     assert "dispatch_default_efforts" not in cfg.read_text(encoding="utf-8")  # the emptied map goes too
 
 
+def test_unset_removes_literal_dotted_top_level_key(env, capsys) -> None:
+    _home, project = env
+    cfg = project / ".trw" / "config.yaml"
+    cfg.write_text("foo.bar: 1\nkeep: true\n", encoding="utf-8")
+    code, out, err = _unset(project, "foo.bar", capsys)
+    assert code == 0 and "removed from" in out and err == ""
+    assert cfg.read_text(encoding="utf-8") == "keep: true\n"
+
+
 def test_an_absent_key_is_reported_and_the_file_is_untouched(
     env: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -1,10 +1,10 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "readback",
   "readback_id": "01J9ZK5W1RB0000000000001",
   "handoff": {
     "handoff_id": "01J9ZK5W1STD000000000001",
-    "digest": "sha256:ddcd8aa819205a8baec80e246d0f47bfd0997de14feeda78f1545eac6fad1d45"
+    "digest": "sha256:f83fe57eda9416905dbca8d7f06b189ac7e1a3119cc0d6a269ea8c633ff13ea2"
   },
   "by": {
     "id": "integrator",
@@ -55,6 +55,6 @@
   "disposition": "ready",
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:bbac659d3f8a9894b2e971a91196e785988c878d133574fca341a8903fc78137"
+    "digest": "sha256:2d0cc0cbb3d8c5be637c84ffd8e6b399f0f50928761302664229de5901880f64"
   }
 }

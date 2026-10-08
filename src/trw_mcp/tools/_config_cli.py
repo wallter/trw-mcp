@@ -81,9 +81,14 @@ def _effective(field: str, sub: str | None, target_dir: Path) -> object:
 
 def _report(key: str, scope: str, target_dir: Path, result: SetResult) -> None:
     field, sub = _field_for(key)
-    effective = _effective(field, sub, target_dir)
     print(f"{key}: {'written' if result.changed else 'unchanged'} in {result.path}")
-    print(f"effective: {effective}")
+    try:
+        effective = _effective(field, sub, target_dir)
+    except Exception as exc:
+        # The write is already durable; report the load failure and keep success status.
+        print(f"effective: unknown (config does not load: {type(exc).__name__})")
+    else:
+        print(f"effective: {effective}")
     env_name = f"TRW_{field.upper()}"
     if env_name in os.environ:
         print(f"warning: {env_name} is set in the environment and wins over config.yaml")

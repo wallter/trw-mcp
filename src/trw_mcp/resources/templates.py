@@ -52,7 +52,7 @@ def register_template_resources(server: FastMCP) -> None:
 
     @server.resource("trw://schemas/ahr/v1", mime_type="application/schema+json")
     def get_ahr_schema() -> str:
-        """Agent Handoff Record 1.0-rc.1 JSON Schema (2020-12), for offline validation.
+        """Agent Handoff Record 1.0-rc.2 JSON Schema (2020-12), for offline validation.
 
         Validate, digest or seal a record with `trw-mcp handoff`.
         """

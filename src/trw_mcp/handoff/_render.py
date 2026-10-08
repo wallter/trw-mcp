@@ -69,7 +69,9 @@ def _header(doc: JsonDoc) -> list[str]:
         "",
         f"Rendered view of {escape(doc['handoff_id'])} {shown}; the JSON record is normative.  ",
         f"from {_principal(doc['from'])} → {target}; completer {completer}  ",
-        f"created {escape(doc['created_at'])} · state as of {escape(as_of['at'])} @ {escape(base.get('commit', '—'))} "
+        f"created {escape(doc['created_at'])} · state as of {escape(as_of['at'])} @ {escape(base.get('commit', '—'))}"
+        + (f" on {escape(base['branch'])}" if "branch" in base else "")
+        + " "
         f"({escape(base.get('tree_state', '—'))}; changed: {escape(changed)}) · run {escape(as_of.get('run_ref', '—'))} "
         f"· expires {escape(doc.get('expires_at', '—'))} · digest {shown} "
         f"· signature {escape(integ.get('signature', {}).get('uri', '—'))}  ",
@@ -87,16 +89,32 @@ def _constraint(con: object) -> str:
 
 def _action(a: JsonDoc) -> str:
     deps = ", ".join(escape(d) for d in a.get("depends_on", [])) or "—"
+    rollback = a.get("rollback")
+    undo = ""
+    if isinstance(rollback, dict):
+        record = rollback.get("record")
+        parts = [record["uri"], *([record["digest"]] if "digest" in record else [])] if record else []
+        shown = f" [record {' '.join(escape(p) for p in parts)}]" if parts else ""
+        undo = f"; rollback: {escape(rollback['procedure'])}{shown}"
     return (
         f"- ({escape(a['id'])}) {escape(a['action'])} — owner {escape(a.get('owner', '—'))}; "
-        f"done when {escape(a.get('done_when', '—'))}; depends on {deps}"
+        f"done when {escape(a.get('done_when', '—'))}; depends on {deps}{undo}"
     )
 
 
 def _evidence(ev: JsonDoc) -> str:
-    raw = ev.get("raw", {})
-    parts = [ev["procedure"], ev["scope"], ev["result"], ev["at"], ev.get("producer", "—"), raw.get("uri", "—")]
-    return "; ".join(escape(p) for p in parts)
+    # Labelled parts: receivers misread the old unlabelled "cmd; scope; result; at; —; —" cell (2026-10-06 eval).
+    text = f"ran {escape(ev['procedure'])} ({escape(ev['result'])} at {escape(ev['at'])}; scope: {escape(ev['scope'])}"
+    text += f"; by {escape(ev['producer'])}" if "producer" in ev else ""
+    text += f"; output {escape(ev['raw']['uri'])}" if isinstance(ev.get("raw"), dict) else ""
+    return text + ")"
+
+
+def _decided_by(decision: JsonDoc) -> str:
+    who = decision.get("decided_by")
+    if not isinstance(who, dict):
+        return ""
+    return f" (decided by: {escape(who['authority'])}{' ' + escape(who['id']) if 'id' in who else ''})"
 
 
 def _state(claims: list[JsonDoc]) -> list[str]:
@@ -112,6 +130,7 @@ def _sections(doc: JsonDoc) -> list[tuple[str, list[str]]]:
     objective = [f"- Goal: {escape(obj['goal'])}"]
     objective += [f"- Intent: {escape(obj['intent'])}"] if "intent" in obj else []
     objective += [f"- Done when: {escape(d)}" for d in obj["done_when"]]
+    objective += [f"- Paths: {', '.join(escape(p) for p in obj['paths'])}"] if obj.get("paths") else []
     cons = doc.get("constraints")
     risks = doc["risks"]
     actions = doc["next_actions"]
@@ -146,6 +165,7 @@ def _sections(doc: JsonDoc) -> list[tuple[str, list[str]]]:
             "Decisions",
             [
                 f"- {escape(d['decision'])} — {escape(d.get('rationale', '—'))}"
+                + _decided_by(d)
                 + (f" (rejected: {', '.join(escape(r) for r in d['rejected'])})" if d.get("rejected") else "")
                 for d in doc.get("decisions", [])
             ],

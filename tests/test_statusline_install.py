@@ -25,13 +25,14 @@ _USER = {"type": "command", "command": "~/bin/my-statusline"}
 _OLD_TRW = {"type": "command", "command": 'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh" --legacy'}
 
 
-def _project(tmp_path: Path, settings: dict[str, object] | None, *, optout: bool = False) -> Path:
+def _project(tmp_path: Path, settings: dict[str, object] | None, *, optout: bool = False, optin: bool = False) -> Path:
     (tmp_path / ".claude").mkdir()
     if settings is not None:
         (tmp_path / ".claude" / "settings.json").write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    if optout:
+    if optout or optin:
         (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "config.yaml").write_text("claude_code_statusline: false\n", encoding="utf-8")
+        flag = "true" if optin else "false"
+        (tmp_path / ".trw" / "config.yaml").write_text(f"claude_code_statusline: {flag}\n", encoding="utf-8")
     return tmp_path
 
 
@@ -49,9 +50,43 @@ def test_template_statusline_is_trw_owned() -> None:
     assert not is_trw_statusline(None)
 
 
-def test_absent_statusline_is_added(tmp_path: Path) -> None:
+def test_absent_key_adds_no_statusline(tmp_path: Path) -> None:
+    """Opt-in: the default display is the trw-ui footer label, so no statusLine row."""
     root = _project(tmp_path, {"env": {"X": "1"}})
+    assert "statusLine" not in _merge(root)
+    assert apply_statusline_registration(root) is False
+
+
+def test_true_key_adds_statusline(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"env": {"X": "1"}}, optin=True)
     assert _merge(root)["statusLine"] == _CURRENT
+
+
+def test_absent_key_keeps_an_existing_trw_statusline(tmp_path: Path) -> None:
+    """The installer does not install the mod, so an existing display is never silently removed."""
+    root = _project(tmp_path, {"statusLine": _CURRENT, "model": "m"})
+    merged = _merge(root)
+    assert merged["statusLine"] == _CURRENT and merged["model"] == "m"
+
+
+def test_absent_key_rewrites_an_older_trw_statusline(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"statusLine": _OLD_TRW})
+    assert _merge(root)["statusLine"] == _CURRENT
+
+
+def test_false_key_removal_records_a_note(tmp_path: Path) -> None:
+    root = _project(tmp_path, {"statusLine": _CURRENT}, optout=True)
+    result: dict[str, list[str]] = {"errors": [], "updated": [], "created": [], "preserved": []}
+    _merge_settings_json(_TEMPLATE, root / ".claude" / "settings.json", result)
+    assert "statusLine" not in json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert any("claude_code_statusline" in n for n in result["notes"])
+
+
+def test_user_statusline_untouched_whatever_the_key(tmp_path: Path) -> None:
+    for i, kw in enumerate(({}, {"optin": True}, {"optout": True})):
+        d = tmp_path / str(i)
+        d.mkdir()
+        assert _merge(_project(d, {"statusLine": _USER}, **kw))["statusLine"] == _USER
 
 
 def test_user_statusline_is_untouched(tmp_path: Path) -> None:
@@ -62,7 +97,7 @@ def test_user_statusline_is_untouched(tmp_path: Path) -> None:
 
 
 def test_older_trw_statusline_is_rewritten(tmp_path: Path) -> None:
-    root = _project(tmp_path, {"statusLine": _OLD_TRW})
+    root = _project(tmp_path, {"statusLine": _OLD_TRW}, optin=True)
     assert _merge(root)["statusLine"] == _CURRENT
 
 
@@ -90,7 +125,7 @@ def test_uninstall_removes_only_trw_statusline() -> None:
 
 
 def test_update_is_idempotent(tmp_path: Path) -> None:
-    root = _project(tmp_path, {"statusLine": _OLD_TRW})
+    root = _project(tmp_path, {"statusLine": _OLD_TRW}, optin=True)
     first = _merge(root)
     text = (root / ".claude" / "settings.json").read_text(encoding="utf-8")
     assert _merge(root) == first
@@ -98,12 +133,14 @@ def test_update_is_idempotent(tmp_path: Path) -> None:
     assert apply_statusline_registration(root) is False
 
 
-@pytest.mark.parametrize("config", ["", "claude_code_statusline: true\n", "{not yaml: [", "- a\n- b\n"])
-def test_unreadable_or_non_false_config_means_enabled(tmp_path: Path, config: str) -> None:
+@pytest.mark.parametrize(
+    "config", ["", "claude_code_statusline: false\n", "{not yaml: [", "- a\n- b\n", "claude_code_statusline: yes-ish\n"]
+)
+def test_unreadable_or_non_true_config_adds_nothing(tmp_path: Path, config: str) -> None:
     root = _project(tmp_path, {})
     (root / ".trw").mkdir()
     (root / ".trw" / "config.yaml").write_text(config, encoding="utf-8")
-    assert _merge(root)["statusLine"] == _CURRENT
+    assert "statusLine" not in _merge(root)
 
 
 @pytest.mark.parametrize(
@@ -113,6 +150,7 @@ def test_unreadable_or_non_false_config_means_enabled(tmp_path: Path, config: st
         'bash "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh" --legacy',
         '"${CLAUDE_PROJECT_DIR}/.claude/hooks/statusline.sh"',
         "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh -v --width=5",
     ],
 )
 def test_trw_command_variants_are_owned(command: str) -> None:
@@ -126,6 +164,11 @@ def test_trw_command_variants_are_owned(command: str) -> None:
         "/srv/someone/.claude/hooks/statusline.sh",
         'sh "$HOME/.claude/hooks/statusline.sh"',
         "echo $CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh.bak",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh && my-thing",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh; rm -rf x",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh my-thing",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh -v | tee out",
+        "$CLAUDE_PROJECT_DIR/.claude/hooks/statusline.sh\nmy-thing",
     ],
 )
 def test_user_scripts_named_statusline_are_not_owned(command: str) -> None:
@@ -161,7 +204,7 @@ def test_existing_trw_entry_removed_with_note_when_user_level_exists(
 ) -> None:
     _home(tmp_path, monkeypatch, {"statusLine": _USER})
     (tmp_path / "p").mkdir()
-    root = _project(tmp_path / "p", {"statusLine": _CURRENT})
+    root = _project(tmp_path / "p", {"statusLine": _CURRENT}, optin=True)
     result: dict[str, list[str]] = {"errors": [], "updated": [], "created": [], "preserved": []}
     _merge_settings_json(_TEMPLATE, root / ".claude" / "settings.json", result)
     assert "statusLine" not in json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
@@ -171,7 +214,7 @@ def test_existing_trw_entry_removed_with_note_when_user_level_exists(
 def test_trw_statusline_at_user_level_does_not_shadow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _home(tmp_path, monkeypatch, {"statusLine": _CURRENT})
     (tmp_path / "p").mkdir()
-    assert _merge(_project(tmp_path / "p", {}))["statusLine"] == _CURRENT
+    assert _merge(_project(tmp_path / "p", {}, optin=True))["statusLine"] == _CURRENT
 
 
 def test_uninstall_leaves_a_custom_formatted_file_byte_identical() -> None:

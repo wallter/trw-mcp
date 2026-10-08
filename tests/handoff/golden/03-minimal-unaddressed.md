@@ -1,8 +1,8 @@
 # Handoff 01J9ZK5W1MIN000000000002 — docs\-typo\-sweep   (tier: minimal; Reversible text edits only)
 
-Rendered view of 01J9ZK5W1MIN000000000002 sha256\:c8b3456f88b907d92c128e0c0ef610da8a64c6bdac4a7180abb5da7aafe9edd6 (computed; unsealed); the JSON record is normative.  
+Rendered view of 01J9ZK5W1MIN000000000002 sha256\:8b68c8124a1b0d9e5073a63963109bd430a0cb88178ae0158944035497a1fbe3 (computed; unsealed); the JSON record is normative.  
 from session\-a [agent] → unaddressed: next\-session; completer operator  
-created 2026\-09\-28T22\:00\:00Z · state as of 2026\-09\-28T22\:00\:00Z @ — (—; changed: —) · run — · expires 2026\-10\-05T22\:00\:00Z · digest sha256\:c8b3456f88b907d92c128e0c0ef610da8a64c6bdac4a7180abb5da7aafe9edd6 (computed; unsealed) · signature —  
+created 2026\-09\-28T22\:00\:00Z · state as of 2026\-09\-28T22\:00\:00Z @ — (—; changed: —) · run — · expires 2026\-10\-05T22\:00\:00Z · digest sha256\:8b68c8124a1b0d9e5073a63963109bd430a0cb88178ae0158944035497a1fbe3 (computed; unsealed) · signature —  
 Supersedes: none  
 Status: unadmitted note (advisory only; no lifecycle events, R-SUP-4)
 

@@ -131,8 +131,17 @@ def new_snapshot_dir(project: Path | None = None) -> Path:
         snap = Path(tempfile.mkdtemp(prefix=SNAPSHOT_PREFIX))
     if project is not None:
         payload = json.dumps({"v": 1, "project": os.path.realpath(project)}).encode("utf-8")
-        write_beneath(snap, _OWNER, payload, mode=0o600)
-        _hold(snap)
+        try:
+            write_beneath(snap, _OWNER, payload, mode=0o600)
+            _hold(snap)
+        except BaseException:
+            try:
+                release_snapshot(snap)
+            finally:
+                from trw_memory._tree_removal import remove_tree
+
+                remove_tree(snap, purpose="unfinished update snapshot")
+            raise
     return snap
 
 

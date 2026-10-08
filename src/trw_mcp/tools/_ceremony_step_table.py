@@ -344,6 +344,18 @@ def _ss_handoff_readback(sctx: SessionStartContext) -> None:
     sctx.results["open_handoff"] = step_handoff_readback()
 
 
+def _ss_handoff_records(sctx: SessionStartContext) -> None:
+    """AHR 1.0-rc.2: handoff records a later session could take up (the compaction self-handoff).
+
+    Non-critical and omitted when empty, like ``moved_checkout``.
+    """
+    from trw_mcp.tools._handoff_records_readback import step_handoff_records
+
+    found = step_handoff_records()
+    if found is not None:
+        sctx.results["handoff_records"] = found
+
+
 def _ss_moved_checkout(sctx: SessionStartContext) -> None:
     """PRD-CORE-253-FR01 — a checkout whose rows are one rename away.
 
@@ -412,6 +424,8 @@ SESSION_START_STEPS: tuple[Step, ...] = (
     # PRD-CORE-249-FR03. Non-critical + timed: the readback is an advisory about
     # work earlier runs deferred, and its failure must never block session start.
     Step("handoff_readback", "_ss_handoff_readback"),
+    # AHR 1.0-rc.2. Non-critical: lists unclaimed handoff records; absent when there are none.
+    Step("handoff_records", "_ss_handoff_records"),
     # PRD-CORE-253-FR01. Non-critical: a possible-rename advisory is diagnostic
     # and must never take down the mandated first action. Last, so it cannot
     # delay anything an agent needs to start work.

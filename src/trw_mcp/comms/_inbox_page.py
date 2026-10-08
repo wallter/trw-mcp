@@ -12,7 +12,7 @@ import re
 import sqlite3
 from typing import Any
 
-from trw_mcp.comms import _ahr_events, _paging
+from trw_mcp.comms import _ahr_events, _ahr_view, _paging
 from trw_mcp.comms._envelope import (
     AHR_ACTIONS,
     HANDOFF_ACTIONS,
@@ -98,7 +98,7 @@ def _project(
     item = receipt(row)
     if action == "fetch":
         item["body"] = row["body"]
-        record = _ahr_events.fetch_record(conn, row["message_id"])  # PRD-CORE-349: the record itself, as data
+        record = _ahr_view.fetch_record(conn, row["message_id"])  # PRD-CORE-349: the record itself, as data
         if record is not None:
             item["ahr_record"] = record
         # FR13 at-least-once: flag only when true, so the common case costs nothing.
@@ -114,7 +114,7 @@ def _project(
             row,
             item["milestones"],
             pointers.get(row["message_id"]),
-            ahr=_ahr_events.view(conn, row["message_id"], row["group_id"]),
+            ahr=_ahr_view.view(conn, row["message_id"], row["group_id"]),
         )
         if handoff is not None:
             item["handoff"] = handoff
@@ -197,7 +197,7 @@ def _ahr_write(
     elif action == "report":
         if value is None:
             raise AdmissionError("ahr_report_needs_outcome")
-        _ahr_events.report(conn, message_id, str(next_read), value, now)
+        _ahr_events.report(conn, binding.group_id, message_id, str(next_read), value, now)
     else:
         _ahr_events.complete(conn, message_id, now)
 

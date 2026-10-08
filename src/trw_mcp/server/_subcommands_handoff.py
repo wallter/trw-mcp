@@ -120,6 +120,7 @@ def _run_new(args: argparse.Namespace) -> int:
         next_read=list(args.next_read),
         to_scope=args.to_scope,
         to_id=args.to_id,
+        paths=list(args.path),
         root=root,
         git=git_state(root, exclude_dir=out.parent, handoff_id=handoff_id),
         now=now,
@@ -137,7 +138,7 @@ def _run_new(args: argparse.Namespace) -> int:
 
 def _check_report(record: Path, expected: str | None) -> dict[str, Any]:
     from trw_mcp.handoff._check import check_record
-    from trw_mcp.server._handoff_git import commits_since, git_state, repo_root
+    from trw_mcp.server._handoff_git import commits_since, git_state, paths_since, repo_root
 
     record = record.resolve()
     root = repo_root(record.parent) if record.parent.is_dir() else None
@@ -150,6 +151,7 @@ def _check_report(record: Path, expected: str | None) -> dict[str, Any]:
         root=root,
         git=git,
         commits_since=(lambda commit: commits_since(root, commit)) if root is not None else lambda _c: None,
+        paths_since=(lambda commit: paths_since(root, commit)) if root is not None else lambda _c: None,
     )
 
 

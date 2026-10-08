@@ -154,9 +154,11 @@ def test_auto_maintenance_draws_on_the_updates_budget_not_a_fresh_one(
         with installing_into(root), pytest.raises(StoreUnavailableError, match="budget"):
             _daemon_store._run(stuck_daemon.status("project:stuck-00000000"))
 
+    from trw_mcp.bootstrap import _rerender
+
+    # 9.2.2 moved the not-a-repo / no-.trw / manifest-refusal pre-flight into _rerender.validate_update_target.
+    monkeypatch.setattr(_rerender, "validate_update_target", lambda *_a: True)
     for name, stub in {
-        "is_git_repo": lambda _p: True,
-        "manifest_refusal": lambda _p: None,
         "dirty_state": lambda *_a: (None, []),
         "_apply_update": _writer_phase_spends_the_budget,
         "_update_git_hooks": lambda *_a: None,

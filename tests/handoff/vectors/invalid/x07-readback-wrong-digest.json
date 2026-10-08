@@ -1,5 +1,5 @@
 {
-  "ahr": "1.0-rc.1",
+  "ahr": "1.0-rc.2",
   "type": "readback",
   "readback_id": "01J9ZK5W1RB0000000000001",
   "handoff": {
@@ -55,6 +55,6 @@
   "disposition": "ready",
   "integrity": {
     "canonicalization": "RFC8785",
-    "digest": "sha256:dfefd9e273af1029d39e206ed6276ed129533e6e20532d47d5fff85ce175fd4b"
+    "digest": "sha256:5d522f29d39a887baab8708dedfd7c6eff04981aad0c0b245cc5d0c5dc6966a3"
   }
 }

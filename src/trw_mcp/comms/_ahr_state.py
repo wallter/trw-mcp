@@ -1,6 +1,6 @@
 """The pure AHR lifecycle replay (PRD-CORE-349 FR03-FR06): one handoff's event log, one event at a time.
 
-A port of the AHR 1.0-rc.1 reference checker ``specs/handoff/tools/ahr_lifecycle.py``: the reference
+A port of the AHR 1.0-rc.2 reference checker ``specs/handoff/tools/ahr_lifecycle.py``: the reference
 loop body is :meth:`AhrLog.step`, with its rules, order and messages kept, so the vendored lifecycle
 vectors (``tests/handoff/vectors/lifecycle``) are this module's regression suite. Only where a ``ref``
 comes from differs: the caller resolves it and passes the target, because the store reads its own

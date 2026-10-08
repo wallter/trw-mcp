@@ -1,4 +1,4 @@
-"""Agent Handoff Record (AHR) 1.0-rc.1: parse, validate, digest, seal (PRD-CORE-347).
+"""Agent Handoff Record (AHR) 1.0-rc.2: parse, validate, digest, seal (PRD-CORE-347).
 
 A leaf package: it imports only the standard library and ``jsonschema``. The public
 surface is ``load``/``loads``, ``validate``, ``digest``, ``seal`` and ``quote_for_model``;

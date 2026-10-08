@@ -34,6 +34,7 @@ class GitState:
     commit: str | None
     tree_state: str
     changed: tuple[str, ...]  # repo-relative paths git reports as changed, the record's own files excluded
+    branch: str | None = None  # None when detached or outside git (informational, R-REC-8)
 
 
 UNKNOWN_GIT = GitState(None, "unknown", ())

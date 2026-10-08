@@ -160,6 +160,8 @@ def reported(log: AhrLog, s: Step) -> object:
     onward = isinstance(resolved, dict) and resolved.get("type") == "handoff" and not check_doc(resolved)
     if isinstance(resolved, dict) and resolved.get("type") == "handoff" and not onward:
         return s.fail("R-LC-12", "an onward handoff in a report must be a valid record")
+    if ev["outcome"] == "met" and onward:  # rc.2 (A25-1): passing work on is `returned` or `escalated`
+        return s.fail("R-LC-12", "a report with outcome 'met' must not ref an onward handoff")
     if ev["outcome"] == "escalated" and not (
         onward and resolved["tier"] == "critical" and resolved["to"].get("kind") != "unaddressed"
     ):

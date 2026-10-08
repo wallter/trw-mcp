@@ -81,10 +81,11 @@ def run_local_recall(
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.models.typed_dicts import RecallResultDict
+    from trw_mcp.state._paths import resolve_trw_dir
     from trw_mcp.sync import _fresh_pull
     from trw_mcp.tools._recall_impl import execute_recall
 
-    resolved = trw_dir or (Path.cwd() / ".trw")
+    resolved = trw_dir if trw_dir is not None else resolve_trw_dir()
     config = get_config()
 
     def ask() -> RecallResultDict:

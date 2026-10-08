@@ -18,8 +18,10 @@
 # 2026-09-28; Haiku 5.5 row added 2026-10-07.)
 #
 # Optional per-row long-prompt tier: long_prompt_threshold_tokens plus
-# long_prompt_input_per_1k / long_prompt_output_per_1k. When a call's input_tokens
-# exceed the threshold, the WHOLE call is priced at the long-prompt rates.
+# long_prompt_input_per_1k / long_prompt_output_per_1k. When uncached and cached
+# prompt tokens together exceed the threshold, the WHOLE call is priced at the
+# long-prompt rates. For Haiku 5.5 the vendor's cache-token threshold treatment
+# is unspecified, so this estimator conservatively counts cache read and write.
 #
 # Keys are bare model aliases. The lookup normalises the incoming id
 # before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
@@ -155,9 +157,9 @@ models:
   # Haiku 5.5 (released 2026-10-07; O, pricing page). Cache read is 0.1x input and the
   # 5-minute cache write 1.25x, the standard convention. Prompts over 100K tokens are
   # billed at $0.50 in / $2.50 out per MTok; the long_prompt_* keys below carry that tier
-  # and _usd_cost_estimate applies it when the call's input_tokens exceed the threshold.
-  # The vendor does not say what counts toward the 100K (cache tokens? the whole prompt?),
-  # so the reader uses input_tokens as reported -- an under-estimate if cache reads count.
+  # and _usd_cost_estimate applies it when input + cache read + cache write tokens
+  # exceed the threshold. The vendor does not specify whether cache tokens count;
+  # this estimate conservatively counts them. Cache rates scale with the long input rate.
   claude-haiku-5-5:
     input_per_1k: 0.0001
     output_per_1k: 0.0005

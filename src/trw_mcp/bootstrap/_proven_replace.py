@@ -55,15 +55,18 @@ class _Unstageable(Exception):
     """The new bytes cannot be published safely here; nothing of the user's was touched."""
 
 
-def replace_proven(path: Path, root: Path, expected: bytes, new: bytes) -> Replaced:
-    """Put *new* at *path* only if *path* still holds exactly *expected*; see the module docstring."""
+def replace_proven(path: Path, root: Path, expected: bytes, new: bytes, *, mode: int | None = None) -> Replaced:
+    """Replace proven bytes, optionally adopting *mode*; None preserves the existing permissions."""
     from ._trash import remove_if_hash
 
-    if new == expected:  # nothing to change: no capture, so .trw/trash stays empty (lead condition 1)
+    if new == expected and mode is None:  # preserve the default no-op contract
         return Replaced("replaced", None, "")
     try:
         rel_parts = path.relative_to(root).parts
-        mode = stat.S_IMODE(os.lstat(path).st_mode)
+        old_mode = stat.S_IMODE(os.lstat(path).st_mode)
+        if new == expected and mode == old_mode:
+            return Replaced("replaced", None, "")
+        mode = old_mode if mode is None else mode
         with _staged(root, rel_parts, new, mode) as (pfd, sfd):
             taken = remove_if_hash(path, root, hashlib.sha256(expected).hexdigest(), key="/".join(rel_parts))
             if taken.status == "absent":
