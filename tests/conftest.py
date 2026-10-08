@@ -766,9 +766,9 @@ def _default_distill_absent(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_sidecar_rebuild_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin ``hint_sidecar_auto_refresh_enabled`` OFF by default (hermetic, and no real build).
+    """Pin ``hint_sidecar_refresh_enabled`` OFF by default (hermetic, and no real build).
 
-    On, any test that computes a pre-edit hint without a usable sidecar would
+    On, a session-start or post-commit request without a usable sidecar would
     fork a detached ``trw-distill self-improve refresh-sidecars`` whenever the
     dev venv ships the CLI: a real whole-repo build outliving the test. Set in
     the environment, so hook subprocesses inherit it too; a child started with
@@ -778,7 +778,7 @@ def _no_sidecar_rebuild_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     the rebuild request opt back in with ``monkeypatch.setenv(..., "true")`` and
     fake ports; a test that sets the variable in its child env keeps its value.
     """
-    key = "TRW_HINT_SIDECAR_AUTO_REFRESH_ENABLED"
+    key = "TRW_HINT_SIDECAR_REFRESH_ENABLED"
     monkeypatch.setenv(key, "false")
     real_popen = subprocess.Popen
 

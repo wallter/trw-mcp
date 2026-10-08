@@ -121,6 +121,8 @@ def _run_new(args: argparse.Namespace) -> int:
         to_scope=args.to_scope,
         to_id=args.to_id,
         paths=list(args.path),
+        constraints=list(args.constraint),
+        constraints_from=list(args.constraint_from),
         root=root,
         git=git_state(root, exclude_dir=out.parent, handoff_id=handoff_id),
         now=now,
@@ -136,7 +138,7 @@ def _run_new(args: argparse.Namespace) -> int:
     return 0
 
 
-def _check_report(record: Path, expected: str | None) -> dict[str, Any]:
+def _check_report(record: Path, expected: str | None, *, strict: bool = False) -> dict[str, Any]:
     from trw_mcp.handoff._check import check_record
     from trw_mcp.server._handoff_git import commits_since, git_state, paths_since, repo_root
 
@@ -152,6 +154,7 @@ def _check_report(record: Path, expected: str | None) -> dict[str, Any]:
         git=git,
         commits_since=(lambda commit: commits_since(root, commit)) if root is not None else lambda _c: None,
         paths_since=(lambda commit: paths_since(root, commit)) if root is not None else lambda _c: None,
+        strict=strict,
     )
 
 
@@ -160,7 +163,7 @@ def _run_check(args: argparse.Namespace) -> int:
 
     if args.digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.digest):
         raise AhrInputError("--digest must be sha256:<64 lowercase hex>")
-    report = _check_report(Path(args.file), args.digest)
+    report = _check_report(Path(args.file), args.digest, strict=bool(args.strict))
     print(json.dumps(report, indent=2, ensure_ascii=True))
     for line in summary(report):
         print(line, file=sys.stderr)
@@ -233,7 +236,69 @@ def _run_render(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Bounds on the two files `brief`/`brief-check` read whole (items are lead-written, results are helper output).
+_MAX_ITEMS_BYTES = 256 * 1024
+_MAX_RESULTS_BYTES = 4 * 1024 * 1024
+
+
+def _brief_inputs(args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    from trw_mcp.handoff._brief import load_items
+    from trw_mcp.handoff._repo import read_capped
+
+    record = load(args.file)
+    if record.get("type") != "handoff":
+        raise AhrInputError("brief takes a handoff record")
+    try:
+        raw = json.loads(read_capped(Path(args.items), _MAX_ITEMS_BYTES).decode("utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
+        raise AhrInputError(f"cannot read items {args.items}: {exc}") from exc
+    return record, load_items(raw)
+
+
+def _run_brief(args: argparse.Namespace) -> int:
+    from trw_mcp.handoff._brief import render_briefs
+
+    record, items = _brief_inputs(args)
+    rendered = render_briefs(
+        record, items, today=datetime.now(UTC).strftime("%Y-%m-%d"), max_reads=max(1, int(args.max_reads))
+    )
+    if args.out_dir is None:
+        print(json.dumps(rendered, indent=2, ensure_ascii=False))
+        return 0
+    out = Path(args.out_dir)
+    for item_id, text in rendered["briefs"].items():
+        target = out / f"{item_id}.brief.md"
+        _write_new(target, text)
+        print(target)
+    return 0
+
+
+def _run_brief_check(args: argparse.Namespace) -> int:
+    from trw_mcp.handoff._brief import check_results, parse_rows
+    from trw_mcp.handoff._repo import read_capped
+    from trw_mcp.server._handoff_git import repo_root
+
+    record, items = _brief_inputs(args)
+    try:
+        rows = parse_rows(read_capped(Path(args.results), _MAX_RESULTS_BYTES).decode("utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise AhrInputError(f"cannot read results {args.results}: {exc}") from exc
+    record_dir = Path(args.file).resolve().parent
+    root = (repo_root(record_dir) if record_dir.is_dir() else None) or Path.cwd().resolve()
+    report = check_results(record, items, rows, root)
+    print(json.dumps(report, indent=2, ensure_ascii=True))
+    counts = report["counts"]
+    print(
+        f"brief-check: {counts['citation_valid']} citation_valid, {counts['inconclusive']} inconclusive"
+        " (citation_valid is not a judgement that an answer is right)",
+        file=sys.stderr,
+    )
+    return 0 if counts["inconclusive"] == 0 and counts["unassigned_rows"] == 0 else 1
+
+
 _HANDLERS = {
+    "brief": _run_brief,
+    "brief-check": _run_brief_check,
     "new": _run_new,
     "readback-new": _run_readback_new,
     "check": _run_check,
@@ -248,7 +313,10 @@ def run_handoff(args: argparse.Namespace) -> None:
     """Dispatch ``trw-mcp handoff <verb>``; exits 0, 1 (findings) or 2 (input error)."""
     handler = _HANDLERS.get(getattr(args, "handoff_command", None) or "")
     if handler is None:
-        print("usage: trw-mcp handoff {new,readback-new,validate,digest,seal,render,check} ...", file=sys.stderr)
+        print(
+            "usage: trw-mcp handoff {new,readback-new,validate,digest,seal,render,check,brief,brief-check} ...",
+            file=sys.stderr,
+        )
         sys.exit(2)
     try:
         code = handler(args)

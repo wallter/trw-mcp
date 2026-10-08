@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from trw_mcp.handoff._quotes import MAX_TEXT_CHARS, quote_from
 from trw_mcp.handoff._repo import GitState, file_uri, raw_digest
 from trw_mcp.handoff._validate import PLACEHOLDER as _T
 
@@ -81,7 +82,10 @@ def _pointer(spec: str, root: Path) -> dict[str, Any]:
     if scheme in _PASS_THROUGH:
         kind = _PASS_THROUGH[scheme]
         return {"uri": spec, "why": f"{_T} why the receiver reads this"} | ({"kind": kind} if kind else {})
-    path = (root / spec[5:] if scheme == "file" else Path(spec).expanduser()).resolve()
+    try:
+        path = (root / spec[5:] if scheme == "file" else Path(spec).expanduser()).resolve()
+    except (OSError, RuntimeError) as exc:  # a symlink loop raises before 3.13
+        raise ValueError(f"--next-read {spec}: the path does not resolve") from exc
     if not path.is_relative_to(root):
         raise ValueError(f"--next-read {spec}: outside the repository root; records carry repo-relative paths only")
     if not path.is_file():
@@ -168,6 +172,14 @@ def _recipient(tier: str, to_id: str | None, to_scope: str) -> dict[str, Any]:
     return {"id": target, "kind": "agent"}
 
 
+def _carried_constraints(quoted: list[str], ranges: list[str], root: Path) -> list[Any]:
+    """Constraints passed on the command line: quoted strings verbatim, then file ranges with their source."""
+    for text in quoted:
+        if not text.strip() or len(text) > MAX_TEXT_CHARS:
+            raise ValueError(f"--constraint: 1 to {MAX_TEXT_CHARS} characters of text; split a longer one")
+    return [*quoted, *(quote_from(spec, root) for spec in ranges)]
+
+
 def build_draft(
     *,
     handoff_id: str,
@@ -178,6 +190,8 @@ def build_draft(
     to_scope: str,
     to_id: str | None = None,
     paths: list[str] | None = None,
+    constraints: list[str] | None = None,
+    constraints_from: list[str] | None = None,
     root: Path | None,
     git: GitState,
     now: datetime,
@@ -211,4 +225,7 @@ def build_draft(
     doc |= _judgement(tier)
     if paths:  # R-REC-3: what the receiver may change; validate refuses absolute, `..` and control characters
         doc["objective"]["paths"] = list(dict.fromkeys(paths))
+    carried = _carried_constraints(constraints or [], constraints_from or [], base)
+    if carried:  # R-REC-6: operative wording arrives by tool, never retyped; replaces the critical sentinel
+        doc["constraints"] = carried
     return Draft({key: doc[key] for key in _ORDER if key in doc}, sidecar)

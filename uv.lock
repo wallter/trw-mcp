@@ -2158,11 +2158,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.14.0"
+version = "2.15.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/af/c3/8a3b59c25070cc61dc517fbdfa5dc0904670c96f605cc69759dc09166b99/pyjwt-2.14.0.tar.gz", hash = "sha256:77283c83fb56ecf566a886c757a714bc83668e38156de2cce8263302f42e0b86", size = 113177, upload-time = "2026-09-11T13:11:54.638Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/ea/5194e52748b0da83d71e082d75496eaec6e58f419f5e184786ded517e6a9/pyjwt-2.15.1.tar.gz", hash = "sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8", size = 121252, upload-time = "2026-09-28T18:40:42.598Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/97/672cb32ce0dfea44b740cb7b4f97038463b9cf7c0ead1aacf595572851d6/pyjwt-2.14.0-py3-none-any.whl", hash = "sha256:ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc", size = 32896, upload-time = "2026-09-11T13:11:53.409Z" },
+    { url = "https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl", hash = "sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193", size = 33860, upload-time = "2026-09-28T18:40:41.429Z" },
 ]
 
 [package.optional-dependencies]
@@ -2963,7 +2963,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "9.2.2"
+version = "9.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -3057,7 +3057,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.5" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=24.0.0" },
-    { name = "trw-memory", specifier = ">=5.2.3,<6.0.0" },
+    { name = "trw-memory", specifier = ">=5.2.4,<6.0.0" },
     { name = "trw-memory", extras = ["otel"], marker = "extra == 'otel'" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "typing-extensions", specifier = ">=4.6.0" },
@@ -3067,7 +3067,7 @@ provides-extras = ["sqlite-fix", "meta-tune", "otel", "dev", "ai"]
 
 [[package]]
 name = "trw-memory"
-version = "5.2.3"
+version = "5.2.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -3094,9 +3094,9 @@ dependencies = [
     { name = "structlog" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/04/f021d644c11b0d7f2fb64dd7fcbd990014d77110018bf2ae2bb4b73817e9/trw_memory-5.2.3.tar.gz", hash = "sha256:49cba942a42392a0b7a5925832fa9f0b4417e750495275eccf51f1185b8a9edd", size = 2201718, upload-time = "2026-10-07T17:44:57.666Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/41/b13ecd092708383a2e24282bec1c38088f20b437c5c1407f23b875ac98bf/trw_memory-5.2.4.tar.gz", hash = "sha256:05c00e0b45ff600a2251a7f977109d54b59dcf213264920d16d4e0115ec917d4", size = 2201883, upload-time = "2026-10-08T13:50:08.83Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/dd/23468881da322084afe43c05f5bf798f6f84a4aa3bb0ff13823abd2ae46d/trw_memory-5.2.3-py3-none-any.whl", hash = "sha256:a764503d9c233d003001e4b553efe584b8021558e1d5096e9b9779b2d8ac186d", size = 1081271, upload-time = "2026-10-07T17:44:55.811Z" },
+    { url = "https://files.pythonhosted.org/packages/15/2d/366a9e4ccaf23b036e9bd9fd22d615574ed239afcc322603fbf475e8dc64/trw_memory-5.2.4-py3-none-any.whl", hash = "sha256:35cbd6fd33a2afb36ec869a97b9f846c7211e41ce9216ed8b2a44c0627d6a3c9", size = 1081303, upload-time = "2026-10-08T13:50:07.229Z" },
 ]
 
 [package.optional-dependencies]

@@ -83,7 +83,11 @@ class TestExplorerAgentContent:
     def test_disallowed_tools_listed(self) -> None:
         """FR38: disallowed tools prevent write/modify operations."""
         content = get_explorer_agent_content()
-        assert "Bash" in content
+        fm = _parse_frontmatter(content)
+        assert "Bash" in fm["tools"]
+        assert "no-shell" not in content and "no shell access" not in content
+        assert "not enforced by the harness" in content
+        assert "Bash" not in fm.get("disallowedTools", [])
         assert "Write" in content
         assert "Edit" in content
         assert "mcp__trw__trw_learn" in content
@@ -133,6 +137,27 @@ class TestExplorerAgentContent:
         assert "trw-distill rca" in content
         assert "--json" in content
         assert "query deps" in content, "a failing test should suggest query deps FIRST"
+
+    def test_grants_bash_with_read_only_distill_policy(self) -> None:
+        content = get_explorer_agent_content()
+        fm = _parse_frontmatter(content)
+        assert "Bash" in fm["tools"]
+        assert "no-shell" not in content and "no shell access" not in content
+        assert "not enforced by the harness" in content
+        assert (
+            "You may run only read-only trw-distill query, rca, status and doctor commands; never run commands that write (run, maintain --apply, refresh-sidecars) or any other program."
+            in content
+        )
+        assert "Exit 3 means the map cache is missing; report that to the lead instead of building it." in content
+        for phrase in (
+            "query callers",
+            "query callees",
+            "query def",
+            "query importers",
+            "query tests",
+            "rca history",
+        ):
+            assert phrase in content
 
 
 class TestInstallCc05Subagent:

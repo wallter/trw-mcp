@@ -37,7 +37,10 @@
 set -e
 trap 'exit 0' EXIT
 
-_repo="${TRW_PROJECT_DIR:-$(pwd)}"
+_repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+# Git runs post-commit in the committing checkout; inherited project state may name another worktree.
+TRW_PROJECT_DIR="$_repo"
+export TRW_PROJECT_DIR
 
 # _trw_pc_unavailable: the maintenance cannot run here. Say so LOUDLY -- one line
 # on stderr, which `git commit` shows, and one `python_unavailable=1` event in the
@@ -72,7 +75,10 @@ _get_python_path() {
     #      `git rev-parse --git-common-dir` (one cheap call, only reached
     #      here; a git error or non-worktree checkout just falls through)
     #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    # A pointer counts only as an ABSOLUTE path to an executable regular file: a
+    # relative one would resolve against whatever directory the hook runs in.
     _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
     if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
         _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
         [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
@@ -86,6 +92,7 @@ _get_python_path() {
         if [ -n "$_trw_common" ]; then
             _trw_main=$(dirname "$_trw_common")
             _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
             [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
         fi
     fi
@@ -98,22 +105,8 @@ _get_python_path() {
     fi
 }
 _py=$(_get_python_path "$_repo") || _trw_pc_unavailable "no Python interpreter found"
-# One foreground probe that imports the worker's own entry module (so a missing
-# dependency such as structlog shows here, not in the silent detached worker).
-# A watchdog bounds it at 5 s, escalating to SIGKILL for a process that ignores
-# SIGTERM, so an interpreter that hangs cannot hold `git commit`; a killed probe
-# counts as unavailable.
-"$_py" -c 'import trw_mcp.tools._post_commit' >/dev/null 2>&1 &
-_probe_pid=$!
-( sleep 5; kill -TERM "$_probe_pid"; sleep 1; kill -KILL "$_probe_pid" ) >/dev/null 2>&1 &
-_probe_watch=$!
-_probe_rc=0
-wait "$_probe_pid" || _probe_rc=$?
-kill -TERM "$_probe_watch" 2>/dev/null || true
-# Reap the killed watchdog so the shell never prints "Terminated: 15" for it on
-# every commit.
-wait "$_probe_watch" 2>/dev/null || true
-[ "$_probe_rc" -eq 0 ] || _trw_pc_unavailable "$_py cannot import trw_mcp"
+# Resolve availability without starting Python in the commit's foreground.
+[ -x "$_py" ] || command -v "$_py" >/dev/null 2>&1 || _trw_pc_unavailable "no executable Python"
 
 # The repo root reaches Python through the ENVIRONMENT, never through source
 # interpolation — a repo path containing quotes or newlines must not be able to
@@ -149,15 +142,15 @@ if [ "${TRW_POST_COMMIT_SYNC:-}" = "1" ]; then
     TRW_POST_COMMIT_HEAD="$_head" \
     PYTHONDONTWRITEBYTECODE=1 \
     MEMORY_DAEMON_AUTOSTART=false \
-    "$_py" -c "$_TRW_PROGRAM" >/dev/null 2>&1 || true
+    "$_py" -c "$_TRW_PROGRAM" >/dev/null 2>&1 || _trw_pc_unavailable "worker failed to start or run"
 else
     (
         TRW_POST_COMMIT_REPO="$_repo" \
         TRW_POST_COMMIT_HEAD="$_head" \
         PYTHONDONTWRITEBYTECODE=1 \
         MEMORY_DAEMON_AUTOSTART=false \
-        "$_py" -c "$_TRW_PROGRAM" >/dev/null 2>&1
-    ) &
+        "$_py" -c "$_TRW_PROGRAM" || _trw_pc_unavailable "worker failed to start or run"
+    ) </dev/null >/dev/null 2>&1 &
 fi
 
 exit 0

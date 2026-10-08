@@ -27,6 +27,7 @@ from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools import _before_edit_hint_core
 from trw_mcp.tools._before_edit_hint_core import BeforeEditHintResult, compute_before_edit_hint
 from trw_mcp.tools._sidecar_ancestry import (
+    CommitUnavailableError,
     GitReadError,
     SubprocessGitReader,
     parse_name_status_z,
@@ -166,14 +167,14 @@ def _render(result: BeforeEditHintResult) -> str:
     )
 
 
-def test_exact_head_batch_is_fresh_and_asks_git_nothing(tmp_path: Path, emitted: list[dict[str, Any]]) -> None:
+def test_exact_head_batch_checks_only_worktree_state(tmp_path: Path, emitted: list[dict[str, Any]]) -> None:
     repo, head = _repo(tmp_path)
     _batch(repo, head)
     git = FakeGit()
 
     result = _hint(repo, git)
 
-    assert (result.distill_status, result.distill_as_of, git.calls) == ("hint_available", None, [])
+    assert (result.distill_status, result.distill_as_of, git.calls) == ("hint_available", None, ["worktree_changed"])
     assert "distill_as_of" not in result.model_dump()
     assert result.distill_hint is not None and result.distill_hint.risk_score == 0.42
     assert "AS-OF" not in _render(result)
@@ -493,12 +494,16 @@ def test_the_subprocess_reader_answers_from_real_git(tmp_path: Path) -> None:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "drop foo")
     head = _git(repo, "rev-parse", "HEAD")
-    reader = SubprocessGitReader(repo)
+    # This checks git result parsing; fake-clock regressions check the production budget.
+    reader = SubprocessGitReader(repo, timeout_s=30)
 
     assert reader.ancestor_distance(first, head) == 2
     assert reader.ancestor_distance(head, head) == 0
     assert reader.ancestor_distance(head, first) is None  # a descendant is not an ancestor
-    assert reader.ancestor_distance("0" * 40, head) is None  # a sha this clone lacks is unproven, not an error
+    # A commit the object store does not hold raises (so it is never cached as "not an ancestor" and is
+    # asked again after a fetch), under the subclass that lets the lookup report "no proven ancestor".
+    with pytest.raises(CommitUnavailableError, match="not in this repository's object store"):
+        reader.ancestor_distance("0" * 40, head)
     tree = _git(repo, "rev-parse", f"{first}^{{tree}}")
     side = _git(repo, "commit-tree", "-p", first, "-m", "side", tree)
     assert reader.ancestor_distance(side, head) is None  # diverged: not reachable from HEAD
@@ -534,6 +539,9 @@ def test_a_linked_worktree_reads_the_main_checkout_cache(tmp_path: Path) -> None
 
 def _run_cc03(repo: Path, tool_use_id: str) -> str:
     """One CC-03 hook run for an absolute Edit path; returns the model-visible context."""
+    from tests.test_sidecar_worktrees import _behavior_clock
+
+    behavior_env = _behavior_clock(repo)
     event = {"tool_use_id": tool_use_id, "tool_name": "Edit", "tool_input": {"file_path": str(repo / "foo.py")}}
     proc = subprocess.run(
         ["sh", str(deploy_distill_hint(repo))],
@@ -547,6 +555,7 @@ def _run_cc03(repo: Path, tool_use_id: str) -> str:
             "PYTHONPATH": CHECKOUT_PYTHONPATH,
             "TRW_PROJECT_DIR": str(repo),
             "HOME": str(repo),
+            **behavior_env,
         },
     )
     assert proc.returncode == 0, proc.stderr
@@ -557,10 +566,8 @@ def _run_cc03(repo: Path, tool_use_id: str) -> str:
 def test_the_claude_code_hook_renders_a_stale_hint_with_real_git(tmp_path: Path) -> None:
     """Production call site: the CC-03 hook, an absolute Edit path, and a sidecar two commits back.
 
-    The hook's in-process deadline is 2.4 s, and on a loaded host a cold
-    interpreter can miss it and print the T0 beacon (its documented timeout
-    fallback). Up to three attempts, with the 180 s debounce lapsed between
-    them; a real regression prints no T2 block on any of them.
+    A deterministic clock isolates rendering from scheduler load; dedicated
+    timeout tests retain coverage of the production alarm and fallback.
     """
     repo, first = _repo(tmp_path)
     _commit(repo, "one.py", "a = 1\n")
@@ -571,13 +578,7 @@ def test_the_claude_code_hook_renders_a_stale_hint_with_real_git(tmp_path: Path)
     (trw / "channels" / "cc03-python.txt").write_text(sys.executable)
     (trw / "config.yaml").write_text("cc03_hook_enabled: true\n")
 
-    context = ""
-    for attempt in range(3):
-        context = _run_cc03(repo, f"toolu-stale-{attempt}")
-        if not context.startswith("[TRW] "):
-            break
-        for marker in (trw / "context" / "cc03-debounce").glob("*.ts"):
-            marker.write_text("0")
+    context = _run_cc03(repo, "toolu-stale")
 
     lines = context.splitlines()
     assert lines[0] == "[TRW Distill Hint — T2]", context

@@ -401,6 +401,20 @@ def finalize_session_start(
     except Exception as exc:  # justified: fail-open, status decoration must not block session start
         record_into(cast("MutableMapping[str, object]", results), "ceremony_status", exc)
 
+    started = time.monotonic()
+    try:
+        if config.hint_sidecar_refresh_enabled:
+            from trw_mcp.tools import ceremony as _ceremony
+            from trw_mcp.tools._distill_spawn import request_session_refresh
+
+            request_session_refresh(
+                _ceremony.resolve_trw_dir().parent,
+                interval_s=config.hint_sidecar_rebuild_min_interval_minutes * 60.0,
+            )
+    except Exception as exc:  # justified: advisory refresh must never block session start
+        record_into(cast("MutableMapping[str, object]", results), "sidecar_refresh", exc)
+    step_durations_ms["sidecar_refresh"] = (time.monotonic() - started) * 1000
+
     results["step_durations_ms"] = step_durations_ms
 
 

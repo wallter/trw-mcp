@@ -295,6 +295,7 @@ class TestWriteHintFile:
             distill_status="hint_available",
         )
         data = json.loads((hints_dir / "tool-p3.json").read_text(encoding="utf-8"))
+        assert (hints_dir / "tool-p3.json").stat().st_mode & 0o777 == 0o600
         # Vocabulary EXISTS, defaulted to unknown/false sentinels (no outcome captured at write time).
         assert data["outcome_captured"] is False
         assert data["was_edited"] is None

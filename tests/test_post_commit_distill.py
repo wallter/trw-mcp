@@ -231,6 +231,8 @@ def test_post_commit_refreshes_risk_report_sidecar(
     repo: Path, fake_cli: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Through the real worker: receipt records the refresh, and incremental stays off by default."""
+    monkeypatch.setenv("TRW_HINT_SIDECAR_REFRESH_ENABLED", "true")
+    monkeypatch.setattr(pc, "_request_sidecar_rebuild", lambda *args: "not_due")
     _allow_fake_env(monkeypatch)
     monkeypatch.delenv(pc.HEAD_ENV_VAR, raising=False)
     monkeypatch.setattr(pc, "_sweep_trw_dir", lambda _root: repo / ".trw")
@@ -298,7 +300,6 @@ def test_post_commit_requests_the_rebuild_through_the_shared_helper(
         spawned.append(argv)
         return type("Child", (), {"pid": 7})()
 
-    monkeypatch.setenv("TRW_HINT_SIDECAR_AUTO_REFRESH_ENABLED", "true")
     monkeypatch.setenv("TRW_HINT_SIDECAR_REFRESH_ENABLED", "true" if refresh_enabled else "false")
     monkeypatch.setattr(
         _distill_spawn,

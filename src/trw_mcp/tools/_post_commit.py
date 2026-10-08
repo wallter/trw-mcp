@@ -55,7 +55,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
@@ -347,7 +347,9 @@ def _run_distill_steps(repo_root: Path, source_env: dict[str, str] | None, recei
     receipt.distill_incremental = spawn_incremental_run(repo_root, env, enabled=config.post_commit_distill_incremental)
 
 
-def _request_sidecar_rebuild(repo_root: Path, source_env: dict[str, str] | None) -> str:
+def _request_sidecar_rebuild(
+    repo_root: Path, source_env: dict[str, str] | None, trigger: Literal["post-commit", "session-start"] = "post-commit"
+) -> str:
     """FR01: look up HEAD's batch sidecar as the hint would, and request a detached rebuild when one is due."""
     from trw_mcp.models.config import get_config
     from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
@@ -366,7 +368,7 @@ def _request_sidecar_rebuild(repo_root: Path, source_env: dict[str, str] | None)
         ancestor_bound=config.hint_sidecar_max_commits_behind if config.hint_sidecar_ancestor_enabled else None,
     )
     env = dict(source_env if source_env is not None else os.environ)
-    return request_rebuild_if_due(lookup, cache_dir=None, trigger="post-commit", source_env=env).status
+    return request_rebuild_if_due(lookup, cache_dir=None, trigger=trigger, source_env=env).status
 
 
 def _run_pass(repo_root: Path, source_env: dict[str, str] | None, receipt: PostCommitReceipt) -> None:

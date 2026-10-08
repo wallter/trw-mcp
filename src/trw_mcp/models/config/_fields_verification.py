@@ -26,8 +26,7 @@ class _VerificationFields:
 
     # -- FR01: T2 hint sidecar generation + delivery measurement -----------
     #: Post-commit's sidecar work: the detached rebuild request (8.2 S2b) and
-    #: the risk-report refresh. Off, post-commit does neither; the pre-edit
-    #: hint's own rebuild request is gated by hint_sidecar_auto_refresh_enabled.
+    #: the risk-report refresh. Off, post-commit does neither.
     hint_sidecar_refresh_enabled: bool = True
 
     # -- T2 ancestor sidecar (8.2 slice S1): the pre-edit hint read path -----
@@ -50,12 +49,6 @@ class _VerificationFields:
     )
 
     # -- T2 sidecar rebuild request (8.2 slice S2b) ------------------------
-    #: Let the pre-edit hint and post-commit request a detached, niced
-    #: `trw-distill self-improve refresh-sidecars` build when no usable
-    #: sidecar exists or the nearest trails HEAD by the threshold below.
-    #: Off, nothing is ever spawned.
-    hint_sidecar_auto_refresh_enabled: bool = True
-
     #: An ancestor sidecar this many commits behind HEAD (or more) triggers a
     #: rebuild request while it still serves the hint. A value above
     #: hint_sidecar_max_commits_behind acts as that bound (no ancestor past it serves).

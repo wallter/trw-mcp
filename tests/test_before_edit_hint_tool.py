@@ -419,7 +419,8 @@ class TestEligibilityTelemetry:
         that did not happen.
         """
         emitted = self._capture(monkeypatch)
-        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.resolve_repo_root", lambda _root: None)
+        # _deadline: root discovery now draws on the lookup's one git budget, so it is handed the deadline.
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.resolve_repo_root", lambda _root, _deadline=None: None)
         r = compute_before_edit_hint(file_path="foo.py")
         assert r.distill_status == "no_repo_root"
         assert emitted == []
@@ -1344,6 +1345,8 @@ def test_multi_file_batch_emits_earlier_hints_when_a_later_file_raises(tmp_path:
         # a fake missing one raises AttributeError on the FIRST file and masks the
         # isolation this test exists to prove.
         "            self.distill_as_of = None\n"
+        # distill_action: read by the once-per-session sidecar remedy line the hook now prints.
+        "            self.distill_action = None\n"
         '            self.learnings = [_FakeLearning("a fake recorded learning")]\n'
         "\n"
         "    def _wrapped(*, file_path, **kwargs):\n"

@@ -31,7 +31,10 @@ _get_python_path() {
     #      `git rev-parse --git-common-dir` (one cheap call, only reached
     #      here; a git error or non-worktree checkout just falls through)
     #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    # A pointer counts only as an ABSOLUTE path to an executable regular file: a
+    # relative one would resolve against whatever directory the hook runs in.
     _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
     if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
         _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
         [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
@@ -45,6 +48,7 @@ _get_python_path() {
         if [ -n "$_trw_common" ]; then
             _trw_main=$(dirname "$_trw_common")
             _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
             [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
         fi
     fi
@@ -265,7 +269,7 @@ _is_safe_extension() {
         .md|.txt|.rst|.lock|.log) return 0 ;;
     esac
     # Check for .gitignore (no extension — basename check)
-    case "$(basename "$_fp")" in
+    case "${_fp##*/}" in
         .gitignore) return 0 ;;
     esac
     return 1
@@ -372,17 +376,25 @@ _trw_safe_read() {
 # ---------------------------------------------------------------------------
 
 _write_distill_snapshot_bg() {
+    # Usage: _write_distill_snapshot_bg <python> [<repo>]
     # Triggers a background CC-01 snapshot write via Python.
     # Fails silently — never blocks the hook caller.
-    _py=$(_get_python_path "${TRW_PROJECT_DIR:-$(pwd)}" 2>/dev/null) || return 0
-    _repo="${TRW_PROJECT_DIR:-$(pwd)}"
+    #
+    # The interpreter is the CALLER's, passed in: this function used to resolve
+    # its own from $TRW_PROJECT_DIR and store it in `_py` and `_repo`, the very
+    # names its caller uses, so after a T2 hint the hook emitted its JSON with
+    # the EDITED checkout's interpreter pointer (red team F2). Every name
+    # assigned here is private (_wds_*).
+    _wds_py="${1:-}"
+    [ -n "$_wds_py" ] || return 0
+    _wds_repo="${2:-${TRW_PROJECT_DIR:-$(pwd)}}"
     (
         # See pre-tool-distill-hint.sh for why these are not set: dropping
         # them saves a ~190ms from-source recompile of the same import chain
         # (measured 2026-09-27) with no lost protection for an installed
         # interpreter.
-        TRW_CC01_REPO_ROOT="$_repo" TRW_PROJECT_ROOT="$_repo" TRW_REPO_ROOT="$_repo" \
-        "$_py" -c '
+        TRW_CC01_REPO_ROOT="$_wds_repo" TRW_PROJECT_ROOT="$_wds_repo" TRW_REPO_ROOT="$_wds_repo" \
+        "$_wds_py" -c '
 # Single-quoted, repo root via the environment. $_repo is not model-controlled,
 # but git_hooks/trw-post-commit.sh states the invariant for every hook in this
 # tree: "a repo path containing quotes or newlines must not be able to inject

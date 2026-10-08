@@ -268,7 +268,8 @@ def test_a_hint_for_a_missing_file_inside_the_project_is_marked_not_found(projec
     assert typo["path_status"] == "not_found" and "does not exist" in typo["path_note"]
 
 
-def test_a_symbol_with_no_match_says_why_and_still_has_results(project: Path) -> None:
+def test_a_symbol_with_no_match_says_why_and_still_has_results(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
     (project / "pkg").mkdir()
     (project / "pkg" / "w.py").write_text("class Widget:\n    def render(self):\n        return 1\n", encoding="utf-8")
     update_code_index(project)
@@ -276,9 +277,33 @@ def test_a_symbol_with_no_match_says_why_and_still_has_results(project: Path) ->
     found = _call(mode="symbol", query="Widget", repo_root=str(project))
     method = _call(mode="symbol", query="render", repo_root=str(project))
 
-    assert found["results"] and "message" not in found
+    assert found["results"] and "message" not in found and "remediation" not in found
     assert method["status"] == "ok" and method["results"] == []
     assert "a method is inside its class" in method["message"]
+    assert method["remediation"] == "trw-distill query def render"
+
+
+def test_symbol_call_graph_query_gets_specific_remediation(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+    (project / "pkg.py").write_text("def Widget():\n    return 1\n", encoding="utf-8")
+    update_code_index(project)
+
+    result = _call(mode="symbol", query="callers Widget", repo_root=str(project))
+
+    assert result["remediation"] == "trw-distill query callers Widget"
+
+
+def test_symbol_mode_names_no_distill_command_when_distill_is_not_installed(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: False)
+    (project / "pkg.py").write_text("def Widget():\n    return 1\n", encoding="utf-8")
+    update_code_index(project)
+
+    missing = _call(mode="symbol", query="render", repo_root=str(project))
+    call_graph = _call(mode="symbol", query="callers Widget", repo_root=str(project))
+
+    assert "remediation" not in missing and "remediation" not in call_graph
 
 
 def test_the_docstring_names_the_index_step_and_the_method_limit() -> None:
@@ -393,3 +418,12 @@ def test_compact_response_hoists_a_repeated_action_once() -> None:
 
     assert result["distill_action"] == "run trw-distill sidecar build"
     assert all("distill_action" not in hint for hint in result["hints"])
+
+
+def test_found_symbol_named_callers_has_no_remediation(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+    (project / "pkg.py").write_text("def callers():\n    return 1\n", encoding="utf-8")
+    update_code_index(project)
+    result = _call(mode="symbol", query="callers", repo_root=str(project))
+    assert result["results"]
+    assert "remediation" not in result

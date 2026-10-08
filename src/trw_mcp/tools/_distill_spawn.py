@@ -3,7 +3,7 @@
 Responsibility: every trw-mcp call site that runs the proprietary
 ``trw-distill`` console script goes through here, so the child environment,
 the CLI lookup and the detached-spawn contract are decided once. It also
-decides when the pre-edit hint or post-commit REQUESTS a whole-repo
+decides when post-commit or session start REQUESTS a whole-repo
 ``trw-distill self-improve refresh-sidecars`` build (8.2 T2, design §3).
 
 Interface:
@@ -35,7 +35,7 @@ Invariants:
   rate limit, a timestamp file written atomically BEFORE the spawn so a failed
   spawn still waits out the interval.
 
-Knobs (``TRWConfig``): ``hint_sidecar_auto_refresh_enabled`` (the gate),
+Knobs (``TRWConfig``): ``hint_sidecar_refresh_enabled`` (the gate),
 ``hint_sidecar_rebuild_after_commits`` (the stale-ancestor trigger, capped at
 ``hint_sidecar_max_commits_behind``),
 ``hint_sidecar_rebuild_min_interval_minutes`` (the rate limit).
@@ -189,7 +189,7 @@ def spawn_detached(
 # -- The detached sidecar rebuild request (8.2 T2 S2b) ----------------------
 
 #: Named in every rebuild-request log event (operator rule: a flagged feature names its off-switch).
-AUTO_REFRESH_FLAG = "disable with hint_sidecar_auto_refresh_enabled: false in .trw/config.yaml"
+AUTO_REFRESH_FLAG = "disable with hint_sidecar_refresh_enabled: false in .trw/config.yaml"
 #: The rate-limit timestamp, in the cache dir the build writes to.
 REBUILD_STAMP_NAME = "rebuild-requested.json"
 #: ``flock``-ed by the detached build for its whole lifetime (the descriptor is handed to the child), so a second request
@@ -202,9 +202,12 @@ REBUILD_LOCK_REL = Path(".trw") / "distill" / REBUILD_LOCK_NAME
 _REBUILD_NICENESS = 10
 _ROLE_ENV = "TRW_SURFACE_ROLE"
 #: Statuses of the batch lookup that mean no usable sidecar exists at all.
-_NO_USABLE_SIDECAR = frozenset({"sidecar_missing", "sidecar_too_far_behind"})
+_NO_USABLE_SIDECAR = frozenset({"sidecar_missing", "sidecar_too_far_behind", "sidecar_malformed"})
 
-RebuildTrigger = Literal["hint", "post-commit"]
+RebuildTrigger = Literal["post-commit", "session-start"]
+#: What the trw-distill CLI is told: its ``--trigger`` choices do not include session-start yet,
+#: and an unknown choice would fail the build. The stamp and the log keep the real trigger.
+_CLI_TRIGGER: dict[str, str] = {"session-start": "post-commit"}
 RebuildStatus = Literal[
     "spawned",
     "not_due",
@@ -218,6 +221,8 @@ RebuildStatus = Literal[
     "spawn_failed",
     "already_running",
     "no_trw_dir",
+    "unsafe_cache",
+    "already_requested",
 ]
 
 
@@ -230,7 +235,7 @@ class SpawnPorts:
     clock: Callable[[], float] = time.time
 
 
-#: The production ports; a test replaces this to drive the hint's own call site.
+#: Production ports; tests replace these to exercise detached requests.
 DEFAULT_PORTS = SpawnPorts()
 
 
@@ -247,9 +252,9 @@ class RebuildRequest:
 def rebuild_reason(status: str, commits_behind: int | None, *, after_commits: int) -> str | None:
     """Why the batch-sidecar lookup that produced *status* calls for a rebuild, or None when it does not.
 
-    No usable sidecar (``sidecar_missing``, ``sidecar_too_far_behind``) is due;
+    No usable sidecar (missing, malformed, or too far behind) is due;
     so is a served ancestor at least *after_commits* behind HEAD. A fresh hint,
-    and every refusal a rebuild would not fix (tier, repo, malformed, git), is not.
+    and every refusal a rebuild would not fix (tier, repo, git), is not.
     """
     if status in _NO_USABLE_SIDECAR:
         return status
@@ -275,7 +280,7 @@ def request_rebuild_if_due(
     from trw_mcp.models.config import get_config
 
     config = get_config()
-    if not config.hint_sidecar_auto_refresh_enabled:
+    if not config.hint_sidecar_refresh_enabled:
         return _refused("disabled", trigger, "")
     behind = lookup.ancestor.commits_behind if lookup.ancestor is not None else None
     after = min(config.hint_sidecar_rebuild_after_commits, config.hint_sidecar_max_commits_behind)
@@ -291,6 +296,48 @@ def request_rebuild_if_due(
         interval_s=config.hint_sidecar_rebuild_min_interval_minutes * 60.0,
         source_env=os.environ if source_env is None else source_env,
         ports=ports or DEFAULT_PORTS,
+    )
+
+
+def request_session_refresh(repo_root: Path, *, interval_s: float, ports: SpawnPorts | None = None) -> None:
+    """Cheap session-start admission; all git, lock and build checks run detached.
+
+    The worker uses the same request path as post-commit, including its shared
+    throttle and per-HEAD deduplication. Never wait for a lookup or a build here.
+    Throttled by interval, not once per session: session start also runs after
+    every compaction, and a rebuild once HEAD has moved is wanted.
+    """
+    from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
+    from trw_mcp.state._surface_role import reviewer_role_active
+    from trw_mcp.tools._sidecar_substrate import check_tier_for_feature
+
+    if reviewer_role_active() or not (repo_root / ".trw").is_dir() or not distill_available():
+        return
+    if not check_tier_for_feature(repo_root, DISTILL_SIDECAR_FEATURE).allowed:
+        return  # nothing to build for this install: no interpreter is forked to find that out
+    ports = ports or DEFAULT_PORTS
+    cache = _shared_cache_dir(repo_root)
+    if any(p.is_symlink() for p in (cache, *cache.parents)):
+        return
+    checked = cache / "session-check"  # this admission's own stamp: the worker stamps only when it builds
+    for last in (_read_stamp(cache), _read_stamp(checked)):
+        if last is not None and 0 <= ports.clock() - last < interval_s:
+            return
+    if not _write_stamp(checked, ports.clock(), "session-start"):
+        return  # nothing would throttle the next start: an unwritable cache forks no worker at all
+    env = sanitized_env(os.environ)
+    env["TRW_PROJECT_DIR"] = str(repo_root)
+    spawn_detached(
+        [
+            sys.executable,
+            "-c",
+            "import os; from pathlib import Path; "
+            "from trw_mcp.tools._post_commit import _request_sidecar_rebuild; "
+            "_request_sidecar_rebuild(Path(os.environ['TRW_PROJECT_DIR']), dict(os.environ), 'session-start')",
+        ],
+        cwd=repo_root,
+        env=env,
+        popen=ports.popen,
     )
 
 
@@ -322,11 +369,16 @@ def _request(
         return _refused("reviewer_role", trigger, reason)
     if not check_tier_for_feature(repo_root, DISTILL_SIDECAR_FEATURE).allowed:
         return _refused("no_entitlement", trigger, reason)
+    from trw_mcp.tools._sidecar_substrate import cache_is_safe, resolve_git_sha
+
+    if not cache_is_safe(cache_dir, repo_root):
+        return _refused("unsafe_cache", trigger, reason)
+
+    head = resolve_git_sha(repo_root)
+    stamp_dir = cache_dir / "refresh-requests" / head if head else cache_dir
     now = ports.clock()
-    last = _read_stamp(cache_dir)
-    if last is not None and 0.0 <= now - last < interval_s:
-        return _refused("min_interval", trigger, reason, seconds_since_last=round(now - last, 1))
     env = sanitized_env(source_env)
+    env["TRW_PROJECT_DIR"] = str(repo_root)
     if source_env.get(_ROLE_ENV):
         env[_ROLE_ENV] = source_env[_ROLE_ENV]
     cli = resolve_distill_cli(env, interpreter_bin=True, which=ports.which)
@@ -340,15 +392,32 @@ def _request(
         return _refused("no_trw_dir", trigger, reason)
     if lock_fd is None:
         return _refused("already_running", trigger, reason)
-    if not _write_stamp(cache_dir, now, trigger):
+    # Check both markers while holding the build lock: concurrent requesters
+    # cannot race a stale read. A busy lock records no pending work.
+    last = _read_stamp(cache_dir)
+    if last is not None and 0.0 <= now - last < interval_s:
         _close(lock_fd)
-        gone = not (
-            repo_root / ".trw"
-        ).is_dir()  # the stamp's directory is below .trw: a vanished .trw is not "unwritable"
+        return _refused("min_interval", trigger, reason)
+    if head and _read_stamp(stamp_dir) is not None:
+        _close(lock_fd)
+        return _refused("already_requested", trigger, reason)
+    if not _write_stamp(cache_dir, now, trigger) or (head and not _write_stamp(stamp_dir, now, trigger)):
+        _close(lock_fd)
+        gone = not (repo_root / ".trw").is_dir()
         return _refused("no_trw_dir" if gone else "stamp_unwritable", trigger, reason, cache_dir=str(cache_dir))
+    for marker in (cache_dir / "refresh-requests").glob("*/rebuild-requested.json"):
+        try:
+            if (
+                not marker.parent.is_symlink()
+                and (_read_stamp(marker.parent) or marker.stat().st_mtime) < now - 7 * 86400
+            ):
+                marker.unlink()
+                marker.parent.rmdir()
+        except OSError as exc:
+            logger.debug("sidecar_request_prune_failed", error=str(exc))
     argv = (
         *(nice, "-n", str(_REBUILD_NICENESS), cli, "self-improve", "refresh-sidecars"),
-        *("--repo", str(repo_root), "--cache-dir", str(cache_dir), "--trigger", trigger),
+        *("--repo", str(repo_root), "--cache-dir", str(cache_dir), "--trigger", _CLI_TRIGGER.get(trigger, trigger)),
     )
     try:
         pid = spawn_detached(

@@ -41,15 +41,17 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, Protocol
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from trw_mcp.tools._sidecar_substrate import ANCESTOR_ARTIFACT as _BATCH_ARTIFACT
+from trw_mcp.tools._sidecar_envelope import ANCESTOR_ARTIFACT as _BATCH_ARTIFACT
+from trw_mcp.tools._sidecar_paths import shared_cache_dir as shared_cache_dir
 
 _logger = structlog.get_logger(__name__)
 
@@ -59,18 +61,19 @@ FLAG_DISABLE = "disable with hint_sidecar_ancestor_enabled: false in .trw/config
 
 _SHA_RE = re.compile(r"[0-9a-fA-F]{7,64}")
 _BATCH_NAME_RE = re.compile(rf"{_BATCH_ARTIFACT}-([0-9a-fA-F]{{7,64}})\.json")
-_CACHE_SCHEMA: Literal["trw-sidecar-ancestry/v1"] = "trw-sidecar-ancestry/v1"
+_CACHE_SCHEMA: Literal["trw-sidecar-ancestry/v2"] = "trw-sidecar-ancestry/v2"
 
-#: Sidecar names examined per lookup. The builder keeps the newest two maps
-#: plus any leftovers from failed builds; 16 covers that with room, and caps
-#: the git work on a cold cache at 1 subprocess per candidate plus 1 diff.
-_MAX_CANDIDATES = 16
+#: Room for a dozen active worktrees with several recent commits each.
+#: The shared deadline, rather than the candidate count, bounds git latency.
+_MAX_CANDIDATES = 64
 #: ``ancestry-<head>.json`` files kept; older ones are pruned on write. Several
-#: worktrees at different HEADs share one cache dir, so this is more than one.
-_MAX_CACHE_FILES = 8
-#: Per git subprocess. Below the hook's 2.4 s in-process deadline, so a hung
-#: git fails this read as ``sidecar_diff_failed`` instead of killing the hook.
-_GIT_TIMEOUT_S = 2.0
+#: worktrees at different HEADs share one cache dir: retain several HEADs each.
+_MAX_CACHE_FILES = 64
+#: Per git subprocess: whatever is left of the shared lookup budget, never a fixed slice.
+_GIT_TIMEOUT_S = 1.0
+_LOOKUP_BUDGET_S = 1.0
+#: Kept back from the candidate walk so the chosen candidate's diff can still run.
+_DIFF_RESERVE_S = 0.2
 
 #: Git statuses under which a path named in a sidecar no longer exists there.
 _GONE_STATUSES = frozenset({"D", "R"})
@@ -82,6 +85,10 @@ _PARTNER_FIELDS = ("importers", "inferred_tests", "doc_references", "co_change_n
 
 class GitReadError(RuntimeError):
     """A git read could not answer; the message names the command and why."""
+
+
+class CommitUnavailableError(GitReadError):
+    """The sidecar's commit is not in this object store: no proven ancestor, and never cached as one."""
 
 
 def valid_sha(sha: str) -> str:
@@ -115,17 +122,21 @@ class SubprocessGitReader:
 
     repo_root: Path
     timeout_s: float = _GIT_TIMEOUT_S
+    deadline: float | None = None
 
     def _run(
         self, args: tuple[str, ...], ok_codes: frozenset[int] = frozenset({0})
     ) -> subprocess.CompletedProcess[bytes]:
         label = f"git {' '.join(args[:2])}"
+        remaining = self.timeout_s if self.deadline is None else min(self.timeout_s, self.deadline - time.monotonic())
+        if remaining <= 0:
+            raise GitReadError("ancestor lookup time budget exhausted")
         try:
             proc = subprocess.run(  # noqa: S603 - fixed argv, validated shas, no shell
                 ["git", *args],  # noqa: S607 - git on PATH, as every other trw-mcp git read
                 cwd=self.repo_root,
                 capture_output=True,
-                timeout=self.timeout_s,
+                timeout=remaining,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as err:
@@ -141,13 +152,19 @@ class SubprocessGitReader:
         ``L`` counts commits reachable from *sha* but not *head*, so ``L == 0``
         exactly when *sha* is an ancestor of *head* (the ``merge-base
         --is-ancestor`` question), and ``R`` is then the distance. One spawn
-        answers both. Exit 128 (a sha this clone lacks, e.g. a cache copied
-        from elsewhere) is "not proven", never an ancestor.
+        answers both. Every failed command, including exit 128, is retryable;
+        shallow fetches and transient failures must not become cached negatives.
+        Exit 128 is told apart by one ``cat-file -e``: a commit this object store
+        does not hold (pruned, or beyond a shallow boundary) is "no proven
+        ancestor" for the caller, any other failure is a failed read.
         """
         args = ("rev-list", "--left-right", "--count", "--end-of-options", f"{valid_sha(sha)}...{valid_sha(head)}")
         proc = self._run(args, frozenset({0, 128}))
         if proc.returncode == 128:
-            return None
+            stderr = proc.stderr.decode("utf-8", "replace").strip()[:200]
+            if self._run(("cat-file", "-e", "--end-of-options", sha), frozenset({0, 1})).returncode == 1:
+                raise CommitUnavailableError(f"commit {sha[:12]} is not in this repository's object store")
+            raise GitReadError(f"`git rev-list --left-right` exited 128: {stderr or 'no stderr'}")
         counts = proc.stdout.decode("ascii", "replace").split()
         if len(counts) != 2 or not all(count.isdigit() for count in counts):
             raise GitReadError(f"`git rev-list --left-right --count` printed {counts!r:.60}, not two counts")
@@ -221,7 +238,7 @@ class _CacheEntry(BaseModel):
 class _AncestryCache(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    schema_version: Literal["trw-sidecar-ancestry/v1"]
+    schema_version: Literal["trw-sidecar-ancestry/v2"]
     head: str
     entries: dict[str, _CacheEntry]
 
@@ -249,29 +266,6 @@ class AncestryOutcome:
     ancestor: AncestorSidecar | None = None
     nearest_commits_behind: int | None = None
     reason: str = ""
-
-
-def shared_cache_dir(repo_root: Path, cache_rel: str) -> Path:
-    """*cache_rel* under the main checkout when *repo_root* is a linked worktree without its own.
-
-    Resolved from the ``.git`` file and ``commondir`` alone (no subprocess), so
-    every worktree of a repository reads the one cache the main checkout owns.
-    Falls back to ``repo_root / cache_rel`` whenever that layout does not hold.
-    """
-    local = repo_root / cache_rel
-    dotgit = repo_root / ".git"
-    if local.is_dir() or not dotgit.is_file():
-        return local
-    try:
-        text = dotgit.read_text(encoding="utf-8").strip()
-        if not text.startswith("gitdir:"):
-            return local
-        gitdir = Path(text.removeprefix("gitdir:").strip())
-        gitdir = gitdir if gitdir.is_absolute() else repo_root / gitdir
-        common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    except OSError:
-        return local
-    return common.parent / cache_rel if common.name == ".git" else local
 
 
 def _index(cache_dir: Path) -> list[tuple[str, Path]]:
@@ -347,9 +341,12 @@ def _write_cache(cache_dir: Path, head: str, entries: dict[str, _CacheEntry]) ->
             disable=FLAG_DISABLE,
         )
         return
-    caches = sorted(cache_dir.glob("ancestry-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in caches[_MAX_CACHE_FILES:]:
-        stale.unlink(missing_ok=True)
+    try:
+        caches = sorted(cache_dir.glob("ancestry-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for stale in caches[_MAX_CACHE_FILES:]:
+            stale.unlink(missing_ok=True)
+    except OSError as err:
+        _logger.debug("sidecar_ancestry_prune_failed", error=str(err))
 
 
 def find_ancestor_sidecar(
@@ -359,6 +356,8 @@ def find_ancestor_sidecar(
     git: GitReader,
     max_commits_behind: int,
     persist: bool = True,
+    excluded: frozenset[Path] = frozenset(),
+    deadline: float | None = None,
 ) -> AncestryOutcome:
     """Pick the proven ancestor batch sidecar nearest to *head*, within *max_commits_behind*.
 
@@ -368,37 +367,52 @@ def find_ancestor_sidecar(
     skipped, never served. ``persist=False`` (the reviewer role, which writes
     nothing) uses a valid cache but never writes or prunes one.
     """
-    candidates = _index(cache_dir)
+    deadline = time.monotonic() + _LOOKUP_BUDGET_S if deadline is None else deadline
+    if isinstance(git, SubprocessGitReader):
+        git = replace(git, deadline=deadline)
+    candidates = [(sha, path) for sha, path in _index(cache_dir) if path not in excluded]
     if not candidates:
         return AncestryOutcome(status="no_candidates")
     valid_sha(head)
     entries = _read_cache(cache_dir, head)
     dirty = False
     failures: list[str] = []
+    unavailable = 0
+    timed_out = False
     best: tuple[int, str, Path] | None = None
     nearest: int | None = None
     for sha, path in candidates:
         entry = entries.get(sha)
         if entry is None:
+            if time.monotonic() >= deadline - _DIFF_RESERVE_S:
+                timed_out = True  # the unchecked rest waits for the next edit; the best found so far answers
+                continue
             try:
                 distance = git.ancestor_distance(sha, head)
                 entry = _CacheEntry(is_ancestor=distance is not None, commits_behind=distance)
+            except CommitUnavailableError:
+                unavailable += 1  # not an ancestor today; asked again next time, never cached
+                continue
             except GitReadError as err:
                 failures.append(str(err))
                 continue
             entries[sha] = entry
             dirty = True
+            if persist:
+                _write_cache(cache_dir, head, entries)
         if not entry.is_ancestor or entry.commits_behind is None:
             continue
         nearest = entry.commits_behind if nearest is None else min(nearest, entry.commits_behind)
         if entry.commits_behind <= max_commits_behind and (best is None or entry.commits_behind < best[0]):
             best = (entry.commits_behind, sha, path)
+    if timed_out and best is None:
+        return AncestryOutcome(status="git_failed", reason="ancestor lookup time budget exhausted")
     outcome, diffed = _finish(head, entries, best, git=git)
     if persist and (dirty or diffed):
         _write_cache(cache_dir, head, entries)
     if outcome.status != "too_far_behind":
         return outcome
-    if len(failures) == len(candidates):
+    if failures and len(failures) + unavailable == len(candidates):
         return AncestryOutcome(status="git_failed", reason=failures[0])
     return AncestryOutcome(status="too_far_behind", nearest_commits_behind=nearest)
 
@@ -485,6 +499,7 @@ __all__ = [
     "FLAG_DISABLE",
     "AncestorSidecar",
     "AncestryOutcome",
+    "CommitUnavailableError",
     "GitReadError",
     "GitReader",
     "SubprocessGitReader",

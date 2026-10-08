@@ -1,4 +1,4 @@
-"""The detached sidecar rebuild request (``hint_sidecar_auto_refresh_enabled``, 8.2 T2 S2b).
+"""The detached sidecar rebuild request (``hint_sidecar_refresh_enabled``, 8.2 T2 S2b).
 
 Driven through the production call site, ``compute_before_edit_hint``, with
 fakes at the three ports (process, PATH, clock) via ``_distill_spawn.DEFAULT_PORTS``
@@ -23,7 +23,8 @@ import pytest
 from pydantic import ValidationError
 from structlog.testing import capture_logs
 
-from tests.test_sidecar_ancestry import _NEAR, FakeGit, _batch, _git, _hint, _repo, emitted  # noqa: F401  (fixture)
+from tests.test_sidecar_ancestry import _NEAR, FakeGit, _batch, _commit, _git, _repo, emitted  # noqa: F401  (fixture)
+from tests.test_sidecar_ancestry import _hint as _read_hint
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools import _distill_spawn
 from trw_mcp.tools._distill_spawn import (
@@ -37,7 +38,7 @@ from trw_mcp.tools._distill_spawn import (
 from trw_mcp.tools._sidecar_ancestry import shared_cache_dir
 from trw_mcp.tools._sidecar_substrate import DEFAULT_CACHE_DIR_REL, CurrentSidecarResult
 
-_FLAG_ENV = "TRW_HINT_SIDECAR_AUTO_REFRESH_ENABLED"
+_FLAG_ENV = "TRW_HINT_SIDECAR_REFRESH_ENABLED"
 _CLI = "/fake/bin/trw-distill"
 _NICE = "/usr/bin/nice"
 _T0 = 1_800_000_000.0
@@ -103,7 +104,28 @@ def ports(monkeypatch: pytest.MonkeyPatch) -> Ports:
 
 
 def _stamp(repo: Path) -> Path:
-    return repo / ".trw" / "distill" / "map-cache" / REBUILD_STAMP_NAME
+    return repo / DEFAULT_CACHE_DIR_REL / REBUILD_STAMP_NAME
+
+
+def _hint(repo: Path, git: FakeGit) -> Any:
+    """Read the hint, then explicitly exercise the post-commit request path."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
+    from trw_mcp.tools._sidecar_substrate import resolve_current_sidecar
+
+    result = _read_hint(repo, git)
+    config = get_config()
+    lookup = resolve_current_sidecar(
+        repo_root=str(repo),
+        cache_dir=None,
+        feature=DISTILL_SIDECAR_FEATURE,
+        artifact_name="before-edit-batch",
+        cli_remediation=None,
+        ancestor_bound=config.hint_sidecar_max_commits_behind,
+        git_reader=git,
+    )
+    request_rebuild_if_due(lookup, cache_dir=None, trigger="post-commit")
+    return result
 
 
 # -- The trigger, through compute_before_edit_hint ------------------------------------
@@ -150,7 +172,8 @@ def test_the_trigger_decides_from_the_lookup(
     # action for. The others either already carry a hint (no action to swap)
     # or never spawned (action stays the manual command).
     if setup in ("missing", "too_far"):
-        assert result.distill_action == "A sidecar rebuild was requested; T2 hints follow once it finishes."
+        assert result.distill_action is not None
+        assert "rebuild was requested" not in result.distill_action
     elif setup in ("behind_threshold", "below_threshold"):
         assert result.distill_action is None  # a hint was served; nothing to remediate
 
@@ -166,7 +189,7 @@ def test_the_spawn_is_detached_niced_and_names_the_shared_cache(
     cache = repo / ".trw" / "distill" / "map-cache"
     assert argv == [
         _NICE, "-n", "10", _CLI, "self-improve", "refresh-sidecars",
-        "--repo", str(repo), "--cache-dir", str(cache), "--trigger", "hint",
+        "--repo", str(repo), "--cache-dir", str(cache), "--trigger", "post-commit",
     ]  # fmt: skip
     assert kwargs["start_new_session"] is True
     assert (kwargs["stdin"], kwargs["stdout"], kwargs["stderr"]) == (subprocess.DEVNULL,) * 3
@@ -209,12 +232,13 @@ def test_a_hand_built_worktree_layout_resolves_through_commondir(tmp_path: Path,
     (linked / ".trw").mkdir()
     (linked / ".trw" / "entitlements.yaml").write_text((main / ".trw" / "entitlements.yaml").read_text())
 
-    outcome = request_rebuild_if_due(_missing(linked), cache_dir=None, trigger="hint")
+    outcome = request_rebuild_if_due(_missing(linked), cache_dir=None, trigger="post-commit")
 
     assert outcome.status == "spawned"
     assert _cache_dir_arg(ports) == shared_cache_dir(linked, DEFAULT_CACHE_DIR_REL)
     assert _cache_dir_arg(ports).resolve() == (main / DEFAULT_CACHE_DIR_REL).resolve()
-    assert _stamp(main).is_file()
+    stamp = json.loads((main / DEFAULT_CACHE_DIR_REL / REBUILD_STAMP_NAME).read_text())
+    assert stamp["trigger"] == "post-commit"
 
 
 def test_the_child_env_carries_the_surface_role_and_nothing_unlisted(
@@ -223,7 +247,7 @@ def test_the_child_env_carries_the_surface_role_and_nothing_unlisted(
     repo, _head = _repo(tmp_path)
     source = {"PATH": "/usr/bin", "TRW_SURFACE_ROLE": "agent", "AWS_SECRET_ACCESS_KEY": "s3cr3t"}
 
-    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint", source_env=source)
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit", source_env=source)
 
     assert outcome.status == "spawned"
     env = ports.popen.calls[0][1]["env"]
@@ -235,7 +259,7 @@ def test_the_child_env_carries_the_surface_role_and_nothing_unlisted(
 def test_the_cli_is_also_found_in_the_interpreters_own_bin(tmp_path: Path, ports: Ports) -> None:
     repo, _head = _repo(tmp_path)
 
-    request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint", source_env={"PATH": "/usr/bin"})
+    request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit", source_env={"PATH": "/usr/bin"})
 
     searched = ports.which.paths["trw-distill"]
     assert searched is not None
@@ -253,6 +277,7 @@ def test_the_hint_is_identical_whether_or_not_a_spawn_happened(
     assert len(ports.popen.calls) == 1
     ports.popen.fail = True
     ports.clock.now += 3600
+    _commit(repo, "later.py", "x=1\n")
     failed = _hint(repo, git)
     monkeypatch.setenv(_FLAG_ENV, "false")
     from trw_mcp.models.config import reload_config
@@ -295,14 +320,14 @@ def test_each_refusal_spawns_nothing(
         del ports.which.found["nice"]
 
     with capture_logs() as logs:
-        outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+        outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
 
     assert outcome.status == refusal
     assert ports.popen.calls == []
     events = [log for log in logs if log["event"] == "sidecar_rebuild_request"]
     assert [event["outcome"] for event in events] == [refusal]
     assert events[0]["disable"] == AUTO_REFRESH_FLAG
-    assert "hint_sidecar_auto_refresh_enabled" in AUTO_REFRESH_FLAG
+    assert "hint_sidecar_refresh_enabled" in AUTO_REFRESH_FLAG
     if refusal != "min_interval":
         assert not _stamp(repo).exists()
 
@@ -310,10 +335,11 @@ def test_each_refusal_spawns_nothing(
 def test_the_interval_elapses_and_the_stamp_is_rewritten_atomically(tmp_path: Path, ports: Ports) -> None:
     repo, _head = _repo(tmp_path)
 
-    first = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+    first = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
     ports.clock.now += 14 * 60
-    inside = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+    inside = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
     ports.clock.now += 60
+    _commit(repo, "later.py", "x=1\n")
     after = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
 
     assert (first.status, inside.status, after.status) == ("spawned", "min_interval", "spawned")
@@ -328,7 +354,7 @@ def test_a_corrupt_stamp_counts_as_elapsed(tmp_path: Path, ports: Ports, body: s
     _stamp(repo).parent.mkdir(parents=True)
     _stamp(repo).write_text(body)
 
-    assert request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint").status == "spawned"
+    assert request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit").status == "spawned"
 
 
 def test_an_oversized_stamp_is_read_bounded_and_counts_as_elapsed(tmp_path: Path, ports: Ports) -> None:
@@ -337,7 +363,7 @@ def test_an_oversized_stamp_is_read_bounded_and_counts_as_elapsed(tmp_path: Path
     _stamp(repo).parent.mkdir(parents=True)
     _stamp(repo).write_text(json.dumps({"requested_at_unix": _T0, "pad": "x" * 100_000}))
 
-    assert request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint").status == "spawned"
+    assert request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit").status == "spawned"
 
 
 def test_a_failed_spawn_still_waits_out_the_interval(tmp_path: Path, ports: Ports) -> None:
@@ -346,8 +372,8 @@ def test_a_failed_spawn_still_waits_out_the_interval(tmp_path: Path, ports: Port
     ports.popen.fail = True
 
     with capture_logs() as logs:
-        failed = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
-    again = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+        failed = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
+    again = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
 
     assert (failed.status, again.status) == ("spawn_failed", "min_interval")
     assert any(log.get("outcome") == "spawn_failed" and log["disable"] == AUTO_REFRESH_FLAG for log in logs)
@@ -358,9 +384,9 @@ def test_an_unwritable_cache_dir_spawns_nothing(tmp_path: Path, ports: Ports) ->
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("")
 
-    outcome = request_rebuild_if_due(_missing(repo), cache_dir=blocker / "cache", trigger="hint")
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=blocker / "cache", trigger="post-commit")
 
-    assert outcome.status == "stamp_unwritable"
+    assert outcome.status == "unsafe_cache"
     assert ports.popen.calls == []
 
 
@@ -373,7 +399,7 @@ def test_an_unwritable_cache_dir_spawns_nothing(tmp_path: Path, ports: Ports) ->
         ("hint_available_stale", 149, None),
         ("hint_available", None, None),
         ("tier_required", None, None),
-        ("sidecar_malformed", None, None),
+        ("sidecar_malformed", None, "sidecar_malformed"),
         ("sidecar_diff_failed", None, None),
     ],
 )
@@ -398,7 +424,7 @@ def test_spawn_detached_returns_without_waiting(tmp_path: Path) -> None:
 def test_the_rebuild_knobs_are_typed_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(_FLAG_ENV, raising=False)
     config = TRWConfig()
-    assert config.hint_sidecar_auto_refresh_enabled is True
+    assert config.hint_sidecar_refresh_enabled is True
     assert (config.hint_sidecar_rebuild_after_commits, config.hint_sidecar_rebuild_min_interval_minutes) == (150, 15)
     for bad in (
         {"hint_sidecar_rebuild_after_commits": 0},
@@ -436,20 +462,6 @@ def test_the_spawn_module_never_imports_trw_distill() -> None:
     assert not any(name.split(".")[0] == "trw_distill" for name in imported)
 
 
-@pytest.mark.parametrize(("child_env", "expected"), [({"PATH": os.defpath}, "false"), ({_FLAG_ENV: "true"}, "true")])
-def test_the_suite_guard_reaches_a_child_started_with_a_literal_env(child_env: dict[str, str], expected: str) -> None:
-    """conftest's guard: a hook subprocess with an explicit env still runs with the rebuild off, unless it opts in."""
-    out = subprocess.run(
-        [sys.executable, "-c", f"import os; print(os.environ.get({_FLAG_ENV!r}))"],
-        env=child_env,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-
-    assert out == expected
-
-
 # -- UNINSTALL-DISTILL-RACE: the detached build holds a lock uninstall can wait on -----------
 
 
@@ -473,7 +485,7 @@ def test_the_spawned_build_holds_the_rebuild_lock_for_its_lifetime(
         _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=child_keeps_the_lock, which=ports.which, clock=ports.clock)
     )
 
-    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
 
     assert outcome.status == "spawned" and len(held) == 1
     probe = os.open(repo / REBUILD_LOCK_REL, os.O_RDWR)
@@ -497,7 +509,7 @@ def test_a_second_request_while_a_build_is_alive_is_refused_not_stacked(tmp_path
     live_build = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
     fcntl.flock(live_build, fcntl.LOCK_EX)
     try:
-        outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+        outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
     finally:
         os.close(live_build)
 
@@ -524,7 +536,7 @@ def test_trw_removed_between_the_entry_check_and_the_lock_stops_with_no_trw_dir(
         SpawnPorts(popen=ports.popen, which=ports.which, clock=_ClockThatUninstalls()),
     )
 
-    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+    outcome = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
 
     assert outcome.status == "no_trw_dir"
     assert ports.popen.calls == []
@@ -568,7 +580,7 @@ def test_a_linked_worktree_build_takes_the_lock_beside_the_shared_cache_it_write
         _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=_keep_child_lock(held), which=ports.which, clock=ports.clock)
     )
 
-    outcome = request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="hint")
+    outcome = request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="post-commit")
 
     assert outcome.status == "spawned" and len(held) == 1
     assert not (worktree / REBUILD_LOCK_REL).exists(), "the worktree's own lock is not the one that protects the cache"
@@ -591,10 +603,10 @@ def test_one_build_at_a_time_across_every_worktree_that_shares_the_cache(
     monkeypatch.setattr(
         _distill_spawn, "DEFAULT_PORTS", SpawnPorts(popen=_keep_child_lock(held), which=ports.which, clock=ports.clock)
     )
-    assert request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="hint").status == "spawned"
+    assert request_rebuild_if_due(_missing(worktree), cache_dir=None, trigger="post-commit").status == "spawned"
     try:
         (_stamp(repo)).unlink(missing_ok=True)  # the rate limit is not what is under test
-        again = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="hint")
+        again = request_rebuild_if_due(_missing(repo), cache_dir=None, trigger="post-commit")
         assert again.status == "already_running", "two builds were stacked on one shared cache"
     finally:
         for fd in held:

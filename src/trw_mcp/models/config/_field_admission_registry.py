@@ -149,16 +149,15 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
         owner="PRD-CORE-231-FR01",
         consumer=(
             "trw_mcp.tools._post_commit._request_sidecar_rebuild and _run_distill_steps "
-            "(data/git_hooks/trw-post-commit.sh)"
+            "(data/git_hooks/trw-post-commit.sh); tools._distill_spawn.request_session_refresh (session start)"
         ),
         default_rationale=(
             "Defaults True so post-commit keeps the T2 tier supplied: it requests the detached sidecar "
-            "rebuild (8.2 S2b) and refreshes the risk report. False is the post-commit rollback path; the "
-            "pre-edit hint's own request stays under hint_sidecar_auto_refresh_enabled."
+            "rebuild (8.2 S2b) and refreshes the risk report. False is the post-commit rollback path."
         ),
         interaction_analysis=(
             "Gates only the post-commit worker's sidecar steps. The rebuild request it gates still passes "
-            "every hint_sidecar_auto_refresh_enabled check (flag, reviewer role, entitlement, min interval). "
+            "every rebuild check (reviewer role, entitlement, min interval). "
             "The per-commit per-file refresh and its hint_sidecar_refresh_file_cap were retired in 8.2 S2b."
         ),
         deprecation_plan="Retain while post-commit carries sidecar work.",

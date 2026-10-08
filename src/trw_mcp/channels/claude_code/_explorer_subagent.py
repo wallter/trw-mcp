@@ -6,7 +6,7 @@ Installs ``.claude/agents/trw-distill-explorer.md`` at ``init-project``
 and ``update-project`` time for the Claude Code client.
 
 The subagent is:
-- Read-only: no Write, Edit, Bash, trw_learn, trw_checkpoint, trw_deliver, Agent
+- Read-only by agent policy; the harness does not restrict Bash to read-only commands
 - Restricted to risk-analysis MCP tools
 - haiku model with 20-turn limit and 600-token output cap
 - Context-isolated: only invoked for codebase risk analysis delegation
@@ -72,8 +72,8 @@ tools:
   - Grep
   - mcp__trw__trw_code
   - mcp__trw__trw_recall
-disallowedTools:
   - Bash
+disallowedTools:
   - Write
   - Edit
   - MultiEdit
@@ -101,28 +101,26 @@ to run) for how to get the data, and never call it a failure.
 Invoke this subagent when asked for:
 - **Per-file risk hints** — use `trw_code(mode="hint", files=...)`
 - **Hotspot ranking** — top-N files by risk score (full report: an operator
-  runs `trw-mcp code risk` from a shell; this read-only, no-shell subagent
-  cannot run it itself)
+  runs `trw-mcp code risk`; this agent must not run that command)
 - **Convention summaries** — use `trw_recall` for code patterns
 
-## trw-distill CLI (operator-run; this subagent has no Bash tool)
+## trw-distill CLI
 
-This subagent cannot run these itself — name the command for the operator
-to run from a shell. All support `--json` for machine-readable output.
+You may run only read-only trw-distill query, rca, status and doctor commands; never run commands that write (run, maintain --apply, refresh-sidecars) or any other program.
+This read-only limit is a rule you must follow, not enforced by the harness.
+The query and rca commands support `--json` for machine-readable output.
 
-- `trw-distill query callers|uses|def <symbol>`, `trw-distill query callees <target>`,
-  `trw-distill query deps|importers|tests <path>` — codebase relationships, e.g.
-  `trw-distill query deps app/billing.py`.
-- `trw-distill rca trace <traceback-file>` (`-` reads a piped traceback),
-  `trw-distill rca raises <exception-name>`, `trw-distill rca history <path>` — root-cause
-  helpers, e.g. `trw-distill rca trace crash.txt`.
-- **A failing test**: suggest `trw-distill query deps <path>` on the test file FIRST — it names what the
-  test touches before `rca trace` ranks where a saved traceback points.
+- Who calls X: `trw-distill query callers X`; what X calls: `query callees X`; where X is defined: `query def X`.
+- What imports PATH: `trw-distill query importers PATH`; its tests: `query tests PATH`; what it depends on:
+  `query deps PATH`.
+- Why a test failed: `trw-distill rca trace <traceback-file>` (`-` reads a pipe); `rca raises <exception>`;
+  `rca history <path>`. For a failing test, run `trw-distill query deps <test file>` FIRST.
+
+Exit 3 means the map cache is missing; report that to the lead instead of building it.
 
 ## Rules
 
 - Do NOT suggest edits.
-- Do NOT run bash commands.
 - Do NOT write or modify any files.
 - Do NOT call `trw_learn`, `trw_checkpoint`, `trw_deliver`, or `trw_init`.
 - Remain focused on one scope per invocation.
@@ -135,7 +133,7 @@ to run from a shell. All support `--json` for machine-readable output.
 1. Read the user's risk-analysis request.
 2. Call the most specific MCP tool (e.g., `trw_code(mode="hint", files=[...])`
    for a named set of files). A repo-wide ranking needs `trw-mcp code risk`, an
-   operator CLI command this subagent has no shell access to run.
+   operator CLI command outside this agent's permitted commands.
 3. If the sidecar is missing, surface the action from `distill_action` field.
 4. Format the response using the return format below.
 5. Never expand scope beyond what was requested.

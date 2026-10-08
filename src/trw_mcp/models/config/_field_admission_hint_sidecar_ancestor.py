@@ -20,10 +20,7 @@ _CONSUMER = (
     "trw_mcp.tools._sidecar_ancestry.find_ancestor_sidecar (pre-edit hint, trw_code hint mode)"
 )
 _TESTS = "trw-mcp/tests/test_sidecar_ancestry.py"
-_REBUILD_CONSUMER = (
-    "trw_mcp.tools._distill_spawn.request_rebuild_if_due "
-    "(trw_mcp.tools._before_edit_hint_core.compute_before_edit_hint, trw_mcp.tools._post_commit)"
-)
+_REBUILD_CONSUMER = "trw_mcp.tools._distill_spawn.request_rebuild_if_due (trw_mcp.tools._post_commit)"
 _REBUILD_TESTS = "trw-mcp/tests/test_sidecar_rebuild_request.py"
 
 HINT_SIDECAR_ANCESTOR_ADMISSIONS: dict[str, ConfigAdmission] = {
@@ -70,30 +67,6 @@ HINT_SIDECAR_ANCESTOR_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer=f"{_TESTS}::test_ancestor_past_the_bound_is_refused",
         budget_decision="admitted",
     ),
-    "hint_sidecar_auto_refresh_enabled": ConfigAdmission(
-        field_name="hint_sidecar_auto_refresh_enabled",
-        owner=_OWNER,
-        consumer=_REBUILD_CONSUMER,
-        default_rationale=(
-            "Defaults True (operator flags-on direction, 8.2): the post-commit refresh had a 60s timeout "
-            "against a build of several minutes and never landed a sidecar, so without an on-demand build the "
-            "ancestor read path has nothing recent to read. On, the hint (and post-commit) request a detached, "
-            "niced refresh-sidecars build and never wait for it. False spawns nothing."
-        ),
-        interaction_analysis=(
-            "Master gate read before hint_sidecar_rebuild_after_commits and "
-            "hint_sidecar_rebuild_min_interval_minutes; off, neither is consulted. Never spawns under the "
-            "reviewer role or without the distill entitlement. Independent of hint_sidecar_ancestor_enabled: "
-            "with that off, a missing exact-HEAD batch sidecar still requests a build."
-        ),
-        deprecation_plan=(
-            "Revert criterion: the same pre-registered hint-delivery census as hint_sidecar_ancestor_enabled. "
-            "Removal: with that flag, after two releases default-on with the census at or above threshold."
-        ),
-        docs_pointer=_DOCS,
-        test_pointer=f"{_REBUILD_TESTS}::test_each_refusal_spawns_nothing",
-        budget_decision="admitted",
-    ),
     "hint_sidecar_rebuild_after_commits": ConfigAdmission(
         field_name="hint_sidecar_rebuild_after_commits",
         owner=_OWNER,
@@ -103,7 +76,7 @@ HINT_SIDECAR_ANCESTOR_ADMISSIONS: dict[str, ConfigAdmission] = {
             "served sidecar falls out of the bound, and a build of several minutes is not started on every commit."
         ),
         interaction_analysis=(
-            "Read only while hint_sidecar_auto_refresh_enabled is on, and only for a served ancestor "
+            "Read only while hint_sidecar_refresh_enabled is on, and only for a served ancestor "
             "(hint_available_stale). Capped at hint_sidecar_max_commits_behind when read, so lowering that bound "
             "alone never makes the config invalid. A missing or too-far-behind sidecar requests a build regardless."
         ),
@@ -121,7 +94,7 @@ HINT_SIDECAR_ANCESTOR_ADMISSIONS: dict[str, ConfigAdmission] = {
             "request at most one build at a time even when the build's own lock is released between them."
         ),
         interaction_analysis=(
-            "Read only while hint_sidecar_auto_refresh_enabled is on. Measured from a timestamp file in the "
+            "Read only while hint_sidecar_refresh_enabled is on. Measured from a timestamp file in the "
             "shared cache dir, so every worktree sharing that cache shares the interval. The build's flock "
             "single-flights concurrent builds independently of this."
         ),

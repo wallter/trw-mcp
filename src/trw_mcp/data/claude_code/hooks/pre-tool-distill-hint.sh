@@ -17,56 +17,266 @@
 #   5. same file_path hinted within last 180 seconds (debounce)
 #   6. Python import fails AND no learnings match
 #
-# Hook latency budget: ≤ 3000ms registered timeout (NFR06).
-# Python subprocess: ≤ 2500ms, bounded by _trw_bounded_python (portable: the
-# program's own SIGALRM, plus `timeout` only where the box has it); fallback to
-# silence on timeout (FR30).
+# Threat model. TRUSTED: the session's own environment (inherited PYTHONPATH,
+# CLAUDE_PROJECT_DIR, TRW_PROJECT_DIR are the operator's) and the session
+# repository's `.trw/` operator state and tracked hook scripts. NOT trusted:
+# anything about where the edited file sits -- its directory, the `.git` beside
+# it, what git reports from there, or any `.trw` it carries.
+#
+# A checkout other than the session root is the session's only when the
+# repository's own back-link says so: the main checkout's real `.git` directory,
+# or `<common>/worktrees/<n>/gitdir` naming that worktree's `.git` file. A main
+# checkout created with --separate-git-dir therefore gets no hint when edited
+# from one of its worktrees' sessions (accepted).
+#
+# Latency. Every process this hook waits for is bounded, and each expiry is a
+# silent exit 0 (FR30):
+#   payload parse   ONE jq/python3 start        _TRW_PARSE_BUDGET_S  0.5s  (KILL)
+#   shell git       all calls share one budget  _TRW_GIT_BUDGET_S    0.7s  (KILL)
+#   hint program    _trw_bounded_python + its own SIGALRM            2.5s  (TERM, KILL 0.2s later;
+#                   where the box has a `timeout` binary, that binary's TERM alone)
+#   one tail start  timeout re-stamp, or the JSON emit  _TRW_TAIL_BOUND_S  0.8s  (same)
+# Worst case 0.5 + 0.7 + 2.5 + 0.8 = 4.5s plus kill grace and process starts,
+# against the 5s the installer registers. The parse and tail starts normally
+# take 10-30ms: their bounds leave a loaded machine 25x or more, so ordinary
+# load does not lose a hint (20/20 under an 18-process CPU load, 2026-10-08). Only the DIRECT child is killed: a
+# wrapper script's own children outlive the hook until they finish by
+# themselves (real git, jq and python are single processes). Without mktemp
+# the parse and git bounds do not apply.
 
 set -e
 trap 'exit 0' EXIT
+
+# git answers for the directory it is pointed at, never for a repository or a
+# search ceiling an inherited environment names. Before any library is sourced.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES 2>/dev/null || true
 
 _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-distill-hint.sh
 . "$_hook_dir/lib-distill-hint.sh" 2>/dev/null || exit 0
 
-# --- Read JSON payload from stdin ---
-_payload=$(cat 2>/dev/null) || exit 0
-
-# Extract fields (FR25) with lib-trw.sh's _json_get: jq, else python3, never a
-# shell parser (T29). Deployed, lib-trw.sh sits beside this hook. The hint is
-# advisory, so a host with neither parser emits nothing.
+# --- Extract every payload field in ONE bounded parser start (FR25) -------------
+# jq, else python3, never a shell parser (T29); a host with neither emits
+# nothing. Six separate starts used to run here with no bound at all: a parser
+# that hung held the hook for as long as it liked. The parser reads the hook's
+# stdin directly and prints one field per line:
+#   ok|bad, tool_use_id, file_path, tool_name, session_id, agent_name, cwd,
+#   then one line per "*** Update File:" / "*** Add File:" target of a Codex
+#   apply_patch command (PRD-CORE-336-FR04), deduped in first-seen order.
+# A field that is not a string, or holds a newline, prints empty; a file_path
+# holding a newline prints "bad" (it would otherwise be read as two files and
+# the hint would be for files nobody is editing) and the hook stays silent.
 _tool_use_id=""
 _file_path=""
 _tool_name=""
 _agent_type=""
 
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
-# The project root, resolved ONCE before any read or write below (the gate in .trw/config.yaml, the interpreter,
-# .trw/context state, telemetry): Claude Code runs this hook in the shell's CWD, which may be a subdirectory, and
-# sets CLAUDE_PROJECT_DIR, not TRW_PROJECT_DIR; Codex sets neither. A bare $(pwd) fallback put .trw state into that
-# subdirectory and read the gate from a config that is not the project's (HOOK-CWD-STATE-LEAK).
-TRW_PROJECT_DIR="${TRW_PROJECT_DIR:-$(get_repo_root)}"
-export TRW_PROJECT_DIR
-_trw_has_json_parser || exit 0
-_tool_use_id=$(printf '%s' "$_payload" | _json_get .tool_use_id) || true
-_file_path=$(printf '%s' "$_payload" | _json_get .tool_input.file_path) || true
-_tool_name=$(printf '%s' "$_payload" | _json_get .tool_name) || true
-_agent_type=$(printf '%s' "$_payload" | _json_get .agent_name) || true
 
-# Codex runs this same file for apply_patch (PRD-CORE-336-FR04). Its PreToolUse
-# payload carries the patch text in tool_input.command, not a file_path; every
-# "*** Update File:" / "*** Add File:" header names a file to hint. _candidates
-# holds one path per line: the single file_path for Claude Code, the patch
-# targets (deduped, first-seen order) for Codex.
+_TRW_PARSE_BUDGET_S="${TRW_CC03_PARSE_BUDGET_S:-0.5}"
+_TRW_GIT_BUDGET_S="${TRW_CC03_GIT_BUDGET_S:-0.7}"
+_TRW_TAIL_BOUND_S="${TRW_CC03_TAIL_BOUND_S:-0.8}"
+# The hook's own scratch directory in $TMPDIR (parser output, the git budget's
+# pid and stdout): never checkout state. Removed by _trw_hook_cleanup.
+_trw_tmp=$(mktemp -d 2>/dev/null) || _trw_tmp=""
+_trw_git_dir=""
+_trw_git_timer=""
+_trw_hook_cleanup() {
+    if [ -n "$_trw_git_timer" ]; then
+        kill -TERM "$_trw_git_timer" 2>/dev/null || true
+        # Reap it, quietly: an unreaped killed job makes bash print "Terminated: 15" on the hook's stderr.
+        wait "$_trw_git_timer" 2>/dev/null || true
+    fi
+    [ -z "$_trw_tmp" ] || rm -rf "$_trw_tmp" 2>/dev/null || true
+    [ -z "${_remedy_receipt:-}" ] || rm -f "$_remedy_receipt" 2>/dev/null || true
+}
+trap '_trw_hook_cleanup; exit 0' EXIT
+
+_TRW_PARSE_JQ='
+def s: if type == "string" and (test("[\n\r]") | not) then . else "" end;
+(if type == "object" then . else error("payload is not an object") end) as $d
+| ($d.tool_input | if type == "object" then . else {} end) as $ti
+| (if ($ti.file_path | type) == "string" and ($ti.file_path | test("[\n\r]")) then "bad" else "ok" end),
+  ($d.tool_use_id | s), ($ti.file_path | s), ($d.tool_name | s), ($d.session_id | s), ($d.agent_name | s), ($d.cwd | s),
+  (($ti.command | if type == "string" then . else "" end)
+   | [split("\n")[] | select(test("^\\*\\*\\* (Update|Add) File: .*[^ \t]")) | sub("^\\*\\*\\* (Update|Add) File: "; "")]
+   | reduce .[] as $x ([]; if index($x) then . else . + [$x] end) | .[])
+'
+_TRW_PARSE_PY='
+import json, sys
+try:
+    d = json.load(sys.stdin.buffer)
+    if not isinstance(d, dict):
+        raise ValueError("payload is not an object")
+except Exception:
+    sys.exit(1)
+ti = d.get("tool_input")
+ti = ti if isinstance(ti, dict) else {}
+def multi(v):
+    return isinstance(v, str) and ("\n" in v or "\r" in v)
+def s(v):
+    return v if isinstance(v, str) and not multi(v) else ""
+fp = ti.get("file_path")
+out = ["bad" if multi(fp) else "ok", s(d.get("tool_use_id")), s(fp), s(d.get("tool_name")), s(d.get("session_id")), s(d.get("agent_name")), s(d.get("cwd"))]
+cmd = ti.get("command")
+for line in cmd.split("\n") if isinstance(cmd, str) else []:
+    for prefix in ("*** Update File: ", "*** Add File: "):
+        name = line[len(prefix):]
+        if line.startswith(prefix) and name.strip() and name not in out[7:]:
+            out.append(name)
+sys.stdout.write("\n".join(out) + "\n")
+'
+if command -v jq >/dev/null 2>&1; then
+    set -- jq -r "$_TRW_PARSE_JQ"
+elif command -v python3 >/dev/null 2>&1; then
+    set -- python3 -I -S -c "$_TRW_PARSE_PY"
+else
+    exit 0
+fi
+if [ -n "$_trw_tmp" ]; then
+    exec 3<&0
+    "$@" <&3 > "$_trw_tmp/payload" 2>/dev/null &
+    _parse_pid=$!
+    ( sleep "$_TRW_PARSE_BUDGET_S"; kill -KILL "$_parse_pid" ) </dev/null >/dev/null 2>&1 &
+    _parse_watch=$!
+    _parse_rc=0
+    wait "$_parse_pid" 2>/dev/null || _parse_rc=$?
+    kill -TERM "$_parse_watch" 2>/dev/null || true
+    wait "$_parse_watch" 2>/dev/null || true
+    exec 3<&-
+    [ "$_parse_rc" -eq 0 ] || exit 0
+    _parsed=$(cat "$_trw_tmp/payload" 2>/dev/null) || exit 0
+else
+    _parsed=$("$@" 2>/dev/null) || exit 0
+fi
+_parse_status=""
+_session_id=""
+_payload_cwd=""
+_patch_targets=""
+{
+    IFS= read -r _parse_status || true
+    IFS= read -r _tool_use_id || true
+    IFS= read -r _file_path || true
+    IFS= read -r _tool_name || true
+    IFS= read -r _session_id || true
+    IFS= read -r _agent_type || true
+    IFS= read -r _payload_cwd || true
+    while IFS= read -r _patch_line; do
+        _patch_targets="${_patch_targets}${_patch_targets:+
+}${_patch_line}"
+    done
+} <<EOF_PARSED
+$_parsed
+EOF_PARSED
+[ "$_parse_status" = "ok" ] || exit 0
+_session_id="${_session_id:-${TRW_SESSION_ID:-${CLAUDE_SESSION_ID:-}}}"
+
+# _candidates holds one path per line: the single file_path for Claude Code,
+# the patch targets for Codex.
 _candidates="$_file_path"
 if [ -z "$_file_path" ] && [ "$_tool_name" = "apply_patch" ]; then
-    _candidates=$(printf '%s' "$_payload" | _json_get .tool_input.command \
-        | sed -n -e 's/^\*\*\* Update File: //p' -e 's/^\*\*\* Add File: //p' | awk 'NF && !seen[$0]++') \
-        || _candidates=""
+    _candidates="$_patch_targets"
 fi
+
+# --- One budget for every shell git call ----------------------------------------
+# `git` below is this function: each call (here and inside the library, e.g.
+# _get_python_path) runs in the background under one shared timer. When the
+# timer fires it marks the budget expired and kills the call in flight; that
+# call and every later one return 124, and the hook exits 0 silently. Armed in
+# the MAIN shell (a `$(...)` subshell could not share it), lazily, so the common
+# path -- which asks git nothing -- pays for none of it. Without mktemp the
+# calls run unbounded, as before.
+_trw_git_arm() {
+    [ -z "$_trw_git_timer" ] || return 0
+    _trw_git_dir="$_trw_tmp"
+    [ -n "$_trw_git_dir" ] || return 0
+    (
+        sleep "$_TRW_GIT_BUDGET_S"
+        : > "$_trw_git_dir/expired"
+        _tga_pid=$(cat "$_trw_git_dir/pid" 2>/dev/null) || _tga_pid=""
+        # KILL, not TERM: these probes only read, and a git that ignores TERM would
+        # otherwise hold the `wait` below for as long as it runs.
+        [ -z "$_tga_pid" ] || kill -KILL "$_tga_pid"
+    ) </dev/null >/dev/null 2>&1 &
+    _trw_git_timer=$!
+}
+_trw_git_expired() {
+    [ -n "$_trw_git_dir" ] && [ -e "$_trw_git_dir/expired" ]
+}
+git() {
+    if [ -z "$_trw_git_dir" ]; then
+        command git "$@"
+        return
+    fi
+    ! _trw_git_expired || return 124
+    command git "$@" > "$_trw_git_dir/out" 2>/dev/null &
+    _tg_pid=$!
+    printf '%s' "$_tg_pid" > "$_trw_git_dir/pid"
+    _tg_rc=0
+    wait "$_tg_pid" 2>/dev/null || _tg_rc=$?
+    : > "$_trw_git_dir/pid"
+    ! _trw_git_expired || return 124
+    cat "$_trw_git_dir/out" 2>/dev/null
+    return $_tg_rc
+}
+# The directory holding the nearest `.git` entry at or above a path, as a
+# physical path; nothing when there is none. Pure shell: no process is started,
+# and no question is put to git, whose answer a hostile directory can shape.
+# Args: $1 = absolute path (it need not exist yet).
+_trw_nearest_checkout() {
+    _nc_d=${1%/*}
+    [ -n "$_nc_d" ] || _nc_d=/
+    while [ ! -d "$_nc_d" ] && [ "$_nc_d" != / ]; do
+        _nc_d=${_nc_d%/*}
+        [ -n "$_nc_d" ] || _nc_d=/
+    done
+    _nc_d=$(cd "$_nc_d" 2>/dev/null && pwd -P) || return 1
+    while :; do
+        if [ -e "$_nc_d/.git" ] || [ -L "$_nc_d/.git" ]; then
+            printf '%s' "$_nc_d"
+            return 0
+        fi
+        [ "$_nc_d" != / ] || return 1
+        _nc_d=${_nc_d%/*}
+        [ -n "$_nc_d" ] || _nc_d=/
+    done
+}
+
+# --- The session's own repository ---------------------------------------------
+# Everything that decides WHETHER and WITH WHAT this hook runs comes from the
+# session's project, never from the directory the edited file happens to be in:
+# the opt-in gate, the interpreter pointer and the source path. A file in some
+# other repository B must not be able to switch the hook on, name the
+# interpreter, put B/*/src on PYTHONPATH or receive .trw state (review 2, P0).
+_session_cwd="$_payload_cwd"
+[ -n "$_session_cwd" ] && [ -d "$_session_cwd" ] || _session_cwd=$(pwd)
+_session_root="${TRW_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-}}"
+if [ -z "$_session_root" ]; then
+    # Codex sets neither: the checkout around the session's directory, else that directory.
+    _trw_git_arm
+    _session_root=$(git -C "$_session_cwd" rev-parse --show-toplevel 2>/dev/null) || _session_root="$_session_cwd"
+    ! _trw_git_expired || exit 0
+fi
+_session_root=$(cd "$_session_root" 2>/dev/null && pwd -P) || exit 0
+
+# --- Skips that need no git call: agent type, extension ------------------------
+case "$_agent_type" in
+    trw-distill-explorer|Explore|Plan) exit 0 ;;
+esac
+_any_hintable=0
+while IFS= read -r _cand; do
+    [ -n "$_cand" ] || continue
+    _is_safe_extension "$_cand" || { _any_hintable=1; break; }
+done <<EOF_PRECHECK
+$_candidates
+EOF_PRECHECK
+[ "$_any_hintable" -eq 1 ] || exit 0
 
 # --- Skip 1: opt-in gate (FR09) ---
 # An explicit true/false in .trw/config.yaml always wins and is read in shell.
+# It is the SESSION project's config; a linked worktree that carries no
+# .trw/config.yaml of its own (.trw untracked) is governed by its main
+# checkout's, so `cc03_hook_enabled: false` there is not lost in a worktree.
 # With no explicit setting (auto: on when trw-distill is importable), the
 # find_spec probe is NOT a separate interpreter start any more: it rides as the
 # first statement of the one bounded Python call below (exit
@@ -74,20 +284,106 @@ fi
 # probe cost ~60ms of a ~340ms non-compute overhead per edit. Everything between
 # here and that call only reads state, so an auto-off hook still has no side
 # effects.
+_session_common=""
+_config_root="$_session_root"
+if [ ! -f "$_session_root/.trw/config.yaml" ]; then
+    _trw_git_arm
+    _session_common=$(git -C "$_session_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || _session_common=""
+    ! _trw_git_expired || exit 0
+    case "$_session_common" in
+        */.git) [ ! -f "${_session_common%/.git}/.trw/config.yaml" ] || _config_root="${_session_common%/.git}" ;;
+    esac
+fi
 _cc03_probe=0
-case "$(_cc03_explicit_setting)" in
+case "$(TRW_PROJECT_DIR="$_config_root" _cc03_explicit_setting)" in
     on) ;;
     off) exit 0 ;;
     *) _cc03_probe=1 ;;
 esac
 
+# --- The checkout the edited file belongs to ----------------------------------
+# A session rooted in the main checkout that edits .trw/worktrees/<wt>/x.py must
+# be answered from <wt> (its HEAD, its path "x.py"), or it looks up a path
+# main's sidecar has never heard of. So the hook re-roots to the file's
+# checkout, but ONLY when that checkout is the session's own repository.
+#
+# Whose a file is, is decided by the nearest `.git` entry above it, found in
+# shell before git is asked anything (so a nested repository git is told not to
+# see -- a ceiling, a broken gitfile, core.worktree -- is still not ours):
+#   - the session root itself: ours, and no git call is made at all;
+#   - anywhere else: ours only if it is a REGISTERED worktree of the session's
+#     repository. git must report that very directory as the toplevel, the
+#     session's common directory, and a git dir that IS that common directory
+#     or sits directly under <common>/worktrees/. The last test is the one a
+#     forgery cannot pass: a directory can claim any commondir in files of its
+#     own, but only the repository writes into its own worktrees/ registry;
+#   - none: only a session project that is a TRW project without git.
+# Every other place (an unrelated or forged repository, a submodule, a path in
+# no repository) gets nothing: no hint, no record, nothing created. A relative
+# path is read against the payload's cwd when it names one (a Codex patch is
+# relative to its session's directory), else against the session project.
+_path_base="$_payload_cwd"
+[ -n "$_path_base" ] && [ -d "$_path_base" ] || _path_base="$_session_root"
+_first_target=${_candidates%%"
+"*}
+[ -n "$_first_target" ] || exit 0
+case "$_first_target" in /*) ;; *) _first_target="$_path_base/$_first_target" ;; esac
+_target_top=$(_trw_nearest_checkout "$_first_target" 2>/dev/null) || _target_top=""
+if [ -z "$_target_top" ]; then
+    [ -d "$_session_root/.trw" ] || exit 0
+    _repo_top="$_session_root"
+elif [ "$_target_top" = "$_session_root" ]; then
+    _repo_top="$_session_root"
+else
+    _trw_git_arm
+    [ -n "$_session_common" ] || _session_common=$(git -C "$_session_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+    _target_git=$(git -C "$_target_top" rev-parse --path-format=absolute --show-toplevel --git-common-dir --absolute-git-dir 2>/dev/null) || exit 0
+    ! _trw_git_expired || exit 0
+    _target_seen=$(printf '%s\n' "$_target_git" | sed -n 1p)
+    _target_common=$(printf '%s\n' "$_target_git" | sed -n 2p)
+    _target_gitdir=$(printf '%s\n' "$_target_git" | sed -n 3p)
+    [ -n "$_target_seen" ] && [ -n "$_target_common" ] && [ -n "$_target_gitdir" ] || exit 0
+    _target_seen=$(cd "$_target_seen" 2>/dev/null && pwd -P) || exit 0
+    _target_common=$(cd "$_target_common" 2>/dev/null && pwd -P) || exit 0
+    _target_gitdir=$(cd "$_target_gitdir" 2>/dev/null && pwd -P) || exit 0
+    _session_common_real=$(cd "$_session_common" 2>/dev/null && pwd -P) || exit 0
+    [ "$_target_seen" = "$_target_top" ] || exit 0
+    [ "$_target_common" = "$_session_common_real" ] || exit 0
+    # What git reported so far a directory can arrange by POINTING at the
+    # session's git directory (a `.git` file or symlink naming <common> or one of
+    # its worktrees/<n>). The back-link is what it cannot arrange: it is written
+    # by the repository, inside the repository.
+    case "$_target_gitdir" in
+        "$_session_common_real")
+            # "I am the main checkout": then my .git IS that directory, for real.
+            [ -d "$_target_top/.git" ] && [ ! -L "$_target_top/.git" ] || exit 0
+            _target_dotgit=$(cd "$_target_top/.git" 2>/dev/null && pwd -P) || exit 0
+            [ "$_target_dotgit" = "$_session_common_real" ] || exit 0
+            ;;
+        "$_session_common_real"/worktrees/*/*) exit 0 ;;
+        "$_session_common_real"/worktrees/?*)
+            # "I am a linked worktree": then worktrees/<n>/gitdir, which git wrote
+            # when it registered me, names MY .git file -- a regular file, here.
+            [ -f "$_target_top/.git" ] && [ ! -L "$_target_top/.git" ] || exit 0
+            _target_backlink=""
+            { IFS= read -r _target_backlink < "$_target_gitdir/gitdir"; } 2>/dev/null || true
+            case "$_target_backlink" in
+                */.git) ;;
+                *) exit 0 ;;
+            esac
+            case "$_target_backlink" in /*) ;; *) _target_backlink="$_target_gitdir/$_target_backlink" ;; esac
+            _target_backlink=$(cd "${_target_backlink%/.git}" 2>/dev/null && pwd -P) || exit 0
+            [ "$_target_backlink" = "$_target_top" ] || exit 0
+            ;;
+        *) exit 0 ;;
+    esac
+    _repo_top="$_target_top"
+fi
+TRW_PROJECT_DIR="$_repo_top"
+export TRW_PROJECT_DIR
+
 # --- Skip 2: no file to hint ---
 [ -n "$_candidates" ] || exit 0
-
-# --- Skip 3: agent_type exclusion ---
-case "$_agent_type" in
-    trw-distill-explorer|Explore|Plan) exit 0 ;;
-esac
 
 # --- Skip 4 + 5, per file: safe extension allowlist (P0-10 fix), then a 180s
 # debounce. At most _TRW_MAX_HINT_FILES files are hinted per call, so a large
@@ -116,7 +412,15 @@ while IFS= read -r _cand; do
     [ -n "$_cand" ] || continue
     [ "$_hint_count" -lt "$_TRW_MAX_HINT_FILES" ] || break
     # A target outside the project (scratch files): no sidecar can know it, so no interpreter, no record.
-    _path_inside_repo "$_cand" "$_repo" || continue
+    # Containment is judged on the absolute path (a relative one is read against $_path_base, as the
+    # repository resolution above and the Python lookup below read it); $_cand itself stays AS GIVEN,
+    # because it names the CC-04 record, the debounce marker and the hint header.
+    case "$_cand" in /*) _cand_abs="$_cand" ;; *) _cand_abs="$_path_base/$_cand" ;; esac
+    _path_inside_repo "$_cand_abs" "$_repo" || continue
+    if [ -e "$_repo/.git" ] || [ -L "$_repo/.git" ]; then
+        # Inside the checkout's directory but below some other `.git`: not this checkout's file.
+        [ "$(_trw_nearest_checkout "$_cand_abs" 2>/dev/null)" = "$_repo" ] || continue
+    fi
     if _is_safe_extension "$_cand"; then
         continue
     fi
@@ -150,18 +454,23 @@ EOF_CANDIDATES
 [ -n "$_file_path" ] || exit 0
 
 # --- Resolve Python path ---
-_py=$(_get_python_path "$_repo" 2>/dev/null) || {
+# The interpreter pointer and the source path are the SESSION repository's (its
+# main checkout's when a worktree has none): never the edited checkout's.
+# _get_python_path asks git only when the session root's own pointer is not usable; arm the budget just then.
+_pointer=""
+{ IFS= read -r _pointer < "$_session_root/.trw/channels/cc03-python.txt"; } 2>/dev/null || true
+case "$_pointer" in /*) [ -f "$_pointer" ] && [ -x "$_pointer" ] || _trw_git_arm ;; *) _trw_git_arm ;; esac
+_py=$(_get_python_path "$_session_root" 2>/dev/null) || {
     # Auto mode with no interpreter: trw-distill cannot be importable, so the
     # hook is off (silent), exactly as the old standalone probe decided.
     exit 0
 }
-_wt_pythonpath=$(_worktree_pythonpath "$_repo" 2>/dev/null) || _wt_pythonpath=""
+! _trw_git_expired || exit 0
+_wt_pythonpath=$(_worktree_pythonpath "$_session_root" 2>/dev/null) || _wt_pythonpath=""
 
 # --- Call compute_before_edit_hint via Python subprocess (FR30) ---
 # Bounded at 2500ms by _trw_bounded_python; stay silent on failure/timeout.
 _hints_dir="${_repo}/.trw/context/cc03-hints"
-# Auto mode defers this to the Python program, after its probe says "on".
-[ "$_cc03_probe" -eq 1 ] || mkdir -p "$_hints_dir" 2>/dev/null || true
 
 # One line per file the Python subprocess actually attempted (CORE-336-S3-KI),
 # appended as it starts each one -- so a file already attempted before a
@@ -176,16 +485,78 @@ _hints_dir="${_repo}/.trw/context/cc03-hints"
 # reachable through anything the checkout controls, so this journal never goes
 # through `_trw_safe_write`'s checkout-relative symlink checks at all --
 # same reasoning as `_bp_out` in `_trw_bounded_python` above.
+# Without mktemp (minimal PATHs exist, see lib-trw.sh) the hint still runs: the
+# remedy line just cannot be marked as delivered, so it may print again.
+_remedy_receipt=$(mktemp 2>/dev/null) || _remedy_receipt=""
 _processed_file=$(mktemp 2>/dev/null) || _processed_file=""
 [ -z "$_processed_file" ] || chmod 600 "$_processed_file" 2>/dev/null || true
 
-# The dependency-free provisional CC-04 record (T0 timeout_fallback) is written
+# The provisional CC-04 record (T0 timeout_fallback) is written
 # by the bounded program itself, right after it arms its deadline and before
 # any heavy import -- one interpreter start instead of two (measured
 # 2026-09-27, ~40ms per edit). If the 2.5s advisory budget expires, the
 # record still says T0 timeout_fallback; the rc!=0 re-stamp below covers an
 # interpreter that never reached our code. Environment variables keep
 # untrusted hook fields out of Python source interpolation.
+
+# --- The CC-04 record writer the inline programs share --------------------------
+# STDLIB ONLY, on purpose. $_py is whatever _get_python_path resolved, and its
+# last resort is a bare `python3` that cannot import trw_mcp or its dependencies
+# (structlog, trw_memory). The record has to be written exactly then: it is how
+# an operator learns the hint engine could not be imported (`exception_fallback`
+# plus the error), so the writer must not need the package that just failed.
+# It gives the same guarantee as trw_mcp._checkout_write.write_checkout_file for
+# this one path shape: every component below the checkout root is opened
+# O_NOFOLLOW (a symlinked .trw, context or cc03-hints is refused, nothing is
+# written), the temp file is created O_EXCL at 0600, and os.replace swaps the
+# leaf without following a symlink planted there. Hook-owned constant text, no
+# untrusted value: prepending it to a program does not reopen the source
+# interpolation the single-quoted programs below exist to prevent.
+_TRW_CC04_WRITER_PY='
+def _trw_write_record(root, path, text):
+    import os
+    rel = os.path.relpath(path, root)
+    parts = rel.split(os.sep)
+    if os.path.isabs(rel) or ".." in parts or not parts[-1]:
+        raise ValueError("record path is outside the checkout")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    isdir = getattr(os, "O_DIRECTORY", 0)
+    fd = os.open(root, os.O_RDONLY | isdir)
+    try:
+        for part in parts[:-1]:
+            try:
+                os.mkdir(part, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nxt = os.open(part, os.O_RDONLY | isdir | nofollow, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        # A symlinked leaf is refused, as write_checkout_file refuses it: the
+        # record is not written and the link is left as it was found.
+        try:
+            if (os.lstat(parts[-1], dir_fd=fd).st_mode & 0o170000) == 0o120000:
+                raise OSError("record path is a symlink")
+        except FileNotFoundError:
+            pass
+        tmp = "." + parts[-1] + "." + str(os.getpid()) + ".tmp"
+        try:
+            os.unlink(tmp, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+        tfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600, dir_fd=fd)
+        try:
+            with os.fdopen(tfd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            os.replace(tmp, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=fd)
+            except OSError:
+                pass
+            raise
+    finally:
+        os.close(fd)
+'
 
 # --- Portable 2.5s bound for the hint subprocess (FR30) -----------------------
 # This call used to read `timeout 2.5 "$_py" -c ...`. `timeout` is GNU
@@ -221,6 +592,7 @@ _trw_bounded_python() {
     # dash and bash 3.2 before the file was introduced.
     _bp_out=$(mktemp 2>/dev/null) || _bp_out=""
     if [ -z "$_bp_out" ]; then
+        # No mktemp: run unbuffered. The program's own SIGALRM still bounds it.
         env "$@" || _bp_rc=$?
         return $_bp_rc
     fi
@@ -229,7 +601,7 @@ _trw_bounded_python() {
     else
         env "$@" > "$_bp_out" &
         _bp_pid=$!
-        ( sleep "$_bp_secs"; kill -TERM "$_bp_pid" ) >/dev/null 2>&1 &
+        ( sleep "$_bp_secs"; kill -TERM "$_bp_pid"; sleep 0.2; kill -KILL "$_bp_pid" ) >/dev/null 2>&1 &
         _bp_watch=$!
         wait "$_bp_pid" || _bp_rc=$?
         kill -TERM "$_bp_watch" 2>/dev/null || true
@@ -302,10 +674,13 @@ _hint_output=$(
     TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
     TRW_CC04_FILE_PATH="$_file_path" \
     TRW_CC03_HINT_FILES="$_hint_files" \
+    TRW_CC03_SESSION_ID="$_session_id" \
     TRW_CC03_PROCESSED_FILE="$_processed_file" \
     TRW_CC03_BATCH_BUDGET_S="${TRW_CC03_BATCH_BUDGET_S:-1.6}" \
+    TRW_CC03_REMEDY_RECEIPT="$_remedy_receipt" \
+    TRW_CC03_PATH_BASE="$_path_base" \
     TRW_CC03_PROBE_DISTILL="$_cc03_probe" \
-    "$_py" -c '
+    "$_py" -c "$_TRW_CC04_WRITER_PY"'
 # SINGLE-quoted on purpose. This program used to be double-quoted, so ${_file_path}
 # — a model-controlled PreToolUse field — was spliced into Python SOURCE. A payload
 # with file_path = x.py"+__import__("os").system("...")+".py executed as the
@@ -356,16 +731,16 @@ if os.environ.get("TRW_CC03_PROBE_DISTILL") == "1":
     if not _trw_on:
         sys.stdout.flush()
         os._exit(3)
-# Provisional CC-04 record, stdlib only and before the heavy imports below: a
+# Provisional CC-04 record, stdlib only (_trw_write_record, prepended above) and
+# before the heavy imports below: a
 # budget expiry from here on still leaves a truthful T0 timeout_fallback.
 # Overwritten by write_hint_file() on a completed run. Never fatal.
 try:
     import datetime, json, pathlib, re
     _trw_tuid = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
     _trw_hdir = pathlib.Path(os.environ["TRW_CC04_HINTS_DIR"])
-    _trw_hdir.mkdir(parents=True, exist_ok=True)
     if _trw_tuid and re.fullmatch(r"[A-Za-z0-9_.-]+", _trw_tuid):
-        (_trw_hdir / (_trw_tuid + ".json")).write_text(json.dumps({
+        _trw_write_record(os.environ["TRW_PROJECT_DIR"], str(_trw_hdir / (_trw_tuid + ".json")), json.dumps({
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "file_path": os.environ.get("TRW_CC04_FILE_PATH", ""),
             "tier": "T0",
@@ -382,13 +757,13 @@ try:
             "duration_ms": None,
             "sidecar_commits_behind": None,
             "target_changed_since_sidecar": None,
-        }), encoding="utf-8")
+        }))
 except Exception:
     pass
 try:
     from trw_mcp.tools._before_edit_hint_core import T2_STATUSES, compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
-        format_t1_hint, format_t2_hint
+        format_t1_hint, format_t2_hint, sidecar_remedy_once, sidecar_remedy_marker
     )
     file_path = os.environ.get("TRW_CC04_FILE_PATH", "")
     tool_use_id = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
@@ -407,6 +782,9 @@ try:
     tier = "T0"
     first_status = None
     first_as_of = None
+    remedy_shown = False
+    repo = pathlib.Path(os.environ["TRW_PROJECT_DIR"]).resolve()
+    _path_base = os.environ.get("TRW_CC03_PATH_BASE") or os.getcwd()
     for index, target in enumerate(files):
         if index and time.monotonic() - _trw_started > _batch_budget_s:
             break
@@ -420,10 +798,24 @@ try:
                     _pf.write(target + "\n")
             except Exception:
                 pass
-        result = compute_before_edit_hint(file_path=target)
+        result = compute_before_edit_hint(
+            file_path=str(pathlib.Path(os.path.join(_path_base, target)).resolve().relative_to(repo)),
+            repo_root=str(repo),
+        )
         if first_status is None:
             first_status = result.distill_status
             first_as_of = result.distill_as_of
+        remedy = sidecar_remedy_once(
+            pathlib.Path(os.environ["TRW_PROJECT_DIR"]), os.environ.get("TRW_CC03_SESSION_ID", ""),
+            result.distill_status, result.distill_action,
+        )
+        if remedy and not remedy_shown:
+            remedy_shown = True
+            if os.environ.get("TRW_CC03_REMEDY_RECEIPT"):
+                pathlib.Path(os.environ["TRW_CC03_REMEDY_RECEIPT"]).write_text(sidecar_remedy_marker(repo, os.environ.get("TRW_CC03_SESSION_ID", "")).name)
+            parts.append(remedy)
+            sys.stdout.write(remedy + "\n")
+            sys.stdout.flush()
         hint = result.distill_hint
         learnings = [{"summary": l.summary} for l in result.learnings]
         if hint and result.distill_status in T2_STATUSES:
@@ -506,8 +898,8 @@ except Exception as _exc:
     # events into the timeout count, so an operator debugging a low hit rate
     # tunes the timeout for a defect that is not about timing.
     #
-    # Deliberately stdlib-only and self-contained: the import that just failed
-    # must not be a precondition for recording that it failed. Untrusted hook
+    # Deliberately stdlib-only and self-contained (_trw_write_record): the import
+    # that just failed must not be a precondition for recording that it failed. Untrusted hook
     # fields arrive via the environment, never interpolated into source — which
     # is now true of the whole program, not only of this handler.
     # "error" keeps what raised (PRD-FIX-155): 1,815 records in the TRW repo
@@ -517,8 +909,7 @@ except Exception as _exc:
         _tuid = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
         if _tuid and re.fullmatch(r"[A-Za-z0-9_.-]+", _tuid):
             _dir = pathlib.Path(os.environ["TRW_CC04_HINTS_DIR"])
-            _dir.mkdir(parents=True, exist_ok=True)
-            (_dir / (_tuid + ".json")).write_text(json.dumps({
+            _trw_write_record(os.environ["TRW_PROJECT_DIR"], str(_dir / (_tuid + ".json")), json.dumps({
                 "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                 "file_path": os.environ.get("TRW_CC04_FILE_PATH", ""),
                 "tier": "T0",
@@ -537,7 +928,7 @@ except Exception as _exc:
                 "edit_survived": None,
                 "test_outcome": "unknown",
                 "hint_acknowledged": None,
-            }), encoding="utf-8")
+            }))
     except Exception:
         pass
 ' 2>/dev/null
@@ -609,10 +1000,11 @@ if [ "$_hint_rc" -ne 0 ]; then
     # said T0/timeout_fallback (the common case: nothing ran long enough to
     # write anything else) is simply re-written to the same values.
     if [ -n "$_tool_use_id" ]; then
-        TRW_CC04_HINTS_DIR="$_hints_dir" \
-        TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
-        TRW_CC04_FILE_PATH="$_file_path" \
-        "$_py" -c '
+        _trw_bounded_python "$_TRW_TAIL_BOUND_S" \
+        "TRW_CC04_HINTS_DIR=$_hints_dir" \
+        "TRW_CC04_TOOL_USE_ID=$_tool_use_id" \
+        "TRW_CC04_FILE_PATH=$_file_path" \
+        "$_py" -c "$_TRW_CC04_WRITER_PY"'
 import datetime, json, os, pathlib, re
 tool_use_id = os.environ["TRW_CC04_TOOL_USE_ID"]
 if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
@@ -634,7 +1026,14 @@ if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
         "sidecar_commits_behind": None,
         "target_changed_since_sidecar": None,
     }
-    (hints_dir / f"{tool_use_id}.json").write_text(json.dumps(record), encoding="utf-8")
+    _trw_write_record(os.environ["TRW_PROJECT_DIR"], str(hints_dir / f"{tool_use_id}.json"), json.dumps(record))
+    # A deadline exit can land between the temp file and its rename: this branch
+    # is where that is noticed, so the leftovers are removed here.
+    import time
+    for _entry in os.scandir(hints_dir):
+        if _entry.name.startswith(".") and _entry.name.endswith(".tmp") and not _entry.is_symlink():
+            if time.time() - _entry.stat(follow_symlinks=False).st_mtime > 5:
+                os.unlink(_entry.path)
 ' >/dev/null 2>&1 || true
     fi
     exit 0
@@ -648,7 +1047,7 @@ fi
 # so it cannot add latency to (or fail) the PreToolUse call.
 case "$_hint_output" in
     *"[TRW Distill Hint — T2]"*)
-        _write_distill_snapshot_bg 2>/dev/null || true
+        _write_distill_snapshot_bg "$_py" "$_repo" 2>/dev/null || true
         ;;
 esac
 
@@ -656,7 +1055,7 @@ esac
 # The 180s debounce above bounds frequency; this bounds REPEATED, unchanged
 # content once the debounce window has lapsed. Never suppresses a hint that
 # changed, or the first hint for a file.
-if [ -n "$_hint_output" ] && _distill_hint_already_seen "$_repo" "$_file_path" "$_hint_output"; then
+if [ -n "$_hint_output" ] && _distill_hint_already_seen "$_repo" "$_session_id:$_file_path" "$_hint_output"; then
     _hint_output=""
 fi
 
@@ -676,10 +1075,30 @@ if [ -n "$_hint_output" ]; then
     # The text travels in the ENVIRONMENT and is encoded by json.dumps, never
     # spliced into shell or Python source, so quotes, newlines or a forged
     # "}{" in a hint cannot break or add to the object. -I -S: stdlib only.
-    TRW_CC03_HINT_TEXT="$_hint_output" "$_py" -I -S -c '
+    _trw_bounded_python "$_TRW_TAIL_BOUND_S" "TRW_CC03_HINT_TEXT=$_hint_output" "$_py" -I -S -c '
 import json, os, sys
 sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": os.environ["TRW_CC03_HINT_TEXT"]}}) + "\n")
-' 2>/dev/null || true
+' 2>/dev/null && {
+        # The receipt holds the marker's file name, written by the hint program
+        # only when it printed the remedy line. Marking it delivered is a
+        # millisecond shell write through the symlink-refusing writer: no third
+        # interpreter start after the hint is already on stdout (review 2,
+        # finding 10). Stale markers are pruned in the background.
+        if [ -n "$_remedy_receipt" ] && [ -s "$_remedy_receipt" ]; then
+            _remedy_name=$(head -n 1 "$_remedy_receipt" 2>/dev/null) || _remedy_name=""
+            case "$_remedy_name" in
+                sidecar-*[!0-9a-f]*.seen | "") ;;
+                sidecar-*.seen)
+                    ( umask 077; printf 'delivered\n' | _trw_safe_write "$_hints_dir/$_remedy_name" ) 2>/dev/null || true
+                    (
+                        find "$_hints_dir" -name 'sidecar-*.seen' -type f -mtime +7 2>/dev/null | while IFS= read -r _stale_seen; do
+                            _trw_safe_rm "$_stale_seen" || true
+                        done
+                    ) </dev/null >/dev/null 2>&1 &
+                    ;;
+            esac
+        fi
+    }
 fi
 
 exit 0

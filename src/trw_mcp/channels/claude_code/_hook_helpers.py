@@ -18,6 +18,7 @@ Authoritative field name (P1-02 fix):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -43,8 +44,11 @@ __all__ = [
     "as_of_line",
     "format_t1_hint",
     "format_t2_hint",
+    "mark_sidecar_remedy_delivered",
     "prune_hint_files",
     "read_cc03_config",
+    "sidecar_remedy_marker",
+    "sidecar_remedy_once",
     "write_hint_file",
 ]
 
@@ -438,7 +442,7 @@ def write_hint_file(
 
     Args:
         hints_dir: Directory to write hint files into (created if absent). It is the
-            root of the write: a hint file that is a symlink is refused, not followed.
+            checkout context directory: symlinked parents and leaves are refused.
         tool_use_id: The PreToolUse tool_use_id from Claude Code stdin.
         file_path: Absolute path of the file being hinted.
         tier: Tier string ("T0", "T1", "T2").
@@ -453,7 +457,6 @@ def write_hint_file(
         target_changed_since_sidecar: ``BeforeEditHintResult.distill_as_of.target_changed``,
             or ``None`` for the same reason.
     """
-    hints_dir.mkdir(parents=True, exist_ok=True)
     hint_file = hints_dir / f"{tool_use_id}.json"
     record = {
         "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -479,7 +482,8 @@ def write_hint_file(
         "test_outcome": "unknown",
         "hint_acknowledged": None,
     }
-    write_checkout_file(hints_dir, hint_file, json.dumps(record))
+    root = hints_dir.parents[2] if hints_dir.parts[-3:] == (".trw", "context", "cc03-hints") else hints_dir.parent
+    write_checkout_file(root, hint_file, json.dumps(record), mode=0o600)
 
 
 def prune_hint_files(hints_dir: Path, ttl_seconds: int = _HINT_FILE_TTL_SECONDS) -> int:
@@ -506,3 +510,61 @@ def prune_hint_files(hints_dir: Path, ttl_seconds: int = _HINT_FILE_TTL_SECONDS)
             pass
 
     return removed
+
+
+def sidecar_remedy_marker(repo: Path, session_id: str) -> Path:
+    """The receipt the shell writes only after successful output delivery."""
+    key = hashlib.sha256(session_id.encode()).hexdigest()
+    return repo / CC03_HINTS_DIR / f"sidecar-{key}.seen"
+
+
+def mark_sidecar_remedy_delivered(repo: Path, session_id: str) -> None:
+    """Record successful delivery and prune receipts older than seven days."""
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    if reviewer_role_active() or not session_id:
+        return
+    marker = sidecar_remedy_marker(repo, session_id)
+    write_checkout_file(repo, marker, "delivered\n", mode=0o600)
+    cutoff = time.time() - 7 * 86400
+    for old in marker.parent.glob("sidecar-*.seen"):
+        try:
+            if not old.is_symlink() and old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True)
+        except OSError:
+            log.debug("sidecar_receipt_prune_failed", exc_info=True)
+
+
+def sidecar_remedy_once(repo: Path, session_id: str, status: str, action: str | None) -> str:
+    """Format an undelivered session notice without writing any state.
+
+    The shell owns the delivery receipt; a timed-out computation must not consume it.
+    """
+    states = {
+        "sidecar_missing": "missing",
+        "sidecar_too_far_behind": "too far behind HEAD",
+        "target_not_in_sidecar": "does not cover this file",
+        "sidecar_malformed": "unreadable",
+        "schema_mismatch": "built by an older version",
+        "stale_sha": "out of date",
+    }
+    # The common case first: a usable sidecar pays for no import and no role lookup on the edit path.
+    if not session_id or status not in states:
+        return ""
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    if reviewer_role_active():
+        return ""
+    if sidecar_remedy_marker(repo, session_id).exists():
+        return ""
+    match = re.search(r"nearest is (\d+) commits behind", action or "")
+    state = f"{match[1]} commits behind" if match else states[status]
+    from trw_mcp.tools._sidecar_ancestry import shared_cache_dir
+
+    root = repo.resolve()
+    cache = shared_cache_dir(root, ".trw/distill/map-cache").absolute()
+    upgrade = "upgrade trw-distill, then " if status == "schema_mismatch" else ""
+    return (
+        f"[TRW] Sidecar {state}; {upgrade}run: trw-distill self-improve refresh-sidecars "
+        f"--repo {shlex.quote(str(root))} --cache-dir {shlex.quote(str(cache))}"
+    )

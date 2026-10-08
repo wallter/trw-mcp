@@ -32,6 +32,7 @@ transition-nudge selector, which records what it has shown.
 from __future__ import annotations
 
 import os
+import shlex
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,24 @@ _NO_MATCH_HINT: str = (
 )
 
 
+def _distill_remediation(query: str, response: dict[str, Any]) -> str | None:
+    """The trw-distill command that answers what symbol mode cannot, or None.
+
+    Named only when the proprietary package is installed, when the lookup found nothing or the
+    query is a call-graph question, and never over a remediation the lookup itself returned.
+    """
+    from trw_mcp.tools._sidecar_substrate import distill_installed
+
+    if response.get("results") or response.get("remediation") or not distill_installed():
+        return None
+    words = query.split()
+    if words and words[0].lower() in {"callers", "callees"}:
+        if len(words) != 2:
+            return None
+        return f"trw-distill query {words[0].lower()} {shlex.quote(words[1])}"
+    return f"trw-distill query def {shlex.quote(query)}"
+
+
 def _symbol(query: str, repo_root: str | None, top_k: int, path: str | None) -> dict[str, Any]:
     if not query.strip():
         return _refuse("mode='symbol' needs query: the symbol name")
@@ -70,6 +89,11 @@ def _symbol(query: str, repo_root: str | None, top_k: int, path: str | None) -> 
 
     root = repo_root or str(_project_root())
     response: dict[str, Any] = dict(code_symbol(repo_root=root, query=query, top_k=top_k, path=path))
+    remediation = _distill_remediation(query.strip(), response)
+    if remediation:
+        response["remediation"] = remediation
+    elif not response.get("remediation"):
+        response.pop("remediation", None)  # the index's empty default says nothing
     if response.get("status") == "ok" and not response.get("results"):
         # An empty answer carries its reason: an omitted or empty `results` reads like a broken index.
         response["results"] = []

@@ -16,6 +16,7 @@ without a sidecar.
 from __future__ import annotations
 
 import concurrent.futures
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -144,7 +145,7 @@ class SidecarAsOf(BaseModel):
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     sidecar_sha: str
-    commits_behind: int = Field(ge=1)
+    commits_behind: int = Field(ge=0)
     target_changed: bool
 
 
@@ -315,9 +316,9 @@ def _select_from_batch(
         return (None, found, None, None)
     ancestor = batch.ancestor
     as_of: SidecarAsOf | None = None
-    if batch.status == "hint_available_stale" and ancestor is not None and batch.repo_root is not None:
+    if ancestor is not None and batch.repo_root is not None:
         target = str(found["target_path"])
-        git = git_reader or ancestry.SubprocessGitReader(batch.repo_root)
+        git = git_reader or ancestry.SubprocessGitReader(batch.repo_root, deadline=batch.deadline)
         try:
             changed = target in ancestor.changed or target in ancestor.dirty_paths or git.worktree_changed(target)
         except ancestry.GitReadError as err:
@@ -326,7 +327,10 @@ def _select_from_batch(
             )
             return (None, "sidecar_diff_failed", None, action)
         found = ancestry.filter_stale_entry(found, changed=ancestor.changed, target_changed=changed)
-        as_of = SidecarAsOf(sidecar_sha=ancestor.sha, commits_behind=ancestor.commits_behind, target_changed=changed)
+        if ancestor.commits_behind or changed:
+            as_of = SidecarAsOf(
+                sidecar_sha=ancestor.sha, commits_behind=ancestor.commits_behind, target_changed=changed
+            )
     _log_ignored_fields(found, frozenset(BeforeYouEditHintPayload.model_fields), shape="hint")
     _log_lesson_extra_fields(found)
     try:
@@ -475,32 +479,6 @@ def _record_exposure(file_path: str, learnings: list[LearningSummary]) -> None:
         _logger.debug("before_edit_exposure_record_failed", exc_info=True)
 
 
-def _request_sidecar_rebuild(batch: CurrentSidecarResult, cache_dir: str | None, distill_status: str) -> str | None:
-    """Request a detached sidecar rebuild when the batch lookup says one is due (``hint_sidecar_auto_refresh_enabled``).
-
-    Runs after every part of the hint is computed and does not change the
-    ``distill_hint``/``distill_status`` payload — the request spawns and
-    returns without waiting. Returns replacement ``distill_action`` TEXT only
-    when this request spawned a rebuild for a missing/too-far-behind sidecar
-    (2026-09-27 audit touchpoint #5): the agent must not also be told to run
-    the same command manually. ``None`` otherwise, including any failure to ask.
-    The spawn-module import stays lazy (this module's import-budget docstring).
-    """
-    try:
-        from trw_mcp.tools._distill_spawn import _NO_USABLE_SIDECAR, request_rebuild_if_due
-
-        spawned = request_rebuild_if_due(batch, cache_dir=cache_dir, trigger="hint").status == "spawned"
-        if spawned and distill_status in _NO_USABLE_SIDECAR:
-            return "A sidecar rebuild was requested; T2 hints follow once it finishes."
-    except Exception:  # trw-fail-silent-allow: the hint never depends on the rebuild request; DEBUG is the record
-        _logger.debug(
-            "sidecar_rebuild_request_failed",
-            exc_info=True,
-            disable="disable with hint_sidecar_auto_refresh_enabled: false in .trw/config.yaml",
-        )
-    return None
-
-
 def compute_before_edit_hint(
     *,
     file_path: str,
@@ -514,10 +492,7 @@ def compute_before_edit_hint(
     exposure rows (PRD-CORE-300-FR12). With ``hint_sidecar_ancestor_enabled``
     on, a missing exact-HEAD batch sidecar falls back to the nearest proven
     ancestor (``hint_available_stale`` plus ``distill_as_of``). ``git_reader``
-    is the test seam for that path's git questions. With
-    ``hint_sidecar_auto_refresh_enabled`` on, a batch lookup that finds no
-    usable sidecar, or one too far behind, requests a detached rebuild after
-    the hint is computed; the result is the same either way.
+    is the test seam for that path's git questions. This path never requests a build.
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.state._surface_role import reviewer_role_active
@@ -554,6 +529,10 @@ def compute_before_edit_hint(
     batch: CurrentSidecarResult | None = None
     if sidecar.status == "hint_available":
         distill_hint, distill_status, distill_action = _select_distill_hint(sidecar.payload, file_path)
+        if distill_hint is not None:
+            distill_hint, distill_status, distill_as_of, distill_action = _select_from_batch(
+                replace(sidecar, payload={"hints": [sidecar.payload]}), (file_path,), git_reader
+            )
 
     # The single-file artifact holds ONE hint for the whole repo at a given sha
     # — `before-edit-hint-<sha>.json` carries no per-file discriminator — so on
@@ -624,8 +603,6 @@ def compute_before_edit_hint(
 
     if not reviewer:
         _record_exposure(file_path, learnings)
-    if batch is not None:
-        distill_action = _request_sidecar_rebuild(batch, cache_dir, distill_status) or distill_action
 
     return BeforeEditHintResult(
         file_path=file_path,

@@ -109,7 +109,10 @@ def confined_path(uri: str, root: Path) -> tuple[Path | None, str]:
     if not rest or ".." in PurePosixPath(rest).parts:
         return None, "empty path or parent-directory segment"
     base = root.resolve()
-    resolved = (base / rest).resolve()
+    try:
+        resolved = (base / rest).resolve()
+    except (OSError, RuntimeError):  # trw-fail-silent-allow: a symlink loop raises before 3.13; refused with a reason
+        return None, "unresolvable path (symlink loop)"
     if not resolved.is_relative_to(base):
         return None, "resolves outside the repository (symlink)"
     return resolved, ""

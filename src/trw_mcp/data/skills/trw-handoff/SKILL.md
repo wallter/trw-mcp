@@ -70,15 +70,17 @@ no TRW store admits critical records, so they are that verifier.
 ### 4. Draft, fill, seal, validate, render
 
 ```
-trw-mcp handoff new --tier <tier> --subject <stable-slug> --next-read <path> [--next-read ...] [--path <glob> ...] [--to-id <id>]
+trw-mcp handoff new --tier <tier> --subject <stable-slug> --next-read <path> [--next-read ...] [--path <glob> ...] [--constraint "<exact words>" ...] [--to-id <id>]
 trw-mcp handoff seal <file>
 trw-mcp handoff render <file> > <file-without-.json>.md
 ```
+Run each verb alone, as a plain command: a headless client may deny one
+chained with `;`, `&&`, `|` or `$?`.
 
-`new` prints the draft's path (under the active run's `handoffs/`, else
-`.trw/handoffs/`) and never overwrites a file. It fills the id, UTC timestamps,
+`new` prints the draft's path (the active run's `handoffs/`, else
+`.trw/handoffs/`) and never overwrites. It fills the id, UTC timestamps,
 your sender id, the recipient, git `base_ref` with the branch (a dirty tree's changed paths go
-in a `<id>.changed-paths.txt` sidecar, cited with its digest) and a raw-byte
+in a `<id>.changed-paths.txt` sidecar) and a raw-byte
 digest per `--next-read` path, and `--path` globs as `objective.paths` (what
 the receiver may change). Paths must be inside the repository; `https:` and
 `trw:` URIs get no digest. Outside git `tree_state` is `unknown`, which
@@ -87,8 +89,7 @@ the receiver may change). Paths must be inside the repository; `https:` and
 Every judgement field holds the `TODO(handoff):` sentinel, including each
 claim's `label` and each risk's `severity`. Fill them in one pass: read the
 draft once, then write the whole record back (one Write, or a few multi-field
-Edits), never one Edit per sentinel and never with an inline script (headless
-harnesses refuse those). The drafted claim shows both shapes: `verified` keeps
+Edits), never one Edit per sentinel or an inline script. The drafted claim shows both shapes: `verified` keeps
 `evidence`, any other label keeps `basis`. Then `seal`: it runs `trw-mcp handoff validate`
 itself, adds `integrity`, prints the digest, and refuses while any finding
 remains. Fix findings by rule id. After three repair rounds,
@@ -112,10 +113,11 @@ judgement: an honest tier, label, severity or `checked` text is on you.
   `{"none_known": true, "checked": "<the check you ran>"}`, e.g.
   `git status --porcelain empty; grep TODO in diff: 0 hits`. Never write "none"
   or "n/a" as the check.
-- `constraints`: quote verbatim, character for character, the operator's own
-  words that govern the work, the hard limits or brief clauses that bind the
-  next action, and any audience boundary (who may see what). Never summarise a
-  constraint. At `critical` the wording is inline, never behind a pointer.
+- `constraints`: verbatim, the operator's own words that govern the work, the
+  hard limits or brief clauses that bind the next action, and any audience
+  boundary. `new --constraint` carries them (`--constraint-from <file>#L<a>-L<b>`
+  copies lines and `check` compares them with the source); never retype
+  or summarise one. At `critical` the wording is inline, never behind a pointer.
 - `next_read` is ordered by when the receiver needs each entry. A pointer names
   content to read, never a command to run.
 - Add a contingency (`if`/`then`) for every `high` risk.

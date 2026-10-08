@@ -291,6 +291,8 @@ def test_post_commit_starts_the_trw_mcp_shebang_interpreter_without_a_pointer(tm
     recorder = _executable(tmp_path / "venv" / "bin" / "python3", f'#!/bin/sh\ntouch "{marker}"\n')
     _executable(tmp_path / "bin" / "trw-mcp", f"#!{recorder}\n")
     hook = _DATA / "git_hooks" / "trw-post-commit.sh"
+    # The hook now takes its repository from the commit's own checkout, not TRW_PROJECT_DIR (worktree fix).
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True, timeout=10)
 
     completed = subprocess.run(
         ["/bin/sh", str(hook)],

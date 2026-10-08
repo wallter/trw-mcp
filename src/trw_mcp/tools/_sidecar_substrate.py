@@ -20,21 +20,51 @@ sidecar envelope ``risk-report-sidecar/v0``.
 from __future__ import annotations
 
 import importlib.util
-import json
-import subprocess
-from dataclasses import dataclass, replace
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from trw_mcp.tools._sidecar_pair import pair_from_two_builds, pair_stale_action
+from trw_mcp.tools._sidecar_envelope import (
+    ANCESTOR_ARTIFACT as ANCESTOR_ARTIFACT,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    DEFAULT_CACHE_DIR_REL as DEFAULT_CACHE_DIR_REL,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    SCHEMA_VERSION_ACCEPTED as SCHEMA_VERSION_ACCEPTED,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    SidecarEnvelopeStatus as SidecarEnvelopeStatus,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    SidecarLoadResult as SidecarLoadResult,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    load_envelope as load_envelope,
+)
+from trw_mcp.tools._sidecar_envelope import (
+    load_sidecar_with_sha_check as load_sidecar_with_sha_check,
+)
+from trw_mcp.tools._sidecar_paths import (
+    PROBE_BUDGET_S,
+    cache_safety,
+)
+from trw_mcp.tools._sidecar_paths import (
+    cache_is_safe as cache_is_safe,
+)
+from trw_mcp.tools._sidecar_paths import (
+    resolve_git_sha as resolve_git_sha,
+)
+from trw_mcp.tools._sidecar_paths import (
+    resolve_repo_root as resolve_repo_root,
+)
+from trw_mcp.tools._sidecar_paths import (
+    shared_cache_dir as shared_cache_dir,
+)
 
 if TYPE_CHECKING:
     from trw_mcp.tools._sidecar_ancestry import AncestorSidecar, GitReader
-
-SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
-DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
-#: The only artifact an ancestor may answer for: it carries one hint per target.
-ANCESTOR_ARTIFACT: str = "before-edit-batch"
 
 
 def distill_installed() -> bool:
@@ -81,14 +111,6 @@ def tier_required_action() -> str:
     )
 
 
-SidecarEnvelopeStatus = Literal[
-    "ok",
-    "sidecar_missing",
-    "sidecar_malformed",
-    "schema_mismatch",
-    "stale_sha",
-    "tier_required",
-]
 CurrentSidecarStatus = Literal[
     "hint_available",
     # hint_sidecar_ancestor_enabled: a proven-ancestor sidecar, served "as of" its sha.
@@ -97,6 +119,8 @@ CurrentSidecarStatus = Literal[
     "sidecar_too_far_behind",
     # hint_sidecar_ancestor_enabled: git could not prove ancestry or list the changes since.
     "sidecar_diff_failed",
+    # A git probe ran out of the lookup's budget: nothing is known, so nothing is advised.
+    "sidecar_check_timed_out",
     "sidecar_missing",
     "sidecar_malformed",
     "schema_mismatch",
@@ -117,19 +141,6 @@ class TierGateResult:
 
 
 @dataclass(frozen=True)
-class SidecarLoadResult:
-    """Outcome of a sidecar load + envelope validation."""
-
-    payload: Any | None
-    status: SidecarEnvelopeStatus
-    action: str | None
-    sidecar_path: str | None
-    sidecar_sha: str | None
-    #: The envelope's ``dirty_paths`` exactly as read (unvalidated), set only on ``ok``.
-    dirty_paths: object = None
-
-
-@dataclass(frozen=True)
 class CurrentSidecarResult:
     """Shared repo, entitlement, SHA, and sidecar-load outcome."""
 
@@ -140,58 +151,12 @@ class CurrentSidecarResult:
     sidecar_path: str | None = None
     sidecar_sha: str | None = None
     sidecar_existed: bool = False
-    #: Set only with ``hint_available_stale``: the ancestor that answered.
+    #: Snapshot provenance, including exact-HEAD hints for dirty-path filtering.
     ancestor: AncestorSidecar | None = None
     #: The resolved repository root, for callers that ask git a follow-up question.
     repo_root: Path | None = None
-
-
-def resolve_repo_root(repo_root: str | None) -> Path | None:
-    """Best-effort repo-root resolution (caller arg → git rev-parse)."""
-    if repo_root is not None:
-        return Path(repo_root)
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            stripped = proc.stdout.strip()
-            if stripped:
-                return Path(stripped)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def resolve_git_sha(repo_root: Path) -> str | None:
-    """Best-effort ``git rev-parse HEAD`` with validation (40-char hex)."""
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "HEAD"],  # noqa: S607
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return None
-        stripped = proc.stdout.strip()
-        if len(stripped) == 40 and all(c in "0123456789abcdef" for c in stripped):
-            return stripped
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-#: What to say when an artifact has no producer at all. Distinct from a
-#: remediation the caller can act on — telling someone to run a command
-#: that does not exist is worse than telling them nothing.
-_NO_PRODUCER_ACTION = "No producer exists for this sidecar yet, so it cannot be generated (see DEFECT-LEDGER UF-011)."
+    #: ``time.monotonic`` instant this lookup's one-second git budget ends; later probes share it.
+    deadline: float | None = None
 
 
 def check_tier_for_feature(
@@ -227,112 +192,6 @@ def check_tier_for_feature(
     )
 
 
-def load_envelope(sidecar_path: Path) -> dict[str, Any] | None:
-    """Read + JSON-parse sidecar; return None on missing/malformed."""
-    if not sidecar_path.exists():
-        return None
-    try:
-        parsed = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
-
-
-def load_sidecar_with_sha_check(
-    sidecar_path: Path,
-    *,
-    expected_sha: str,
-    cli_remediation: str | None,
-    file_path_hint: str | None = None,
-) -> SidecarLoadResult:
-    """Load sidecar envelope + validate schema_version + SHA match.
-
-    Returns ``SidecarLoadResult`` with payload populated only when all
-    checks pass. NEVER raises.
-
-    Args:
-        sidecar_path: Path to the sidecar JSON.
-        expected_sha: Current git HEAD SHA (caller verifies it matched).
-        cli_remediation: Exact CLI to run to regenerate the sidecar, or None
-            when no producer exists for this artifact. None is not a
-            convenience default. `trw_entity_risk_map` (since REMOVED, UF-011) advertised a
-            `trw-distill self-improve` subcommand that has never been
-            registered, so every caller at every tier was told to run something
-            that could not work (DEFECT-LEDGER UF-011). This parameter has to be
-            able to say "there is nothing to run", or the only way to satisfy
-            its type is to invent a command.
-
-            Note the deliberate omission above: the missing subcommand is NOT
-            named here. `wiring/checks/existence.py::_check_sidecar` decides a
-            producer exists if any non-consumer source file under the search
-            roots contains the contract's `producer_token`, so writing that
-            token into this docstring silently cleared the CONSUMER_ORPHAN
-            finding for it — prose disabling a truthfulness gate, which is the
-            exact defect class the gate exists to catch.
-        file_path_hint: Deprecated compatibility keyword; no longer needed for remediation.
-    """
-    _ = file_path_hint  # PRD-DIST-1988 compatibility; callers may still supply it.
-    sidecar_path_str = str(sidecar_path)
-    envelope = load_envelope(sidecar_path)
-    if envelope is None:
-        return SidecarLoadResult(
-            payload=None,
-            status="sidecar_missing",
-            action=(f"Run: {cli_remediation}" if cli_remediation else _NO_PRODUCER_ACTION),
-            sidecar_path=sidecar_path_str,
-            sidecar_sha=expected_sha,
-        )
-    schema = envelope.get("schema_version")
-    if schema != SCHEMA_VERSION_ACCEPTED:
-        return SidecarLoadResult(
-            payload=None,
-            status="schema_mismatch",
-            action=(
-                f"Sidecar schema_version={schema!r}; expected "
-                f"{SCHEMA_VERSION_ACCEPTED!r} — upgrade trw-distill or trw-mcp"
-            ),
-            sidecar_path=sidecar_path_str,
-            sidecar_sha=expected_sha,
-        )
-    sidecar_sha = envelope.get("sha")
-    stale: str | None = None
-    if not isinstance(sidecar_sha, str) or sidecar_sha != expected_sha:
-        stale = f"Sidecar SHA={sidecar_sha!r}; HEAD={expected_sha} — re-run with --persist-sidecar"
-    elif pair_from_two_builds(sidecar_path, envelope, load_envelope):
-        stale = pair_stale_action(expected_sha, cli_remediation, _NO_PRODUCER_ACTION)
-    if stale is not None:
-        return SidecarLoadResult(
-            payload=None,
-            status="stale_sha",
-            action=stale,
-            sidecar_path=sidecar_path_str,
-            sidecar_sha=expected_sha,
-        )
-    payload = envelope.get("payload")
-    if payload is None:
-        return SidecarLoadResult(
-            payload=None,
-            status="sidecar_malformed",
-            action=(
-                f"Sidecar payload missing; re-run: {cli_remediation}"
-                if cli_remediation
-                else f"Sidecar payload missing. {_NO_PRODUCER_ACTION}"
-            ),
-            sidecar_path=sidecar_path_str,
-            sidecar_sha=expected_sha,
-        )
-    return SidecarLoadResult(
-        payload=payload,
-        status="ok",
-        action=None,
-        sidecar_path=sidecar_path_str,
-        sidecar_sha=expected_sha,
-        dirty_paths=envelope.get("dirty_paths"),
-    )
-
-
 def resolve_current_sidecar(
     *,
     repo_root: str | None,
@@ -354,7 +213,8 @@ def resolve_current_sidecar(
     ``persist_ancestry=False`` (the reviewer role) computes ancestry in memory
     and writes no cache file.
     """
-    resolved_repo_root = resolve_repo_root(repo_root)
+    deadline = time.monotonic() + PROBE_BUDGET_S  # one budget, started before the first probe (root discovery)
+    resolved_repo_root = resolve_repo_root(repo_root, deadline)
     if resolved_repo_root is None:
         return CurrentSidecarResult(
             tier="free",
@@ -377,7 +237,7 @@ def resolve_current_sidecar(
             action=None,
         )
 
-    git_sha = resolve_git_sha(resolved_repo_root)
+    git_sha = resolve_git_sha(resolved_repo_root, deadline)
     if git_sha is None:
         return CurrentSidecarResult(
             tier=gate.tier,
@@ -386,7 +246,22 @@ def resolve_current_sidecar(
             action="Could not run `git rev-parse HEAD` — verify .git/ present",
         )
 
-    resolved_cache_dir = Path(cache_dir) if cache_dir is not None else resolved_repo_root / DEFAULT_CACHE_DIR_REL
+    from trw_mcp.tools._sidecar_ancestor_fallback import _resolve_ancestor
+    from trw_mcp.tools._sidecar_ancestry import AncestorSidecar, parse_dirty_paths
+
+    resolved_cache_dir = (
+        Path(cache_dir) if cache_dir is not None else shared_cache_dir(resolved_repo_root, DEFAULT_CACHE_DIR_REL)
+    )
+    safety = cache_safety(resolved_cache_dir, resolved_repo_root, deadline)
+    if safety != "safe":
+        timed_out = safety == "unknown"
+        return CurrentSidecarResult(
+            tier=gate.tier,
+            payload=None,
+            status="sidecar_check_timed_out" if timed_out else "sidecar_missing",
+            action="Could not check the sidecar cache (git timed out); learnings only" if timed_out else None,
+            repo_root=resolved_repo_root,
+        )
     sidecar_path = resolved_cache_dir / f"{artifact_name}-{git_sha}.json"
     sidecar_existed = sidecar_path.exists()
     if ancestor_bound is not None and artifact_name != ANCESTOR_ARTIFACT:
@@ -402,13 +277,35 @@ def resolve_current_sidecar(
             git_reader=git_reader,
             cli_remediation=cli_remediation,
             persist=persist_ancestry,
+            deadline=deadline,
         )
     load = load_sidecar_with_sha_check(
         sidecar_path,
         expected_sha=git_sha,
         cli_remediation=cli_remediation,
     )
+    if ancestor_bound is not None and load.status != "ok":
+        return _resolve_ancestor(
+            repo_root=resolved_repo_root,
+            search_dir=resolved_cache_dir,
+            head=git_sha,
+            tier=gate.tier,
+            bound=ancestor_bound,
+            git_reader=git_reader,
+            cli_remediation=cli_remediation,
+            persist=persist_ancestry,
+            deadline=deadline,
+        )
+    ancestor = None
+    if load.status == "ok" and artifact_name in (ANCESTOR_ARTIFACT, "before-edit-hint"):
+        dirty = parse_dirty_paths(load.dirty_paths)
+        if dirty is None:
+            return CurrentSidecarResult(
+                tier=gate.tier, payload=None, status="sidecar_malformed", repo_root=resolved_repo_root
+            )
+        ancestor = AncestorSidecar(git_sha, sidecar_path, 0, dirty_paths=dirty)
     return CurrentSidecarResult(
+        ancestor=ancestor,
         tier=gate.tier,
         payload=load.payload,
         status="hint_available" if load.status == "ok" else load.status,
@@ -417,79 +314,8 @@ def resolve_current_sidecar(
         sidecar_sha=load.sidecar_sha,
         sidecar_existed=sidecar_existed,
         repo_root=resolved_repo_root,
+        deadline=deadline,
     )
-
-
-def _resolve_ancestor(
-    *,
-    repo_root: Path,
-    search_dir: Path | None,
-    head: str,
-    tier: str,
-    bound: int,
-    git_reader: GitReader | None,
-    cli_remediation: str | None,
-    persist: bool,
-) -> CurrentSidecarResult:
-    """No exact-HEAD artifact: answer from the nearest proven-ancestor batch sidecar, or say why not."""
-    from trw_mcp.tools import _sidecar_ancestry as ancestry
-
-    cache_dir = search_dir or ancestry.shared_cache_dir(repo_root, DEFAULT_CACHE_DIR_REL)
-    git = git_reader or ancestry.SubprocessGitReader(repo_root)
-    run = f"run: {cli_remediation}" if cli_remediation else _NO_PRODUCER_ACTION
-    try:
-        outcome = ancestry.find_ancestor_sidecar(cache_dir, head, git=git, max_commits_behind=bound, persist=persist)
-    except ancestry.GitReadError as err:
-        outcome = ancestry.AncestryOutcome(status="git_failed", reason=str(err))
-    base = CurrentSidecarResult(
-        tier=tier, payload=None, status="sidecar_missing", sidecar_sha=head, repo_root=repo_root
-    )
-    if outcome.status == "no_candidates":
-        return replace(base, action=f"Run: {cli_remediation}" if cli_remediation else _NO_PRODUCER_ACTION)
-    if outcome.status == "git_failed":
-        return replace(
-            base,
-            status="sidecar_diff_failed",
-            action=f"Could not compare cached sidecars with HEAD ({outcome.reason}); learnings only ({ancestry.FLAG_DISABLE})",
-        )
-    if outcome.status == "too_far_behind" or outcome.ancestor is None:
-        nearest = outcome.nearest_commits_behind
-        where = (
-            "no cached sidecar is an ancestor of HEAD"
-            if nearest is None
-            else f"the nearest is {nearest} commits behind"
-        )
-        return replace(
-            base,
-            status="sidecar_too_far_behind",
-            action=f"No sidecar within hint_sidecar_max_commits_behind={bound} ({where}); {run} ({ancestry.FLAG_DISABLE})",
-        )
-    return _load_ancestor(base, outcome.ancestor, cli_remediation)
-
-
-def _load_ancestor(
-    base: CurrentSidecarResult, ancestor: AncestorSidecar, cli_remediation: str | None
-) -> CurrentSidecarResult:
-    """Validate the chosen ancestor's envelope; a corrupt file is ``sidecar_malformed``, never "missing"."""
-    from trw_mcp.tools._sidecar_ancestry import parse_dirty_paths
-
-    load = load_sidecar_with_sha_check(ancestor.path, expected_sha=ancestor.sha, cli_remediation=cli_remediation)
-    located = replace(base, sidecar_path=str(ancestor.path), sidecar_existed=True)
-    if load.status == "ok":
-        dirty = parse_dirty_paths(load.dirty_paths)
-        if dirty is None:
-            action = f"Sidecar dirty_paths is not a list of paths; rebuild {ancestor.path.name}"
-            return replace(located, status="sidecar_malformed", action=action)
-        fresh = ancestor.commits_behind == 0
-        return replace(
-            located,
-            payload=load.payload,
-            status="hint_available" if fresh else "hint_available_stale",
-            sidecar_sha=ancestor.sha,
-            ancestor=None if fresh else replace(ancestor, dirty_paths=dirty),
-        )
-    status: CurrentSidecarStatus = "sidecar_malformed" if load.status == "sidecar_missing" else load.status
-    return replace(located, status=status, action=load.action)
 
 
 __all__ = [
@@ -509,5 +335,6 @@ __all__ = [
     "resolve_current_sidecar",
     "resolve_git_sha",
     "resolve_repo_root",
+    "shared_cache_dir",
     "tier_required_action",
 ]

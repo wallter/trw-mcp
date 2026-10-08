@@ -63,8 +63,8 @@ when present; the packaged sibling agent is the standalone operational protocol.
 
 Beyond the shared rule below, a red-team absence claim requires **two
 independent searches** — a `Grep` over the claimed scope plus a different
-mechanism (a broad `Glob`, `{tool:trw_code}` with `mode="symbol"` when a code index
-exists, or `trw-distill query` when it is installed) — with both scopes recorded. If
+mechanism (a broad `Glob` or `{tool:trw_code}` with `mode="symbol"` when a code index
+exists) — with both scopes recorded. If
 either is unavailable, label the result unverified rather than absent.
 
 ## Output delta
@@ -109,13 +109,12 @@ steps. This fragment covers the general case.
 
 Any **negative existence claim** — "no X found", "no callers", "does not exist",
 "nothing references" — must cite (a) the exact search you ran, including its
-scope, and (b) proof that the search root exists. Run the absence search with
-`Grep`, or with `rg` over the named roots (or `trw-distill query` when it is
-installed), and show the command and root. Confirm the root with a tool you
-actually hold: a `Glob` returning entries beneath it, a directory listing, or
-`rg --files <root>`. A raw `grep` over a path that does not exist returns empty
-silently, so an empty result over an unverified root is a broken search, not
-evidence of absence.
+scope, and (b) proof that the search root exists. Run the search with `Grep` or
+`rg` over the named roots and show the command; without a search tool, ask the
+lead, or use `trw_code` for a symbol. Confirm the root with a tool you hold: a
+`Glob` returning entries beneath it, a directory listing, or `rg --files <root>`.
+A raw `grep` over a missing path returns empty silently, so an empty result over
+an unverified root is a broken search, not evidence of absence.
 <!-- trw:negative-existence-rule:end -->
 
 <!-- trw:delegated-run-precondition:start -->

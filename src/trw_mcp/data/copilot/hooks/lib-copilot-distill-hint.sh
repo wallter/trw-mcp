@@ -54,7 +54,10 @@ _get_python_path() {
     #      `git rev-parse --git-common-dir` (one cheap call, only reached
     #      here; a git error or non-worktree checkout just falls through)
     #   5. python3 on PATH, which often cannot import trw_mcp (trw-mcp doctor)
+    # A pointer counts only as an ABSOLUTE path to an executable regular file: a
+    # relative one would resolve against whatever directory the hook runs in.
     _trw_py=$(cat "$1/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+    case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
     if [ -z "$_trw_py" ] || [ ! -x "$_trw_py" ]; then
         _trw_py=$(command -v trw-mcp 2>/dev/null) || _trw_py=""
         [ -z "$_trw_py" ] || _trw_py=$(head -n 1 "$_trw_py" 2>/dev/null) || _trw_py=""
@@ -68,6 +71,7 @@ _get_python_path() {
         if [ -n "$_trw_common" ]; then
             _trw_main=$(dirname "$_trw_common")
             _trw_py=$(cat "$_trw_main/.trw/channels/cc03-python.txt" 2>/dev/null) || _trw_py=""
+            case "$_trw_py" in /*) [ -f "$_trw_py" ] || _trw_py="" ;; *) _trw_py="" ;; esac
             [ -x "$_trw_py" ] || _trw_py="$_trw_main/.venv/bin/python"
         fi
     fi

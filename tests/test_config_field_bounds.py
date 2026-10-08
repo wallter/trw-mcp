@@ -19,8 +19,11 @@ _NEW_FIELDS = (
 )
 
 
-def test_defaults_match_the_prd() -> None:
+def test_defaults_match_the_prd(monkeypatch: pytest.MonkeyPatch) -> None:
     """The shipped defaults are the ones the PRD specifies."""
+    # The suite-wide no-build guard (conftest) now switches this flag off through the environment;
+    # the SHIPPED default is what this asserts, so read it without that override.
+    monkeypatch.delenv("TRW_HINT_SIDECAR_REFRESH_ENABLED", raising=False)
     config = TRWConfig()
 
     assert config.hint_sidecar_refresh_enabled is True

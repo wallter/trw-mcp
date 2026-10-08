@@ -93,7 +93,7 @@ def test_without_flock_a_delayed_post_commit_worker_still_creates_nothing(
 def test_the_rebuild_request_is_refused_when_trw_is_gone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from trw_mcp.tools._distill_spawn import SpawnPorts, request_rebuild_if_due
 
-    monkeypatch.setenv("TRW_HINT_SIDECAR_AUTO_REFRESH_ENABLED", "true")  # the conftest pins it off
+    monkeypatch.setenv("TRW_HINT_SIDECAR_REFRESH_ENABLED", "true")  # the conftest pins it off
 
     class _Lookup:
         status = "sidecar_missing"

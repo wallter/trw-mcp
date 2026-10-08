@@ -46,6 +46,22 @@ def add_handoff_subcommands(
         metavar="GLOB",
         help="A repository-relative path or glob (*, **, ?) the receiver may change (repeatable): objective.paths",
     )
+    new.add_argument(
+        "--constraint",
+        action="append",
+        default=[],
+        metavar="TEXT",
+        help="A constraint's operative wording, carried verbatim into constraints[] (repeatable); "
+        "paste the operator's words, never a summary",
+    )
+    new.add_argument(
+        "--constraint-from",
+        action="append",
+        default=[],
+        metavar="PATH#L<first>[-L<last>]",
+        help="Copy a constraint from those lines of a repository file, bound to the file's digest (repeatable); "
+        "`handoff check` later verifies the text is still a verbatim part of that source",
+    )
     new.add_argument("--to-scope", default="next-session", help="Scope of the unaddressed receiver")
     new.add_argument(
         "--to-id",
@@ -99,6 +115,31 @@ def add_handoff_subcommands(
     )
     render.add_argument("file", help="AHR handoff JSON file")
 
+    brief = sub.add_parser(
+        "brief",
+        help="Project a record (draft or sealed) into one read-only sweep brief per item: commit, objective.paths "
+        "and constraints carried verbatim, a fixed item ledger and the return schema; never truncates",
+    )
+    brief.add_argument("file", help="AHR handoff JSON file (a draft is enough: only scope and constraints are read)")
+    brief.add_argument(
+        "--items", required=True, metavar="FILE", help='JSON array of {"id","question","hint"?,"must_contain"?}'
+    )
+    brief.add_argument("--max-reads", type=int, default=6, help="Read budget stated to each helper (default 6)")
+    brief.add_argument("--out-dir", default=None, metavar="DIR", help="Write <id>.brief.md files here")
+
+    brief_check = sub.add_parser(
+        "brief-check",
+        help="Check helper results against the same items: one row per id, allowed status and label, every "
+        "cited line present in scope exactly as quoted; anything else is inconclusive. Exit 1 unless every "
+        "item is citation_valid and no row names an unknown item (citation_valid is not a judgement that the "
+        "answer is right)",
+    )
+    brief_check.add_argument("file", help="The AHR handoff JSON file the briefs were rendered from")
+    brief_check.add_argument("--items", required=True, metavar="FILE", help="The items file given to `brief`")
+    brief_check.add_argument(
+        "--results", required=True, metavar="FILE", help="Helper rows: a JSON array, or one JSON object per line"
+    )
+
     check = sub.add_parser(
         "check",
         help="Receiver pre-flight: digest, validity, expiry, supersession, pointer digests and git state; "
@@ -106,3 +147,10 @@ def add_handoff_subcommands(
     )
     check.add_argument("file", help="AHR handoff JSON file")
     check.add_argument("--digest", default=None, metavar="sha256:HEX", help="The digest the sender gave you")
+    check.add_argument(
+        "--strict",
+        action="store_true",
+        help="Accept only positive evidence: the given digest matches, every pointer and sourced constraint is "
+        "match, and the checkout is where the sender left it; unknowns (not_accessed, no_digest) are findings. "
+        "Use before acting on a record without a person reading the report",
+    )

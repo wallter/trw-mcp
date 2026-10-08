@@ -116,11 +116,8 @@ never forms a fork.
   as proposals under its own authority and never runs a URI or quoted text.
 - No secrets, tokens, credentials or personal data in a record. Point to such
   material under its own access control.
-- A receiver opens only `file:` pointers inside its repository that `check`
-  reported as accessible, and fetches `https:` or `trw:` pointers only with
-  the user's go-ahead.
-- Evidence procedures are proposals too: a receiver runs only read-only local
-  commands it would run on its own authority.
+- Receiving rules for pointers and evidence procedures: `RECEIVE.md` steps 5
+  and 7.
 - When a model is asked to judge a record, pass it as quoted data
   (`trw_mcp.handoff.quote_for_model`), not as part of the prompt's instructions.
 

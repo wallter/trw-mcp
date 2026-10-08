@@ -289,6 +289,13 @@ class TestDistillDiscoverabilityLine:
         assert PRE_EDIT_HINT_INSTRUCTION in rendered
         assert "trw-distill query" in rendered
         assert "trw-distill rca" in rendered
+        assert "query callers" in rendered and "query callees" in rendered
+        assert "query importers" in rendered and "query tests" in rendered
+        assert "rca history" in rendered and "rca log" in rendered
+        assert "query deps" in rendered and "rca trace" in rendered and "query def" in rendered
+        # The guidance names no build command of its own: only the hint's line carries the right --cache-dir.
+        assert "Exit 3" in rendered and "run the command the hint prints" in rendered
+        assert "refresh-sidecars" not in rendered
 
     def test_omits_the_distill_line_when_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.models.config import _pre_edit_channels as mod

@@ -401,9 +401,12 @@ class TestRecordMatchesWhatWasDelivered:
             "    distill_status = 'hint_available'\n"
             "    distill_hint = _FakeHint()\n"
             "    distill_as_of = None\n"
+            # distill_action: read by the once-per-session sidecar remedy line the hook now prints.
+            "    distill_action = None\n"
             "    learnings = []\n"
             "\n"
-            "def _fake_compute(*, file_path):\n"
+            # repo_root: the hook now names the checkout it resolved from the edited file (worktree fix).
+            "def _fake_compute(*, file_path, repo_root=None):\n"
             "    return _FakeResult()\n"
             "\n"
             "_core.compute_before_edit_hint = _fake_compute\n"
@@ -469,7 +472,8 @@ class TestRecordMatchesWhatWasDelivered:
             "import time\n"
             "import trw_mcp.tools._before_edit_hint_core as _core\n"
             "\n"
-            "def _slow_compute(*, file_path):\n"
+            # repo_root: the hook now names the checkout it resolved from the edited file (worktree fix).
+            "def _slow_compute(*, file_path, repo_root=None):\n"
             "    time.sleep(0.3)\n"
             "    raise AssertionError('unreachable: the alarm should kill the process first')\n"
             "\n"

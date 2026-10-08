@@ -20,6 +20,7 @@ from typing import Any
 from trw_mcp.handoff._currency import handoff_files, supersession
 from trw_mcp.handoff._glob import covers
 from trw_mcp.handoff._jcs import JcsError, digest
+from trw_mcp.handoff._quotes import quote_status
 from trw_mcp.handoff._repo import GitState, confined_path, raw_digest, read_capped
 from trw_mcp.handoff._rules import instant
 from trw_mcp.handoff._validate import AhrInputError, AhrParseError, load, validate
@@ -33,6 +34,8 @@ CommitCounter = Callable[[str], int | None]
 PathLister = Callable[[str], tuple[str, ...] | None]
 _CLEAN_POINTERS = frozenset({"match", "no_digest", "not_accessed"})
 _CLEAN_GIT = frozenset({"match", "not_recorded", "not_comparable"})
+_CLEAN_QUOTES = frozenset({"match", "not_accessed"})
+_STRICT = frozenset({"match"})
 _FULL_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _MAX_SIDECAR_BYTES = 1 << 20
 _MAX_SCOPE_LIST = 20
@@ -157,6 +160,16 @@ def _scope(doc: JsonDoc, root: Path | None, now: GitState, paths_since: PathList
     return {"status": "checked", "outside": outside[:_MAX_SCOPE_LIST], "outside_count": len(outside)}
 
 
+def _constraint_sources(doc: JsonDoc, root: Path) -> list[JsonDoc]:
+    """One row per constraint that cites a ``source``: is its text still a verbatim part of that source (R-RB-8)?"""
+    constraints = doc.get("constraints")
+    return [
+        {"index": index} | quote_status(con.get("text"), con["source"], root)
+        for index, con in enumerate(constraints if isinstance(constraints, list) else [])
+        if isinstance(con, dict) and "source" in con
+    ]
+
+
 def _git_section(doc: JsonDoc, root: Path | None, now: GitState, commits_since: CommitCounter) -> JsonDoc:
     """Tree-state and changed-path drift are findings; new commits on top of the recorded one are information."""
     as_of = doc.get("as_of")
@@ -206,6 +219,7 @@ def check_record(
     git: GitState,
     commits_since: CommitCounter = _no_history,
     paths_since: PathLister = _no_paths,
+    strict: bool = False,
 ) -> JsonDoc:
     """Run every receiver pre-flight check on one handoff file; the report is JSON-serializable.
 
@@ -236,34 +250,39 @@ def check_record(
     scope = _scope(doc, root, git, paths_since)
     if scope is not None:
         report["scope"] = scope
+    sourced = _constraint_sources(doc, base)
+    if sourced:
+        report["constraints"] = sourced
+    if strict:
+        report["strict"] = True
     return report
 
 
 def is_clean(report: JsonDoc) -> bool:
-    sup = report["supersession"]
-    return (
-        report["digest"]["status"] != "mismatch"
-        and report["validity"]["valid"]
-        and report["expiry"]["status"] in ("valid", "none")
-        and sup["status"] == "current"
-        and not sup.get("tier_downgrade")
-        and not sup.get("duplicate_id")
-        and all(pc["status"] in _CLEAN_POINTERS for pc in report["pointer_checks"])
-        and report["git"]["status"] in _CLEAN_GIT
-    )
+    return not _failing(report)
 
 
 def _failing(report: JsonDoc) -> list[str]:
     """The report sections that keep it from being clean, in report order (dogfood 2026-10-08: a bare
-    "FINDINGS" next to "valid: True (0 findings)" read as a contradiction)."""
+    "FINDINGS" next to "valid: True (0 findings)" read as a contradiction).
+
+    A ``strict`` report (``check --strict``, for a receiver that will act without a person reading the
+    report) accepts only positive evidence: the digest it was given matches, every pointer and every
+    sourced constraint is ``match``, and the checkout is where the sender left it. ``not_accessed``,
+    ``no_digest`` and a non-comparable git state are unknowns, and an unknown is not clean there.
+    """
+    strict = bool(report.get("strict"))
+    pointers, git, quotes = (_STRICT, _STRICT, _STRICT) if strict else (_CLEAN_POINTERS, _CLEAN_GIT, _CLEAN_QUOTES)
     sup = report["supersession"]
+    digest_status = report["digest"]["status"]
     failing = {
-        "digest": report["digest"]["status"] == "mismatch",
+        "digest": digest_status != "match" if strict else digest_status == "mismatch",
         "validity": not report["validity"]["valid"],
         "expiry": report["expiry"]["status"] not in ("valid", "none"),
         "supersession": sup["status"] != "current" or bool(sup.get("tier_downgrade") or sup.get("duplicate_id")),
-        "pointers": any(pc["status"] not in _CLEAN_POINTERS for pc in report["pointer_checks"]),
-        "git": report["git"]["status"] not in _CLEAN_GIT,
+        "pointers": any(pc["status"] not in pointers for pc in report["pointer_checks"]),
+        "git": report["git"]["status"] not in git,
+        "constraints": any(row["status"] not in quotes for row in report.get("constraints", [])),
     }
     return [name for name, bad in failing.items() if bad]
 
@@ -277,7 +296,7 @@ def summary(report: JsonDoc) -> list[str]:
     newer = f" (newest: {sup['newest']['handoff_id']})" if "newest" in sup else ""
     newer += "".join(f" {key}: {len(sup[key])}" for key in ("tier_downgrade", "duplicate_id") if sup.get(key))
     return [
-        f"handoff {report['handoff_id']}: "
+        f"handoff {report['handoff_id']}{' (strict)' if report.get('strict') else ''}: "
         + ("clean" if is_clean(report) else f"FINDINGS in {', '.join(_failing(report))} - do not act yet"),
         f"  digest: {report['digest']['status']}   valid: {report['validity']['valid']}"
         f" ({len(report['validity']['findings'])} findings)   expiry: {report['expiry']['status']}",

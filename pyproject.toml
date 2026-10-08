@@ -9,7 +9,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "9.2.2"
+version = "9.3.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -93,7 +93,7 @@ dependencies = [
     # 5.1.0 also carries `trw_memory.security.credentials` (the one credential detector,
     # E2E-INC-036), imported UNGUARDED by telemetry/anonymizer.py; if this ships after
     # trw-memory 5.1.0 is published, raise the floor to the release that carries it.
-    "trw-memory>=5.2.3,<6.0.0",
+    "trw-memory>=5.2.4,<6.0.0",
     "typing_extensions>=4.6.0",
 ]
 

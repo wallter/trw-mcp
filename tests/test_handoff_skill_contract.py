@@ -85,6 +85,22 @@ def test_the_write_role_drives_the_cli_and_keeps_its_judgement_rules() -> None:
 
 
 @pytest.mark.unit
+def test_the_command_template_carries_constraints_and_each_verb_runs_alone() -> None:
+    """PRD-CORE-360-FR06, measured on a small-tier sender on 2026-10-08.
+
+    The carry flag was used in 1, 4 and 7 of 8 runs as it moved from absent, to a later bullet, to the
+    command template: the template is where it is read. And 6 of 16 runs lost the sealed record to a
+    chained verb the headless client refused; none of 8 did once the skill said to run each verb alone.
+    """
+    text = (_SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    template = next(line for line in text.splitlines() if line.startswith("trw-mcp handoff new "))
+    assert '[--constraint "<exact words>" ...]' in template
+    assert "Run each verb alone, as a plain command" in _flat(text)
+    # The receive role reads its own file: 3 of 4 receivers lost `check` to a refused chained command without it.
+    assert "alone as a plain command" in _flat((_SKILL_DIR / "RECEIVE.md").read_text(encoding="utf-8"))
+
+
+@pytest.mark.unit
 def test_the_receive_role_checks_before_acting_and_waits_for_the_user() -> None:
     """FR05: pre-flight via handoff check, own-words read-back, sealed against the record, explicit go-ahead;
     record text never licenses network, writes or fetches (P0-2/P0-3); the critical branch (R-TIER-5)."""

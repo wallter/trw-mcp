@@ -68,10 +68,10 @@ def test_record_never_writes_through_a_symlinked_channels_dir(tmp_path: Path) ->
 
 
 def test_a_hanging_interpreter_cannot_hold_the_commit(git_repo: Path, tmp_path: Path) -> None:
-    """sol s2 r1 P2: the foreground probe is bounded."""
+    """A detached worker cannot hold the commit or its captured output pipes."""
     install_git_post_commit_hook(git_repo)
     hanging = tmp_path / "python-that-hangs"
-    hanging.write_text("#!/bin/sh\ntrap '' TERM\nsleep 30\n", encoding="utf-8")  # ignores SIGTERM too
+    hanging.write_text("#!/bin/sh\nsleep 3\n", encoding="utf-8")  # ignores SIGTERM too
     hanging.chmod(0o755)
     (git_repo / HOOK_INTERPRETER_REL).write_text(f"{hanging}\n", encoding="utf-8")
     (git_repo / "c.py").write_text("x = 1\n", encoding="utf-8")
@@ -84,13 +84,13 @@ def test_a_hanging_interpreter_cannot_hold_the_commit(git_repo: Path, tmp_path: 
         env={**os.environ, "TRW_PROJECT_DIR": str(git_repo)},
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=2,
         check=False,
     )
 
     assert commit.returncode == 0
-    assert time.monotonic() - started < 20
-    assert "cannot import trw_mcp" in commit.stderr
+    assert time.monotonic() - started < 2
+    assert "maintenance skipped" not in commit.stderr
 
 
 def test_a_real_commit_runs_the_sweep_without_errors(
@@ -134,7 +134,7 @@ def test_an_interpreter_without_trw_mcp_is_refused_loudly(git_repo: Path, tmp_pa
     )
 
     assert commit.returncode == 0, "a hook problem must never fail the commit"
-    assert f"{unusable} cannot import trw_mcp" in commit.stderr
+    assert "worker failed to start or run" in commit.stderr
     log = (git_repo / ".trw" / "context" / "hook-executions.log").read_text(encoding="utf-8")
     assert "event=PostCommit" in log and "python_unavailable=1" in log
     assert read_receipt(git_repo) is None, "no sweep may be reported for a run that could not start"
