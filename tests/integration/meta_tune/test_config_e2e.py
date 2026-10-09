@@ -86,7 +86,9 @@ def test_startup_validation_activates_from_legacy_flat_meta_tune_key(
     monkeypatch.setattr("trw_mcp.models.config._loader.platform.system", lambda: "Linux")
     monkeypatch.delenv("TRW_META_TUNE_ENABLED", raising=False)
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: repo_root)
-    monkeypatch.setattr(_app, "validate_meta_tune_defaults", lambda cfg: validate_calls.append(cfg.meta_tune.enabled))
+    monkeypatch.setattr(
+        _app, "validate_meta_tune_defaults", lambda cfg, **_kw: validate_calls.append(cfg.meta_tune.enabled)
+    )
     reload_config(None)
     try:
         cfg = get_config()

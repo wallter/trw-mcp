@@ -24,8 +24,10 @@ def probe_timeout(deadline: float | None) -> float:
     return min(PROBE_BUDGET_S, left)
 
 
-def resolve_repo_root(repo_root: str | None, deadline: float | None = None) -> Path | None:
-    """Best-effort repo-root resolution (caller arg → git rev-parse)."""
+def resolve_repo_root(
+    repo_root: str | None, deadline: float | None = None, *, start: Path | None = None
+) -> Path | None:
+    """Best-effort repo-root resolution (caller arg → git rev-parse, asked in *start* when given)."""
     if repo_root is not None:
         return Path(repo_root)
     try:
@@ -35,6 +37,7 @@ def resolve_repo_root(repo_root: str | None, deadline: float | None = None) -> P
             text=True,
             timeout=probe_timeout(deadline),
             check=False,
+            cwd=start,
         )
         if proc.returncode == 0:
             stripped = proc.stdout.strip()

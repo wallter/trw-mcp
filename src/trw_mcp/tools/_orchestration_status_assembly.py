@@ -23,10 +23,7 @@ from trw_mcp.tools._orchestration_lifecycle import (
     _compute_reflection_metrics,
     _phase_duration_summary,
 )
-from trw_mcp.tools._orchestration_phase import (
-    _check_framework_version_staleness,
-    _compute_reversion_metrics,
-)
+from trw_mcp.tools._orchestration_phase import _check_framework_version_staleness
 from trw_mcp.tools._orchestration_time import status_time_block
 from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
 
@@ -71,7 +68,6 @@ _FIELD_SCOPE: dict[str, str] = {
     "event_count": "run",
     "reflection": "run",
     "phase_durations": "run",
-    "reversions": "run",
     "last_activity_ts": "run",
     "hours_since_activity": "run",
     # PRD-CORE-338-FR05: elapsed/forecast/drift from THIS run's own events.
@@ -316,17 +312,6 @@ def assemble_status_result(
             result["recall_policy"] = str(recall_policy)
         apply_task_profile_observability(cast("dict[str, object]", result), task_profile_data)
     result["phase_durations"] = _phase_duration_summary(events, result["phase"])
-
-    reversion_metrics = _compute_reversion_metrics(events)
-    # Compact the healthy/no-revert case: drop the empty ``by_trigger`` dict
-    # and the ``latest: null`` field, which are pure null-noise re-emitted on
-    # every status check for the life of the run. ``count``/``rate``/
-    # ``classification`` stay unconditional (callers/tests depend on them).
-    if not reversion_metrics.get("by_trigger"):
-        reversion_metrics.pop("by_trigger", None)
-    if reversion_metrics.get("latest") is None:
-        reversion_metrics.pop("latest", None)
-    result["reversions"] = reversion_metrics
 
     # PRD-QUAL-105: surface deliver-gate readiness at status-check time so an
     # agent can answer "can I deliver now?" without a deliver-then-fail-then-

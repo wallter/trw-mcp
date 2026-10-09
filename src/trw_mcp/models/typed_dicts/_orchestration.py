@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 # ---------------------------------------------------------------------------
 # trw_init / trw_checkpoint local shapes
@@ -35,33 +35,6 @@ class StatusReflectionDict(TypedDict):
     """Nested reflection sub-dict within ``TrwStatusDict``."""
 
     count: int
-
-
-class StatusReversionLatestDict(TypedDict, total=False):
-    """Nested latest-reversion entry within ``StatusReversionMetricsDict``."""
-
-    from_phase: str
-    to_phase: str
-    trigger: str
-    reason: str
-    ts: str
-
-
-class StatusReversionMetricsDict(TypedDict):
-    """Return shape of ``_compute_reversion_metrics()`` in orchestration.py.
-
-    ``_compute_reversion_metrics`` always populates all five keys, but the
-    ``trw_status`` response compacts the empty cases: ``by_trigger`` is omitted
-    when there are no reverts (empty dict) and ``latest`` is omitted when null,
-    hence both are ``NotRequired`` on the wire. ``count``/``rate``/
-    ``classification`` are always present.
-    """
-
-    count: int
-    rate: float
-    by_trigger: NotRequired[dict[str, int]]
-    classification: str
-    latest: NotRequired[StatusReversionLatestDict | None]
 
 
 class DeliverGateScanDict(TypedDict):
@@ -112,7 +85,6 @@ class TrwStatusDict(TypedDict, total=False):
     blocked_decision: dict[str, object]
     blocked_decisions_pending: int
     phase_durations: dict[str, object]
-    reversions: StatusReversionMetricsDict
     last_activity_ts: str
     hours_since_activity: float
     # PRD-CORE-338-FR05: present only for a tracked run (NFR02).

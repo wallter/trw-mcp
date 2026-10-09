@@ -80,11 +80,13 @@ def test_sync_passes_manifest_hashes_to_install(tmp_path: Path, bundled: str, mo
     assert dest.read_text(encoding="utf-8") == bundled
 
 
-def test_install_hook_edit_warning_names_the_reprovision_remedy(tmp_path: Path, bundled: str) -> None:
+def test_install_hook_edit_warning_names_a_remedy_that_works(tmp_path: Path, bundled: str) -> None:
+    """--reprovision refuses a path with no tombstone; delete-and-run-again is the sequence that restores it."""
     _dest(tmp_path).write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
     result = _result()
     ch._install_hook(tmp_path, HOOK, result, None)
-    assert f"update-project --reprovision .claude/hooks/{HOOK}" in result["warnings"][0]
+    assert "delete it and run update-project again" in result["warnings"][0]
+    assert "--reprovision" not in result["warnings"][0]
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs os.mkfifo")

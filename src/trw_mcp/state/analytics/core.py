@@ -96,7 +96,6 @@ _TOPIC_KEYWORD_MAP: dict[str, str] = {
     # Security
     "security": "security",
     "auth": "security",
-    "token": "security",
     "jwt": "security",
     "rbac": "security",
     # Database
@@ -114,23 +113,18 @@ _TOPIC_KEYWORD_MAP: dict[str, str] = {
     # Documentation
     "docs": "documentation",
     "readme": "documentation",
-    "prd": "documentation",
     "changelog": "documentation",
     # Debugging
     "debug": "debugging",
-    "error": "debugging",
     "bug": "debugging",
     "fix": "debugging",
     "trace": "debugging",
     # Pricing / Cost
-    "cost": "pricing",
     "price": "pricing",
     "pricing": "pricing",
     "billing": "pricing",
-    "budget": "pricing",
     # Rate limiting
     "rate": "rate-limiting",
-    "limit": "rate-limiting",
     "throttle": "rate-limiting",
     "ratelimit": "rate-limiting",
 }

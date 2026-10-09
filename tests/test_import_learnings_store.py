@@ -244,3 +244,19 @@ def test_the_export_metadata_carries_the_package_version(tmp_path: Path, fake_me
     from trw_mcp.export import export_data
 
     assert export_data(_setup_project(tmp_path / "p"), "learnings")["metadata"]["trw_version"] == __version__
+
+
+@pytest.mark.parametrize(
+    ("source", "kept"),
+    [("distill", True), ("human", True), ("made-up", False), (7, False)],
+)
+def test_the_exported_source_rides_as_a_tag_only_when_it_is_a_source_a_writer_can_set(
+    source: object, kept: bool
+) -> None:
+    """A row a distillation pipeline wrote keeps that fact through an export and import; an unknown value does not."""
+    from trw_mcp.export_import import _provenance_tags
+
+    tags = _provenance_tags({"id": "L-abc1", "source_type": source})
+
+    assert "imported-id:L-abc1" in tags
+    assert (f"imported-source:{source}" in tags) is kept

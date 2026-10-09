@@ -65,17 +65,17 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.3.0 -->
+<!-- whats-new: 9.4.0 -->
 
+- **Answers about your project, wherever the server runs.** `trw_review`, `trw_code` hints, `trw_build_check`, `trw_dispatch` and `trw_deliver` read your project's repository even when the server was started in another directory.
+- **A delivery gate that follows your own checkout.** `trw_deliver` counts the requirement status changes your checkout made, when it can tell which those are; `update-project` keeps an edited hook's registration.
 - **Dispatch setup in the installer.** Turn on `trw_dispatch` and pin a model and effort per client while installing, or later with `trw-mcp config dispatch`.
 - **`trw-mcp config set` and `unset`.** Change or remove one setting safely: validated exactly as TRW loads it, secrets refused, and every other line of your file kept.
 - **Installs that remember you.** Each question is asked once, a remembered answer holds on unattended runs, and `update-project --rerender` restores a TRW file after backing up yours.
 - **Handoffs another session can trust.** The `trw-handoff` skill seals a record with labelled claims and constraints copied from their source; `handoff check --strict` accepts only positive evidence.
-- **Helper sweeps you can check.** `trw-mcp handoff brief` turns a record into read-only briefs for small helper agents, and `brief-check` verifies every quoted line by code.
 - **Pre-edit hints from any worktree.** With the optional `trw-distill` package, the hint works in linked git worktrees, confirms a file's repository, and stays inside a fixed time limit.
-- **Set up once per computer.** Sign in and configure `trw_assess` once; new projects reuse `~/.trw` instead of asking again.
 
-Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.2.4. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
+Requires Python <!-- inv:python_min_trw_mcp -->3.11<!-- /inv -->+ and trw-memory 5.3.0. 9.0.0 was a breaking release: read the [upgrade notes](#upgrading) and the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md) first.
 
 ## Upgrading
 

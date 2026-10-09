@@ -100,13 +100,14 @@ from trw_mcp.state.validation._prd_scoring_parsing import (
     _VAGUE_TERMS_RE as _VAGUE_TERMS_RE,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
+    DEFAULT_SECTION_DENSITY_WEIGHT,
+    SECTION_DENSITY_WEIGHTS,
+)
+from trw_mcp.state.validation._prd_scoring_parsing import (
     _compute_ambiguity_rate as _compute_ambiguity_rate,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _extract_subheadings as _extract_subheadings,
-)
-from trw_mcp.state.validation._prd_scoring_parsing import (
-    _get_section_weights as _get_section_weights,
 )
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _is_substantive_line as _is_substantive_line,
@@ -212,7 +213,7 @@ def score_content_density(
     content: str,
     config: TRWConfig | None = None,
 ) -> DimensionScore:
-    """Score the Content Density dimension (25 points max).
+    """Score the Content Density dimension (``validation_density_weight`` points max).
 
     Computes per-section density and aggregates via weighted average.
     Problem Statement and Functional Requirements get 2x weight;
@@ -220,7 +221,7 @@ def score_content_density(
 
     Args:
         content: Full PRD markdown content.
-        config: Optional config for weight override.
+        config: Optional config (supplies ``validation_density_weight``, the max score).
 
     Returns:
         DimensionScore for content density.
@@ -240,12 +241,11 @@ def score_content_density(
     section_scores: list[SectionScore] = []
     weighted_sum = 0.0
     weight_total = 0.0
-    section_weights = _get_section_weights(_config)
 
     for name, body in sections:
         ss = score_section_density(name, body)
         section_scores.append(ss)
-        weight = section_weights.get(name, _config.density_weight_default)
+        weight = SECTION_DENSITY_WEIGHTS.get(name, DEFAULT_SECTION_DENSITY_WEIGHT)
         weighted_sum += ss.density * weight
         weight_total += weight
 

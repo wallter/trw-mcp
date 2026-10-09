@@ -17,15 +17,17 @@ class TestHandleCrossModelMode:
 
     def test_disabled_config_sets_cross_model_skipped_true(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["cross_model_skipped"] is True
 
-    def test_disabled_config_returns_pass_verdict(self, run_dir: Path) -> None:
+    def test_disabled_config_without_findings_returns_error(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
-        assert result["verdict"] == "pass"
+        assert "error" in result
+        assert "verdict" not in result
+        assert not (run_dir / "meta/review.yaml").exists()
 
     def test_empty_diff_sets_cross_model_skipped_true(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=True)
@@ -42,19 +44,19 @@ class TestHandleCrossModelMode:
 
     def test_mode_field_is_cross_model(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["mode"] == "cross_model"
 
     def test_provider_field_in_result(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False, cross_model_provider="test-provider")
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["cross_model_provider"] == "test-provider"
 
     def test_persists_review_yaml_with_mode_field(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         review_path = run_dir / "meta" / "review.yaml"
         assert review_path.exists()
@@ -64,7 +66,7 @@ class TestHandleCrossModelMode:
 
     def test_no_run_returns_empty_review_yaml(self) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, None, "review-none", "2026-03-01T00:00:00Z")
         assert result["review_yaml"] == ""
         assert result["run_path"] is None
@@ -113,12 +115,12 @@ class TestHandleCrossModelMode:
 
     def test_review_id_in_result(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-id-check", "2026-03-01T00:00:00Z")
         assert result["review_id"] == "review-id-check"
 
     def test_total_findings_zero_when_skipped(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False)
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "review-cm", "2026-03-01T00:00:00Z")
         assert result["total_findings"] == 0

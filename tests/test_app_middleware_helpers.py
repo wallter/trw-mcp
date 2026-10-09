@@ -147,7 +147,9 @@ class TestMiddlewareHelpers:
         cfg = TRWConfig(meta_tune=MetaTuneConfig(enabled=True))
 
         seen: list[object] = []
-        with patch("trw_mcp.server._app.validate_meta_tune_defaults", side_effect=seen.append):
+        with patch(
+            "trw_mcp.server._app.validate_meta_tune_defaults", side_effect=lambda config, **_kw: seen.append(config)
+        ):
             _run_meta_tune_boot_validation(cfg)
 
         assert seen == [cfg]

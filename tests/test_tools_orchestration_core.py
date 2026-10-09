@@ -18,10 +18,7 @@ import pytest
 
 from tests._tools_orchestration_support import FRAMEWORK_VERSION, orch_tools, set_project_root  # noqa: F401
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.tools._orchestration_phase import (
-    _check_framework_version_staleness,
-    _compute_reversion_metrics,
-)
+from trw_mcp.tools._orchestration_phase import _check_framework_version_staleness
 
 pytestmark = pytest.mark.usefixtures("fake_memory_store")
 
@@ -36,7 +33,6 @@ def test_orchestration_module_stays_within_500_lines() -> None:
 @pytest.mark.parametrize(
     "helper",
     [
-        _compute_reversion_metrics,
         _check_framework_version_staleness,
     ],
 )

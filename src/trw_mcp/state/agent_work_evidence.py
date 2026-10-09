@@ -57,7 +57,7 @@ def assemble_agent_work_evidence(
     # (raises StateError on the first malformed line). The structural backbone
     # (run.yaml above) stays strict.
     events = read_jsonl_resilient(events_path)
-    event_summary_model, _, duration, _ = parse_run_events(events)
+    event_summary_model, _, duration = parse_run_events(events)
     warnings: list[str] = []
     verification = _assemble_verification(run_path, state_reader, warnings)
     artifacts = _assemble_artifacts(run_path, run_state.artifacts, warnings)

@@ -31,7 +31,7 @@ Do not treat a missing optional log as zero activity. Mark it `UNKNOWN/NOT EMITT
 
 ### Run and ceremony
 
-- Report active/stale/completed state, phase, tier/profile, last activity, checkpoints/reversions, build evidence, and substantive review evidence.
+- Report active/stale/completed state, phase, tier/profile, last activity, checkpoints, build evidence, and substantive review evidence.
 - Judge compliance against the resolved tier and configured gates, not raw event counts or elapsed-time folklore.
 - Separate session-level events from run-level artifacts and avoid attributing another concurrent session's evidence to this run.
 

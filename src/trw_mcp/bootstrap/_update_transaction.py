@@ -508,14 +508,21 @@ def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callab
             shutil.copy2(token, scratch / CHECKOUT_TOKEN_RELPATH)  # keeps the 0600 mode
         with git_view_of(scratch, target_dir):  # the git-clean retire rule must see the real checkout
             apply(scratch)
+        from ._enrollment_rebless import record_scratch_hook_drift
+
+        record_scratch_hook_drift(scratch, result)
     finally:
         try:
             release_snapshot(scratch)
         finally:
             remove_tree(scratch, purpose="update dry-run scratch")
-    # Writers name absolute paths in their notes; point them at the real target.
+    # Writers name absolute paths in their notes; point them at the real target. Nothing was moved to trash.
+    from ._restore_proof import as_dry_run_note
+
     for key, items in result.items():
         result[key] = [
-            item.replace(str(scratch.resolve()), str(target_dir)).replace(str(scratch), str(target_dir))
+            as_dry_run_note(item)
+            .replace(str(scratch.resolve()), str(target_dir))
+            .replace(str(scratch), str(target_dir))
             for item in items
         ]

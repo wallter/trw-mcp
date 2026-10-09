@@ -47,7 +47,7 @@ class TestModeDetection:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -127,7 +127,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="some diff"),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -140,7 +140,7 @@ class TestCrossModelMode:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         tools = make_ceremony_server(monkeypatch, tmp_path)
-        _reset_config(TRWConfig(cross_model_review_enabled=True))
+        _reset_config(TRWConfig(cross_model_review_enabled=True, cross_model_provider="test-provider"))
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
@@ -161,7 +161,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -187,7 +187,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -204,13 +204,13 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
         assert result["mode"] == "cross_model"
 
-    def test_cross_model_skipped_yields_pass_verdict(
+    def test_cross_model_skipped_without_findings_returns_error(
         self,
         tmp_path: Path,
         run_dir: Path,
@@ -225,7 +225,9 @@ class TestCrossModelMode:
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
-        assert result["verdict"] == "pass"
+        assert "error" in result
+        assert "verdict" not in result
+        assert not (run_dir / "meta/review.yaml").exists()
 
     def test_cross_model_logs_review_complete_event(
         self,
@@ -238,7 +240,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=run_dir),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 
@@ -262,7 +264,7 @@ class TestCrossModelMode:
 
         with (
             patch("trw_mcp.tools.review.find_active_run", return_value=None),
-            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""),
+            patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"),
         ):
             result = tools["trw_review"].fn(mode="cross_model")
 

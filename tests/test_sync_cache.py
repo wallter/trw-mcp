@@ -27,28 +27,27 @@ def _p99_ms(samples: list[float]) -> float:
 
 
 def test_cache_update_and_read(tmp_path: Path) -> None:
-    """Write state then read back attribution_results."""
+    """update() persists the state to disk and the etag round-trips."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
     state = {"attribution_results": {"L-1": 1.3, "L-2": 0.8}}
     cache.update(state, etag="etag-v1")
 
-    params = cache.get_attribution_results()
-    assert params is not None
-    assert params["L-1"] == 1.3
-    assert params["L-2"] == 0.8
+    assert cache.etag == "etag-v1"
+    on_disk = json.loads((tmp_path / "intel-cache.json").read_text())
+    assert on_disk["attribution_results"] == {"L-1": 1.3, "L-2": 0.8}
 
 
 def test_cache_expired_returns_none(tmp_path: Path) -> None:
-    """Cache with TTL=0 returns None (expired immediately)."""
+    """Cache with TTL=0 serves no etag (expired immediately)."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
     cache.update({"attribution_results": {"L-1": 1.0}}, etag="old")
 
     # TTL=0 means cache is always expired
-    assert cache.get_attribution_results() is None
+    assert cache.etag is None
 
 
 def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
@@ -59,7 +58,7 @@ def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
     cache.update({"attribution_results": {"L-1": 1.0}}, etag="old")
 
     with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
-        assert cache.get_attribution_results() is None
+        assert cache.etag is None
 
     expired_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_expired",))
     assert expired_call.kwargs["age_seconds"] >= 0
@@ -67,13 +66,11 @@ def test_cache_expired_logs_age_and_ttl(tmp_path: Path) -> None:
 
 
 def test_cache_missing_returns_none(tmp_path: Path) -> None:
-    """Cache with no file returns None for all accessors."""
+    """Cache with no file serves no etag."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path)
-    assert cache.get_attribution_results() is None
     assert cache.etag is None
-    assert not cache.is_fresh
 
 
 def test_cache_atomic_write(tmp_path: Path) -> None:
@@ -93,7 +90,7 @@ def test_cache_atomic_write(tmp_path: Path) -> None:
 
 
 def test_a_leftover_bandit_params_key_is_ignored(tmp_path: Path) -> None:
-    """PRD-CORE-303 FR02: an old cache's bandit_params key is left on disk, never read."""
+    """PRD-CORE-303 FR02: an old cache's bandit_params/attribution_results keys stay on disk, never read."""
     from trw_mcp.sync.cache import IntelligenceCache
 
     cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
@@ -104,28 +101,8 @@ def test_a_leftover_bandit_params_key_is_ignored(tmp_path: Path) -> None:
 
     assert not hasattr(cache, "get_bandit_params")
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_attribution_results() == {"L-001": {"causal_score": 0.8}}
+        assert cache.etag == "v2"
     mock_warning.assert_not_called()
-
-
-def test_cache_is_fresh_true_within_ttl(tmp_path: Path) -> None:
-    """Cache written just now is fresh."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"attribution_results": {}}, etag="v1")
-
-    assert cache.is_fresh
-
-
-def test_cache_is_fresh_false_when_expired(tmp_path: Path) -> None:
-    """Cache with TTL=0 is not fresh."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=0)
-    cache.update({"attribution_results": {}}, etag="v1")
-
-    assert not cache.is_fresh
 
 
 def test_cache_etag_property(tmp_path: Path) -> None:
@@ -141,6 +118,38 @@ def test_cache_etag_property(tmp_path: Path) -> None:
     # Update with new etag
     cache.update({"attribution_results": {}}, etag="my-etag-456")
     assert cache.etag == "my-etag-456"
+
+
+def _age_cache(tmp_path: Path, seconds: int) -> None:
+    """Backdate the stored ``updated_at`` so no test has to sleep."""
+    from datetime import datetime, timedelta, timezone
+
+    cache_file = tmp_path / "intel-cache.json"
+    data = json.loads(cache_file.read_text())
+    data["_meta"]["updated_at"] = (datetime.now(tz=timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    cache_file.write_text(json.dumps(data))
+
+
+def test_etag_served_inside_the_ttl(tmp_path: Path) -> None:
+    """A cache younger than its TTL serves the stored etag."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache.update({"attribution_results": {}}, etag="v1")
+    _age_cache(tmp_path, 3500)
+
+    assert cache.etag == "v1"
+
+
+def test_etag_is_none_once_the_ttl_has_passed(tmp_path: Path) -> None:
+    """A cache older than its TTL serves no etag, forcing a full pull."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    cache.update({"attribution_results": {}}, etag="v1")
+    _age_cache(tmp_path, 3700)
+
+    assert cache.etag is None
 
 
 def test_cache_etag_none_when_expired(tmp_path: Path) -> None:
@@ -200,9 +209,9 @@ def test_cache_read_logs_freshness_metadata(tmp_path: Path) -> None:
     cache.update({"attribution_results": {"L-1": 1.0}}, etag="etag-v1")
 
     with patch("trw_mcp.sync.cache.logger.debug") as mock_debug:
-        params = cache.get_attribution_results()
+        etag = cache.etag
 
-    assert params == {"L-1": 1.0}
+    assert etag == "etag-v1"
     read_call = next(call for call in mock_debug.call_args_list if call.args == ("intel_cache_read",))
     assert read_call.kwargs["event_type"] == "intel_cache_read"
     assert read_call.kwargs["is_fresh"] is True
@@ -241,8 +250,7 @@ def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
     state = _build_large_state()
     cache.update(state, etag="etag-v1")
 
-    params = cache.get_attribution_results()
-    assert params is not None
+    assert cache.etag == "etag-v1"
 
 
 @requires_local_timing
@@ -257,23 +265,9 @@ def test_cache_read_p99_under_10ms_for_large_payload_budget(tmp_path: Path) -> N
     samples: list[float] = []
     for _ in range(100):
         started_at = time.perf_counter()
-        cache.get_attribution_results()
+        cache.etag
         samples.append(time.perf_counter() - started_at)
     assert_budget("cache_read_p99_large_payload", _p99_ms(samples), 10.0, "ms")
-
-
-def test_cache_get_attribution_results(tmp_path: Path) -> None:
-    """Write and read attribution_results."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update(
-        {"attribution_results": {"L-1": {"causal_score": 0.9, "confidence": 0.7}}},
-        etag="v1",
-    )
-    results = cache.get_attribution_results()
-    assert results is not None
-    assert results["L-1"]["causal_score"] == 0.9
 
 
 def test_cache_corrupt_file_returns_none(tmp_path: Path) -> None:
@@ -284,7 +278,6 @@ def test_cache_corrupt_file_returns_none(tmp_path: Path) -> None:
     cache_file = tmp_path / "intel-cache.json"
     cache_file.write_text("NOT VALID JSON {{{{")
 
-    assert cache.get_attribution_results() is None
     assert cache.etag is None
 
 
@@ -297,7 +290,7 @@ def test_cache_corrupt_file_logs_file_size_and_error_type(tmp_path: Path) -> Non
     cache_file.write_text("NOT VALID JSON {{{{")
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_attribution_results() is None
+        assert cache.etag is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_corrupt",)
@@ -331,23 +324,6 @@ def test_cache_etag_none_when_empty_string(tmp_path: Path) -> None:
     assert cache.etag is None
 
 
-def test_cache_validation_error_logged_for_missing_requested_field(tmp_path: Path) -> None:
-    """Missing requested sections emit a structured validation error instead of crashing."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"synthesis_overlay": {"cluster_count": 1}}, etag="etag-v1")
-
-    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_attribution_results() is None
-
-    args, kwargs = mock_warning.call_args
-    assert args == ("intel_cache_validation_error",)
-    assert kwargs["event_type"] == "intel_cache_validation_error"
-    assert kwargs["field_name"] == "attribution_results"
-    assert kwargs["reason"] == "missing"
-
-
 def test_cache_validation_error_logged_for_invalid_meta(tmp_path: Path) -> None:
     """Invalid metadata structures are rejected with a precise field-level validation event."""
     from trw_mcp.sync.cache import IntelligenceCache
@@ -364,27 +340,10 @@ def test_cache_validation_error_logged_for_invalid_meta(tmp_path: Path) -> None:
     )
 
     with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_attribution_results() is None
+        assert cache.etag is None
 
     args, kwargs = mock_warning.call_args
     assert args == ("intel_cache_validation_error",)
     assert kwargs["event_type"] == "intel_cache_validation_error"
     assert kwargs["field_name"] == "_meta.updated_at"
     assert kwargs["reason"] == "invalid_iso8601"
-
-
-def test_cache_validation_error_logged_for_invalid_requested_field_type(tmp_path: Path) -> None:
-    """Requested sections with the wrong type emit validation errors instead of silent None."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update({"attribution_results": ["invalid"]}, etag="etag-v1")
-
-    with patch("trw_mcp.sync.cache.logger.warning") as mock_warning:
-        assert cache.get_attribution_results() is None
-
-    args, kwargs = mock_warning.call_args
-    assert args == ("intel_cache_validation_error",)
-    assert kwargs["event_type"] == "intel_cache_validation_error"
-    assert kwargs["field_name"] == "attribution_results"
-    assert kwargs["reason"] == "invalid_type"

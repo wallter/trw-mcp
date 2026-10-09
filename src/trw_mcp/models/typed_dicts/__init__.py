@@ -157,8 +157,6 @@ from trw_mcp.models.typed_dicts._orchestration import (
     CheckpointRecordDict,
     DeliverGateScanDict,
     StatusReflectionDict,
-    StatusReversionLatestDict,
-    StatusReversionMetricsDict,
     TrwStatusDict,
 )
 
@@ -293,8 +291,6 @@ __all__ = [
     "SessionRecallExtrasDict",
     "SessionStartResultDict",
     "StatusReflectionDict",
-    "StatusReversionLatestDict",
-    "StatusReversionMetricsDict",
     "StepResultBase",
     "SyncIndexMdResult",
     "TelemetryStepResult",

@@ -576,6 +576,10 @@ class TestCodexToolApprovals:
         for tool_name in ("trw_session_start", "trw_init", "trw_checkpoint", "trw_recall", "trw_send"):
             assert tools.get(tool_name, {}).get("approval_mode") == "approve", tool_name
 
+    def test_the_before_edit_hint_is_approved(self, tmp_path: Path) -> None:
+        """The instructions tell every agent to call it before an edit; a never-approval session was refused."""
+        assert self._trw_tools(tmp_path).get("trw_code", {}).get("approval_mode") == "approve"
+
     def test_the_consequential_tools_stay_gated(self, tmp_path: Path) -> None:
         tools = self._trw_tools(tmp_path)
         for tool_name in ("trw_deliver", "trw_dispatch"):

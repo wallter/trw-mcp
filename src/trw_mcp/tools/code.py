@@ -107,6 +107,14 @@ def _project_root() -> Path:
     return Path(os.path.realpath(resolve_project_root()))
 
 
+def _top_level_of_project() -> str:
+    """The repository top level containing the project root (the project root itself when git cannot say)."""
+    from trw_mcp.tools._sidecar_paths import resolve_repo_root
+
+    root = _project_root()
+    return str(os.path.realpath(resolve_repo_root(None, start=root) or root))
+
+
 def _confined_repo_root(repo_root: str | None) -> tuple[str | None, str | None]:
     """``(resolved, problem)``: *repo_root* resolved once, or why it may not be used (E2E-INC-125).
 
@@ -150,7 +158,7 @@ def _path_problem(file_path: str, repo_root: str | None) -> tuple[str, str] | No
 
 
 def _one_hint(file_path: str, repo_root: str | None, reviewer: bool) -> dict[str, Any]:
-    result = compute_before_edit_hint(file_path=file_path, repo_root=repo_root)
+    result = compute_before_edit_hint(file_path=file_path, repo_root=repo_root or _top_level_of_project())
     hint: dict[str, Any] = result.model_dump()
     if not reviewer:
         with suppress(Exception):  # justified: fail-open telemetry, never break the tool

@@ -29,6 +29,7 @@ from trw_mcp.models.typed_dicts import (
     AutoReviewResult,
     MultiReviewerAnalysisResult,
 )
+from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
 from trw_mcp.tools._review_advisory_severity import log_advisory_severity
@@ -111,6 +112,8 @@ def handle_auto_mode(
     prd_ids: list[str] | None = None,
     *,
     verified_reviewer_identity: RunIdentity | None = None,
+    external_reviewer_receipt_id: str | None = None,
+    external_receipt_path: str | None = None,
 ) -> AutoReviewResult:
     """Handle the auto review mode -- multi-reviewer analysis, filter, persist.
 
@@ -118,7 +121,9 @@ def handle_auto_mode(
     ``resolve_verified_reviewer_identity``; it stamps the framework-verified
     reviewer identity onto the persisted provenance block.
     """
-    diff = _helpers._get_git_diff()
+    # In the project's checkout, not the process's working directory: a server started elsewhere would
+    # otherwise review another repository's diff, or none.
+    diff = _helpers._get_git_diff(cwd=resolve_project_root())
     if diff is None:
         # git could not be run, so the diff is UNKNOWN rather than empty. Scoring
         # here would emit a verdict about a tree that was never read.
@@ -276,6 +281,25 @@ def handle_auto_mode(
             # artifact schema but remain part of the persisted file contract.
             integration_data.update({"review_id": review_id, "mode": "auto"})
 
+    external_context: dict[str, object] = {}
+    if external_reviewer_receipt_id is not None:
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._review_provenance import build_reviewer_block
+
+        external_context = {
+            "mode": "cross_model",
+            "reviewer": build_reviewer_block(
+                resolved_run,
+                FileStateReader(),
+                source="cross_model",
+                receipt_id=external_reviewer_receipt_id,
+                ts=ts,
+                verified_identity=verified_reviewer_identity,
+            ),
+            "external_receipt_path": external_receipt_path or "",
+        }
+        cast("dict[str, object]", result).update({"mode": "cross_model"})
+
     result["review_yaml"] = _helpers._persist_review_artifact(
         resolved_run,
         {
@@ -315,6 +339,7 @@ def handle_auto_mode(
             "git_diff_hash": diff_hash,
             "human_escalation_path": "Escalate to team lead via GitHub PR comment",
             "retention_expires": retention_expires,
+            **external_context,
         },
         {
             "review_id": review_id,
@@ -325,6 +350,7 @@ def handle_auto_mode(
             "auto_analysis_limited": auto_analysis_limited,
             "substantive": substantive,
             "prd_ids": list(prd_ids) if prd_ids else [],
+            **({"mode": "cross_model"} if external_context else {}),
         },
         cast("dict[str, object]", result),
         verified_reviewer_identity=verified_reviewer_identity,

@@ -62,7 +62,7 @@ class ReviewDiffUnavailableError(RuntimeError):
     """
 
 
-def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> str | None:
+def _get_git_diff(paths: list[str] | None = None, base: str | None = None, cwd: Path | None = None) -> str | None:
     """Get a git diff, or ``None`` when git could not be run at all.
 
     ``None`` and ``""`` are deliberately different: ``""`` means the diff is
@@ -75,6 +75,8 @@ def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> st
         commit), so transitions committed since the base AND uncommitted ones are visible.
       - ``paths``: a path-limited diff (``git diff ... -- <paths>``) so the
         transition detector's cost is bounded by the PRD directory (NFR03).
+      - ``cwd``: the repository to diff. Without it git runs in the process's working directory,
+        which is the project only when the server was started there.
     All arguments are trusted internal literals / repo-relative paths — never
     caller-tainted shell input.
     """
@@ -90,6 +92,7 @@ def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> st
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=cwd,
         )
         if result.returncode != 0:
             # The SAME collapse this function exists to prevent, reached through a

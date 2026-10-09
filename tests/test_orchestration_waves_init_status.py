@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -271,44 +270,11 @@ class TestTrwStatusVersionWarning:
         assert "version_warning" not in status
 
 
-class TestTrwStatusReversionMetrics:
-    """Integration tests for reversion metrics in trw_status."""
+class TestTrwStatusNoReversionBlock:
+    """The never-written phase_revert metric is no longer published."""
 
-    def test_status_includes_reversions_key(self, orch_tools: dict[str, Any]) -> None:
-        """trw_status always returns 'reversions' key."""
+    def test_status_has_no_reversions_key(self, orch_tools: dict[str, Any]) -> None:
         init_result = orch_tools["trw_init"].fn(task_name="reversion-task")
         status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
 
-        assert "reversions" in status
-        rev = status["reversions"]
-        assert "count" in rev
-        assert "rate" in rev
-        assert "classification" in rev
-
-    def test_status_reversions_reflect_logged_events(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """Phase revert events logged by other means appear in reversion metrics."""
-        init_result = orch_tools["trw_init"].fn(task_name="rev-events-task")
-        run_path = Path(init_result["run_path"])
-
-        events_path = run_path / "meta" / "events.jsonl"
-        with open(events_path, "a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {
-                        "ts": "2026-01-01T00:00:00Z",
-                        "event": "phase_revert",
-                        "from_phase": "implement",
-                        "to_phase": "plan",
-                        "trigger": "scope_creep",
-                    }
-                )
-                + "\n"
-            )
-
-        status = orch_tools["trw_status"].fn(run_path=str(run_path))
-
-        assert status["reversions"]["count"] == 1
-        assert status["reversions"]["latest"] is not None
+        assert "reversions" not in status

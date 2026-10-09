@@ -40,7 +40,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -238,10 +240,13 @@ def _read_optional(path: Path) -> bytes | None:
 
 def _load_marker(path: Path) -> dict[str, object] | None:
     raw = _read_optional(path)
-    if raw is None:
-        return None
+    return None if raw is None else _parse_marker(raw)
+
+
+def _parse_marker(raw: bytes) -> dict[str, object]:
     try:
         document = YAML(typ="safe").load(io.StringIO(raw.decode("utf-8", errors="strict")))
+    # trw-fail-silent-allow: an unparsable marker reads as empty, which every caller treats as stale or unenrolled
     except (UnicodeDecodeError, YAMLError):
         return {}
     return document if isinstance(document, dict) else {}
@@ -375,10 +380,35 @@ def _write_marker(root: Path, fields: dict[str, object]) -> None:
     file this one legitimately REPLACES itself on re-enrollment, so it truncates
     rather than demanding exclusive creation.
     """
+    write_text_confined(root, enrollment_path(root), render_marker(fields))
+
+
+def render_marker(fields: dict[str, object]) -> str:
+    """The exact text :func:`_write_marker` writes for *fields* (TRW's own serialization of a marker)."""
     version = fields.get("schema_version")
     lines = [f"schema_version: {version if isinstance(version, int) else ENROLLMENT_SCHEMA_VERSION}"]
     lines += [f"{key}: '{value}'" for key, value in sorted(fields.items()) if key != "schema_version"]
-    write_text_confined(root, enrollment_path(root), "\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"
+
+
+def load_marker_fields(path: Path) -> dict[str, object] | None:
+    """The marker at *path* as a mapping: None when absent or unreadable, empty when it does not parse."""
+    return _load_marker(path)
+
+
+def enrollment_drift(root: Path) -> tuple[str, ...] | None:
+    """Which marker fields no longer match *root*; None when there is no marker. A PURE read.
+
+    Unlike :func:`check_enrollment_status` this never creates the enrollment evidence, so a reporting caller
+    (``update-project``'s closing warning) can ask without changing any state. ``()`` means current.
+    """
+    marker = _load_marker(enrollment_path(root))
+    if marker is None:
+        return None
+    if marker.get("schema_version") != ENROLLMENT_SCHEMA_VERSION:
+        return ("schema_version",)
+    recomputed = compute_digests(root, str(marker.get("contract_path", "") or DEFAULT_CONTRACT_PATH))
+    return tuple(key for key, value in recomputed.items() if str(marker.get(key, "")) != value)
 
 
 def sync_glob_sidecar(root: Path, marker: dict[str, object], contract_rel_path: str, digests: dict[str, str]) -> bool:
@@ -514,8 +544,7 @@ def refresh_hook_digest(root: Path) -> bool:
 
     Returns True only when a marker was actually rewritten.
     """
-    path = enrollment_path(root)
-    marker = _load_marker(path)
+    marker = _load_marker(enrollment_path(root))
     if not marker or marker.get("schema_version") != ENROLLMENT_SCHEMA_VERSION:
         return False
     contract_rel_path = str(marker.get("contract_path", "") or DEFAULT_CONTRACT_PATH)
@@ -540,6 +569,69 @@ def refresh_hook_digest(root: Path) -> bool:
     elif changed:
         _write_marker(root, marker)
     return changed
+
+
+def hook_digest_of(contents: dict[str, bytes]) -> str:
+    """The ``expected_hook_digest`` of a hook set whose bytes the caller already HOLDS (name -> bytes).
+
+    Same construction as :func:`compute_digests`, minus the read: a caller that compared bytes it trusts can
+    record a digest of exactly those bytes, instead of a second read of files that may have changed since.
+    Raises ``KeyError`` when a digest-covered file is not in *contents*.
+    """
+    parts = {name: _digest(contents[name]) for name in (*INTENT_HOOK_FILES, *HOOK_SUPPORT_FILES)}
+    return _digest(json.dumps(parts, sort_keys=True).encode("utf-8"))
+
+
+def refresh_hook_digest_from(root: Path, hook_digest: str, publish: Callable[[bytes, str], bool]) -> bytes | None:
+    """The INSTALLER's refresh: record *hook_digest*, which the caller computed from bytes it trusts.
+
+    Differs from :func:`refresh_hook_digest` (the operator's command, which blesses what is on disk) in four
+    ways, each closing a way an unattended refresh could do harm:
+
+    * the digest is the caller's, never a re-read of the installed hooks, so a hook replaced after the
+      caller's comparison leaves the marker disagreeing with disk (stale) instead of blessed;
+    * it writes only over a marker that is byte-equal to TRW's own serialization of its parsed content, so
+      an operator's comments, key order and formatting are never re-serialized away. This holds on every
+      path, with or without a git-side restore behind it;
+    * it returns exactly the payload it published, or None when it published nothing, so a caller's write
+      ledger registers what was written and never what happened to be on disk afterwards;
+    * it never truncates the marker in place. ``publish(validated, payload)`` is the caller's
+      capture-then-exclusive-create: it must replace the marker only if the file still holds *validated*,
+      never replace a file that appeared meanwhile, and report whether *payload* is now the marker.
+
+    Like the operator's command it never mints a marker and never touches the other digests.
+    """
+    path = enrollment_path(root)
+    raw = _read_optional(path)
+    marker = None if raw is None else _parse_marker(raw)
+    if raw is None or not marker or marker.get("schema_version") != ENROLLMENT_SCHEMA_VERSION:
+        return None
+    if render_marker(marker).encode("utf-8") != raw:
+        return None
+    contract_rel_path = str(marker.get("contract_path", "") or DEFAULT_CONTRACT_PATH)
+    digests = compute_digests(root, contract_rel_path)
+    changed = str(marker.get("expected_hook_digest", "")) != hook_digest
+    if changed:
+        marker = dict(marker)
+        marker["expected_hook_digest"] = hook_digest
+        marker["hook_digest_refreshed_at"] = datetime.now(timezone.utc).isoformat()
+    payload = render_marker(marker)
+    # Everything above took time (three digests, the contract and pre-commit reads). A marker saved in that
+    # window is the operator's: *publish* replaces only the validated bytes, and an unchanged marker is left
+    # alone unless it still holds them.
+    if not (publish(raw, payload) if changed else _read_optional(path) == raw):
+        return None
+    # Only after the marker is in place. The hooks refuse a sidecar NEWER than the marker, so the marker's
+    # timestamp is moved past the sidecar's; its bytes are not touched. A sidecar is written only when the
+    # marker matches a fresh read of the tree, so a trusted digest that disagrees with disk removes it.
+    if sync_glob_sidecar(root, marker, contract_rel_path, digests):
+        try:
+            os.utime(path, follow_symlinks=False)
+        except (OSError, NotImplementedError) as exc:
+            print(
+                f"intent-contract: enrollment marker not re-stamped ({exc}); the fast path stays off", file=sys.stderr
+            )
+    return payload.encode("utf-8") if changed else None
 
 
 def main(argv: list[str] | None = None) -> int:

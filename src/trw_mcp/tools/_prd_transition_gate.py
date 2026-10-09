@@ -8,8 +8,10 @@ block posture for the run's ``task_type`` AND ``prd_transition_gate`` is set.
 
 Detection is a path-limited ``git diff -- docs/requirements-aare-f/prds/`` so the
 cost is bounded by the PRD directory, not the whole tree (NFR03). No transition
-detected => no new gating (pure additive, brownfield-safe). Every resolution
-error degrades to pre-existing behavior — never a spurious hard block (NFR02).
+detected => no new gating (pure additive, brownfield-safe). Attribution uses this worktree's
+HEAD reflog during the run plus uncommitted status changes. Unknown attribution
+retains the base-diff candidates; when git cannot answer at all the check is not evaluated,
+says so in the result, and does not block (NFR02).
 """
 
 from __future__ import annotations
@@ -148,17 +150,16 @@ def detect_status_transitions(diff: str) -> list[str]:
     return prd_ids
 
 
-def _prd_status_diff(base: str | None = None) -> str:
-    """Path-limited ``git diff`` over the PRD directory (fail-open to '')."""
+def _prd_status_diff(base: str | None = None) -> str | None:
+    """Path-limited diff of the PROJECT's checkout; None means git could not answer, never a clean tree.
+
+    Run in the project root, not in the process's working directory: a server started elsewhere (a shared
+    server, a test process, an exported tree) otherwise diffs another repository or none at all.
+    """
+    from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.tools import _review_helpers as _helpers
 
-    # `or ""` preserves this function's OWN documented fail-open contract, now that
-    # the helper distinguishes "git did not run" (None) from "no changes" (""). The
-    # two are collapsed here deliberately and locally, not by accident in the helper:
-    # a transition gate that cannot read the PRD diff reports no status changes, which
-    # is this module's stated choice. If that should change, change it here, where the
-    # docstring above says so.
-    return _helpers._get_git_diff(paths=[PRDS_DIR], base=base) or ""
+    return _helpers._get_git_diff(paths=[PRDS_DIR], base=base, cwd=resolve_project_root())
 
 
 # ---------------------------------------------------------------------------
@@ -499,10 +500,12 @@ def evaluate_transition_gate(run_path: Path) -> TransitionGateOutcome:
     ``self_same_session``/``asserted_independent`` receipt under block mode). A
     non-blocking finding (warn mode, or an ``unknown``/``asserted`` advisory)
     populates ``warning`` so the delivering agent still SEES it (NFR02 observable
-    degradation, no dormant warn path). Any resolution error degrades to no-block.
+    degradation, no dormant warn path). When git cannot produce the evidence the check is reported as
+    not evaluated and does not block (NFR02); unrelated coherence resolution faults keep the advisory behavior.
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.tools._deliver_gate_mode import gate_mode_blocks_task
+    from trw_mcp.tools._prd_transition_attribution import TransitionEvidenceUnavailable, attributed_transitions
 
     reader = FileStateReader()
     try:
@@ -516,8 +519,7 @@ def evaluate_transition_gate(run_path: Path) -> TransitionGateOutcome:
         if not gate_mode_blocks_task(config, task_type):
             return TransitionGateOutcome(should_block=False, mode=gate_mode)
 
-        diff = _prd_status_diff(_run_base_ref(run_data))
-        prd_ids = _scope_detected_prds(detect_status_transitions(diff), run_data)
+        prd_ids = _scope_detected_prds(attributed_transitions(run_path, run_data), run_data)
         if not prd_ids:
             return TransitionGateOutcome(should_block=False, mode=gate_mode)
 
@@ -585,6 +587,11 @@ def evaluate_transition_gate(run_path: Path) -> TransitionGateOutcome:
             mode=gate_mode,
             decision_outcomes=decision_outcomes,
         )
+    except TransitionEvidenceUnavailable as exc:
+        # NFR02: a gate that cannot read its evidence does not hard-block. It says so, loudly, in the result.
+        warning = f"PRD transition check not evaluated: {exc}. No status change was certified or refused."
+        logger.warning("acceptance_integrity_evidence_unavailable", run=str(run_path), reason=str(exc))
+        return TransitionGateOutcome(should_block=False, mode=gate_mode, message=str(exc), warning=warning)
     except Exception:  # justified: any resolution failure degrades to no-block (NFR02, fail-open)
         logger.warning("acceptance_integrity_gate_degraded", run=str(run_path), exc_info=True)
         return TransitionGateOutcome(should_block=False)

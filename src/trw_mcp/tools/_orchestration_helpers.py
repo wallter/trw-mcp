@@ -25,9 +25,6 @@ from trw_mcp.state.persistence import (
 from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness as _check_framework_version_staleness,
 )
-from trw_mcp.tools._orchestration_phase import (
-    _compute_reversion_metrics as _compute_reversion_metrics,
-)
 
 logger = structlog.get_logger(__name__)
 

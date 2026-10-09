@@ -82,9 +82,6 @@ LIGHT_MODE_RECALL_CAP: int = 10
 # -- Compact mode limits --
 COMPACT_TAGS_CAP: int = 10  # Max tags per learning in compact mode
 
-# -- Surface area defaults (PRD-CORE-125) --
-DEFAULT_NUDGE_BUDGET_CHARS: int = 600
-
 # -- PRD-CORE-218-FR03 capability-pack fixture (derived, NOT a second table) --
 # The pack membership (kernel + the non-kernel packs) has ONE source of truth:
 # ``trw_mcp.models.surface_packs``. The authoritative registry

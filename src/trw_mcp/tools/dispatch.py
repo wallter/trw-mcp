@@ -286,11 +286,13 @@ def register_dispatch_tools(server: FastMCP) -> None:
         # resolution; full project-root confinement is a documented follow-up.
         from pathlib import Path
 
-        resolved_cwd: Path | None = None
+        from trw_mcp.state._paths import resolve_project_root
+
+        resolved_cwd: Path = resolve_project_root()  # no cwd given: the project, not wherever the server started
         if cwd:
             if ".." in Path(cwd).parts:
                 return {"error": "cwd must not contain '..'", "exit_code": 2}
-            resolved_cwd = Path(cwd)
+            resolved_cwd = Path(cwd) if Path(cwd).is_absolute() else resolved_cwd / cwd
 
         # PRD-SEC-015-FR13: a REVIEWER-role server refuses to widen a grandchild.
         # trw_dispatch is already outside REVIEWER_TOOLS, so the middleware denies
@@ -336,7 +338,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
         # cwd pointing outside the project tree (e.g. /etc). Reads are lower-risk
         # and unaffected. allow_writes=True is the only explicit write signal we
         # can see here without re-resolving config, so confine on it.
-        if allow_writes and resolved_cwd is not None:
+        if allow_writes and cwd:
             from trw_mcp.state._paths import resolve_trw_dir
 
             project_root = resolve_trw_dir().parent.resolve()

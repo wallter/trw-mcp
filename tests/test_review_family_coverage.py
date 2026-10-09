@@ -105,7 +105,7 @@ class TestEveryVerdictHasCoverage:
 class TestSingleFamilyCaveat:
     def test_single_family_caveat_reason_token(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False, cross_model_provider="gemini-2.5-pro")
-        with patch(f"{_HELPERS}._get_git_diff", return_value="diff content"):
+        with patch(f"{_HELPERS}._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "rev-caveat", "2026-03-01T00:00:00Z")
         assert result["review_family_coverage"] == "single_family"
         caveat = result["single_family_caveat"]
@@ -232,6 +232,7 @@ class TestFallbackNoRaise:
                     "confidence": 90,
                     "severity": "info",
                     "description": "h",
+                    "category": "security",
                     "honeypot": True,
                 },
             ],
@@ -247,7 +248,7 @@ class TestFallbackNoRaise:
 
     def test_honeypots_absent_flag_default_false(self, run_dir: Path) -> None:
         config = _make_config(cross_model_enabled=False, cross_model_provider="gpt-4o")
-        with patch(f"{_HELPERS}._get_git_diff", return_value="diff content"):
+        with patch(f"{_HELPERS}._get_git_diff", return_value="+# TODO cleanup"):
             result = handle_cross_model_mode(config, run_dir, "rev-nohp", "2026-03-01T00:00:00Z")
         assert result["honeypots_present"] is False
 

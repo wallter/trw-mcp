@@ -232,10 +232,11 @@ def _install_hooks(
 
     # A re-init over an ALREADY-enrolled project rewrites the same bundled hooks
     # the update path does, so it carries the same brick-the-project hazard (see
-    # _template_updater._rebless_intent_hook_digest). No-op when no marker exists.
-    from trw_mcp.bootstrap._template_updater import _rebless_intent_hook_digest
+    # _enrollment_rebless.rebless_intent_hook_digest). No-op when no marker exists, and
+    # when any digest-covered hook on disk is not the bundled file (a kept or edited one).
+    from trw_mcp.bootstrap._enrollment_rebless import rebless_intent_hook_digest
 
-    _rebless_intent_hook_digest(target_dir, result)
+    rebless_intent_hook_digest(target_dir, result, hooks_source)
 
     _install_git_hooks(target_dir, force, result, on_progress)
 
@@ -446,6 +447,9 @@ def init_project(
         logger.exception("project_init_exception", project_root=str(target_dir))
         result["errors"].append(f"init-project failed: {type(exc).__name__}: {exc}")
 
+    from ._enrollment_rebless import warn_if_enrollment_stale
+
+    warn_if_enrollment_stale(target_dir, result, dry_run=False)  # a re-init over an enrolled project
     if result["errors"]:
         logger.warning("project_init_partial", project_root=str(target_dir), errors=result["errors"][:3])
     logger.info(

@@ -351,7 +351,9 @@ def handle_reconcile_mode(
             "coverage_method": RECONCILE_COVERAGE_METHOD,
         }
 
-    diff = _helpers._get_git_diff()
+    # In the project's checkout, not the process's working directory: a server started elsewhere would
+    # otherwise review another repository's diff, or none.
+    diff = _helpers._get_git_diff(cwd=resolve_project_root())
     if diff is None:
         # git could not be run, so the diff is UNKNOWN rather than empty. Scoring
         # here would emit a verdict about a tree that was never read.

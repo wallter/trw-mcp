@@ -235,6 +235,7 @@ def preserve_uncommitted_changes(
 
     from ._canon_ownership import is_trw_deployed_canon, is_trw_owned_runtime_canon
     from ._dirty_refresh import refresh_loses_nothing
+    from ._enrollment_rebless import marker_rel, rebless_loses_nothing
     from ._update_transaction import _file_signature, _is_under_pruned_dir, _restore_transaction_file
     from ._version_manifest import _manifest_key_for
 
@@ -269,6 +270,8 @@ def preserve_uncommitted_changes(
             recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
             if recorded == hashlib.sha256(before.read_bytes()).hexdigest():
                 continue
+        if rel == marker_rel() and rebless_loses_nothing(target_dir, before, after):
+            continue  # only the hook digest moved, over the bundled hooks: the user's other keys are intact
         _restore_transaction_file(target_dir, snapshot_root, rel, result.setdefault("warnings", []))
         result.setdefault("preserved", []).append(f"{rel} (uncommitted_changes)")
 

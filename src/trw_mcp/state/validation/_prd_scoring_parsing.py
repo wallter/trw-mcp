@@ -9,7 +9,7 @@ Belongs to the ``_prd_scoring.py`` facade. Re-exported there for back-compat.
 - ``_EXPECTED_SECTION_NAMES`` / ``_HIGH_WEIGHT_SECTIONS`` / ``_SECTION_WEIGHTS``
   — section-vocabulary + density-weight tables.
 - ``_REQUIRED_SUBSECTIONS_BY_VARIANT`` — per-template subsection requirements.
-- ``_get_section_weights``, ``_compute_ambiguity_rate``,
+- ``SECTION_DENSITY_WEIGHTS``, ``_compute_ambiguity_rate``,
   ``_parse_section_content``, ``_extract_subheadings``,
   ``_is_substantive_line``, ``_validation_profile``.
 
@@ -19,10 +19,6 @@ Extracted as DIST-243 batch 58.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from trw_mcp.models.config import TRWConfig
 
 # Section heading pattern: ## N. Title
 _HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
@@ -99,13 +95,17 @@ _REQUIRED_SUBSECTIONS_BY_VARIANT: dict[str, list[str]] = {
 }
 
 
-def _get_section_weights(config: TRWConfig) -> dict[str, float]:
-    """Build per-section weight map from TRWConfig (PRD-CORE-080-FR04)."""
-    return {
-        "Problem Statement": config.density_weight_problem_statement,
-        "Functional Requirements": config.density_weight_functional_requirements,
-        "Traceability Matrix": config.density_weight_traceability_matrix,
-    }
+#: Per-section weights for the reported content-density average. Fixed: the
+#: four ``density_weight_*`` config keys that used to tune them were retired
+#: (density is reported, not scored -- ``prd_quality`` excludes it from total).
+SECTION_DENSITY_WEIGHTS: dict[str, float] = {
+    "Problem Statement": 2.0,
+    "Functional Requirements": 2.0,
+    "Traceability Matrix": 1.5,
+}
+
+#: Weight of every section not named in ``SECTION_DENSITY_WEIGHTS``.
+DEFAULT_SECTION_DENSITY_WEIGHT: float = 1.0
 
 
 def _compute_ambiguity_rate(content: str) -> float:

@@ -152,6 +152,31 @@ async def test_the_server_starts_the_watcher_unless_the_flag_is_off(
         task.cancel()
 
 
+async def test_a_source_tree_env_is_told_to_swap_by_hand(paths: SharedPaths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The watcher leaves a ``swap --src`` env alone, so "no action needed" there was false: on 2026-10-08 a server
+    stayed two versions behind for thirteen hours while every session was told it would replace itself."""
+    from trw_mcp.middleware import version_drift
+    from trw_mcp.shared_server._records import set_env_python
+    from trw_mcp.shared_server._server import Door, _start_hot_swap
+
+    class _App:
+        async def __call__(self, scope: object, receive: object, send: object) -> None: ...
+
+    monkeypatch.setattr(_autoswap, "_ACTIVE", None)
+    monkeypatch.setattr(version_drift, "_ACTION_OVERRIDE", None)
+    set_env_python(paths, "stable", Path(sys.executable), pythonpath="/work/tree/trw-mcp/src:/work/tree/trw-memory/src")
+    door = Door(_App(), token="t", env="stable", version="1", max_inflight=1)
+
+    task = _start_hot_swap(door, paths, SharedMcpConfig(auto_swap=True))
+    try:
+        action = version_drift.build_advisory("1", "2")["action"]
+        assert "hot-swaps" not in action and "no action" not in action
+        assert "trw-mcp swap --src" in action
+    finally:
+        assert task is not None
+        task.cancel()
+
+
 def test_the_persisted_row_is_not_read_as_an_env_record(paths: SharedPaths) -> None:
     """``SharedPaths.envs()`` reads every ``*.json`` beside the records as an env; the swap row must not be one."""
     _autoswap.write_last_auto_swap(paths, "stable", {"from": "1", "to": "2", "outcome": "swapped"})

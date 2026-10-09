@@ -33,6 +33,7 @@ from trw_mcp.shared_server._records import (
     SharedPaths,
     SharedServerError,
     ensure_token,
+    env_pythonpath,
     publish_record,
     read_live_record,
     withdraw_record,
@@ -45,6 +46,11 @@ _DRAIN_SECONDS = 300.0
 _SESSION_WINDOW_SECONDS = 3600.0
 _SELF_SWAP_ACTION = (
     "no action needed: this shared trw-mcp hot-swaps to the installed version on its own (shared_mcp.auto_swap)"
+)
+#: A `swap --src` env is the one the watcher never replaces (`_autoswap.HotSwap.step`), so the drift stays until this.
+_SOURCE_TREE_ACTION = (
+    "this shared trw-mcp serves a source tree, which it never replaces on its own: run `trw-mcp swap --src "
+    "<worktree>` to load the new version"
 )
 #: Client identity the server must never carry itself: every client would inherit it.
 _IDENTITY_ENV = ("TRW_SESSION_ID", "TRW_CLIENT_PROFILE", "TRW_AGENT_ID", "TRW_RUN_ID", "TRW_CHAIN_ID")
@@ -250,7 +256,8 @@ def _start_hot_swap(door: Door, paths: SharedPaths, limits: Any) -> asyncio.Task
         return None
     _autoswap.activate(door.env, paths, _autoswap.booted_versions(), hot_swap.status)
     door.extra_status = lambda: {"auto_swap": hot_swap.status()}
-    version_drift.set_action_override(_SELF_SWAP_ACTION)
+    serves_source = env_pythonpath(paths, door.env) is not None
+    version_drift.set_action_override(_SOURCE_TREE_ACTION if serves_source else _SELF_SWAP_ACTION)
     return asyncio.create_task(hot_swap.run(limits.auto_swap_poll_seconds))
 
 

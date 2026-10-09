@@ -264,7 +264,9 @@ def _update_hooks(
             on_progress=on_progress,
             root=target_dir,
         )
-    _rebless_intent_hook_digest(target_dir, result)
+    from ._enrollment_rebless import rebless_intent_hook_digest
+
+    rebless_intent_hook_digest(target_dir, result, hooks_source)
 
 
 def _withdraw_retired_hooks(
@@ -298,32 +300,6 @@ def _withdraw_retired_hooks(
             result.setdefault("warnings", []).append(
                 f"{rel}: no longer shipped by TRW; {what}; to remove it yourself run: rm {shlex.quote(rel)}"
             )
-
-
-def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) -> None:
-    """Re-bless the PRD-SEC-013 enrollment marker's HOOK half after a vendor resync.
-
-    Without this, shipping a new bundled hook bricks every enrolled project:
-    ``expected_hook_digest`` covers the intent hooks and the shared lib they
-    source, so the marker reads ``stale``, both control points fail closed, and
-    every Edit/Write is blocked though the user did nothing. The installer is the
-    only component that can tell "the vendor just wrote these exact bytes" from
-    "someone tampered with them", so the re-bless belongs here and nowhere else.
-
-    Only the hook half moves. ``refresh_hook_digest`` leaves the contract digest
-    alone and never mints a marker, so an unenrolled project stays inert and a
-    contract edit still fails closed until an operator re-enrolls.
-
-    Fail-open: a re-bless problem is a warning, never an aborted update.
-    """
-    try:
-        from trw_mcp.security.intent_contract.enrollment import refresh_hook_digest
-
-        if refresh_hook_digest(target_dir):
-            logger.info("intent_enrollment_hook_digest_refreshed", path=str(target_dir))
-    except Exception as exc:  # justified: fail-open, an update must never abort here
-        logger.warning("intent_enrollment_refresh_failed", error=str(exc))
-        result.setdefault("warnings", []).append(f"intent-contract enrollment hook digest not refreshed: {exc}")
 
 
 def _update_skills(
@@ -480,6 +456,13 @@ def _update_framework_files(
 
     _update_always_overwrite_files(target_dir, effective_data, result, on_progress)
     _report_preserved_files(target_dir, result)
+    # PRD-SEC-005-FR02: merge-ensure the credentials.yaml ignore rule on every
+    # existing install (gitignore.txt is only deployed on INIT, so update-project
+    # would otherwise never refresh a custom .trw/.gitignore).
+    _ensure_credentials_gitignored(target_dir, result, on_progress)
+    _update_hooks(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
+    # Merged AFTER the hooks, so a registration can follow its hook file: an entry whose file this update kept
+    # (an edited copy) is left as it was.
     # PRD-INFRA-044-FR04: Smart-merge settings.json (preserves user ENABLE_TOOL_SEARCH opt-out).
     # PRD-INFRA-192 FR09 §3: only when claude-code still owns this project's settings.json.
     if update_owns_surface(".claude/settings.json", target_dir, ide):
@@ -488,11 +471,6 @@ def _update_framework_files(
             target_dir / ".claude" / "settings.json",
             result,
         )
-    # PRD-SEC-005-FR02: merge-ensure the credentials.yaml ignore rule on every
-    # existing install (gitignore.txt is only deployed on INIT, so update-project
-    # would otherwise never refresh a custom .trw/.gitignore).
-    _ensure_credentials_gitignored(target_dir, result, on_progress)
-    _update_hooks(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
     _update_skills(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
     _update_agents(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
 

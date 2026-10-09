@@ -48,12 +48,22 @@ _LEGACY_TIMEOUT_FLOOR = 600
 _LEGACY_SHIPPED_TIMEOUTS = frozenset({500, 3000, 5000, 10000})
 
 
-def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[object]) -> int:
+def _migrate_legacy_timeouts(
+    existing_list: list[object],
+    bundled_list: list[object],
+    *,
+    root: Path | None = None,
+    bundled_hooks: Path | None = None,
+    result: dict[str, list[str]] | None = None,
+) -> int:
     """Give a TRW hook (matched by command) the bundled timeout when its own is a legacy millisecond value.
 
     The only in-place rewrite the merge does: a value at or below 600 s is the user's choice and is kept, except
-    the exact values TRW itself shipped (:data:`_LEGACY_SHIPPED_TIMEOUTS`). Returns how many it rewrote.
+    the exact values TRW itself shipped (:data:`_LEGACY_SHIPPED_TIMEOUTS`). A hook whose file the update kept
+    (given *root* and the *bundled_hooks* directory) keeps its registration too, and *result* says so. Returns how many it rewrote.
     """
+    from ._kept_hook_registration import hook_file_kept, hook_name_of, note_registration_left
+
     changed = 0
     bundled_timeouts = {
         str(hook.get("command")): hook["timeout"]
@@ -74,6 +84,16 @@ def _migrate_legacy_timeouts(existing_list: list[object], bundled_list: list[obj
                 and (timeout > _LEGACY_TIMEOUT_FLOOR or timeout in _LEGACY_SHIPPED_TIMEOUTS)
                 and command in bundled_timeouts
             ):
+                name = hook_name_of(command)
+                if (
+                    root is not None
+                    and bundled_hooks is not None
+                    and name
+                    and hook_file_kept(root, name, (bundled_hooks,))
+                ):
+                    if result is not None:
+                        note_registration_left(result, name)
+                    continue
                 hook["timeout"] = bundled_timeouts[command]
                 changed += 1
     return changed
@@ -169,7 +189,9 @@ def _merge_settings_json(
                 continue
             if not isinstance(hook_list, list):
                 continue
-            retimed += _migrate_legacy_timeouts(existing_list, hook_list)
+            retimed += _migrate_legacy_timeouts(
+                existing_list, hook_list, root=dest.parents[1], bundled_hooks=src.parent / "hooks", result=result
+            )
             known = {_hook_entry_identity(entry) for entry in existing_list}
             for entry in hook_list:
                 identity = _hook_entry_identity(entry)
@@ -185,8 +207,15 @@ def _merge_settings_json(
     # statusLine is a single object, not a hook list: ownership (PRD-CORE-354 FR06)
     # decides whether TRW may add, rewrite or remove it.
     root = dest.parents[1]
+    from ._kept_hook_registration import hook_file_kept
+
     note = _reconcile_statusline(
-        existing, bundled.get("statusLine"), statusline_enabled(root), shadowed=statusline_shadowed(root)
+        existing,
+        bundled.get("statusLine"),
+        statusline_enabled(root),
+        shadowed=statusline_shadowed(root),
+        script_kept=hook_file_kept(root, "statusline.sh", (src.parent / "hooks",)),
+        result=result,
     )
     if note:
         result.setdefault("notes", []).append(note)
@@ -210,8 +239,13 @@ def _merge_settings_json(
         result["errors"].append(f"Failed to write merged settings.json: {dest}")
 
 
-def _set_hook_registration(settings: Path, event: str, entry: dict[str, object], *, present: bool) -> bool:
+def _set_hook_registration(
+    settings: Path, event: str, entry: dict[str, object], *, present: bool, keep_existing: bool = False
+) -> bool:
     """Add (``present``) or remove one hook entry in ``settings``; ``True`` when the file changed.
+
+    ``keep_existing`` leaves an entry already registered exactly as it is (its hook file was kept); a missing one
+    is still added.
 
     Identity is :func:`_hook_entry_identity`, the same key the merge uses, so the
     entry is never duplicated and a user's other entries for the event are untouched.
@@ -223,6 +257,8 @@ def _set_hook_registration(settings: Path, event: str, entry: dict[str, object],
         return False
     entries: list[object] = hooks.get(event, [])
     identity = _hook_entry_identity(entry)
+    if present and keep_existing and any(_hook_entry_identity(e) == identity for e in entries):
+        return False
     wanted = [e for e in entries if _hook_entry_identity(e) != identity] + ([entry] if present else [])
     if wanted == entries:
         return False
@@ -290,12 +326,29 @@ def statusline_enabled(root: Path) -> bool | None:
 
 
 def _reconcile_statusline(
-    data: dict[str, object], bundled: object, enabled: bool | None, *, shadowed: bool = False
+    data: dict[str, object],
+    bundled: object,
+    enabled: bool | None,
+    *,
+    shadowed: bool = False,
+    script_kept: bool = False,
+    result: dict[str, list[str]] | None = None,
 ) -> str:
-    """Apply the FR06 ownership rule to ``data["statusLine"]`` in place; returns a note when TRW removes its own."""
+    """Apply the FR06 ownership rule to ``data["statusLine"]`` in place; returns a note when TRW removes its own.
+
+    ``script_kept``: the update kept an edited ``statusline.sh``, so an existing TRW statusLine object (which may
+    carry the user's flags for that script) is not refreshed; the opt-out removals above it are unchanged.
+    """
     current = data.get("statusLine")
     if current is not None and not is_trw_statusline(current):
         return ""  # the user's own statusLine is never touched
+    refresh = enabled is None or (enabled and not shadowed)
+    if script_kept and refresh and current is not None and is_trw_statusline(bundled):
+        if current != bundled and result is not None:
+            from ._kept_hook_registration import note_registration_left
+
+            note_registration_left(result, "statusline.sh")
+        return ""
     if enabled is None:
         # Absent key: never add, never remove; only bring an existing TRW entry current.
         if current is not None and is_trw_statusline(bundled):
@@ -314,12 +367,14 @@ def _reconcile_statusline(
     return ""
 
 
-def apply_statusline_registration(target_dir: Path) -> bool:
+def apply_statusline_registration(target_dir: Path, result: dict[str, list[str]] | None = None) -> bool:
     """Idempotently reconcile ``.claude/settings.json``'s statusLine; ``True`` when it changed.
 
     Covers what the merge cannot: a fresh whole-template copy under opt-out, and
     the re-apply after the uncommitted-changes guard (same reason as CC-03).
     """
+    from ._kept_hook_registration import hook_file_kept
+
     settings = target_dir / ".claude" / "settings.json"
     data = read_json_object(settings, context="statusline_registration")
     bundled = read_json_object(_data_dir() / "settings.json", context="statusline_bundled")
@@ -331,6 +386,8 @@ def apply_statusline_registration(target_dir: Path) -> bool:
         bundled.get("statusLine"),
         statusline_enabled(target_dir),
         shadowed=statusline_shadowed(target_dir),
+        script_kept=hook_file_kept(target_dir, "statusline.sh", (_data_dir() / "hooks",)),
+        result=result,
     )
     if json.dumps(data, sort_keys=True) == before:
         return False

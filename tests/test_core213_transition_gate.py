@@ -264,6 +264,9 @@ def _patch_gate(
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: root)
     monkeypatch.setattr(tg, "_prd_status_diff", lambda base=None: diff)
+    # These tests patch every git call for coherence only; attribution is tested in test_prd_transition_attribution.py.
+    monkeypatch.setattr("trw_mcp.tools._prd_transition_attribution._checked_git", lambda *args: diff)
+    monkeypatch.setattr("trw_mcp.tools._prd_transition_attribution._has_history", lambda root: True)
 
 
 def test_evaluate_transition_gate_blocks_incoherent_p0(
@@ -524,6 +527,9 @@ def _deliver_e2e(tmp_path: Path, run_dir: Path, **kwargs: Any) -> dict[str, Any]
         patch("trw_mcp.tools.ceremony.get_config", lambda: cfg),
         patch("trw_mcp.tools._delivery_helpers.get_config", lambda: cfg),
         patch.object(tg, "_prd_status_diff", lambda base=None: _DIFF_IMPLEMENTED),
+        # These tests patch every git call for coherence only; attribution is tested in test_prd_transition_attribution.py.
+        patch("trw_mcp.tools._prd_transition_attribution._checked_git", return_value=_DIFF_IMPLEMENTED),
+        patch("trw_mcp.tools._prd_transition_attribution._has_history", return_value=True),
         patch(
             "trw_mcp.tools._deferred_delivery._do_index_sync",
             return_value={"status": "success", "index": {}, "roadmap": {}},

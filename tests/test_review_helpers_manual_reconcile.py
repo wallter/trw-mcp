@@ -129,7 +129,7 @@ The guidance must prioritize executable evidence before prose expansion.
 """.strip(),
             encoding="utf-8",
         )
-        monkeypatch.setattr("trw_mcp.tools._review_helpers._get_git_diff", lambda: "")
+        monkeypatch.setattr("trw_mcp.tools._review_helpers._get_git_diff", lambda **_: "")
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
 
         result = handle_reconcile_mode(

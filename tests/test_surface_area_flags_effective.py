@@ -99,13 +99,6 @@ def test_tools_sub_config_reflects_explicit_values() -> None:
 
 
 @pytest.mark.unit
-def test_nudge_budget_chars_default() -> None:
-    """nudge_budget_chars defaults to 600."""
-    cfg = TRWConfig()
-    assert cfg.nudge_budget_chars == 600
-
-
-@pytest.mark.unit
 def test_framework_md_enabled_default_is_none() -> None:
     """framework_md_enabled defaults to None (sentinel)."""
     cfg = TRWConfig()

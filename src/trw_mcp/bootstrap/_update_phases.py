@@ -136,7 +136,10 @@ def _refresh_distill_channels(
         for _key in ("preserved", "removed", "errors", "warnings", "retired"):
             _items = cc_dc.get(_key)
             if isinstance(_items, list):
-                result.setdefault(_key, []).extend(_items)
+                known = result.setdefault(_key, [])
+                # A warning the settings merge already recorded (a kept hook's registration) is not repeated.
+                fresh = [item for item in _items if _key != "warnings" or item not in known]
+                known.extend(fresh)
     except Exception as exc:  # justified: fail-open, distill channels are additive
         result.setdefault("warnings", []).append(f"claude-code distill channels update skipped: {exc}")
 
@@ -245,11 +248,11 @@ def _restore_dirty_files(
     # so this write is picked up there without a separate report here.
     from ._claude_code_distill_channels import apply_cc03_hook_registration
 
-    apply_cc03_hook_registration(root)
+    apply_cc03_hook_registration(root, result)
     # PRD-CORE-354 FR06: same discard-and-reapply for the statusLine entry.
     from ._settings_merge import apply_statusline_registration
 
-    apply_statusline_registration(root)
+    apply_statusline_registration(root, result)
 
 
 _KEPT = " (uncommitted_changes)"

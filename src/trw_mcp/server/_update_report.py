@@ -29,6 +29,11 @@ _KEPT_REASONS = {
         "own entries in it; run git diff on it to see exactly what changed"
     ),
 }
+#: What a dry run says of the same file: the preview is in the conditional, and names what stays the user's.
+_WOULD_CHANGE_AFTER_KEEP = (
+    "it has uncommitted changes in git, so this update would keep your version, then update TRW's own entries in it "
+    "(hook registrations, statusLine); your other entries are kept"
+)
 _KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
 
 __all__ = [
@@ -90,11 +95,14 @@ def kept_files(result: dict[str, list[str]], target: Path) -> list[tuple[str, st
     # A path a retired notice already names (with its removal command) is not named again as "kept": that read as
     # two contradictory statements (feedback #158).
     named_retired = _left_in_place(result, target)
+    reasons = dict(_KEPT_REASONS)
+    if "would_run" in result:  # a dry run proposes; it does not claim the later steps ran
+        reasons["(uncommitted_changed_after_keep)"] = _WOULD_CHANGE_AFTER_KEEP
     kept: dict[str, str] = {}
     for path in result.get("modified", []):
         kept.setdefault(_display_path(str(path), target), _KEPT_EDITED)
     for entry in result.get("preserved", []):
-        for suffix, why in _KEPT_REASONS.items():
+        for suffix, why in reasons.items():
             if str(entry).endswith(suffix):
                 kept.setdefault(_display_path(str(entry).removesuffix(suffix).rstrip(), target), why)
     return [(path, why) for path, why in kept.items() if path not in named_retired]

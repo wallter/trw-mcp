@@ -810,7 +810,12 @@ def _ship_new_hooks(project: Path) -> dict[str, list[str]]:
 
     Exercises `_update_hooks`, the function the update chain actually calls, with
     the manifest a real update carries — not just the re-bless helper it wires in.
+
+    The staged directory stands in for the INSTALLED PACKAGE's data directory (a new
+    release), so it is patched in as such: the automatic re-bless trusts only the
+    package's own bundle and refuses a data directory the caller merely passed in.
     """
+    from trw_mcp.bootstrap import _enrollment_rebless
     from trw_mcp.bootstrap._template_updater import _update_hooks
 
     installed = project / ".claude" / "hooks"
@@ -825,7 +830,9 @@ def _ship_new_hooks(project: Path) -> dict[str, list[str]]:
         if (installed / source.name).exists()
     }
     result: dict[str, list[str]] = {"created": [], "updated": [], "skipped": [], "modified": [], "warnings": []}
-    _update_hooks(project, staged, result, manifest_hashes=manifest)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(_enrollment_rebless, "_package_hooks_dir", lambda: staged / "hooks")
+        _update_hooks(project, staged, result, manifest_hashes=manifest)
     return result
 
 

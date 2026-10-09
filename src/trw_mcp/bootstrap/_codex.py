@@ -80,7 +80,9 @@ _TRW_TOOL_PREFIX = "trw_"
 #:
 #: This is the CEREMONY CORE and nothing else: read and progress-recording tools
 #: a non-interactive session must call to start from prior context and leave a
-#: trace. Deliberately absent, and therefore still prompted for: ``trw_deliver``
+#: trace. ``trw_code`` is here because the instructions tell every agent to ask
+#: it for a hint before an edit; it changes no project file (its only writes are
+#: TRW's own telemetry and exposure rows). Deliberately absent, and therefore still prompted for: ``trw_deliver``
 #: (records acceptance), ``trw_dispatch`` (launches another agent),
 #: ``trw-mcp instructions sync`` (rewrites the operator's instruction files).
 #: ``default_tools_approval_mode`` is NOT emitted: a blanket grant would cover
@@ -91,6 +93,7 @@ _CODEX_APPROVED_TOOLS: tuple[str, ...] = (
     "trw_status",
     "trw_checkpoint",
     "trw_recall",
+    "trw_code",
     "trw_learn",
     "trw_send",
     "trw_inbox",

@@ -64,7 +64,8 @@ CONFIG_MODEL_NAME = "TRWConfig"
 #: 250 after PRD-CORE-300 S11a/S11b retired the phase-exposure, tool-access-grant and
 #: skill-lifecycle fields.
 #: 230 after PRD-CORE-341 retired the three agents_md_learning_* fields.
-SELF_REFERENTIAL_WITH_READER_CEILING = 230
+#: 208 measured 2026-10-09 after the reversion-rate, nudge_budget_chars and density_weight_* keys were removed.
+SELF_REFERENTIAL_WITH_READER_CEILING = 208
 
 
 class ConsumerClaimReport(BaseModel):

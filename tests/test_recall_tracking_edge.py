@@ -8,6 +8,7 @@ Covers uncovered branches and boundary conditions NOT in test_recall_tracking.py
 from __future__ import annotations
 
 import os
+import random
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -112,6 +113,21 @@ def _stable(response: dict[str, Any]) -> dict[str, Any]:
     return stable
 
 
+def _same_nudge_draws(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the coming pass the same pool and message draws as the other pass.
+
+    The standard messenger picks its nudge pool with a weighted draw from ``SystemRandom``, and a pool with
+    nothing to say (no pending step, no matching learning) leaves ``nudge_content`` out of the response. Two
+    passes with independent draws therefore differ in that KEY in a fraction of runs (7 of 30 with unequal seeds), whatever the logs
+    directory does. Seeding both generators identically before each pass removes the draw as a difference, so
+    a key that still appears or disappears is the unwritable directory's doing.
+    """
+    from trw_mcp.state import _nudge_content, _nudge_rules
+
+    monkeypatch.setattr(_nudge_rules, "_RNG", random.Random(0))
+    monkeypatch.setattr(_nudge_content, "_RNG", random.Random(0))
+
+
 @pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions and a non-root user")
 def test_unwritable_logs_leave_responses_unchanged(
     trw_dir: Path,
@@ -131,6 +147,7 @@ def test_unwritable_logs_leave_responses_unchanged(
         summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
     )["learning_id"]
 
+    _same_nudge_draws(monkeypatch)
     writable = _drive_four_tools(server, lid)
     logs = trw_dir / "logs"
     rows_before = {p.name: p.read_bytes() for p in logs.glob("*.jsonl")}
@@ -149,6 +166,7 @@ def test_unwritable_logs_leave_responses_unchanged(
     for path in existing:
         path.chmod(0o400)
     logs.chmod(0o500)
+    _same_nudge_draws(monkeypatch)
     try:
         unwritable = _drive_four_tools(server, lid)
     finally:

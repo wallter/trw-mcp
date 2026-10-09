@@ -356,6 +356,8 @@ def _apply_update(
                 remove_tree(snapshot_root, purpose="update snapshot")
     for key, kind in (("updated", "updated"), ("created", "created"), ("cleaned", "deleted")):
         result[key] = [rel for rel, change in changes.items() if change == kind]
+    if dry_run:  # the scratch copy is the only place the preview can compare bytes; a real run does it on the target
+        relabel_kept_files_that_changed(root, result)
 
 
 @with_instruction_write_trigger("bootstrap_update", "update-project")
@@ -466,7 +468,6 @@ def update_project(
                 ),
             )
             result["would_run"] = external
-            result.pop("_kept_digests", None)  # the scratch copy's bytes say nothing about the real files
             link_claude_md_after_update(target_dir, result, dry_run=True)
             # The scratch copy holds only the managed surface, so create-only files outside it (the learnings
             # index) were never seen there; the real run reports them preserved, so the preview must too.
@@ -505,6 +506,9 @@ def update_project(
                 result["warnings"].extend(context["warnings"])
                 result["ran"] = external
 
+    from ._enrollment_rebless import warn_if_enrollment_stale
+
+    warn_if_enrollment_stale(target_dir, result, dry_run=dry_run)
     targets = resolve_client_write_targets(target_dir, ide_override=ide)
     changed = (
         bool(result["updated"] or result["created"]) and not result["errors"]

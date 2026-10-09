@@ -60,6 +60,9 @@ class FileRiskScorePayload(BaseModel):
     test_edge_count: int = Field(ge=0)
     doc_edge_count: int = Field(ge=0)
     line_count: int = Field(ge=0)
+    # Tests per evidence tier (trw-distill 0.12.0). Without it here, extra="forbid" rejected every risk report
+    # a current trw-distill writes as `sidecar_malformed`.
+    test_tier_counts: dict[str, int] = Field(default_factory=dict)
     test_signal_confidence: Literal["high", "medium", "low"] = "low"
 
 

@@ -9,18 +9,17 @@ from trw_mcp.models.report import DurationInfo, EventSummary, PhaseEntry
 
 def parse_run_events(
     events: list[dict[str, object]],
-) -> tuple[EventSummary, list[PhaseEntry], DurationInfo, float]:
-    """Parse events into summary, phase timeline, duration, and reversion rate.
+) -> tuple[EventSummary, list[PhaseEntry], DurationInfo]:
+    """Parse events into summary, phase timeline, and duration.
 
     Args:
         events: List of event dicts from events.jsonl.
 
     Returns:
-        Tuple of (event_summary, phase_timeline, duration_info, reversion_rate).
+        Tuple of (event_summary, phase_timeline, duration_info).
     """
     by_type: dict[str, int] = {}
     phase_enters: list[dict[str, object]] = []
-    revert_count = 0
 
     for evt in events:
         event_type = str(evt.get("event", "unknown"))
@@ -28,8 +27,6 @@ def parse_run_events(
 
         if event_type == "phase_enter":
             phase_enters.append(evt)
-        elif event_type == "phase_revert":
-            revert_count += 1
 
     event_summary = EventSummary(total_count=len(events), by_type=by_type)
 
@@ -39,11 +36,7 @@ def parse_run_events(
     # Duration from first/last event timestamps
     duration = _compute_duration(events)
 
-    # Reversion rate
-    total_transitions = len(phase_enters) + revert_count
-    reversion_rate = revert_count / total_transitions if total_transitions > 0 else 0.0
-
-    return event_summary, phase_timeline, duration, reversion_rate
+    return event_summary, phase_timeline, duration
 
 
 def _build_phase_timeline(

@@ -29,6 +29,7 @@ from trw_mcp.state._entitlements import DISTILL_SIDECAR_FEATURE
 # `_learnings_collector` module. Re-exported here for backward
 # compatibility with callers that still import from this module.
 from trw_mcp.tools import _sidecar_substrate
+from trw_mcp.tools._before_edit_hint_totals import CappedListTotals
 from trw_mcp.tools._learnings_collector import LearningSummary
 from trw_mcp.tools._sidecar_substrate import CurrentSidecarResult, CurrentSidecarStatus
 
@@ -106,7 +107,7 @@ class EditLessonPayload(BaseModel):
     summary: str = Field(max_length=160)
 
 
-class BeforeYouEditHintPayload(BaseModel):
+class BeforeYouEditHintPayload(CappedListTotals):
     """Cross-package shape pin against c734 BeforeYouEditHint.
 
     Field-by-field mirror of the trw-distill model. We CANNOT import

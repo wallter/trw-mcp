@@ -377,7 +377,7 @@ def test_new_prd_frontmatter_omits_aaref_components_by_default() -> None:
 
 
 # ---------------------------------------------------------------------------
-# FR04: Configurable per-section content density weights
+# FR04: Per-section content density weights (fixed; config keys retired)
 # ---------------------------------------------------------------------------
 
 
@@ -387,88 +387,17 @@ def _build_section_content(section_name: str, lines: int = 10) -> str:
     return f"## 1. {section_name}\n\n{body_lines}\n"
 
 
-def test_density_weight_defaults_are_correct() -> None:
-    """TRWConfig default section weights must match PRD specification."""
-    config = TRWConfig()
-    assert config.density_weight_problem_statement == 2.0
-    assert config.density_weight_functional_requirements == 2.0
-    assert config.density_weight_traceability_matrix == 1.5
-    assert config.density_weight_default == 1.0
-
-
-def test_density_weight_problem_statement_override() -> None:
-    """Custom Problem Statement weight must produce different score than default."""
-    content = _build_section_content("Problem Statement", lines=10)
-
-    config_default = TRWConfig()
-    config_custom = TRWConfig(density_weight_problem_statement=3.0)
-
-    result_default = score_content_density(content, config_default)
-    result_custom = score_content_density(content, config_custom)
-
-    # Higher weight on Problem Statement should produce higher weighted sum
-    # (same density but more weight means higher ratio contribution)
-    # Both have same max_score (validation_density_weight=42) but different
-    # weighted averages when weight denominator changes
-    # With only one section: avg_density = density * w / w = density (weight cancels)
-    # BUT different default weight affects relative weighting when there are multiple sections.
-    # For single section, weight doesn't affect final avg_density (w/w = 1).
-    # We still verify the config field is read (no exception, correct type).
-    assert isinstance(result_default.score, float)
-    assert isinstance(result_custom.score, float)
-
-
-def test_density_weight_multiple_sections_reflects_custom_weights() -> None:
-    """Custom weights must change the weighted average when multiple sections exist."""
-    # Two sections: Problem Statement (high weight) and Open Questions (default weight)
+def test_removed_density_weight_keys_are_ignored() -> None:
+    """The retired ``density_weight_*`` keys no longer tune the density score."""
     content = (
         "## 1. Problem Statement\n\n"
         + "\n".join(f"Requirement line {i}." for i in range(10))
-        + "\n\n## 2. Open Questions\n\n"
-        # Deliberately sparse: only 2 substantive lines
-        "TBD\nUnknown\n"
+        + "\n\n## 2. Open Questions\n\nTBD\nUnknown\n"
     )
+    stale = TRWConfig.model_validate({"density_weight_problem_statement": 0.1, "density_weight_default": 10.0})
 
-    # Default: PS weight=2.0, OQ weight=1.0 → high-density PS pulls avg up
-    config_default = TRWConfig()
-    # Custom: PS weight=0.1, OQ weight=10.0 → sparse OQ dominates → lower avg
-    config_custom = TRWConfig(
-        density_weight_problem_statement=0.1,
-        density_weight_default=10.0,
-    )
-
-    result_default = score_content_density(content, config_default)
-    result_custom = score_content_density(content, config_custom)
-
-    # When sparse section (OQ) has 10x weight, overall density must be lower
-    assert result_custom.score < result_default.score, (
-        f"Custom config (sparse section weighted 10x) should produce lower score "
-        f"({result_custom.score:.4f}) than default ({result_default.score:.4f})"
-    )
-
-
-def test_density_weight_bounds_reject_negative_values() -> None:
-    """TRWConfig must reject negative section weight values (ge=0.0)."""
-    with pytest.raises(Exception):
-        TRWConfig(density_weight_problem_statement=-1.0)
-
-
-def test_density_weight_bounds_reject_values_above_10() -> None:
-    """TRWConfig must reject section weight values above 10.0 (le=10.0)."""
-    with pytest.raises(Exception):
-        TRWConfig(density_weight_problem_statement=11.0)
-
-
-def test_density_weight_zero_is_valid() -> None:
-    """Zero weight (0.0) must be accepted (ge=0.0)."""
-    config = TRWConfig(density_weight_problem_statement=0.0)
-    assert config.density_weight_problem_statement == 0.0
-
-
-def test_density_weight_ten_is_valid() -> None:
-    """Weight of 10.0 must be accepted (le=10.0)."""
-    config = TRWConfig(density_weight_traceability_matrix=10.0)
-    assert config.density_weight_traceability_matrix == 10.0
+    assert not hasattr(stale, "density_weight_problem_statement")
+    assert score_content_density(content, stale).score == score_content_density(content, TRWConfig()).score
 
 
 # ---------------------------------------------------------------------------

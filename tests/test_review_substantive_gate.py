@@ -154,7 +154,7 @@ def test_degraded_cross_model_artifact_does_not_satisfy_review_gate(
     config = TRWConfig(cross_model_review_enabled=False, review_gate_mode="block")
     monkeypatch.setattr("trw_mcp.tools._delivery_helpers.get_config", lambda: config)
 
-    with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
+    with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
         result = handle_cross_model_mode(config, run_dir, "review-degraded", "2026-07-09T00:00:00Z")
 
     assert result["auto_analysis_limited"] is True

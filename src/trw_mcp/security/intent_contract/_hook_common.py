@@ -94,6 +94,16 @@ def telemetry(root: Path, outcome: Outcome, configured: str | None) -> None:
         return
 
 
+#: The one-line reason a stale marker blocks with. It blocks every target, inside the project or not, and
+#: re-blessing is an operator acknowledgement: the agent reading this is told to stop, not to find a way round.
+STALE_BLOCK_MESSAGE = (
+    "enrollment marker is stale, so every Write and Edit from this project's sessions is blocked, whatever "
+    "the target path. This is for the operator to fix, not an agent: stop and report this block instead of "
+    "writing by another route. Operator: `python3 -m trw_mcp.security.intent_contract.enrollment "
+    "refresh-hooks` after new vendor hook bytes, or `... enrollment enroll` after a contract change."
+)
+
+
 def enrollment_gate(block: int) -> EnrolledRoot | HookDecision:
     """Is this project opted in, with a marker that still matches the tree?
 
@@ -130,7 +140,7 @@ def enrollment_gate(block: int) -> EnrolledRoot | HookDecision:
         # The warning is unsuppressible and prints even when the block is
         # subsequently overridden by the caller's break-glass path.
         print(stale_enrollment_warning(root, config.contract_path), file=sys.stderr)
-        return HookDecision(block, "enrollment marker is stale")
+        return HookDecision(block, STALE_BLOCK_MESSAGE)
     return EnrolledRoot(root=root, config=config)
 
 

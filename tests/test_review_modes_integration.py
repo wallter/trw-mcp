@@ -29,7 +29,7 @@ class TestIntegration:
             ),
             (
                 {"mode": "cross_model"},
-                (("trw_mcp.tools._review_helpers._get_git_diff", ""),),
+                (("trw_mcp.tools._review_helpers._get_git_diff", "+# TODO cleanup"),),
             ),
             (
                 {
@@ -138,7 +138,7 @@ class TestIntegration:
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(cross_model_review_enabled=False))
 
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = tools["trw_review"].fn(mode="cross_model", options={"run_path": str(run_dir)})
 
         assert result["run_path"] == str(run_dir)
@@ -155,7 +155,7 @@ class TestIntegration:
         tools = make_ceremony_server(monkeypatch, tmp_path)
         _reset_config(TRWConfig(cross_model_review_enabled=False))
 
-        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
+        with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="+# TODO cleanup"):
             result = tools["trw_review"].fn(mode="cross_model", options={"run_path": str(run_dir)})
 
         assert result["review_family_coverage"] == "single_family"

@@ -62,10 +62,6 @@ class _CeremonyFields:
     # and no originating PRD kept them advisory-live (validation_smell_weight
     # and validation_ears_weight were already documented as permanently-0
     # advisory tunables the scorer never multiplies by).
-    density_weight_problem_statement: float = Field(default=2.0, ge=0.0, le=10.0)
-    density_weight_functional_requirements: float = Field(default=2.0, ge=0.0, le=10.0)
-    density_weight_traceability_matrix: float = Field(default=1.5, ge=0.0, le=10.0)
-    density_weight_default: float = Field(default=1.0, ge=0.0, le=10.0)
     validation_skeleton_threshold: float = 30.0
     validation_draft_threshold: float = 60.0
     validation_review_threshold: float = 85.0
@@ -104,9 +100,6 @@ class _CeremonyFields:
     # applies -- removed.
 
     reflect_max_success_patterns: int = 5
-
-    reversion_rate_elevated: float = 0.15
-    reversion_rate_concerning: float = 0.30
 
     # The eleven debt_* fields were removed 2026-07-28 (PRD-QUAL-131-FR01).
     # A repository-wide search for technical_debt, DebtRegistry, debt_registry

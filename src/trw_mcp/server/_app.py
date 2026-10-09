@@ -203,7 +203,9 @@ def _try_init_response_optimizer() -> object | None:
 def _run_meta_tune_boot_validation(config: TRWConfig) -> None:
     """Fail-loud SAFE-001 boot validation when meta-tune is enabled."""
     if config.meta_tune.enabled:
-        validate_meta_tune_defaults(config)
+        from trw_mcp.state._paths import resolve_project_root
+
+        validate_meta_tune_defaults(config, repo_root=resolve_project_root())
 
 
 def _build_middleware() -> list[object]:

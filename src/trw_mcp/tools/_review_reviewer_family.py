@@ -19,8 +19,9 @@ The rule, stated once:
   of its exact bytes by supplying its SHA-256 digest as ``reviewer_receipt_id``.
   Anything less downgrades, with a machine-readable reason.
 
-The in-process ``auto``/``cross_model`` dispatch paths are untouched — there the
-dispatch itself ran a real provider call, which IS the evidence.
+Externally supplied cross-model findings carry ``external_receipt_path`` (even
+when empty) and use the same digest verification as manual submissions. They
+must never inherit the internal dispatch's trusted family merely from the mode.
 """
 
 from __future__ import annotations
@@ -128,7 +129,7 @@ def resolve_reviewer_fields(
 
     1. an in-process ``mode == "cross_model"`` dispatch (the provider call is the
        evidence), or
-    2. a manual-mode claim whose ``external_receipt_path`` digests to the
+    2. an external claim whose ``external_receipt_path`` digests to the
        supplied ``reviewer_receipt_id``.
 
     Every other manual-mode ``cross_model`` claim is downgraded and carries a
@@ -140,7 +141,10 @@ def resolve_reviewer_fields(
     identity = str(block.get("receipt_id") or block.get("session_id") or block.get("run_id") or origin)
     dispatch_family = FAMILY_CROSS_MODEL if mode == "cross_model" else ("agent" if mode == "auto" else "human_or_self")
 
-    if mode != "manual" or origin != FAMILY_CROSS_MODEL:
+    # The external import path always supplies this key, including an empty
+    # value. Missing/invalid receipts must downgrade, never inherit dispatch trust.
+    external_claim = mode == "manual" or "external_receipt_path" in review_data
+    if not external_claim or origin != FAMILY_CROSS_MODEL:
         return ReviewerFields(origin=origin, identity=identity, family=dispatch_family)
 
     claimed_digest = str(block.get("receipt_id") or "").strip().lower()

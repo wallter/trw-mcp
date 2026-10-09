@@ -42,6 +42,7 @@ from trw_mcp.models.typed_dicts._tools import (
     FailureAttributionDict,
     FailureAttributionItemDict,
 )
+from trw_mcp.state._paths import resolve_project_root
 
 logger = structlog.get_logger(__name__)
 
@@ -73,6 +74,7 @@ def changed_files() -> set[str] | None:
                 capture_output=True,
                 text=True,
                 timeout=15,
+                cwd=resolve_project_root(),
             )
             if result.returncode != 0:
                 # Not a git repo / detached weirdness — treat as unavailable.
@@ -82,6 +84,7 @@ def changed_files() -> set[str] | None:
                 if line:
                     paths.add(line)
                     paths.add(line.rsplit("/", 1)[-1])
+    # trw-fail-silent-allow: None is "git unavailable"; callers then report `unknown`, never `pre-existing`
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
     return paths

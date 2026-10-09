@@ -176,10 +176,6 @@ delivery_busy_timeout_ms
 delivery_operations_mode
 delivery_queue_depth_max
 delivery_stale_lease_minutes
-density_weight_default
-density_weight_functional_requirements
-density_weight_problem_statement
-density_weight_traceability_matrix
 dispatch_default_client
 dispatch_default_models
 dispatch_default_read_only
@@ -237,7 +233,6 @@ meta_tune
 meta_tune_enabled
 migration_gate_enabled
 model_family
-nudge_budget_chars
 nudge_density
 nudge_enabled
 nudge_messenger
@@ -280,8 +275,6 @@ receipts_dir
 reflect_max_success_patterns
 reflections_dir
 response_format
-reversion_rate_concerning
-reversion_rate_elevated
 review_confidence_threshold
 review_gate_mode
 review_mandate_advisory_enabled

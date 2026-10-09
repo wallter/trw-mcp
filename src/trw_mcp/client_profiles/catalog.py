@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from trw_mcp.models.config import builtin_client_ids, resolve_client_profile
 from trw_mcp.models.config._client_profile import ClientProfile, WriteTargets
-from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS
 
 # DERIVED (2026-09-12) from the profile registry, in registry order. It was a
 # hand-written 8-tuple, and a profile added to the registry alone would have
@@ -37,7 +36,6 @@ class ClientProfileDocRow:
     instruction_path: str
     nudge_messenger: str
     nudge_density: str
-    nudge_budget_chars: int
     nudge_pool_weights_label: str
     nudge_cooldown_after: int
 
@@ -112,7 +110,6 @@ def build_client_profile_rows() -> tuple[ClientProfileDocRow, ...]:
                 instruction_path=profile.write_targets.instruction_path,
                 nudge_messenger="standard",
                 nudge_density=profile.nudge_density or "None",
-                nudge_budget_chars=DEFAULT_NUDGE_BUDGET_CHARS,
                 nudge_pool_weights_label=_format_pool_weights(profile),
                 nudge_cooldown_after=3,
             )

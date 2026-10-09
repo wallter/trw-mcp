@@ -105,6 +105,12 @@ def _register_review_tool(server: FastMCP) -> None:
         reviewer_run_id = claim.reviewer_run_id
         reviewer_session_id = claim.reviewer_session_id
 
+        if reviewer_findings is not None and findings is not None:
+            return {
+                "error": 'Use mode="cross_model", reviewer_findings=[...] without manual findings, '
+                'or mode="auto", reviewer_findings=[...] to score the supplied review.'
+            }
+
         # Mode detection:
         # - mode="reconcile" explicitly set -> reconcile (check first)
         # - findings=[...] explicitly passed -> manual (backward compat)
@@ -121,6 +127,17 @@ def _register_review_tool(server: FastMCP) -> None:
             effective_mode = "auto"
         else:
             effective_mode = "manual"
+
+        if (
+            effective_mode == "cross_model"
+            and reviewer_findings is not None
+            and (reviewer_source != "cross_model" or not reviewer_receipt_id)
+        ):
+            return {
+                "error": "Supplied cross-model findings require reviewer_identity with "
+                'reviewer_source="cross_model" and reviewer_receipt_id. '
+                'Use mode="auto", reviewer_findings=[...] to score findings without that receipt.'
+            }
 
         # Resolve run directory (PRD-CORE-141 FR03/FR05).
         resolved_run: Path | None = None
@@ -208,6 +225,9 @@ def _register_review_tool(server: FastMCP) -> None:
                     ts,
                     prd_ids,
                     verified_reviewer_identity=verified_reviewer_identity,
+                    reviewer_findings=reviewer_findings,
+                    reviewer_receipt_id=reviewer_receipt_id,
+                    external_receipt_path=external_receipt_path,
                 ),
             )
         else:
@@ -224,6 +244,9 @@ def _register_review_tool(server: FastMCP) -> None:
                     verified_reviewer_identity=verified_reviewer_identity,
                 ),
             )
+
+        if "error" in response:
+            return response
 
         # OQ-001 honesty: tell the caller whether a claimed identity verified.
         if identity_claimed:

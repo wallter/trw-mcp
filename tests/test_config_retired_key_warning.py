@@ -447,3 +447,33 @@ def test_the_loader_checks_retired_env_vars_on_the_real_path(monkeypatch: pytest
     _loader._build_config()
 
     assert seen and "TRW_COMPACT_AFTER_TURNS" in seen[0]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "reversion_rate_concerning",
+        "reversion_rate_elevated",
+        "nudge_budget_chars",
+        "density_weight_problem_statement",
+        "density_weight_functional_requirements",
+        "density_weight_traceability_matrix",
+        "density_weight_default",
+    ],
+)
+def test_dead_surface_removal_keys_load_and_warn(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """The keys retired with the P12 dead-surface removals load and are named once removed."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    assert key not in TRWConfig.model_fields
+    assert key in retired_config_keys()
+
+    config = TRWConfig.model_validate({key: 7})
+    assert not hasattr(config, key)
+
+    warned = warn_unrecognised_config_keys({key: 7}, set(TRWConfig.model_fields))
+
+    err = capsys.readouterr().err
+    assert warned == [key]
+    assert key in err

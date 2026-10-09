@@ -179,6 +179,13 @@ def _integration_review_unreadable(integration_path: Path) -> str:
     return block
 
 
+def _project_root_of_run(run_path: Path) -> Path:
+    """The directory whose ``.trw`` holds *run_path* (the run's own project), else the served project."""
+    from trw_mcp.state._paths import resolve_project_root
+
+    return next((p for p in run_path.parents if (p / ".trw").is_dir()), resolve_project_root())
+
+
 def _check_untracked_files(run_path: Path) -> str | None:
     """Check for untracked source/test files and return warning if found."""
     try:
@@ -189,7 +196,7 @@ def _check_untracked_files(run_path: Path) -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
-            cwd=str(run_path.parent.parent.parent),  # project root
+            cwd=str(_project_root_of_run(run_path)),
         )
         if git_result.returncode == 0:
             untracked = [
@@ -335,14 +342,8 @@ def _check_instruction_tool_parity_gate(run_path: Path) -> str | None:
 
         exposed = resolve_exposed_tools(mode=mode)
 
-        # Walk up from run_path to find project root (parent of .trw/)
-        project_root = run_path
-        for parent in run_path.parents:
-            if (parent / ".trw").is_dir():
-                project_root = parent
-                break
-
-        return check_instruction_tool_parity(project_root, exposed)
+        return check_instruction_tool_parity(_project_root_of_run(run_path), exposed)
+    # trw-fail-silent-allow: a soft warning gate; a parity check that cannot run is logged and must not block delivery
     except Exception:  # justified: fail-open, soft warning gate must not block delivery
         logger.warning("instruction_parity_gate_failed", exc_info=True)
         return None

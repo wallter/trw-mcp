@@ -58,9 +58,6 @@ from trw_mcp.tools._orchestration_lifecycle import (
 from trw_mcp.tools._orchestration_phase import (
     _check_framework_version_staleness as _check_framework_version_staleness,
 )
-from trw_mcp.tools._orchestration_phase import (
-    _compute_reversion_metrics as _compute_reversion_metrics,
-)
 from trw_mcp.tools._orchestration_status_assembly import assemble_status_result, field_scope_label
 from trw_mcp.tools._profile_cli import surface_detail
 from trw_mcp.tools._status_feedback import status_feedback

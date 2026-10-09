@@ -399,7 +399,13 @@ def test_a_hung_payload_parser_cannot_hold_the_hook(tmp_path: Path, parser: str)
 def test_the_payload_is_parsed_in_one_start(tmp_path: Path) -> None:
     main, _ = _world(tmp_path)
     log = tmp_path / "jq.log"
-    tools = _toolbin(tmp_path, jq=f'#!/bin/sh\necho x >> "{log}"\nexec /usr/bin/jq "$@"\n')
+    # The wrapper is started once before the hook, because the first exec of a newly written script costs
+    # 0.15-0.4 s on macOS (6 ms afterwards) and the parser's whole bound is 0.5 s. Under the warm-up variable
+    # it exits before it records anything, so the log still counts only the starts the hook made.
+    guard = '[ -z "${TRW_TEST_STUB_WARM_UP:-}" ] || exit 0'
+    tools = _toolbin(tmp_path, jq=f'#!/bin/sh\n{guard}\necho x >> "{log}"\nexec /usr/bin/jq "$@"\n')
+    subprocess.run([str(Path(tools) / "jq")], env={"TRW_TEST_STUB_WARM_UP": "1"}, check=True, timeout=30)
+    assert not log.exists(), "the warm-up start was counted"
 
     run = _hook(main, main / "foo.py", tmp_path, path=tools)
 
@@ -421,6 +427,11 @@ def test_worst_case_slow_parser_slow_git_and_hung_interpreter_together(tmp_path:
         jq='#!/bin/sh\nsleep 0.15\nexec /usr/bin/jq "$@"\n',
         git='#!/bin/sh\nsleep 0.15\nexec /usr/bin/git "$@"\n',
     )
+    # "Inside its own budget" has to be true of the stage, not of the fixture: the first exec of a newly
+    # written script costs 0.15-0.4 s on macOS (6 ms afterwards), which on top of the 0.15 s sleep put the
+    # parser past its 0.5 s bound and ended the hook at 0.5 s. Each wrapper is started once before the hook.
+    for wrapper in ("jq", "git"):
+        subprocess.run([str(Path(tools) / wrapper), "--version"], check=True, capture_output=True, timeout=30)
 
     run = _hook(main, main / "foo.py", tmp_path, path=tools)
 

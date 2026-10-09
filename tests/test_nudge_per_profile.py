@@ -4,7 +4,7 @@ Covers all built-in client profiles (claude-code, opencode, cursor-ide,
 cursor-cli, codex, copilot, antigravity-cli). Exercises:
 
 FR10: per-profile surface-flag wiring — nudge_enabled, effective_nudge_messenger,
-effective_nudge_density, nudge_budget_chars. Also verifies nudge-eligible
+effective_nudge_density. Also verifies nudge-eligible
 profiles actually emit ``nudge_shown`` INFO events and that the dedup
 invariant holds across two sequential calls.
 

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from trw_mcp.models.typed_dicts import CrossModelReviewResult
+from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.tools import _review_helpers as _helpers
 from trw_mcp.tools._client_detection import resolve_client_profile
 from trw_mcp.tools._review_advisory_severity import log_advisory_severity
@@ -156,7 +157,10 @@ def handle_cross_model_mode(
     prd_ids: list[str] | None = None,
     *,
     verified_reviewer_identity: RunIdentity | None = None,
-) -> CrossModelReviewResult:
+    reviewer_findings: list[dict[str, object]] | None = None,
+    reviewer_receipt_id: str | None = None,
+    external_receipt_path: str | None = None,
+) -> CrossModelReviewResult | dict[str, object]:
     """Handle the cross-model review mode -- get diff, invoke provider, persist.
 
     PRD-QUAL-108: never hard-requires cross-family availability. When cross-family
@@ -164,9 +168,32 @@ def handle_cross_model_mode(
     review degrades to the same-family multi-seed + honeypot path, computes a
     verdict from those findings, and stamps the verdict ``single_family`` with a
     closed-set caveat. The coverage stamp reflects REALIZED findings, never
-    configuration intent (NFR02).
+    configuration intent (NFR02). Disabled access with no fallback findings
+    returns an error without persisting a verdict. Supplied, receipted findings
+    use the auto scorer and the external receipt verifier; no provider runs.
     """
-    diff = _helpers._get_git_diff()
+    if reviewer_findings is not None:
+        from trw_mcp.tools._review_auto import handle_auto_mode
+
+        if not reviewer_receipt_id:
+            return {"error": 'Use mode="auto", reviewer_findings=[...] without a cross-model receipt.'}
+        return dict(
+            handle_auto_mode(
+                config,
+                resolved_run,
+                review_id,
+                ts,
+                reviewer_findings,
+                prd_ids,
+                verified_reviewer_identity=verified_reviewer_identity,
+                external_reviewer_receipt_id=reviewer_receipt_id,
+                external_receipt_path=external_receipt_path,
+            )
+        )
+
+    # In the project's checkout, not the process's working directory: a server started elsewhere would
+    # otherwise review another repository's diff, or none.
+    diff = _helpers._get_git_diff(cwd=resolve_project_root())
     if diff is None:
         # git could not be run, so the diff is UNKNOWN rather than empty. Scoring
         # here would emit a verdict about a tree that was never read.
@@ -274,6 +301,13 @@ def handle_cross_model_mode(
         )
         same_family_findings_count = len(fallback_findings)
         verdict_findings = fallback_findings
+
+    if reason_token == REASON_CROSS_MODEL_DISABLED and not verdict_findings:
+        return {
+            "error": "Cross-model review did not run: no provider is configured or enabled, "
+            "and the fallback produced no findings. Configure a provider or submit "
+            "reviewer_findings with a cross-model receipt (or use mode=auto)."
+        }
 
     # ONE list drives both the verdict and the critical count, so they can never
     # disagree. Reporting the count is load-bearing, not cosmetic: the delivery

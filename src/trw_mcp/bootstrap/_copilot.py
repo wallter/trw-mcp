@@ -268,8 +268,14 @@ def _is_trw_hook_group(group: dict[str, object]) -> bool:
 
 def _merge_copilot_hooks(
     existing: dict[str, object],
+    *,
+    root: Path | None = None,
+    result: dict[str, list[str]] | None = None,
 ) -> CopilotHooksPayload:
-    """Merge TRW-managed hooks into existing Copilot hooks.json."""
+    """Merge TRW-managed hooks into existing Copilot hooks.json.
+
+    Given *root* and *result*, an existing TRW group that runs a hook file the update kept stays as it is.
+    """
     existing_hooks = existing.get("hooks", {})
     if not isinstance(existing_hooks, dict):
         existing_hooks = {}
@@ -289,6 +295,20 @@ def _merge_copilot_hooks(
             cast("CopilotHookGroup", g) for g in existing_groups if isinstance(g, dict) and not _is_trw_hook_group(g)
         ]
         trw_groups = trw_hooks.get(event_name, [])
+        if root is not None and result is not None:
+            from ._kept_hook_registration import merge_owned_groups
+
+            owned = [g for g in existing_groups if isinstance(g, dict) and _is_trw_hook_group(g)]
+            trw_groups = cast(
+                "list[CopilotHookGroup]",
+                merge_owned_groups(
+                    cast("list[dict[str, object]]", owned),
+                    cast("list[dict[str, object]]", trw_groups),
+                    root=root,
+                    result=result,
+                    settings_rel=_COPILOT_HOOKS_PATH,
+                ),
+            )
 
         if trw_groups:
             merged_hooks[event_name] = user_groups + trw_groups
@@ -374,7 +394,7 @@ def generate_copilot_hooks(
                     "(left untouched; re-run with force=True to overwrite)"
                 )
                 return result
-            payload = _merge_copilot_hooks(raw_existing)
+            payload = _merge_copilot_hooks(raw_existing, root=target_dir, result=result)
         else:
             payload = _copilot_hooks_payload()
         write_checkout_file(target_dir, hooks_path, json.dumps(payload, indent=2, sort_keys=True) + "\n")

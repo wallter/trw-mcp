@@ -20,8 +20,9 @@ Extracted as DIST-243 batch 42 (continuation) to keep the parent
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.models.typed_dicts import (
@@ -193,8 +194,16 @@ def _is_trw_hook_group(event: str, group: CodexHookMatcherEntry) -> bool:
     return False
 
 
-def merge_codex_hooks(existing: CodexHooksConfig) -> CodexHooksConfig:
-    """Merge TRW-managed Codex hooks into an existing hooks config."""
+def merge_codex_hooks(
+    existing: CodexHooksConfig,
+    hold: Callable[[list[CodexHookMatcherEntry], list[CodexHookMatcherEntry]], list[CodexHookMatcherEntry]]
+    | None = None,
+) -> CodexHooksConfig:
+    """Merge TRW-managed Codex hooks into an existing hooks config.
+
+    *hold*, given an event's existing TRW groups and the fresh ones, returns the TRW groups to write: a group
+    running a hook file the update kept stays as it is (see ``_kept_hook_registration``).
+    """
     merged = _normalize_hook_config(existing)
     current_hooks = merged.get("hooks", {})
     trw_hooks = _codex_hooks_payload()["hooks"]
@@ -204,8 +213,12 @@ def merge_codex_hooks(existing: CodexHooksConfig) -> CodexHooksConfig:
         user_groups = [
             group for group in current_hooks.get(event_name, []) if not _is_trw_hook_group(event_name, group)
         ]
-        if event_name in trw_hooks:
-            merged_hooks[event_name] = user_groups + trw_hooks[event_name]
+        fresh = trw_hooks.get(event_name, [])
+        if hold is not None:
+            owned = [g for g in current_hooks.get(event_name, []) if _is_trw_hook_group(event_name, g)]
+            fresh = hold(owned, fresh)
+        if event_name in trw_hooks or fresh:
+            merged_hooks[event_name] = user_groups + fresh
         elif user_groups:
             merged_hooks[event_name] = user_groups
 
@@ -239,7 +252,17 @@ def generate_codex_hooks(
                 "JSON object; left unchanged to preserve user hooks"
             )
             return result
-        payload = merge_codex_hooks(_normalize_hook_config(raw_existing))
+        from functools import partial
+
+        from ._kept_hook_registration import merge_owned_groups
+
+        hold = partial(
+            merge_owned_groups,
+            root=target_dir,
+            result=cast("dict[str, list[str]]", result),
+            settings_rel=_CODEX_HOOKS_PATH,
+        )
+        payload = merge_codex_hooks(_normalize_hook_config(raw_existing), hold=cast("Any", hold))
     else:
         payload = _codex_hooks_payload()
 

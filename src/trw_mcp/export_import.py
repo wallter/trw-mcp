@@ -150,7 +150,7 @@ def _check_entry_filters(
     return True, ""
 
 
-_VALID_SOURCE_TYPES = frozenset({"human", "agent", "tool", "consolidated"})
+_VALID_SOURCE_TYPES = frozenset({"human", "agent", "tool", "consolidated", "distill"})
 _LEARNING_ID = re.compile(r"L-[A-Za-z0-9_-]{1,64}")
 
 

@@ -187,10 +187,10 @@ def _install_hook(
             key = rel if manifest_hashes and rel in manifest_hashes else hook_name
             if artifact_user_edited_against(dest, key, bundled, manifest_hashes):
                 result["preserved"].append(rel)
-                # A deleted recorded file is tombstoned, so the fresh copy needs --reprovision.
+                # Keeping it drops its manifest record, so deleting it leaves no tombstone and the next plain
+                # run writes the bundled copy; --reprovision refuses a path that was never tombstoned.
                 result.setdefault("warnings", []).append(
-                    f"{rel}: kept because it was edited "
-                    f"(for the fresh copy, delete it and run update-project --reprovision {rel})"
+                    f"{rel}: kept because it was edited (for the fresh copy, delete it and run update-project again)"
                 )
                 if hook_name.endswith(".sh") and not os.access(dest, os.X_OK):
                     result.setdefault("warnings", []).append(
@@ -242,7 +242,18 @@ def cc03_registered_in_settings(target_dir: Path) -> bool:
     return any(_hook_entry_identity(entry) == identity for entry in entries)
 
 
-def apply_cc03_hook_registration(target_dir: Path) -> bool:
+def _registered_entries(settings: Path) -> list[object]:
+    """Every PreToolUse entry registered for the CC-03 hint hook in *settings* (a duplicate is listed too)."""
+    from trw_mcp.bootstrap._file_ops import read_json_object
+
+    data = read_json_object(settings, context="cc03_registered_entry")
+    hooks = data.get("hooks") if data is not None else None
+    entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    identity = _hook_entry_identity(_CC03_ENTRY)
+    return [e for e in entries if _hook_entry_identity(e) == identity] if isinstance(entries, list) else []
+
+
+def apply_cc03_hook_registration(target_dir: Path, result: dict[str, list[str]] | None = None) -> bool:
     """(Re)write ``.claude/settings.json``'s PreToolUse entry to match ``cc03_hook_enabled``.
 
     Idempotent: a no-op when the entry already matches. Split out of
@@ -255,10 +266,22 @@ def apply_cc03_hook_registration(target_dir: Path) -> bool:
     silently discarded on the very next ``update-project`` (release-window fix,
     2026-09-27). Calling this again after that guard re-applies TRW's own entry
     on top of whatever the guard restored, without touching any other entry.
+
+    An entry already registered for a hint hook file the update kept (an edited copy) stays as it is, and *result*
+    says so: the new registration's timeout is meant for the new hook, not the user's old one.
     """
+    from trw_mcp.bootstrap._kept_hook_registration import kept_hook_of, note_registration_left
+
     enabled = bool(read_cc03_config(target_dir)["cc03_hook_enabled"])
     settings = target_dir / ".claude" / "settings.json"
-    return settings.is_file() and _set_hook_registration(settings, "PreToolUse", _CC03_ENTRY, present=enabled)
+    if not settings.is_file():
+        return False
+    kept = kept_hook_of(target_dir, [_CC03_ENTRY], (_HOOKS_DATA_DIR,)) if enabled else None
+    existing = _registered_entries(settings) if kept is not None else []
+    changed = _set_hook_registration(settings, "PreToolUse", _CC03_ENTRY, present=enabled, keep_existing=bool(existing))
+    if kept is not None and result is not None and any(e != _CC03_ENTRY for e in existing):
+        note_registration_left(result, kept)  # one warning per hook file, however many entries were left
+    return changed
 
 
 def sync_cc03_hook_files(
@@ -349,12 +372,12 @@ def install_claude_code_distill_channels(
 
     # 2. CC-03 hook pair: shipped and registered while enabled, withdrawn otherwise.
     sync_cc03_hook_files(target_dir, result, manifest_hashes)
-    if apply_cc03_hook_registration(target_dir):
+    if apply_cc03_hook_registration(target_dir, result):
         result["updated"].append(".claude/settings.json")
     # PRD-CORE-354 FR06: a fresh whole-template copy still honours the statusLine opt-out.
     from ._settings_merge import apply_statusline_registration
 
-    if apply_statusline_registration(target_dir):
+    if apply_statusline_registration(target_dir, result):
         result["updated"].append(".claude/settings.json")
 
     # 3. Bootstrap channel manifest (two CC channel entries)

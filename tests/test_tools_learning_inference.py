@@ -111,11 +111,17 @@ class TestInferTopicTags:
         assert "documentation" in tags
 
     def test_pricing_keywords(self) -> None:
-        """Cost/pricing keywords map to 'pricing' tag (PRD acceptance example)."""
+        """Unambiguous pricing keywords map to 'pricing'."""
         from trw_mcp.state.analytics import infer_topic_tags
 
-        tags = infer_topic_tags("cost_tracker renamed", ["gotcha"])
+        tags = infer_topic_tags("pricing plans and billing tiers", ["gotcha"])
         assert "pricing" in tags
+
+    def test_engineering_budget_does_not_imply_pricing(self) -> None:
+        from trw_mcp.state.analytics import infer_topic_tags
+
+        tags = infer_topic_tags("CPU load exceeded the token budget during tests", [])
+        assert "pricing" not in tags
 
     def test_rate_limiting_keywords(self) -> None:
         """Rate/limit keywords map to 'rate-limiting' tag (PRD acceptance example)."""

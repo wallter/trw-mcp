@@ -30,7 +30,6 @@ class _NudgeFields:
     # PRD-CORE-294 FR05: the one switch over the FR04/FR06 transition selector,
     # independent of nudge_enabled so no client profile turns it off by default.
     transition_nudges_enabled: bool = True
-    nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_messenger: NudgeMessengerLiteral | None = None
 
     # ``nudge_urgency_mode`` and ``nudge_dedup_enabled`` were removed in 2.0.0

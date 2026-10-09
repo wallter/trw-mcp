@@ -31,6 +31,7 @@ from trw_mcp._checkout_write import UnsafeWriteError, write_checkout_file
 from trw_mcp.bootstrap._codex_hooks import codex_hooks_review_warning
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result, read_json_object
+from trw_mcp.bootstrap._kept_hook_registration import merge_owned_groups
 from trw_mcp.channels._manifest_loader import ManifestValidationError
 
 log = structlog.get_logger(__name__)
@@ -214,12 +215,15 @@ def codex_pre_edit_hint_registered(target_dir: Path) -> bool:
     return isinstance(groups, list) and any(_is_pre_edit_hint_group(group) for group in groups)
 
 
-def set_pre_edit_hint_registration(target_dir: Path, *, present: bool) -> bool:
+def set_pre_edit_hint_registration(
+    target_dir: Path, *, present: bool, result: dict[str, list[str]] | None = None
+) -> bool:
     """Add or remove the pre-edit hint group in ``.codex/hooks.json``; return whether the file changed.
 
     Registered only while ``cc03_hook_enabled`` is on, because the script it
     runs is shipped only then: a registration pointing at a withdrawn file would
-    fail on every patch. An unreadable hooks.json is left untouched.
+    fail on every patch. An unreadable hooks.json is left untouched. An existing group for a hint script the
+    update kept (an edited copy) stays as it is, and *result* says so.
     """
     hooks_json_path = target_dir / _CODEX_HOOKS_JSON
     existing: dict[str, Any] = {}
@@ -233,11 +237,18 @@ def set_pre_edit_hint_registration(target_dir: Path, *, present: bool) -> bool:
     hooks_section = existing.get("hooks")
     hooks: dict[str, Any] = dict(hooks_section) if isinstance(hooks_section, dict) else {}
     raw_groups = hooks.get("PreToolUse")
-    groups = (
-        [group for group in raw_groups if not _is_pre_edit_hint_group(group)] if isinstance(raw_groups, list) else []
-    )
+    current = raw_groups if isinstance(raw_groups, list) else []
+    groups = [group for group in current if not _is_pre_edit_hint_group(group)]
     if present:
-        groups.append(_pre_edit_hint_group())
+        groups.extend(
+            merge_owned_groups(
+                [g for g in current if _is_pre_edit_hint_group(g)],
+                [_pre_edit_hint_group()],
+                root=target_dir,
+                result=result if result is not None else {},
+                settings_rel=_CODEX_HOOKS_JSON,
+            )
+        )
     if groups == (raw_groups if isinstance(raw_groups, list) else []):
         return False
     if groups:
@@ -368,7 +379,7 @@ def install_codex_distill_channels(
         from trw_mcp.bootstrap._claude_code_distill_channels import sync_cc03_hook_files
 
         enabled = sync_cc03_hook_files(target_dir, result)
-        if set_pre_edit_hint_registration(target_dir, present=enabled):
+        if set_pre_edit_hint_registration(target_dir, present=enabled, result=result):
             result["updated"].append(_CODEX_HOOKS_JSON)
     except Exception as exc:  # justified: fail-open, the hint is advisory
         log.warning("codex_pre_edit_hint_install_failed", error=str(exc), outcome="warning")

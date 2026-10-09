@@ -29,15 +29,6 @@ class IntelligenceCache:
         self._cache_path = trw_dir / _CACHE_FILE
         self._ttl_seconds = ttl_seconds
 
-    def get_attribution_results(self) -> dict[str, dict[str, Any]] | None:
-        """Read cached attribution results."""
-        raw = self._read_cached_field("attribution_results")
-        if not isinstance(raw, dict):
-            if raw is not None:
-                self._log_validation_error(field_name="attribution_results", reason="invalid_type")
-            return None
-        return raw
-
     def update(self, state: dict[str, Any], etag: str | None = None) -> None:
         """Atomically write new state to cache."""
         state["_meta"] = {
@@ -84,12 +75,6 @@ class IntelligenceCache:
                 outcome="error",
                 exc_info=True,
             )
-
-    @property
-    def is_fresh(self) -> bool:
-        """Check if cache is within TTL."""
-        data = self._read_cache()
-        return data is not None
 
     @property
     def etag(self) -> str | None:
@@ -162,16 +147,6 @@ class IntelligenceCache:
                 exc_info=True,
             )
             return None
-
-    def _read_cached_field(self, field_name: str) -> object | None:
-        """Read the full cache, then validate and return the requested field."""
-        data = self._read_cache()
-        if data is None:
-            return None
-        if field_name not in data:
-            self._log_validation_error(field_name=field_name, reason="missing")
-            return None
-        return data.get(field_name)
 
     def _log_validation_error(self, *, field_name: str, reason: str) -> None:
         """Emit the standardized cache validation error event."""

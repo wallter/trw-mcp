@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from trw_mcp.state.report import parse_run_events
 
 
@@ -18,24 +16,22 @@ class TestEventParsing:
             {"ts": "2026-02-19T10:15:00Z", "event": "phase_enter", "phase": "plan"},
             {"ts": "2026-02-19T10:30:00Z", "event": "checkpoint"},
         ]
-        summary, timeline, duration, rate = parse_run_events(events)
+        summary, timeline, duration = parse_run_events(events)
 
         assert summary.total_count == 4
         assert summary.by_type["run_init"] == 1
         assert summary.by_type["phase_enter"] == 2
         assert summary.by_type["checkpoint"] == 1
         assert len(timeline) == 2
-        assert rate == 0.0
 
     def test_empty_events(self) -> None:
         """parse_run_events handles empty event list."""
-        summary, timeline, duration, rate = parse_run_events([])
+        summary, timeline, duration = parse_run_events([])
 
         assert summary.total_count == 0
         assert summary.by_type == {}
         assert timeline == []
         assert duration.start_ts is None
-        assert rate == 0.0
 
     def test_malformed_event_types(self) -> None:
         """Events with missing type field counted as 'unknown'."""
@@ -43,7 +39,7 @@ class TestEventParsing:
             {"ts": "2026-02-19T10:00:00Z"},
             {"ts": "2026-02-19T10:01:00Z", "event": "phase_enter", "phase": "research"},
         ]
-        summary, _, _, _ = parse_run_events(events)
+        summary, _, _ = parse_run_events(events)
 
         assert summary.total_count == 2
         assert summary.by_type.get("unknown") == 1
@@ -55,7 +51,7 @@ class TestEventParsing:
             {"ts": "2026-02-19T10:15:00Z", "event": "phase_enter", "phase": "plan"},
             {"ts": "2026-02-19T10:30:00Z", "event": "phase_enter", "phase": "implement"},
         ]
-        _, timeline, _, _ = parse_run_events(events)
+        _, timeline, _ = parse_run_events(events)
 
         assert len(timeline) == 3
         assert timeline[0].phase == "research"
@@ -70,23 +66,11 @@ class TestEventParsing:
         events: list[dict[str, object]] = [
             {"ts": "2026-02-19T10:00:00Z", "event": "phase_enter", "phase": "research"},
         ]
-        _, timeline, _, _ = parse_run_events(events)
+        _, timeline, _ = parse_run_events(events)
 
         assert len(timeline) == 1
         assert timeline[0].exited_at is None
         assert timeline[0].duration_seconds is None
-
-    def test_reversion_rate_computed(self) -> None:
-        """Reversion rate computed correctly."""
-        events: list[dict[str, object]] = [
-            {"ts": "2026-02-19T10:00:00Z", "event": "phase_enter", "phase": "research"},
-            {"ts": "2026-02-19T10:15:00Z", "event": "phase_enter", "phase": "plan"},
-            {"ts": "2026-02-19T10:20:00Z", "event": "phase_revert", "from": "plan", "to": "research"},
-            {"ts": "2026-02-19T10:25:00Z", "event": "phase_enter", "phase": "plan"},
-        ]
-        _, _, _, rate = parse_run_events(events)
-
-        assert rate == pytest.approx(0.25)
 
     def test_duration_first_last_event(self) -> None:
         """Duration computed from first and last event timestamps."""
@@ -94,7 +78,7 @@ class TestEventParsing:
             {"ts": "2026-02-19T10:00:00Z", "event": "run_init"},
             {"ts": "2026-02-19T13:00:00Z", "event": "checkpoint"},
         ]
-        _, _, duration, _ = parse_run_events(events)
+        _, _, duration = parse_run_events(events)
 
         assert duration.start_ts == "2026-02-19T10:00:00Z"
         assert duration.end_ts == "2026-02-19T13:00:00Z"
@@ -108,7 +92,7 @@ class TestEventParsing:
             {"ts": "2026-02-19T10:02:00Z", "event": "build_passed"},
             {"ts": "2026-02-19T10:03:00Z", "event": "reflection_completed"},
         ]
-        summary, _, _, _ = parse_run_events(events)
+        summary, _, _ = parse_run_events(events)
 
         assert len(summary.by_type) == 4
         for event_type in ["run_init", "tests_passed", "build_passed", "reflection_completed"]:

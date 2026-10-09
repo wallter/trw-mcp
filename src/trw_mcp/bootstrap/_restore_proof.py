@@ -25,6 +25,7 @@ import enum
 import errno
 import hashlib
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -148,11 +149,29 @@ def remove_proven_or_keep(target_dir: Path, snapshot_root: Path, rel: str, notes
         with contextlib.suppress(OSError):  # only an EMPTY trash folder goes; it existed for this capture alone
             captured.parent.parent.rmdir()
         return Cleared.CLEARED
-    notes.append(
-        f"{rel}: held bytes this update did not write; they were moved to"
-        f" {outcome.retained_at or '.trw/trash'} before the earlier copy was put back"
-    )
+    notes.append(f"{rel}: {_HELD}{_MOVED_TO} {outcome.retained_at or '.trw/trash'} {_PUT_BACK}")
     return Cleared.CLEARED
+
+
+_HELD = "held bytes this update did not write; "
+_MOVED_TO = "they were moved to"
+_PUT_BACK = "before the earlier copy was put back"
+_SAVED_AT = re.compile(r"your pre-update version is at .*", re.DOTALL)
+_KEPT_ONLY_AT = re.compile(
+    r"your pre-update version could not be saved in the project; it is kept only at .*", re.DOTALL
+)
+_DRY_RUN_NOTE = re.compile(re.escape(_HELD + _MOVED_TO) + " .*? " + re.escape(_PUT_BACK))
+
+
+def as_dry_run_note(note: str) -> str:
+    """Reword a restore note from a dry run's scratch copy: nothing was moved, and its trash path never existed."""
+    note = _DRY_RUN_NOTE.sub(
+        "a real run would find bytes here it did not write; they would be moved to a new folder under"
+        " .trw/trash before the earlier copy is put back",
+        note,
+    )
+    note = _SAVED_AT.sub("a real run would save your pre-update version under .trw/trash", note)
+    return _KEPT_ONLY_AT.sub("a real run would have to keep your pre-update version outside the project", note)
 
 
 def copy_back_exclusive(

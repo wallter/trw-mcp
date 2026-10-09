@@ -188,6 +188,20 @@ def test_a_hung_interpreter_is_killed_at_the_deadline_and_the_hook_still_emits(t
 
 
 _NOW = "perl -MTime::HiRes=time -e 'printf \"%.3f\\n\", time'"
+#: First line of a stub that `_started_once` may run ahead of the hook: under the warm-up variable it does nothing.
+_WARM_UP_GUARD = '[ -z "${TRW_TEST_STUB_WARM_UP:-}" ] || exit 0\n'
+
+
+def _started_once(stub: Path) -> Path:
+    """Start a newly written stub once, outside any budget the hook is about to measure.
+
+    The first exec of a newly written executable file is not free on macOS: measured on this host at
+    0.15 s on a quiet host and 0.3-0.4 s while a test suite runs elsewhere, against 6 ms for every later start.
+    Two new stubs inside one 1 s recall budget spent it before the second had written a heartbeat. That is a
+    cost of the fixture's files, not of an interpreter a project really has, so it is paid here.
+    """
+    subprocess.run([str(stub)], env={**os.environ, "TRW_TEST_STUB_WARM_UP": "1"}, check=True, timeout=30)
+    return stub
 
 
 @pytest.mark.unit
@@ -196,15 +210,18 @@ def test_one_recall_budget_is_shared_by_every_interpreter_candidate(tmp_path: Pa
     """Candidate 1 starts, burns 0.5 s and cannot start the module (exit 1); candidate 2 hangs, heartbeating.
     With ONE 1 s budget candidate 2 is cut about 0.5 s after it began, so its last heartbeat lies ~1.0 s after
     candidate 1 began; a budget per candidate would let it run a further full second (~1.5 s). Every figure is
-    a timestamp the stubs wrote themselves, so host setup cost and load do not enter."""
+    a timestamp the stubs wrote themselves, so host setup cost does not enter; both stubs are started once
+    beforehand, so neither pays a first-exec cost out of the budget under test."""
     started = tmp_path / "cand1.start"
     heartbeat = tmp_path / "cand2.beat"
     marker = tmp_path / "third-candidate-ran"
-    slow_fail = _stub(tmp_path / "fail-python", f"{_NOW} > '{started}'\nsleep 0.5\nexit 1\n")
+    slow_fail = _started_once(
+        _stub(tmp_path / "fail-python", f"{_WARM_UP_GUARD}{_NOW} > '{started}'\nsleep 0.5\nexit 1\n")
+    )
     root = tmp_path / "r"
     venv = root / "bundled" / ".venv" / "bin"
     venv.mkdir(parents=True)
-    _stub(venv / "python", f"while :; do {_NOW} > '{heartbeat}'; sleep 0.05; done\n")
+    _started_once(_stub(venv / "python", f"{_WARM_UP_GUARD}while :; do {_NOW} > '{heartbeat}'; sleep 0.05; done\n"))
     _stub(venv / "python3", f"touch '{marker}'\nexit 0\n")
     run, _elapsed = _timed(
         root,
