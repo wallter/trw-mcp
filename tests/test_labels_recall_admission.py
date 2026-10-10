@@ -18,6 +18,8 @@ from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.state._recall_admission import RecallAdmission, label_scope
 from trw_mcp.state._recall_take import take_hits
 
+pytestmark = pytest.mark.repo_scan
+
 _TEAM_ROW = "L-team"
 
 

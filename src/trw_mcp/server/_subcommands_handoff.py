@@ -111,7 +111,9 @@ def _run_new(args: argparse.Namespace) -> int:
     now = datetime.now(UTC)
     handoff_id = new_handoff_id(now)
     out = _new_out(args.out, _default_handoff_dir() / f"{handoff_id}.json")
-    root = repo_root(Path.cwd())
+    from trw_mcp.state._paths import resolve_project_root
+
+    root = repo_root(resolve_project_root())
     draft = build_draft(
         handoff_id=handoff_id,
         out_path=out,

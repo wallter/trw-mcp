@@ -42,6 +42,8 @@ from ._telemetry_pipeline_support import (  # noqa: F401
     pipeline_cls,
 )
 
+pytestmark = pytest.mark.repo_scan
+
 #: Monorepo root: ``trw-mcp/tests/<this file>`` -> ``trw-mcp`` -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 

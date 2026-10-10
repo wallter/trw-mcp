@@ -42,6 +42,8 @@ logger = structlog.get_logger(__name__)
 TREE_BUDGET_SECS = 20.0
 
 _TREE_SHA = re.compile(r"[0-9a-f]{40,64}\Z")
+#: What ``git add`` says of a nested repository that has no commit yet (its messages are pinned to C in _git_env).
+_NO_COMMIT = re.compile(r"^error: '(?P<path>[^\n]+?)/?' does not have a commit checked out$", re.MULTILINE)
 
 UNBOUND_NOT_GIT = "tree_unbound_not_git_repo"
 UNBOUND_GIT_ERROR = "tree_unbound_git_error"
@@ -66,9 +68,11 @@ class TreeSnapshot:
 
 
 class _GitFailure(Exception):
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, detail: str = "", said: str = "") -> None:
         super().__init__(reason)
         self.reason = reason
+        self.detail = detail  # which step failed and how it ended: for the log, never for a response
+        self.said = said  # git's own words (they may quote a path, a config value, a filter's output): debug only
 
 
 def relative_excludes(project_root: Path, paths: Iterable[Path | str]) -> tuple[str, ...]:
@@ -112,7 +116,7 @@ def _run(
     except FileNotFoundError as exc:
         raise _GitFailure(UNBOUND_GIT_MISSING) from exc
     except OSError as exc:
-        raise _GitFailure(UNBOUND_GIT_ERROR) from exc
+        raise _GitFailure(UNBOUND_GIT_ERROR, f"starting git: {type(exc).__name__}", str(exc)) from exc
 
 
 #: Variables that point git at a different repository, work tree, index or object store than the one under the
@@ -142,15 +146,56 @@ def _git_env(index_file: Path | None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in _REDIRECTING_GIT_VARS}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env["LC_ALL"] = "C"  # git's own messages are read below (_NO_COMMIT) and logged; paths stay bytes either way
     if index_file is not None:
         env["GIT_INDEX_FILE"] = str(index_file)
     return env
 
 
+def _failed(result: subprocess.CompletedProcess[str]) -> str:
+    """``git <step> exited <n>`` for a finished git call."""
+    return f"git {' '.join(str(part) for part in list(result.args)[1:3])} exited {result.returncode}"
+
+
+def _said(result: subprocess.CompletedProcess[str]) -> str:
+    """Git's last two lines (the cause is often the line before ``fatal:``)."""
+    return " | ".join((result.stderr or "").strip().splitlines()[-2:])[:300]
+
+
 def _checked(result: subprocess.CompletedProcess[str]) -> str:
     if result.returncode != 0:
-        raise _GitFailure(UNBOUND_GIT_ERROR)
+        raise _GitFailure(UNBOUND_GIT_ERROR, _failed(result), _said(result))
     return result.stdout
+
+
+def _log_unbound(failure: _GitFailure, project_root: Path) -> None:
+    # A directory that is no repository is an ordinary project and stays quiet. Any other reason is a digest that
+    # should exist and does not, and the failing step is the only record of why: a build record of 2026-10-09
+    # came back unbound and nothing said which call had failed. A debug line reaches no default log, so the step
+    # goes out at info; git's own words stay at debug, because they can quote more than a path.
+    log = logger.debug if failure.reason == UNBOUND_NOT_GIT else logger.info
+    log("tree_snapshot_unbound", reason=failure.reason, detail=failure.detail, root=str(project_root))
+    if failure.said:
+        logger.debug("tree_snapshot_unbound_git_said", said=failure.said)
+
+
+def _empty_nested_repo(project_root: Path, stderr: str) -> str:
+    """The path of a nested repository with no commit that ``git add`` refused, else "".
+
+    The path is read out of git's message, so it is believed only when that directory really is a repository
+    below the root: anything else (a file name that holds the phrase, a filter's output) keeps the generic reason.
+    """
+    found = _NO_COMMIT.search(stderr)
+    if found is None:
+        return ""
+    try:
+        root, candidate = project_root.resolve(), (project_root / found["path"]).resolve()
+        nested = candidate != root and candidate.is_relative_to(root) and (candidate / ".git").exists()
+    except (
+        OSError
+    ):  # trw-fail-silent-allow: an unreadable candidate is no proof of a nested repository; the generic reason stands
+        return ""
+    return candidate.relative_to(root).as_posix() if nested else ""
 
 
 def snapshot_tree(
@@ -165,7 +210,7 @@ def snapshot_tree(
         located = _run(["rev-parse", "--git-path", "index"], project_root, _git_env(None), deadline)
         if located.returncode != 0:
             not_repo = "not a git repository" in located.stderr.lower()
-            raise _GitFailure(UNBOUND_NOT_GIT if not_repo else UNBOUND_GIT_ERROR)
+            raise _GitFailure(UNBOUND_NOT_GIT if not_repo else UNBOUND_GIT_ERROR, _failed(located), _said(located))
         real_index = Path(located.stdout.strip())
         if not real_index.is_absolute():
             real_index = project_root / real_index
@@ -173,10 +218,10 @@ def snapshot_tree(
         with tempfile.TemporaryDirectory(prefix="trw-tree-") as tmp_dir:
             return TreeSnapshot(tree_sha=_tree_sha(project_root, real_index, Path(tmp_dir), excludes, deadline))
     except _GitFailure as failure:
-        logger.debug("tree_snapshot_unbound", reason=failure.reason, root=str(project_root))
+        _log_unbound(failure, project_root)
         return TreeSnapshot(tree_sha=None, unbound_reason=failure.reason)
-    except OSError:
-        logger.debug("tree_snapshot_unbound", reason=UNBOUND_GIT_ERROR, root=str(project_root), exc_info=True)
+    except OSError as exc:
+        _log_unbound(_GitFailure(UNBOUND_GIT_ERROR, type(exc).__name__, str(exc)), project_root)
         return TreeSnapshot(tree_sha=None, unbound_reason=UNBOUND_GIT_ERROR)
 
 
@@ -184,32 +229,30 @@ def _tree_sha(project_root: Path, real_index: Path, tmp_dir: Path, excludes: Seq
     """Fold the working tree into a temp index seeded from *real_index*; return ``write-tree``'s id."""
     if tmp_dir.resolve().is_relative_to(project_root.resolve()):
         # TMPDIR pointing into the checkout would make this a checkout write; refuse rather than write there.
-        raise _GitFailure(UNBOUND_GIT_ERROR)
+        raise _GitFailure(UNBOUND_GIT_ERROR, "the temporary directory is inside the checkout")
     temp_index = tmp_dir / "index"
     try:
         shutil.copyfile(real_index, temp_index)  # read-only toward the real index
     except FileNotFoundError:  # trw-fail-silent-allow: no index yet means a fresh repo with nothing staged; the temp index correctly starts empty
         pass
     except OSError as exc:
-        raise _GitFailure(UNBOUND_GIT_ERROR) from exc
+        raise _GitFailure(UNBOUND_GIT_ERROR, f"copying the index: {type(exc).__name__}", str(exc)) from exc
     env = _git_env(temp_index)
     blind = _blind_spot(project_root, env, deadline, excludes)
     if blind:
         raise _GitFailure(blind)
-    _checked(
-        _run(
-            ["add", "-A", "--", ".", *(f":(exclude,literal){p}" for p in excludes)],
-            project_root,
-            env,
-            deadline,
-        )
-    )
+    added = _run(["add", "-A", "--", ".", *(f":(exclude,literal){p}" for p in excludes)], project_root, env, deadline)
+    empty = _empty_nested_repo(project_root, added.stderr or "") if added.returncode != 0 else ""
+    if empty:
+        # A nested repository with no commit: git cannot record it at all, and it hides its edits like any other.
+        raise _GitFailure(f"{UNBOUND_NESTED_REPO}:{empty}", _failed(added), _said(added))
+    _checked(added)
     nested = _nested_repos(project_root, env, deadline, excludes)
     if nested:
         raise _GitFailure(nested)
     sha = _checked(_run(["write-tree"], project_root, env, deadline)).strip()
     if _TREE_SHA.fullmatch(sha) is None:
-        raise _GitFailure(UNBOUND_GIT_ERROR)
+        raise _GitFailure(UNBOUND_GIT_ERROR, "git write-tree printed no tree id")
     return sha
 
 

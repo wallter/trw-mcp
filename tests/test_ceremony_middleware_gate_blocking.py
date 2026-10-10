@@ -24,6 +24,8 @@ from tests._test_ceremony_middleware_gate_support import (
 from trw_mcp.middleware import ceremony as ceremony_module
 from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active, reset_state
 
+pytestmark = pytest.mark.repo_scan
+
 
 @pytest.fixture(autouse=True)
 def _hermetic_trw_dir(tmp_path: Path) -> Any:

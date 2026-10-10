@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 _DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 
 

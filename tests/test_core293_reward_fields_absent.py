@@ -11,8 +11,12 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 import trw_mcp
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 RETIRED = re.compile(r"\b(q_value|q_observations|helpful_count|unhelpful_count)\b")
 

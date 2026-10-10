@@ -79,12 +79,33 @@ class TestUpdateProjectBasics:
         assert len(result["errors"]) == 1
         assert ".trw/ not found" in result["errors"][0]
 
-    def test_requires_git_repo(self, tmp_path: Path) -> None:
-        """update_project refuses to scaffold into a non-repo (symmetry with init)."""
-        # No .git/ at all — even with .trw/ present the guard must fire first.
-        (tmp_path / ".trw").mkdir()
+    def test_non_git_project_adds_a_second_client_and_warns(self, tmp_path: Path) -> None:
+        """Symmetry with init (PRD-INFRA-170-FR06): the installer's second client is an update, outside git too.
+
+        The installer runs ``init-project --ide <first>`` then ``update-project --ide <next>``; refusing the
+        update in a directory with no ``.git`` stopped a two-client install halfway.
+        """
+        target = tmp_path / "scratch"
+        target.mkdir()
+        assert init_project(target, ide="claude-code")["errors"] == []
+        assert not (target / ".codex").exists() and not (target / ".git").exists()
+
+        result = update_project(target, ide="codex")
+
+        assert result["errors"] == []
+        assert (target / ".codex" / "config.toml").is_file()
+        warnings = [w for w in result["warnings"] if "not a git repository" in w]
+        assert len(warnings) == 1 and "git init" in warnings[0], result["warnings"]
+
+    def test_non_git_directory_without_trw_names_init_project(self, tmp_path: Path) -> None:
+        """Outside git and never initialised: the one error is the missing install, whose remedy is init-project."""
         result = update_project(tmp_path)
-        assert any("not a git repository" in e for e in result["errors"])
+        assert len(result["errors"]) == 1
+        assert ".trw/ not found" in result["errors"][0] and "init-project" in result["errors"][0]
+
+    def test_git_repo_gets_no_non_git_warning(self, initialized_repo: Path) -> None:
+        result = update_project(initialized_repo)
+        assert not [w for w in result["warnings"] if "not a git repository" in w]
 
     def test_rejects_symlinked_git(self, tmp_path: Path) -> None:
         """A symlinked .git must not satisfy the git-repo guard (symlink-safe)."""

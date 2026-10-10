@@ -158,6 +158,24 @@ def _fresh_pinned_read_cache() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _close_daemon_store_sessions(_stop_daemons_this_test_spawned: None) -> Iterator[None]:
+    """Close the daemon sessions this test's store calls left held.
+
+    It asks for the daemon-stopping fixture so that it is set up after it and torn down before it:
+    a session is closed while its daemon still answers, not against a dead one (a five-second wait).
+
+    ``daemon_store_for`` keeps one client per grant, each holding an open session, for the
+    life of the process. A test's checkout has a grant of its own that no later test looks
+    up, so each daemon test left one socket open until the pytest process ended (50 after
+    50 tests). The store closes its own clients; no descriptor is touched from here.
+    """
+    yield
+    from trw_mcp.state import _daemon_store
+
+    _daemon_store.close_daemon_clients()
+
+
+@pytest.fixture(autouse=True)
 def _stop_daemons_this_test_spawned(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Stop every daemon this test's in-process client auto-started, published or not.
 

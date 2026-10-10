@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+pytestmark = pytest.mark.repo_scan
 
 # The matrix/quick-reference renderer parity tests moved with the renderer to
 # scripts/tests/test_render_client_profile_docs.py (PRD-CORE-313 FR05).

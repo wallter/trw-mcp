@@ -33,6 +33,8 @@ import pytest
 
 from tests import _source_index as source_index
 
+pytestmark = pytest.mark.repo_scan
+
 SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 _TRW_NAME_RE = re.compile(r"^TRW_[A-Z0-9_]+$")
 

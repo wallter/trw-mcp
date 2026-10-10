@@ -6,7 +6,7 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 

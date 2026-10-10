@@ -35,7 +35,8 @@ def _run_maintain_verify(args: argparse.Namespace) -> None:
         f"{payload['cleared_transitions']} cleared, "
         f"{payload['persist_failures']} persist failures, "
         f"{payload['entry_failures']} entry failures, "
-        f"{payload['invalidated']} verdicts invalidated "
+        f"{payload['invalidated']} verdicts invalidated, "
+        f"{payload['tree_behind']} held as unknown (checkout behind the claim) "
         f"({payload['duration_ms']}ms)"
     )
 

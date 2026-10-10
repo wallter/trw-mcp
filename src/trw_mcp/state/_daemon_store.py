@@ -103,6 +103,34 @@ def _log_retire_failure(future: concurrent.futures.Future[None]) -> None:
         logger.debug("daemon_client_retire_failed", error=repr(future.exception()))
 
 
+def close_daemon_clients(timeout: float = 5.0) -> None:
+    """Forget the clients cached now and retire each, waiting at most *timeout* seconds for them all.
+
+    The cache keeps one open session per grant for the life of the process, and a grant that
+    is gone (a removed checkout, a rotated grant) is never looked up again, so nothing else
+    closes its session. Retiring is not a hard close: a call in flight on a retired client
+    finishes first, and a lookup made meanwhile caches a new client, which this call leaves
+    alone. Called on the daemon-call loop's own thread it schedules the retirement and returns.
+    """
+    with _clients_lock:
+        retiring = [client for client, _ in _clients.values()]
+        _clients.clear()
+    if not retiring:
+        return
+
+    async def _retire_all() -> None:
+        await asyncio.gather(*(client.retire() for client in retiring), return_exceptions=True)
+
+    loop, thread = _daemon_loop()
+    future = asyncio.run_coroutine_threadsafe(_retire_all(), loop)
+    if threading.current_thread() is thread:  # waiting here would block the loop that has to run it
+        return
+    try:
+        future.result(timeout)
+    except concurrent.futures.TimeoutError:
+        logger.info("daemon_clients_close_timed_out", clients=len(retiring), timeout_s=timeout)
+
+
 def _daemon_instance() -> tuple[int, str] | None:
     """The live daemon's pid and start time, or ``None`` when none is published."""
     from trw_memory.daemon import DaemonPaths
@@ -347,7 +375,11 @@ class DaemonMemoryStore:
                 raise ValueError(f"memory_verify refused {namespace}: {answer.get('error')}")
             summary = add_sweep_counts(summary, answer["summary"]) if summary else answer["summary"]
             if not isinstance(position := answer.get("next"), list):
-                return MaintainVerifySummary(**summary)
+                # Only the counts this client's summary has: the daemon's version gate is by major, so a daemon of
+                # a later minor may count something more, and that must not end a finished sweep in a TypeError.
+                known = {field.name for field in dataclasses.fields(MaintainVerifySummary)}
+                kept: dict[str, Any] = {key: value for key, value in summary.items() if key in known}
+                return MaintainVerifySummary(**kept)
             if reached and position <= reached:
                 raise ValueError(f"memory_verify of {namespace} did not advance past {reached}")
             reached = position

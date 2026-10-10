@@ -35,7 +35,8 @@ def test_update_project_error_is_plain_text(tmp_path: Path) -> None:
     done = _cli(tmp_path, "update-project", ".")
     assert done.returncode == 1
     lines = [line for line in done.stderr.splitlines() if line.strip()]
-    assert any(line.startswith("Error: ") and "not a git repository" in line for line in lines), done.stderr
+    # Outside git is no longer the refusal (init-project installs there); the missing install is, with its remedy.
+    assert any(line.startswith("Error: ") and "init-project" in line for line in lines), done.stderr
     assert not [line for line in lines if line.lstrip().startswith("{")], done.stderr
 
 

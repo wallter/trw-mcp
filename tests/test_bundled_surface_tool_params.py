@@ -11,7 +11,11 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 _PACKAGE = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 _CALL = re.compile(r"\b(trw_[a-z_]+)\(([^()]*)\)")

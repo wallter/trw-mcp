@@ -50,6 +50,8 @@ import pytest
 import trw_mcp
 from trw_mcp.tools._before_edit_hint_core import BeforeEditHintStatus
 
+pytestmark = pytest.mark.repo_scan
+
 _DATA_DIR = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data"
 
 #: The knob under test. A misspelling here is silent — pydantic-settings ignores

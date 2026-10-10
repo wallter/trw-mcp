@@ -25,6 +25,8 @@ import pytest
 from tests import _source_index as source_index
 from tests._stdio_harness import pinned_server_env
 
+pytestmark = pytest.mark.repo_scan
+
 _TESTS = Path(__file__).resolve().parent
 _TREE = _TESTS.parents[1]
 _EXEMPT = "# spawn-pin: exempt"  # a spawn whose own PYTHONPATH is the subject under test

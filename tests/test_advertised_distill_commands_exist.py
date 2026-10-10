@@ -37,6 +37,8 @@ import pytest
 import trw_mcp
 from tests import _source_index as source_index
 
+pytestmark = pytest.mark.repo_scan
+
 #: trw-distill is proprietary and is deliberately absent from trw-mcp's
 #: dependencies, so this can only run in the monorepo. That is the right place:
 #: the monorepo is where the drift is introduced.

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 _MAX_LINES = 350
 

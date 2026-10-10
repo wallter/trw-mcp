@@ -513,12 +513,16 @@ class TestRecordMatchesWhatWasDelivered:
         re-stamps the record to T0/timeout_fallback whenever it substitutes the T0
         beacon, regardless of which bound triggered it.
         """
-        project, extra_env = self._project_with_slow_post_write(tmp_path, delay_s=0.5)
+        # The watchdog has to fire AFTER the record is written and BEFORE the delay ends. With a 0.2 s bound and
+        # a 0.5 s delay that window only exists on an idle machine: at a load average of 22 (2026-10-10) the
+        # interpreter had not written the record when the watchdog fired, and the test failed on a missing file.
+        # A bound the interpreter reaches on a busy machine, inside a delay it never outlasts, keeps the order.
+        project, extra_env = self._project_with_slow_post_write(tmp_path, delay_s=60)
         # The inner alarm must NOT be what fires here (otherwise this is just the
-        # earlier test again): give it a deadline the 0.5s delay never reaches, and
+        # earlier test again): give it a deadline the delay never reaches, and
         # squeeze only the OUTER watchdog's bound.
         extra_env["TRW_CC03_ALARM_S"] = "100"
-        extra_env["TRW_CC03_BOUND_S"] = "0.2"
+        extra_env["TRW_CC03_BOUND_S"] = "4"
         _enable_cc03(project)
         tool_use_id = "toolu-outer-watchdog"
         result = run_distill_hint_hook(

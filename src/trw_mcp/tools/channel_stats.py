@@ -38,22 +38,30 @@ def _resolve_repo_root(repo_root: str | None) -> Path | None:
     root_env = os.environ.get("TRW_REPO_ROOT")
     if root_env:
         return Path(root_env)
+    from trw_mcp.state._paths import resolve_project_root
+
+    try:
+        project = resolve_project_root()
+        # A bound project (an enclosing install, TRW_PROJECT_ROOT) or a directory that holds the event log's
+        # folder is the project. Otherwise the root is only the process directory, and the project is the
+        # repository that directory belongs to: run from ``repo/src`` this reads ``repo/.trw``, as it always did.
+        if project != Path.cwd().resolve() or (project / ".trw").is_dir():
+            return project
+        return _git_toplevel(project) or project
+    except Exception as exc:  # trw-fail-silent-allow: caller reports could_not_resolve_repo_root
+        log.debug("channel_stats_project_root_resolution_failed", error=str(exc))
+    return None
+
+
+def _git_toplevel(directory: Path) -> Path | None:
+    """The top level of the repository *directory* is in, or ``None`` when it is in none or git is absent."""
     git = shutil.which("git")
     if git is None:
         return None
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [git, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            return Path(proc.stdout.strip())
-    except Exception as exc:
-        log.debug("channel_stats_git_root_resolution_failed", error=str(exc))
-    return None
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [git, "rev-parse", "--show-toplevel"], cwd=directory, capture_output=True, text=True, timeout=5, check=False
+    )
+    return Path(proc.stdout.strip()) if proc.returncode == 0 and proc.stdout.strip() else None
 
 
 def compute_channel_stats_result(

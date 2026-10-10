@@ -38,6 +38,8 @@ from trw_mcp.models.run import (
     is_terminal_status,
 )
 
+pytestmark = pytest.mark.repo_scan
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _TRW_MCP_SRC = Path(__file__).resolve().parents[1] / "src"
 _GATE = _REPO_ROOT / "scripts" / "check-run-status-vocabulary.py"

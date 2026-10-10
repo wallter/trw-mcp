@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 _HOOKS_DATA_DIR = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "cursor"
 _CURSOR_HOOKS = ("trw-before-shell.sh", "trw-after-shell.sh", "trw-after-mcp.sh")
 

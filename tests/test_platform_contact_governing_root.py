@@ -29,6 +29,8 @@ from trw_mcp.tools.submit_feedback import submit_feedback_via_http
 
 from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
 
+pytestmark = pytest.mark.repo_scan
+
 BACKEND_URL = "https://api.trwframework.com"
 FAKE_API_KEY = "trw-fake-api-key-for-governing-root-test"
 _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"

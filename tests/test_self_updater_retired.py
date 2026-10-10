@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 _RETIRED_KEY = "auto_upgrade"
 _PACKAGE = Path(__file__).resolve().parents[1]
 

@@ -22,7 +22,7 @@ import pytest
 
 from tests import _source_index as source_index
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 _SRC = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 

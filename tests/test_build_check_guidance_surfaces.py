@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.repo_scan
+
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 BUILD_CHECK_CALL = re.compile(r"\btrw_build_check\(([^)]*)\)")
 

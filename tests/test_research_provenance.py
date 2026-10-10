@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests._layout import requires_monorepo
 from trw_mcp.state.validation.research_provenance import lint_research_markdown
+
+pytestmark = pytest.mark.repo_scan
 
 
 def test_lint_rejects_unlabeled_quantitative_claim() -> None:

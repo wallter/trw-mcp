@@ -23,8 +23,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 import trw_mcp
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 #: Repo-relative path (from ``trw_mcp/src/trw_mcp``) -> one-line, dated reason. Every entry is a
 #: named residual, not a silently-tolerated one; each states whether it is own-state (stays) or a

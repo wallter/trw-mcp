@@ -9,6 +9,7 @@ legacy-WAL file is reported ``corrupt_store``. Tests that depend on the cache ha
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -17,11 +18,18 @@ from trw_mcp import _checkout_access
 
 
 def reset_pinned_reads() -> None:
-    """Close every pinned descriptor and clear the cache's bookkeeping."""
+    """Close every pinned descriptor and clear the cache's bookkeeping.
+
+    Only a descriptor that is still a regular file is closed. A number in these lists that the cache does not
+    own (a made-up test double, or one already closed and since reused) may by now name something else in this
+    process: closing 111 by number once closed a live daemon-session socket and made every later daemon call
+    that was handed descriptor 111 fail as "daemon unreachable". The cache pins store files only.
+    """
     for fd in list(_checkout_access._fds.values()) + _checkout_access._race_loser_fds:
         try:
-            os.close(fd)
-        except OSError:  # trw-fail-silent-allow: best-effort teardown close; a double-close is harmless to isolate
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+        except OSError:  # trw-fail-silent-allow: best-effort teardown close of a descriptor that is already gone
             pass
     _checkout_access._fds.clear()
     _checkout_access._path_inode.clear()

@@ -50,6 +50,8 @@ from trw_mcp.state.claude_md._write_guard import (
     non_generated_bytes,
 )
 
+pytestmark = pytest.mark.repo_scan
+
 _MARKERS = (TRW_MARKER_START, TRW_MARKER_END)
 _AUTO_COMMENT = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 

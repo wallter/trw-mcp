@@ -16,6 +16,8 @@ from tests import _source_index as source_index
 from tests._otel_support import assert_keys_registered, assert_no_canary, assert_no_unkeyed_digest
 from tests.test_deliver_outcome_record import _EXITS, _ORACLE, _evaluate, _observed, _records, _run_dir
 
+pytestmark = pytest.mark.repo_scan
+
 CANARY = "CANARY-a11e-gate-text"
 
 

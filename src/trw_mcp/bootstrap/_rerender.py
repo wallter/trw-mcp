@@ -86,14 +86,20 @@ def validate_update_target(root: Path, result: dict[str, list[str]]) -> bool:
     from ._utils import is_git_repo
     from ._version_manifest import manifest_refusal
 
-    if not is_git_repo(root):
-        result["errors"].append(f"{root} is not a git repository (.git/ not found)")
+    # init-project installs outside git (PRD-INFRA-170-FR06), so the update that adds a second client to that same
+    # project must run there too: only a linked ``.git`` is refused, and a missing one is a warning naming the remedy.
+    if (root / ".git").is_symlink():
+        result["errors"].append(f"{root} is not a git repository (.git is a symbolic link)")
     elif not (root / ".trw").exists():
         result["errors"].append(
             f"{root} does not have TRW installed (.trw/ not found). Run `trw-mcp init-project` first."
         )
     elif refusal := manifest_refusal(root):
         result["errors"].append(refusal)
+    elif not is_git_repo(root):
+        result.setdefault("warnings", []).append(
+            f"{root} is not a git repository — updating anyway; run 'git init' to enable git-based features."
+        )
     return not result["errors"]
 
 

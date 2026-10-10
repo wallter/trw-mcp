@@ -162,6 +162,7 @@ def register_learning_tools(server: FastMCP) -> None:
             summary=summary or "",
             detail=detail or "",
             trw_dir=resolve_trw_dir(),
+            project_root=resolve_project_root(),
             config=get_config(),
             tags=_coerce_tags(tags),
             evidence=evidence,

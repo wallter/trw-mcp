@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.repo_scan
+
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 PACKAGE = DATA.parent
 _RENDERED_CLIENTS = ("codex", "copilot", "opencode")

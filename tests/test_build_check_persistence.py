@@ -18,6 +18,8 @@ from trw_mcp.state._ceremony_progress_state import (
 )
 from trw_mcp.state._ceremony_state_model import CeremonyState
 
+pytestmark = pytest.mark.repo_scan
+
 
 def test_mark_build_check_writes_passed(tmp_project: Path) -> None:
     trw_dir = tmp_project / ".trw"

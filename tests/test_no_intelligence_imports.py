@@ -17,7 +17,7 @@ import pytest
 # mirror. Skip cleanly there; the monorepo CI still enforces it.
 from tests._layout import MONOREPO_ROOT
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 
 if MONOREPO_ROOT is None:

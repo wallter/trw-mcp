@@ -21,6 +21,7 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 # Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
 # Re-exported so existing test imports continue to work.
 from trw_mcp.tools._learn_anchors import resolve_learn_anchors
+from trw_mcp.tools._learn_assertion_stamp import stamp_assertions
 from trw_mcp.tools._learn_journal_wiring import (
     attach_response_notes,
     capture_journal_payload,
@@ -132,6 +133,8 @@ def execute_learn(
     # ``_from_journal`` suppresses re-journaling on that replay path.
     _replay_learning_id: str | None = None,
     _from_journal: bool = False,
+    # PRD-CORE-362 FR01: the project checkout (never derived from the storage directory's name); None: no stamp.
+    project_root: Path | None = None,
 ) -> LearnResultDict:
     """Execute the core learn workflow: validate, dedup, store, distribute.
 
@@ -155,10 +158,14 @@ def execute_learn(
         _update_analytics: Injected analytics updater.
         _list_active_learnings: Compatibility-only unused active-list override.
         _check_and_handle_dedup: Injected dedup checker.
+        project_root: The project checkout whose HEAD is stamped on assertions that carry none.
     """
     # Snapshot the replayable original args BEFORE any local mutation so the
     # write-ahead journal persists raw caller inputs (later stages mutate them). Captured now; written only once the entry is ACCEPTED.
     advance("preflight")
+    # PRD-CORE-362 FR01: the checkout commit is stamped BEFORE the snapshot, so a journal replay stores the
+    # stamp of the original call and takes no new lookup for assertions that already carry one.
+    assertions = stamp_assertions(assertions, project_root) if project_root is not None else assertions
     _journal_payload = capture_journal_payload(dict(locals()))
 
     # Resolve injected deps with fallbacks (see _learn_preflight.LearnDeps).
@@ -312,9 +319,9 @@ def execute_learn(
     # the learning's own text. Delegated to _learn_anchors so this module stays
     # under the size gate.
     advance("anchors")
-    project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
+    anchor_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
     anchors, anchor_validity = resolve_learn_anchors(
-        project_root,
+        anchor_root,
         learning_id,
         session_id=session_id,
         summary=summary,

@@ -18,6 +18,8 @@ import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 
+pytestmark = pytest.mark.repo_scan
+
 _REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _BASELINE = _REPO_ROOT / ".trw" / "compliance" / "config-field-consumers-baseline.json"
 

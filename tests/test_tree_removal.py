@@ -9,8 +9,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 import trw_mcp
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 _HANDLER_KEYWORDS = frozenset({"ignore_errors", "onerror", "onexc"})
 

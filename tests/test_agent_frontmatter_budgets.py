@@ -22,6 +22,8 @@ from typing import Any
 import pytest
 import yaml
 
+pytestmark = pytest.mark.repo_scan
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]

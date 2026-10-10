@@ -38,6 +38,8 @@ import pytest
 
 from tests import _source_index as source_index
 
+pytestmark = pytest.mark.repo_scan
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp"
 

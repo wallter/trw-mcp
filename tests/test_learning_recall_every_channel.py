@@ -29,7 +29,7 @@ from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.state._hook_flags import write_hook_flags
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"

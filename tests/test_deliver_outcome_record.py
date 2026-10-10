@@ -16,6 +16,8 @@ import pytest
 
 from trw_mcp.tools import _deliver_gate_dispatch as gd
 
+pytestmark = pytest.mark.repo_scan
+
 _SELF_COMPUTED = (
     "_evaluate_build_authority",
     "_evaluate_acceptance_integrity",

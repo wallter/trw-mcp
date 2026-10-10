@@ -70,8 +70,12 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 import trw_mcp
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 #: Class tags for the reasons below (PRD-QUAL-147 FR09 brief):
 #:   checkout memory.db -- the pre-6.0 checkout-supplied project store; QUAL-147 FR06/FR07 routes

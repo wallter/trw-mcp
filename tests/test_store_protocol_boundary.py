@@ -14,7 +14,7 @@ import pytest
 import trw_mcp
 from tests import _source_index as source_index
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 
 def test_trw_mcp_never_reaches_past_store_access() -> None:

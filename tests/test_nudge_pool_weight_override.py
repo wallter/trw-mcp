@@ -22,6 +22,8 @@ from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 
+pytestmark = pytest.mark.repo_scan
+
 _SEED = 20260926
 # Each trial drives the whole served path (~2.5 ms of state I/O), so the count is sized to the smallest separation
 # asserted: the task tuple vs the client default contributes ~0.233 chi-square per draw, so 400 draws expect ~93

@@ -8,7 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 _PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "trw_mcp"
 

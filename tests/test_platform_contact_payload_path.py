@@ -28,6 +28,8 @@ from trw_mcp.telemetry.sender import BatchSender, stamp_consent
 
 from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
 
+pytestmark = pytest.mark.repo_scan
+
 BACKEND_URL = "https://api.trwframework.com"
 _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 _CONSENT = "learning_sharing_enabled: true\nplatform_telemetry_enabled: true\nbackup_remote_enabled: true\n"

@@ -24,6 +24,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.repo_scan
+
 _README = Path(__file__).resolve().parents[1] / "README.md"
 
 #: The tool table lives under this heading and ends at the next ``## ``. The

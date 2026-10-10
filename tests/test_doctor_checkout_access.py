@@ -40,12 +40,23 @@ def test_checkout_access_row_reports_zero_when_no_race_losers(tmp_path: Path, mo
 
 
 def test_checkout_access_row_reports_the_live_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Non-fd integers stand in as test doubles: this row only ever calls ``len()`` on the list."""
+    """Three descriptors this test opened, never made-up numbers: the autouse cache reset closes whatever
+    the list holds, and in a long serial run 111 was a live daemon socket (every later daemon call that
+    was handed descriptor 111 then failed as "daemon unreachable")."""
+    import os
+
     from trw_mcp import _checkout_access
 
-    monkeypatch.setattr(_checkout_access, "_race_loser_fds", [111, 222, 333])
-
-    row = _row(tmp_path)
+    held_file = tmp_path / "race-loser"
+    held_file.write_bytes(b"x")
+    held = [os.open(held_file, os.O_RDONLY) for _ in range(3)]
+    try:
+        with monkeypatch.context() as patched:  # undone before the reset fixture's teardown can see the list
+            patched.setattr(_checkout_access, "_race_loser_fds", list(held))
+            row = _row(tmp_path)
+    finally:
+        for fd in held:
+            os.close(fd)
 
     assert row.status == "PASS"
     assert "3 race-loser" in row.message

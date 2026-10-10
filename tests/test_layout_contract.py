@@ -9,6 +9,8 @@ import pytest
 from tests import _source_index as source_index
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 
+pytestmark = pytest.mark.repo_scan
+
 
 @pytest.mark.parametrize("name", ["arbitrary-checkout", "trw-mcp/trw-mcp"])
 def test_standalone_package_has_no_monorepo(tmp_path: Path, name: str) -> None:

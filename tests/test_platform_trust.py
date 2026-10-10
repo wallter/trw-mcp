@@ -42,7 +42,7 @@ from trw_mcp.state._platform_trust import platform_auth_headers, platform_contac
 from ._telemetry_pipeline_support import pipeline_cls  # noqa: F401
 
 # A real send needs a governing project: its switch is read from that project's .trw.
-pytestmark = pytest.mark.usefixtures("governing_project")
+pytestmark = [pytest.mark.usefixtures("governing_project"), pytest.mark.repo_scan]
 
 # ---------------------------------------------------------------------------
 # trusted_platform_hosts — allowlist sourcing

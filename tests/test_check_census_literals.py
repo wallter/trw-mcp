@@ -33,6 +33,8 @@ import pytest
 from tests._layout import requires_local_timing
 from tests._timing import assert_budget
 
+pytestmark = pytest.mark.repo_scan
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = REPO_ROOT / "scripts"
 _CLI = _SCRIPTS / "check_census_literals.py"
@@ -695,6 +697,13 @@ def test_empty_scan_scope_is_an_error(tmp_path: Path) -> None:
     empty.write_text("python_trees: []\nmarkdown_globs: []\n", encoding="utf-8")
     with pytest.raises(census.ScopeError, match="no surfaces"):
         census.load_scope(empty)
+
+
+def test_the_aggregate_target_refuses_a_scan_that_found_no_python_file(tmp_path: Path) -> None:
+    """`scanned 0 python file(s)` with exit 0 is the empty-input defect: the make recipe must refuse it."""
+    result = _run_cli("--scope", str(_seeded_scope(tmp_path)), "--root", str(tmp_path), "--from-check")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "REFUSED" in result.stderr and "nothing was checked" in result.stderr
 
 
 def test_reasoned_suppression_silences_one_line_and_stays_visible(tmp_path: Path) -> None:

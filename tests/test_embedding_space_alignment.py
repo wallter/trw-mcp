@@ -29,7 +29,7 @@ from trw_mcp.state._store_selection import VectorSet
 from trw_mcp.tools._recall_impl import _dedup_ranked_learnings
 
 # A real send needs a payload project: its policy is read from that project's .trw.
-pytestmark = pytest.mark.usefixtures("governing_project")
+pytestmark = [pytest.mark.usefixtures("governing_project"), pytest.mark.repo_scan]
 
 # -- 1. default model --------------------------------------------------------
 

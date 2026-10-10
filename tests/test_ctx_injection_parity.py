@@ -28,7 +28,11 @@ import inspect
 from pathlib import Path
 from typing import Any, get_type_hints
 
+import pytest
+
 from tests import _source_index as source_index
+
+pytestmark = pytest.mark.repo_scan
 
 _PIN_STATE_HELPERS: frozenset[str] = frozenset(
     {

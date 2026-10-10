@@ -120,6 +120,9 @@ def configured_checkout(
         try:
             yield DaemonCheckout(trw_dir, namespace, client)
         finally:
+            # This test's own client cache is discarded with the patch above, before the
+            # conftest's per-test close could see it, and its daemon is about to be stopped.
+            _daemon_store.close_daemon_clients()
             reload_config()
 
 

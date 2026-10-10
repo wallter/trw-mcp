@@ -17,8 +17,12 @@ import functools
 import re
 from pathlib import Path
 
+import pytest
+
 from tests import _source_index as source_index
 from trw_mcp.models.surface_v2 import POST_CUT_SURFACE, RETIRED_TOOLS
+
+pytestmark = pytest.mark.repo_scan
 
 _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 _DATA_SUFFIXES = {".md", ".yaml", ".yml", ".txt", ".mdc", ".toml", ".json"}

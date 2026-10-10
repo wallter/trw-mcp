@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 #: Bundled hook tree. Every ``.sh`` TRW installs into a user project lives here.
 _DATA_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 

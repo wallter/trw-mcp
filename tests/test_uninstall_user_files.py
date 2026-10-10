@@ -15,6 +15,8 @@ from trw_mcp.server._cli_argparse import _build_arg_parser
 from trw_mcp.server._subcommands import _run_uninstall
 from trw_mcp.server._uninstall_corpus import trw_created_names
 
+pytestmark = pytest.mark.repo_scan
+
 _LINE = "item(s) in .trw/ were not created by TRW and will be removed"
 _SENTENCE = "Everything under the project's .trw/ is removed (except the learning corpus with --keep-memory)."
 

@@ -16,7 +16,7 @@ from tests._timing import assert_budget
 from trw_mcp.state.validation.call_chain import ChainVerdict, ToolSite, verify_chain
 from trw_mcp.state.validation.chain_declarations import ChainDeclaration, declared_chains
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.repo_scan]
 
 _BUDGET_SECONDS = 10.0
 

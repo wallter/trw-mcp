@@ -29,7 +29,7 @@ import pytest
 
 from tests import _hook_carriers as hc
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "trw_mcp"
 _HOOK_DIR = _SRC / "data" / "hooks"

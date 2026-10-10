@@ -31,7 +31,7 @@ def compute_rework_rate(
     changed_files: list[str],
     *,
     lookback_days: int = 14,
-    project_root: str | Path | None = None,
+    project_root: str | Path,
 ) -> ReworkRateResult:
     """Compute rework rate from git history.
 
@@ -42,7 +42,7 @@ def compute_rework_rate(
     Args:
         changed_files: Files changed in current session.
         lookback_days: Days to look back for fix commits (default 14).
-        project_root: Project root for git commands. Defaults to cwd.
+        project_root: Project root; git runs there, never in the process directory.
 
     Returns:
         Dict with rework_rate (float 0.0-1.0), rework_files (int),
@@ -51,7 +51,7 @@ def compute_rework_rate(
     if not changed_files:
         return {"rework_rate": 0.0, "rework_files": 0, "total_files": 0}
 
-    cwd = str(project_root) if project_root else None
+    cwd = str(project_root)
     rework_files = 0
     total = len(changed_files)
 

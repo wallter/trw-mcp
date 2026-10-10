@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from trw_mcp.tools._learn_arg_bags import LearnUpdateFields
+from trw_mcp.tools._learn_assertion_stamp import stamp_assertions
 from trw_mcp.tools._learning_module_helpers import (
     _coerce_learn_type,
     _coerce_tags,
@@ -92,6 +93,9 @@ def execute_learn_update(
         "evidence_level": evidence_level,
         **upd.model_dump(exclude={"reverify_anchors"}, exclude_none=True),
     }
+    # PRD-CORE-362 FR02: replacement assertions are stamped with the checkout commit, before the patch is parsed.
+    if "assertions" in fields:
+        fields["assertions"] = stamp_assertions(cast("list[dict[str, str]]", fields["assertions"]), project_root())
     # Validate before any side effect: a rejected patch must not re-verify anchors.
     # trw-memory owns the patch contract (PRD-CORE-294 FR03); the adapter re-parses it.
     from trw_memory.lifecycle.correction import parse_patch

@@ -40,6 +40,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.timeout(600),
     pytest.mark.xdist_group(name="update_project_determinism"),
+    pytest.mark.repo_scan,
 ]
 
 _RUNNER = """

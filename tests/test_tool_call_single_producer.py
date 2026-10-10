@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 import structlog.contextvars
 
+pytestmark = pytest.mark.repo_scan
+
 _SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
 
 

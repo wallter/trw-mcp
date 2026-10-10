@@ -23,7 +23,7 @@ import pytest
 
 from tests import _source_index as source_index
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.repo_scan]
 
 # Repo root resolved from this test file's location (…/trw-mcp/tests/<file>).
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent

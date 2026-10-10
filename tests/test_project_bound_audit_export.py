@@ -20,6 +20,8 @@ from tests import _source_index as source_index
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._paths import resolve_project_root
 
+pytestmark = pytest.mark.repo_scan
+
 
 def _entry_points(target: Path) -> dict[str, tuple[str, Callable[[], object]]]:
     """``{name: (module attribute the entry point reads under its binding, call)}``."""

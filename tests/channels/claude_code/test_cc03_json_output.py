@@ -76,6 +76,11 @@ def _run(project: Path, tool_use_id: str = "toolu-json-001") -> subprocess.Compl
             "PYTHONPATH": CHECKOUT_PYTHONPATH,
             "TRW_PROJECT_DIR": str(project),
             "HOME": str(project),
+            # These tests are about WHAT the hook prints, not how fast. On a busy machine the interpreter alone can
+            # outlast the hook's 2.4 s alarm, and the hook then prints nothing: three of them failed that way in a
+            # full run at a load average of 22 (2026-10-10) and passed alone a minute later.
+            "TRW_CC03_ALARM_S": "20",
+            "TRW_CC03_BOUND_S": "25",
         },
     )
 

@@ -49,6 +49,9 @@ class _StatusOnly:
         self.calls += 1
         return self._payload
 
+    async def retire(self) -> None:
+        """Holds no session; the store retires every client it cached when a test ends."""
+
 
 @pytest.fixture
 def fresh_clients(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:

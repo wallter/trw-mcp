@@ -23,6 +23,8 @@ from trw_mcp.middleware.version_drift import (
     build_advisory,
 )
 
+pytestmark = pytest.mark.repo_scan
+
 
 class _FakeClock:
     """Manually advanced monotonic clock."""

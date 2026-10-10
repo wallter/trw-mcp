@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 
 def test_gate_is_closed_when_distill_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """The default for an unlicensed project is: do not install."""

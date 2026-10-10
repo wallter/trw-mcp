@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.repo_scan
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _REPO_ROOT / "trw-mcp/src/trw_mcp/data/framework_canons.json"
 
