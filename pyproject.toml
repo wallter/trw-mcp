@@ -4,7 +4,7 @@
 # have published carries 2.4. Re-verified 2026-09-05 in the release rehearsal.
 # Exact since R9 #8: the signed tag attests the wheel's sha256, and the mirror rebuilds it; both
 # isolated builds must resolve the same backend or every publish fails closed. Bump deliberately.
-requires = ["hatchling==1.28.0"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -157,7 +157,7 @@ dev = [
     # exactly (hatchling 1.29+ stamps Metadata-Version 2.5, which twine/packaging reject)
     # — --no-isolation uses the venv's installed hatchling instead of an isolated one,
     # so a looser pin here silently breaks the D5 build fixture.
-    "hatchling==1.28.0",
+    "hatchling==1.32.4",
 ]
 ai = [
     "anthropic>=0.40.0",
