@@ -9,6 +9,7 @@ they also survive its spinner.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -34,10 +35,25 @@ _WOULD_CHANGE_AFTER_KEEP = (
     "it has uncommitted changes in git, so this update would keep your version, then update TRW's own entries in it "
     "(hook registrations, statusLine); your other entries are kept"
 )
-_KEPT_EDITED = "you edited it since TRW last wrote it, so this update did not replace it"
+#: The way out for a kept hook, skill or agent file (since 9.2.2). ``--rerender`` publishes TRW's current render
+#: of exactly that file and records it; the bytes it replaces are moved into a ``.trw/trash`` capture, never
+#: deleted, and the run prints that capture's path.
+_RERENDER = (
+    "to replace it with TRW's current version run: trw-mcp update-project --rerender <path> "
+    "(the bytes it replaces are moved into .trw/trash, and that run prints where; it refuses and changes nothing "
+    "if the file changes while it runs or TRW has no current version of it for this project)"
+)
+_KEPT_EDITED = f"you edited it since TRW last wrote it, so this update did not replace it; {_RERENDER}"
+#: No record at all: nothing shows the user changed it, so the line must not say they did (sub_GOYE8ssHqS).
+_KEPT_UNRECORDED = (
+    "TRW has no record of writing it and it differs from TRW's current version, so this update left it alone "
+    "(it is your own edit, or a copy TRW wrote without keeping a record of it; TRW cannot tell which); "
+    f"{_RERENDER}"
+)
 
 __all__ = [
     "Record",
+    "adopted_lines",
     "attention_count",
     "build_records",
     "kept_files",
@@ -99,8 +115,10 @@ def kept_files(result: dict[str, list[str]], target: Path) -> list[tuple[str, st
     if "would_run" in result:  # a dry run proposes; it does not claim the later steps ran
         reasons["(uncommitted_changed_after_keep)"] = _WOULD_CHANGE_AFTER_KEEP
     kept: dict[str, str] = {}
+    unrecorded = {str(p) for p in result.get("unrecorded", [])}
     for path in result.get("modified", []):
-        kept.setdefault(_display_path(str(path), target), _KEPT_EDITED)
+        why = _KEPT_UNRECORDED if str(path) in unrecorded else _KEPT_EDITED
+        kept.setdefault(_display_path(str(path), target), why)
     for entry in result.get("preserved", []):
         for suffix, why in reasons.items():
             if str(entry).endswith(suffix):
@@ -129,6 +147,33 @@ def attention_count(result: dict[str, list[str]], target: Path) -> int:
     return sum(1 for record in build_records(result, target) if record.action != "removed")
 
 
+def adopted_lines(result: dict[str, list[str]], target: Path) -> list[str]:
+    """One line per client this bare update newly added to the install record: which, why, and how to remove it.
+
+    A blocked client was always named ("<client> not adopted into the install record: ..."); an adopted one left
+    no trace but ``config.yaml`` among the updated files (sub_GOYE8ssHqS). A client is named only when the record
+    in *target* holds it now: the config write reports a failure as a warning, and a rollback puts the record
+    back. A dry run changes no record, so it only proposes.
+    """
+    proposed = list(dict.fromkeys(result.get("adopted_clients", [])))
+    if result.get("errors") or not proposed:
+        return []
+    dry = "would_run" in result
+    if not dry:
+        from trw_mcp.bootstrap._template_claude_md import _recorded_targets
+
+        recorded = set(_recorded_targets(target))
+        proposed = [client for client in proposed if client in recorded]
+    verb = "would be adopted" if dry else "adopted"
+    return [
+        f"{client} {verb} into the install record: every TRW-named file of it in this project is byte-identical "
+        f"to what TRW writes or recorded writing, so update-project keeps it up to date from now on; to remove it "
+        f"instead run: trw-mcp uninstall --ide {client} (it lists what it would remove and asks first; --dry-run "
+        "only lists; files you edited stay)"
+        for client in proposed
+    ]
+
+
 def print_kept(result: dict[str, list[str]], target: Path) -> None:
     """One ``WARNING: kept <path>: <why>`` line per file left alone, so the installer re-surfaces it.
 
@@ -139,8 +184,8 @@ def print_kept(result: dict[str, list[str]], target: Path) -> None:
     for path, why in kept_files(result, target):
         by_reason.setdefault(why, []).append(printable(path))
     for why, paths in by_reason.items():  # one line per reason, with the count (feedback #142)
-        if len(paths) == 1:
-            print(f"WARNING: kept {paths[0]}: {why}")
+        if len(paths) == 1:  # one file: the command is printed ready to run
+            print(f"WARNING: kept {paths[0]}: {why.replace('<path>', shlex.quote(paths[0].removeprefix('./')))}")
         else:
             print(f"WARNING: kept {len(paths)} files ({why}): {', '.join(paths)}")
 
@@ -208,6 +253,11 @@ def report_kept(result: dict[str, list[str]], target: Path, *, detailed: bool, q
     """Name each edit to the user's CLAUDE.md and what the update left alone: log lines under ``-v``, plain lines
     otherwise, nothing if quiet."""
     print_claude_md(result.get("claude_md", []), detailed=detailed, quiet=quiet)
+    for line in adopted_lines(result, target):
+        if detailed:
+            logger.info("update_project_client_adopted", op="update_project", detail=line)
+        elif not quiet:
+            print(f"Note: {printable(line)}")  # information, not a problem: the prefix change notes carry
     if not detailed and not quiet:
         print_refreshed(result)
         for note in result.get("notes", []):

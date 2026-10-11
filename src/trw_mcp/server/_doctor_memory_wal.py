@@ -162,9 +162,9 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     # now advances when the checkpoint CAUGHT UP WITH THE BACKLOG, measured in
     # frames (the since-deleted `maybe_checkpoint_wal`). Do not re-derive this
     # from file size in either direction.
-    # Inclusive, matching evaluate_wal_trigger's `>=`. With `>` the trigger
-    # fired at exactly the threshold while this row printed "checkpoint due at
-    # N MiB" and reported not-oversized (F7).
+    # Inclusive (`>=`), as the threshold has always been read. With `>` a WAL at
+    # exactly the threshold was reported not-oversized while this row printed
+    # "checkpoint due at N MiB" (F7).
     oversized = wal_mib >= config.wal_checkpoint_threshold_mb
     # Never checkpointed is UNKNOWN, not stale: an absent marker establishes no
     # elapsed time, and reporting "nothing for over an hour" on a store created

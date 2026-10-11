@@ -237,12 +237,15 @@ def test_every_registration_of_a_kept_hint_script_is_left_whatever_the_order(pro
 
 def test_an_edited_statusline_script_keeps_its_registered_flags(project: Path) -> None:
     from trw_mcp.bootstrap import update_project
+    from trw_mcp.bootstrap._utils import _DATA_DIR
 
     path = project / SETTINGS
     data = json.loads(path.read_text(encoding="utf-8"))
-    bundled_cmd = data.get("statusLine", {}).get("command")
-    assert bundled_cmd, "the bundled settings register a statusLine; without one this test proves nothing"
-    data["statusLine"]["command"] = bundled_cmd + " -x"
+    # A first install adds no statusLine since the opt-in fix (PRD-CORE-354 FR09), so the project here is one
+    # that already has TRW's, with the user's flag on it.
+    bundled = json.loads((Path(_DATA_DIR) / "settings.json").read_text(encoding="utf-8")).get("statusLine", {})
+    assert bundled.get("command"), "the bundled settings carry a statusLine; without one this test proves nothing"
+    data["statusLine"] = {**bundled, "command": bundled["command"] + " -x"}
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     _edit(project, ".claude/hooks/statusline.sh")
     _git(project, "add", "-A")

@@ -205,11 +205,16 @@ def test_uninstall_exdev_falls_back_to_trw_trash(
     _uninstall(root)
     out = capsys.readouterr().out
     assert "to the system Trash" not in out
-    # E2E-INC-062: each capture that stayed names why (the cross-device move), not only "see doctor".
-    listed = [ln for ln in out.splitlines() if ln.startswith("  Kept in .trw/trash: ")]
-    assert listed and len(listed) == len(list((root / ".trw" / "trash").glob("*/data")))
-    suffix = f"(the system Trash is on another device; see doctor; remove with: rm -rf {root / '.trw' / 'trash'})"
-    assert all(ln.endswith(suffix) for ln in listed), listed[:2]
+    # E2E-INC-062: the captures that stayed say why (the cross-device move), not only "see doctor"; one reason
+    # shared by many captures is said once with the count (a 9.5.0 report: 79 identical lines for three clients).
+    kept = len(list((root / ".trw" / "trash").glob("*/data")))
+    reason = f"(the system Trash is on another device; see doctor; remove with: rm -rf {root / '.trw' / 'trash'})"
+    per_file = [ln for ln in out.splitlines() if ln.startswith("  Kept in .trw/trash: ")]
+    summary = [ln for ln in out.splitlines() if ln.startswith(f"  Kept {kept} files in .trw/trash {reason}: ")]
+    if kept <= 3:
+        assert len(per_file) == kept and all(ln.endswith(reason) for ln in per_file), per_file[:2]
+    else:
+        assert per_file == [] and len(summary) == 1 and summary[0].endswith(f"and {kept - 3} more"), out[-600:]
     assert _os_trash(home) == []
 
 

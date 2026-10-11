@@ -568,7 +568,10 @@ def _run_init_phases(
         try:
             from ._claude_code_distill_channels import install_claude_code_distill_channels
 
-            cc_dc = install_claude_code_distill_channels(target_dir, force=force)
+            _settings = target_dir / ".claude" / "settings.json"
+            cc_dc = install_claude_code_distill_channels(
+                target_dir, force=force, settings_created=any(Path(p) == _settings for p in result["created"])
+            )
             result["created"].extend(cc_dc.get("created", []))
             result.setdefault("skipped", []).extend(cc_dc.get("preserved", []))
             result["errors"].extend(cc_dc.get("errors", []))

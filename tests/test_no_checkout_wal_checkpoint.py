@@ -14,15 +14,7 @@ from pathlib import Path
 import pytest
 
 from tests._memory_store_fake import FakeMemoryStore
-from trw_mcp.state import _wal_triggers
 from trw_mcp.state.memory_adapter import store_learning
-
-
-class _Due:
-    due = True
-    reason = "forced"
-    wal_size_bytes = 1 << 30
-    age_seconds = 1e9
 
 
 def _digest(directory: Path) -> dict[str, str]:
@@ -42,8 +34,6 @@ def test_a_daemon_write_leaves_the_unmigrated_checkout_store_byte_identical(
     conn.executemany("INSERT INTO t VALUES (?)", [("row",)] * 200)
     conn.commit()
     assert (memory / "memory.db-wal").stat().st_size > 0
-    # Every checkpoint trigger due, so any checkpoint path that still exists runs.
-    monkeypatch.setattr(_wal_triggers, "evaluate_wal_trigger", lambda *a, **k: _Due())
     before = _digest(memory)
     try:
         store_learning(tmp_path / ".trw", "L-walfree", "a daemon write", "detail")

@@ -43,15 +43,54 @@ def test_empty_file_returns_fallback(tmp_path: Path) -> None:
     assert _read_last_checkpoint_message(tmp_path) == _FALLBACK
 
 
-def test_blank_last_message_returns_fallback(tmp_path: Path) -> None:
+def test_a_blank_last_message_is_passed_over_for_the_real_one_before_it(tmp_path: Path) -> None:
     _write_checkpoints(tmp_path, "real message", "")
+    assert _read_last_checkpoint_message(tmp_path) == "real message"
+
+
+def test_only_blank_messages_return_the_fallback(tmp_path: Path) -> None:
+    _write_checkpoints(tmp_path, "", "   ")
     assert _read_last_checkpoint_message(tmp_path) == _FALLBACK
 
 
-def test_malformed_jsonl_returns_fallback(tmp_path: Path) -> None:
+def test_the_pre_compaction_literal_is_never_the_real_message(tmp_path: Path) -> None:
+    """The pre-compaction checkpoint appends the literal and the marker is read right after it: the newest line
+    was always the literal, so the message a session resumes from was never shown (PRD-CORE-342 FR-02)."""
+    _write_checkpoints(tmp_path, "FR-08 wired; next: parity test", _FALLBACK, _FALLBACK)
+    assert _read_last_checkpoint_message(tmp_path) == "FR-08 wired; next: parity test"
+
+
+def test_the_search_for_a_real_message_is_bounded(tmp_path: Path) -> None:
+    _write_checkpoints(tmp_path, "too far back", *([_FALLBACK] * 50))
+    assert _read_last_checkpoint_message(tmp_path) == _FALLBACK
+
+
+def test_a_real_message_at_the_edge_of_the_bound_is_still_found(tmp_path: Path) -> None:
+    _write_checkpoints(tmp_path, "just in reach", *([_FALLBACK] * 49))
+    assert _read_last_checkpoint_message(tmp_path) == "just in reach"
+
+
+def test_a_message_that_is_not_text_is_no_message(tmp_path: Path) -> None:
+    """A null used to come back as the word "None"."""
+    meta = tmp_path / "meta"
+    meta.mkdir(parents=True)
+    (meta / "checkpoints.jsonl").write_text(
+        '{"message": "real"}\n{"message": null}\n{"message": 7}\n', encoding="utf-8"
+    )
+    assert _read_last_checkpoint_message(tmp_path) == "real"
+
+
+def test_a_malformed_last_line_is_passed_over(tmp_path: Path) -> None:
     meta = tmp_path / "meta"
     meta.mkdir(parents=True)
     (meta / "checkpoints.jsonl").write_text('{"message": "good"}\n{not valid json\n', encoding="utf-8")
+    assert _read_last_checkpoint_message(tmp_path) == "good"
+
+
+def test_only_malformed_lines_return_the_fallback(tmp_path: Path) -> None:
+    meta = tmp_path / "meta"
+    meta.mkdir(parents=True)
+    (meta / "checkpoints.jsonl").write_text('{not valid json\n["a list, not a record"]\n', encoding="utf-8")
     assert _read_last_checkpoint_message(tmp_path) == _FALLBACK
 
 

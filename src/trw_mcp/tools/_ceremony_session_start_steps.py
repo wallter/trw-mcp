@@ -83,6 +83,7 @@ def step_run_resolve(
         _candidate_run_hints,
         _get_run_status,
         _no_active_run_hint,
+        _with_own_marker_candidate,
     )
 
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
@@ -122,7 +123,7 @@ def step_run_resolve(
                 pass
         else:
             logger.info("session_start_no_active_run", pin_key=call_ctx.session_id)
-            candidate_runs = _candidate_run_hints()
+            candidate_runs = _with_own_marker_candidate(_candidate_run_hints())
             results["run"] = {"active_run": None, "status": "no_active_run"}
             results["hint"] = _no_active_run_hint(candidate_runs)
             if candidate_runs:

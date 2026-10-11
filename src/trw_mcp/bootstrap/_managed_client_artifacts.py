@@ -79,8 +79,14 @@ def artifact_user_edited_against(
     key: str,
     framework_hashes: set[str],
     manifest_hashes: dict[str, str] | None,
+    *,
+    data: bytes | None = None,
 ) -> bool:
     """Return True when *dest* is a user edit, given an explicit framework baseline.
+
+    With *data* (bytes the caller already read from *dest*) those bytes are judged and the file is not read
+    again: a recorder stores the digest of exactly what was judged (:func:`proven_digest`). No framework
+    baseline is then "cannot prove", so True.
 
     The general form of :func:`artifact_user_edited`, for artifacts that have
     MORE than one legitimate framework rendering. ``.claude/agents/*.md`` is the
@@ -96,9 +102,34 @@ def artifact_user_edited_against(
     """
     from ._version_manifest import _is_user_modified
 
+    owned = framework_hashes | _recorded(key, manifest_hashes)
+    if data is not None:
+        proven = hashlib.sha256(data).hexdigest() in owned or _crlf_of_owned(data, owned)
+        return not (framework_hashes and proven)
     if not _is_user_modified(dest, key, manifest_hashes, framework_hashes=framework_hashes):
         return False
-    return not _legacy_crlf_copy(dest, framework_hashes | _recorded(key, manifest_hashes))
+    return not _legacy_crlf_copy(dest, owned)
+
+
+def proven_digest(
+    dest: Path, key: str, framework_hashes: set[str], manifest_hashes: dict[str, str] | None
+) -> str | None:
+    """The SHA-256 a manifest recorder may store for *dest*: of the very bytes it proved TRW's, else ``None``.
+
+    ONE read. Checking ownership and then hashing the file again let a save between the two reads become TRW's
+    baseline, and a failed first read counted as "not edited" (PRD-FIX-121's laundering class). Here the bytes
+    judged are the bytes recorded, and a file that cannot be read is unproven: no record. "TRW's" is what the
+    predicate accepts: the framework baseline, the previous record, or a legacy all-CRLF copy of either.
+    """
+    try:
+        data = dest.read_bytes()
+    except OSError:  # trw-fail-silent-allow: unreadable means unproven, so nothing is recorded
+        logger.warning("manifest_hash_unreadable", path=key)
+        return None
+    # Through the shared predicate, so "every recorded key consulted it" stays one checkable property.
+    if artifact_user_edited_against(dest, key, framework_hashes, manifest_hashes, data=data):
+        return None
+    return hashlib.sha256(data).hexdigest()
 
 
 def _recorded(key: str, manifest_hashes: dict[str, str] | None) -> set[str]:
@@ -114,6 +145,10 @@ def _legacy_crlf_copy(dest: Path, owned: set[str]) -> bool:
         data = dest.read_bytes()
     except OSError:  # trw-fail-silent-allow: unreadable means unproven, so it stays a user edit
         return False
+    return _crlf_of_owned(data, owned)
+
+
+def _crlf_of_owned(data: bytes, owned: set[str]) -> bool:
     crlf = data.count(b"\r\n")
     if not crlf or crlf != data.count(b"\n"):
         return False
@@ -441,14 +476,10 @@ def _cursor_rules_mdc_manifest_hash(target_dir: Path, prev_hashes: dict[str, str
     if not candidates:
         return {}
     framework_hashes = {hashlib.sha256(c).hexdigest() for c in candidates}
-    if artifact_user_edited_against(dest, key, framework_hashes, prev_hashes):
+    if (digest := proven_digest(dest, key, framework_hashes, prev_hashes)) is None:
         logger.info("managed_artifact_ownership_declined", path=key, client="cursor")
         return {}
-    try:
-        return {key: hashlib.sha256(dest.read_bytes()).hexdigest()}
-    except OSError:  # trw-fail-silent-allow: mirrors the sibling sweep's unreadable-file handling; omission is the safe direction (no manifest entry means "unproven", never "TRW's")
-        logger.warning("managed_artifact_hash_failed", path=key)
-        return {}
+    return {key: digest}
 
 
 def _is_regular(path: Path) -> bool:
@@ -671,13 +702,11 @@ def managed_client_manifest_hashes(
             dest = target_dir / key
             if not dest.is_file():
                 continue
-            if artifact_user_edited(dest, key, incoming, prev_hashes):
+            digest = proven_digest(dest, key, {hashlib.sha256(incoming).hexdigest()}, prev_hashes)
+            if digest is None:
                 logger.info("managed_artifact_ownership_declined", path=key, client=source.client)
                 continue
-            try:
-                hashes[key] = hashlib.sha256(dest.read_bytes()).hexdigest()
-            except OSError:
-                logger.warning("managed_artifact_hash_failed", path=key)
+            hashes[key] = digest
     hashes.update(_cursor_rules_mdc_manifest_hash(target_dir, prev_hashes))
     hashes.update(_antigravity_explorer_manifest_hash(target_dir, prev_hashes))
     return hashes

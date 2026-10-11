@@ -290,6 +290,8 @@ def adopt_hash_proven_clients(
     if adopted:
         _update_config_target_platforms(target_dir, adopted, result)
         logger.info("clients_adopted_by_hash_proof", clients=adopted)
+        # Candidates for the report's adoption line; it reads the record back first (the write can fail softly).
+        result.setdefault("adopted_clients", []).extend(adopted)
     return adopted
 
 

@@ -160,6 +160,53 @@ def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
     return candidates[:limit]
 
 
+#: Marks the one candidate that comes from the pre-compact marker stored under this session's key.
+OWN_MARKER_SOURCE = "session_key_pre_compact_marker"
+
+
+def _own_marker_candidate() -> dict[str, object] | None:
+    """The run named by the pre-compact marker stored under this session's key, as an advisory candidate.
+
+    A session that checkpoints with an explicit ``run_path`` writes no pin, so
+    after a compaction the pin-derived candidates listed only other sessions'
+    runs. The per-session marker is the one record that a capture under this
+    session key named run X. That is provenance by file name, not proof of
+    ownership (a reused key or a file put there by hand reads the same), so
+    the row is labelled by where it came from and nothing is pinned or adopted.
+
+    Returns ``None`` when the session has no shared identity (the fallback
+    marker is one project-wide file and may be another session's), when there
+    is no valid marker, or when the path it names is not a run whose directory
+    and ``meta/run.yaml`` both resolve inside this project.
+    """
+    from trw_mcp.state._paths import resolve_project_root
+    from trw_mcp.state.pre_compact_marker import read_pre_compact_marker_run_path, session_marker_key
+
+    try:
+        if not session_marker_key():
+            return None
+        named = read_pre_compact_marker_run_path()
+        if not named:
+            return None
+        root = resolve_project_root().resolve()
+        run_dir = Path(named).resolve()
+        run_yaml = (run_dir / "meta" / "run.yaml").resolve()
+        if not run_dir.is_relative_to(root) or not run_yaml.is_relative_to(root) or not run_yaml.is_file():
+            return None
+    except Exception:  # trw-fail-silent-allow: an advisory candidate; its absence must never block session start
+        logger.debug("own_marker_candidate_failed", exc_info=True)
+        return None
+    return {"run_path": str(run_dir), "source": OWN_MARKER_SOURCE}
+
+
+def _with_own_marker_candidate(candidates: list[dict[str, object]], limit: int = 3) -> list[dict[str, object]]:
+    """Put the run named under this session's key first; drop a pin row naming the same run."""
+    own = _own_marker_candidate()
+    if own is None:
+        return candidates
+    return [own, *(c for c in candidates if c.get("run_path") != own["run_path"])][:limit]
+
+
 def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
     """Build actionable no-pin guidance while preserving PRD-CORE-141 isolation.
 
@@ -170,6 +217,8 @@ def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
     hint = "No active run for this session. " + no_active_run_remedy()
     if candidate_runs:
         hint += " Candidate run paths are advisory only; TRW will not auto-adopt another session's run."
+        if candidate_runs[0].get("source") == OWN_MARKER_SOURCE:
+            hint += f" source={OWN_MARKER_SOURCE}: the marker under this session's key names it; confirm it is yours."
     return hint
 
 

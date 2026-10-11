@@ -168,7 +168,12 @@ def user_edited_review_kept(target_path: Path, trw_dir: Path) -> ReviewMdResultD
         "path": str(target_path),
         "rules_count": 0,
         "status": "skipped",
-        "kept_existing": "REVIEW.md kept: it has edits TRW did not generate (use --force to regenerate it)",
+        # The remedy must be one that exists on every surface that prints this: update-project has no --force, and
+        # `instructions sync --force` also rewrites AGENTS.md. A deleted REVIEW.md is regenerated with its receipt.
+        "kept_existing": (
+            "REVIEW.md kept: it has edits TRW did not generate (to replace it with TRW's version, delete it and "
+            "run trw-mcp update-project)"
+        ),
     }
 
 
@@ -194,5 +199,8 @@ def existing_review_kept(
         "path": str(target_path),
         "rules_count": 0,
         "status": "skipped",
-        "kept_existing": f"existing REVIEW.md kept: {reason} (use --force to rewrite it without learnings)",
+        "kept_existing": (
+            f"existing REVIEW.md kept: {reason} (to rewrite it without learnings, delete it and run "
+            "trw-mcp update-project)"
+        ),
     }

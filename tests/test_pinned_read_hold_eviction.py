@@ -89,6 +89,35 @@ def test_every_descriptor_held_still_refuses(tmp_path: Path) -> None:
         read_at(_file(tmp_path, "d"), 4)
 
 
+@pytest.mark.parametrize("held", [0, 2], ids=["the cache emptied", "the rest are held"])
+def test_a_refused_reader_pins_its_file_when_another_reader_already_freed_a_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: int
+) -> None:
+    """Two readers are refused together and the other one evicts the only descriptor that may be evicted.
+
+    This reader then finds nothing it may evict. That means the cache is below its cap, not that every descriptor
+    is held, so it must pin its file. The other reader's eviction runs where it interleaves in a real race: after
+    this reader's refusal and before its own eviction (the dead-path sweep runs there, with no lock held).
+    """
+    monkeypatch.setattr(_checkout_access, "_MAX_PINNED_FDS", held + 1)
+    pins = [_file(tmp_path, n) for n in "abc"[: held + 1]]
+    for path in pins:
+        read_at(path, 4)
+    sweep = _checkout_access._evict_dead_paths
+
+    def sweep_while_the_other_reader_evicts() -> int:
+        freed = sweep()
+        assert _checkout_access._evict_idle_unheld() == "evicted"
+        return freed
+
+    monkeypatch.setattr(_checkout_access, "_evict_dead_paths", sweep_while_the_other_reader_evicts)
+
+    with holding(*pins[:held]):
+        assert read_at(_file(tmp_path, "d"), 4) == b"data"
+        assert all(_pinned(path) for path in pins[:held]), "a held descriptor was closed"
+    assert len(_checkout_access._fds) <= held + 1, "the cache grew past its cap"
+
+
 def _released() -> None:
     with _checkout_access._map_lock:
         _checkout_access._drain_releases_locked()

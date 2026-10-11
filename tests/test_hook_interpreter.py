@@ -426,6 +426,86 @@ def test_doctor_fails_a_deployed_hook_that_still_resolves_the_old_way(
     assert not marker.exists(), "the doctor executed a hook file the project ships"
 
 
+_CURSOR_LIB_REL = ".cursor/hooks/lib-distill-hint.sh"
+
+
+def _project_with_a_stale_cursor_lib(tmp_path: Path, config_yaml: str | None) -> None:
+    _executable(tmp_path / _CURSOR_LIB_REL, _PRE_FIX_RESOLVER)
+    (tmp_path / HOOK_INTERPRETER_RELPATH).parent.mkdir(parents=True)
+    (tmp_path / HOOK_INTERPRETER_RELPATH).write_text(sys.executable, encoding="utf-8")
+    if config_yaml is not None:
+        (tmp_path / ".trw" / "config.yaml").write_text(config_yaml, encoding="utf-8")
+
+
+def test_doctor_warns_about_a_stale_hook_of_a_client_the_install_record_does_not_hold(tmp_path: Path) -> None:
+    """sub_GOYE8ssHqS-5q3hE: update-project leaves an unrecorded client's file alone, so the old remedy fixed nothing."""
+    _project_with_a_stale_cursor_lib(tmp_path, "target_platforms:\n- claude-code\n")
+
+    status, message = hook_python_row(tmp_path)
+
+    assert status == "WARN"
+    assert message == (
+        f"{_CURSOR_LIB_REL} still resolves the interpreter the old way and belongs to cursor-ide, which this "
+        "project's install record (target_platforms in .trw/config.yaml) does not hold, so trw-mcp update-project "
+        f"leaves it alone. Remedy: delete {_CURSOR_LIB_REL} if you do not use cursor-ide in this project or else "
+        "run trw-mcp update-project --ide cursor-ide to add that client to the install record."
+    )
+
+
+def test_doctor_fails_a_stale_hook_of_a_recorded_client(tmp_path: Path) -> None:
+    _project_with_a_stale_cursor_lib(tmp_path, "target_platforms:\n- claude-code\n- cursor-ide\n")
+
+    status, message = hook_python_row(tmp_path)
+
+    assert (status, message.split(" still")[0]) == ("FAIL", _CURSOR_LIB_REL)
+    assert message.endswith("Remedy: trw-mcp update-project (outside a git repository: trw-mcp init-project).")
+
+
+@pytest.mark.parametrize(
+    "config_yaml",
+    [None, "target_platforms: [\n", "target_platforms: cursor\n", "target_platforms: []\n", "\xff\xfe"],
+    ids=["no-record-file", "broken-yaml", "not-a-list", "empty-list", "not-utf8"],
+)
+def test_an_install_record_that_names_no_client_never_downgrades_the_fail(
+    tmp_path: Path, config_yaml: str | None
+) -> None:
+    """Absent, unreadable or empty: every file is checked as recorded (update-project then refreshes by detection)."""
+    _project_with_a_stale_cursor_lib(tmp_path, None)
+    if config_yaml is not None:
+        (tmp_path / ".trw" / "config.yaml").write_bytes(config_yaml.encode("latin-1"))
+
+    assert hook_python_row(tmp_path)[0] == "FAIL"
+
+
+def test_the_post_commit_hook_belongs_to_no_client_and_always_fails_when_stale(tmp_path: Path) -> None:
+    _project_with_a_stale_cursor_lib(tmp_path, "target_platforms:\n- opencode\n")
+    _executable(tmp_path / ".trw/hooks/trw-post-commit.sh", _PRE_FIX_RESOLVER)
+
+    status, message = hook_python_row(tmp_path)
+
+    assert status == "FAIL"
+    assert message.startswith(".trw/hooks/trw-post-commit.sh still resolve(s) the interpreter the old way; ")
+    assert f"{_CURSOR_LIB_REL} still resolves the interpreter the old way and belongs to cursor-ide" in message
+    assert message.count("Remedy:") == 1
+
+
+def test_a_stale_claude_lib_stays_a_fail_while_codex_is_recorded(tmp_path: Path) -> None:
+    """The codex update path writes .claude/hooks/lib-distill-hint.sh too, so its record keeps the file owned."""
+    _executable(tmp_path / ".claude/hooks/lib-distill-hint.sh", _PRE_FIX_RESOLVER)
+    (tmp_path / HOOK_INTERPRETER_RELPATH).parent.mkdir(parents=True)
+    (tmp_path / HOOK_INTERPRETER_RELPATH).write_text(sys.executable, encoding="utf-8")
+    config = tmp_path / ".trw" / "config.yaml"
+
+    config.write_text("target_platforms:\n- codex\n", encoding="utf-8")
+    assert hook_python_row(tmp_path)[0] == "FAIL"
+
+    config.write_text("target_platforms:\n- opencode\n", encoding="utf-8")
+    status, message = hook_python_row(tmp_path)
+    assert status == "WARN"
+    assert "belongs to claude-code or codex" in message
+    assert "trw-mcp update-project --ide claude-code" in message
+
+
 def test_doctor_skips_a_directory_without_trw(tmp_path: Path) -> None:
     assert hook_python_row(tmp_path)[0] == "SKIP"
 

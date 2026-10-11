@@ -35,7 +35,7 @@
     "hooks/post-tool-degenerate-result.sh": "sha256:556aaebe9a36214350461cf3276c9e700d1ab419d1da270d7937f7eb3bb279e4",
     "hooks/post-tool-event.sh": "sha256:ff05803621278d680aaea41c2c8d41de07b59952043634f0a313802845ac8e0a",
     "hooks/post-tool-intent-check.sh": "sha256:330a15081f495bdfa2457fff300c420e9e96186f4c5cd32ffa638976de32c903",
-    "hooks/pre-compact.sh": "sha256:fdf8b9266901462feaa0c57c8f47da136314e03011d395f9f56a62644a0bf738",
+    "hooks/pre-compact.sh": "sha256:82479b99cd344dae85b68d015e5f1ea2e253f9eebf5d69d62ec8b4a4d1e9efcf",
     "hooks/pre-tool-deliver-gate.sh": "sha256:ada05d9d6b3291943ff76b01c3939ed47822368c55350b43277245537c4d9c7a",
     "hooks/pre-tool-intent-guard.sh": "sha256:98630e2d5d3c0fbfa2c4d6e8416cfc0f23f3bdfc8d246e8fe079c0cc178f88df",
     "hooks/session-end.sh": "sha256:3d99ebfbbed04bda2df47821bff496843681ca953539c1aeba26871fe4f5d0c3",

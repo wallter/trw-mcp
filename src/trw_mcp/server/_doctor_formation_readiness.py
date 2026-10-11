@@ -29,9 +29,20 @@ Precedence, highest first:
 ``binary_absent`` no documented spelling of the executable resolves on PATH.
 ``not_measured``  the probe raised, timed out, or exited non-zero. The reason is
                  recorded verbatim; no version is claimed.
+``wrong_binary``  the executable was reached through an ALIAS (not the entry's
+                 primary name) and its version banner names another registered
+                 client. A generic alias is a name two vendors can ship: on
+                 2026-10-10 cursor-cli's alias ``agent`` resolved to Grok's
+                 binary (banner ``grok 1.0.34``) and the row said cursor-cli
+                 was ready (sub_GOYE8ssHqS-5q3hE). The row names the client the
+                 binary identifies as. The primary name is never subjected to
+                 this test, and an alias whose banner names no other client is
+                 accepted as before: the check is a denylist built from the
+                 other entries' names, not a pattern for this client's banner,
+                 because no real Cursor banner has been observed.
 ``ready``         a verified entry whose binary answered its own version probe.
 
-There is no fifth verdict and no default: every path above assigns one
+There is no further verdict and no default: every path above assigns one
 explicitly, so a client can never fall through to ``ready`` because a branch was
 missed. The check status is PASS, WARN or SKIP and never FAIL — a missing client
 degrades capability without breaking the install, and the doctor's exit code is
@@ -45,13 +56,14 @@ probe's own output — never an environment value.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.dispatch._client_specs import ClientSpec, UnknownClientError, client_spec_for
+from trw_mcp.dispatch._client_specs import CLIENT_SPECS, ClientSpec, UnknownClientError, client_spec_for
 from trw_mcp.dispatch._env import build_probe_env
 
 if TYPE_CHECKING:
@@ -89,6 +101,25 @@ def _resolve_binary(spec: ClientSpec) -> tuple[str | None, str | None]:
         if path is not None:
             return name, path
     return None, None
+
+
+def _other_client_named(banner: str, spec: ClientSpec) -> str | None:
+    """The id of another registered client that *banner* LEADS with, else None.
+
+    A version banner starts with the program's own name (``grok 1.0.34``, ``grok-cli 1.0``). A name that merely
+    occurs later (``Cursor Agent 1.0 (supports grok)``) is no evidence of identity, so only the leading name
+    counts; it ends at the first character that is not a letter, a digit or part of the registered name itself.
+    A name this entry itself answers to is never evidence against it.
+    """
+    own = {name.lower() for name in (spec.client_id, *spec.binary_names)}
+    lowered = banner.strip().lower()
+    for other in CLIENT_SPECS.values():
+        if other.client_id == spec.client_id:
+            continue
+        for name in dict.fromkeys(n.lower() for n in (other.client_id, *other.binary_names)):
+            if name not in own and re.match(rf"{re.escape(name)}(?![a-z0-9])", lowered):
+                return other.client_id
+    return None
 
 
 def probe_version(binary: str, spec: ClientSpec, timeout_s: int) -> tuple[str | None, str | None]:
@@ -170,6 +201,17 @@ def _readiness_row(client: str, timeout_s: int) -> ReadinessRow:
         row["reason"] = failure
         return row
     row["version"] = version
+    # Only an alias is questioned: the primary name keeps its behaviour, whatever it prints.
+    identifies_as = _other_client_named(version or "", spec) if resolved != spec.binary else None
+    if identifies_as is not None:
+        row["verdict"] = "wrong_binary"
+        row["identifies_as"] = identifies_as
+        row["reason"] = (
+            f"{resolved!r} is an alias of {spec.binary!r}, and the binary it resolves to ({path}) prints "
+            f"{version!r}, which identifies it as {identifies_as}, not {client}; install {spec.binary!r} "
+            f"to use {client}"
+        )
+        return row
     row["verdict"] = "ready"
     return row
 

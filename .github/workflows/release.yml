@@ -60,7 +60,18 @@ jobs:
         # The released trw-memory the committed uv.lock names (never git main): the wheel is built
         # against code that was locked and published. The release tool refuses a cut whose tree
         # installs anything else (scripts/_release_public/build_pin.py).
-        run: pip install "trw-memory==$(python3 .github/scripts/locked_memory_version.py)"
+        # A runner can reach a PyPI cache node that does not list a release published minutes ago (9.5.0: three
+        # failed runs over five minutes while other machines installed it), so that one answer is waited out,
+        # for up to ten minutes. Any other failure of the install fails the step at once.
+        run: |
+          for attempt in $(seq 1 20); do
+            if pip install "trw-memory==$(python3 .github/scripts/locked_memory_version.py)" 2> pip-error.txt; then exit 0; fi
+            cat pip-error.txt >&2
+            grep -q "No matching distribution found" pip-error.txt || exit 1
+            echo "attempt $attempt: this runner's index does not list the locked release yet; trying again in 30 s"
+            sleep 30
+          done
+          exit 1
       - name: Build package at the attested epoch
         # R9 #8: the wheel is built from the tree (not from the sdist) at the tag's TRW-Source-Date-Epoch,
         # exactly as `release_public.py cut` built the wheel whose sha256 the tag attests. A tag with no
@@ -104,8 +115,16 @@ jobs:
           name: dist
           path: dist/
       - name: Install wheel (sqlite-vec is a base dependency)
+        # The same wait as the build job: this job runs on another runner, which may reach another cache node.
         run: |
-          pip install "trw-memory==$(python3 .github/scripts/locked_memory_version.py)"
+          for attempt in $(seq 1 20); do
+            if pip install "trw-memory==$(python3 .github/scripts/locked_memory_version.py)" 2> pip-error.txt; then break; fi
+            cat pip-error.txt >&2
+            grep -q "No matching distribution found" pip-error.txt || exit 1
+            [ "$attempt" -lt 20 ] || exit 1
+            echo "attempt $attempt: this runner's index does not list the locked release yet; trying again in 30 s"
+            sleep 30
+          done
           pip install dist/*.whl
       - name: Smoke test — SQLiteBackend store/get round-trip
         run: |

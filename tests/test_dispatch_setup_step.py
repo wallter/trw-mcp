@@ -62,6 +62,21 @@ def test_installed_follows_path_without_launching(monkeypatch: pytest.MonkeyPatc
     assert [c for c, r in rows.items() if r["installed"]] == ["codex"]
 
 
+def test_installed_is_the_name_a_dispatch_starts_not_an_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cursor-cli answers to ``agent`` too, a name Grok's CLI also installs. A dispatch always starts
+    ``cursor-agent``, so ``agent`` alone on PATH is not an installed cursor-cli: the listing said it was,
+    and the dispatch it invited failed to launch."""
+    spec = CLIENT_SPECS["cursor-cli"]
+    assert spec.binary_aliases, "the case needs a client with an alias spelling"
+    alias = spec.binary_aliases[0]
+
+    monkeypatch.setattr("shutil.which", lambda b: "/bin/x" if b == alias else None)
+    assert _rows()["cursor-cli"]["installed"] is False
+
+    monkeypatch.setattr("shutil.which", lambda b: "/bin/x" if b == spec.binary else None)
+    assert _rows()["cursor-cli"]["installed"] is True
+
+
 @pytest.mark.parametrize(
     "cfg", [{}, {"dispatch_default_efforts": {"codex": "medium"}, "dispatch_default_effort": "high"}]
 )

@@ -52,7 +52,8 @@ def _doctor_says(installer: ModuleType, monkeypatch: pytest.MonkeyPatch, checks:
     monkeypatch.setattr(
         installer.subprocess,
         "run",
-        lambda *_a, **_k: subprocess.CompletedProcess(args=[], returncode=0, stdout=payload, stderr=""),
+        # assess install-check prints nothing here: what it prints is relayed to the user as a warning step.
+        lambda cmd, **_k: subprocess.CompletedProcess(cmd, 0, "" if "install-check" in cmd else payload, ""),
     )
     ui = _RecordingUI()
     installer.run_install_doctor(ui, sys.executable, Path("."))

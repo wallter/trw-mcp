@@ -161,6 +161,74 @@ def test_binary_alias_is_reported_by_the_name_that_actually_answered(
     assert row["verdict"] == "ready"
 
 
+def test_an_alias_that_is_another_clients_binary_is_not_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # sub_GOYE8ssHqS-5q3hE: `agent` on the reporter's PATH was Grok's binary and cursor-cli read as ready.
+    bin_dir = tmp_path / "bin"
+    planted = _plant(bin_dir, "agent", "#!/bin/sh\necho 'grok 1.0.34'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    status, message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["cursor-cli"]))
+    row = rows[0]
+
+    assert row["verdict"] == "wrong_binary"
+    assert row["identifies_as"] == "grok"
+    assert row["binary_resolved"] == "agent"
+    assert row["version"] == "grok 1.0.34"
+    assert "identifies it as grok, not cursor-cli" in str(row["reason"])
+    assert str(planted) in str(row["reason"])
+    assert (status, message) == (
+        "WARN",
+        "0 of 1 dispatch clients ready (cursor-cli=wrong_binary): no dispatch target is usable",
+    )
+
+
+def test_the_primary_binary_name_is_ready_whatever_its_banner_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only an alias is questioned: `cursor-agent` is Cursor's own name, and its real banner is not known.
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "cursor-agent", "#!/bin/sh\necho 'grok 1.0.34'\n")
+    _plant(bin_dir, "agent", "#!/bin/sh\necho 'grok 1.0.34'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    _status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["cursor-cli"]))
+
+    assert (rows[0]["binary_resolved"], rows[0]["verdict"]) == ("cursor-agent", "ready")
+    assert "identifies_as" not in rows[0]
+
+
+@pytest.mark.parametrize("banner", ["grok 1.0.34", "grok-cli 1.0", "Grok 2", "  grok\t1.0"])
+def test_a_banner_that_leads_with_another_clients_name_is_that_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, banner: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "agent", f"#!/bin/sh\nprintf '%s\\n' '{banner}'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    _status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["cursor-cli"]))
+
+    assert (rows[0]["verdict"], rows[0]["identifies_as"]) == ("wrong_binary", "grok")
+
+
+@pytest.mark.parametrize(
+    "banner",
+    ["2025.09.12-4852336", "agent 3.1", "agyle grokking 1.0", "Cursor Agent 1.0 (supports grok)", "grokking 2.0"],
+)
+def test_an_alias_whose_banner_names_no_other_client_stays_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, banner: str
+) -> None:
+    # A denylist, not a pattern for Cursor's banner: a bare version, the alias's own name, words that merely
+    # contain another client's name (agy, grok), and a banner that mentions another client after its own name
+    # (review, 2026-10-11: a mention is not an identity) all keep the result the row gave before.
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "agent", f"#!/bin/sh\necho '{banner}'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    _status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["cursor-cli"]))
+
+    assert (rows[0]["binary_resolved"], rows[0]["verdict"], rows[0]["version"]) == ("agent", "ready", banner)
+
+
 # --------------------------------------------------------------------------- #
 # The timeout knob (NFR01) — wired, not a literal
 # --------------------------------------------------------------------------- #

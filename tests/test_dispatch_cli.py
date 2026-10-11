@@ -127,7 +127,7 @@ def test_a_prompt_and_a_prompt_file_are_two_variants_run_in_parallel(
     pf.write_text("from the file")
     lanes: list[tuple[str, str]] = []
 
-    def run_all(reqs: list[tuple[str, object]]) -> list[dict[str, object]]:
+    def run_all(reqs: list[tuple[str, object]], **_: object) -> list[dict[str, object]]:
         lanes.extend((label, req.prompt) for label, req in reqs)  # type: ignore[attr-defined]
         return [{"target": label, "ok": True, "text": "t"} for label, _ in reqs]
 
@@ -379,7 +379,7 @@ def test_a_fan_out_writes_its_aggregate_to_the_output_file(monkeypatch: pytest.M
     """Review r1 known issue: --output-file was ignored by the fan-out path."""
     monkeypatch.setattr(
         "trw_mcp.tools._dispatch_fanout._run_fanout",
-        lambda reqs: [{"target": label, "ok": True, "text": "t"} for label, _ in reqs],
+        lambda reqs, **_: [{"target": label, "ok": True, "text": "t"} for label, _ in reqs],
     )
     out = tmp_path / "fan.json"
     with pytest.raises(SystemExit) as exc:

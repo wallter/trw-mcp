@@ -137,6 +137,33 @@ def test_timeout_fallback_names_its_own_remedy(tmp_path: Path, monkeypatch: pyte
     assert "2.4s budget" in result.message
 
 
+def test_target_not_in_sidecar_names_the_command_that_builds_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """sub_GOYE8ssHqS-5q3hE: the most common status in the reporter's window had no remedy at all."""
+    _has_distill(monkeypatch)
+    _write_records(tmp_path, 25, tier="T1", distill_status="target_not_in_sidecar")
+
+    result = _check_hint_delivery(tmp_path, TRWConfig())
+
+    assert "remedy: the code-map sidecar has no entry for those files" in result.message
+    assert "trw-distill self-improve refresh-sidecars --repo . rebuilds it" in result.message
+    assert "no commit or session start rebuilds it for that reason alone" in result.message
+
+
+def test_target_not_in_sidecar_says_so_when_trw_distill_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_distill(monkeypatch)
+    _write_records(tmp_path, 25, tier="T1", distill_status="target_not_in_sidecar")
+
+    result = _check_hint_delivery(tmp_path, TRWConfig())
+
+    assert "trw-distill, the separate package that builds the sidecar, cannot be imported" in result.message
+    assert "nothing here can rebuild it" in result.message
+    assert "rebuilds it, after which" not in result.message
+
+
 # ── WARN: T2=0 only when trw-distill is installed ────────────────────────────
 
 

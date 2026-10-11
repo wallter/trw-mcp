@@ -56,7 +56,7 @@ def test_a_user_edited_review_md_is_kept_and_reported(repo: tuple[Path, Path]) -
 
     assert review.read_text(encoding="utf-8") == edited
     assert "edits TRW did not generate" in str(result.get("kept_existing", ""))
-    assert "--force" in str(result.get("kept_existing", ""))
+    assert "delete it and run trw-mcp update-project" in str(result.get("kept_existing", ""))
 
 
 def test_force_regenerates_an_edited_review_md(repo: tuple[Path, Path]) -> None:
@@ -132,7 +132,8 @@ def test_update_project_keeps_a_committed_user_edit_and_says_so(tmp_path: Path) 
 
     assert review.read_text(encoding="utf-8") == edited
     reported = "\n".join(str(x) for key in ("warnings", "preserved", "info") for x in result.get(key, []))
-    assert "REVIEW.md" in reported and "--force" in reported, reported
+    assert "REVIEW.md" in reported and "delete it and run trw-mcp update-project" in reported, reported
+    assert "--force" not in reported, "update-project has no --force; the hint must name a remedy that exists"
 
 
 def test_a_kept_review_md_is_reported_even_when_the_sync_also_refused(
@@ -141,7 +142,10 @@ def test_a_kept_review_md_is_reported_even_when_the_sync_also_refused(
     """Codex r2 KI: a policy refusal returned early and dropped the REVIEW.md warning."""
     from trw_mcp.bootstrap._ide_targets_finalize import _run_claude_md_sync
 
-    kept = "REVIEW.md kept: it has edits TRW did not generate (use --force to regenerate it)"
+    kept = (
+        "REVIEW.md kept: it has edits TRW did not generate (to replace it with TRW's version, delete it and "
+        "run trw-mcp update-project)"
+    )
     monkeypatch.setattr(
         "trw_mcp.state.claude_md.execute_claude_md_sync",
         lambda **_k: {"refusals": [{"file": "AGENTS.md", "reason": "x"}], "review_md": {"kept_existing": kept}},

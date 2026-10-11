@@ -1,8 +1,9 @@
 """Feedback nudge configuration (PRD-INFRA-132 FR07).
 
-Owns the ``feedback`` nested sub-config on ``TRWConfig``. The nudge engine
-in ``trw_mcp.state._feedback_nudge`` reads these values to decide whether
-and when to surface the ``/trw-feedback`` reminder once per session.
+Owns the ``feedback`` nested sub-config on ``TRWConfig``. No code reads
+these values: the nudge engine that was to read them was deleted by the 8.0
+removals before it was wired (see ``trw_mcp.state._feedback_nudge``), so
+setting them changes nothing until FR07 is rebuilt or withdrawn.
 
 NFR04: ``feedback.proactive`` defaults to ``False`` -- the engine is fully
 opt-in. No counters can produce a nudge while the gate is off.

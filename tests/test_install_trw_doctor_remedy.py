@@ -46,11 +46,12 @@ class _Ui:
 def _run_doctor(monkeypatch: pytest.MonkeyPatch, checks: list[dict[str, Any]]) -> tuple[bool, list[str]]:
     installer = _installer()
     monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
-    monkeypatch.setattr(
-        installer.subprocess,
-        "run",
-        lambda *_a, **_k: subprocess.CompletedProcess([], 1, stdout=json.dumps({"checks": checks}), stderr=""),
-    )
+
+    def fake_run(cmd: list[str], **_k: Any) -> subprocess.CompletedProcess[str]:
+        # Only the doctor answers with its JSON: the assess line is relayed to the user, so it must not carry it.
+        return subprocess.CompletedProcess(cmd, 1, json.dumps({"checks": checks}) if "doctor" in cmd else "", "")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
     ui = _Ui()
     return installer.run_install_doctor(ui, "python3", Path("/tmp/project")), ui.lines
 
@@ -82,19 +83,27 @@ def test_any_other_failure_shows_its_message_and_points_at_doctor(monkeypatch: p
     assert "git init" not in text  # the checkout is initialised; that advice was only ever right for one failure
 
 
-def test_a_missing_framework_still_gets_the_init_remedy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_missing_framework_shows_the_rows_own_init_advice_and_the_installer_adds_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row's message is the advice. The installer no longer derives an init-project line from that prose."""
+    message = "runtime frameworks not installed yet; run 'trw-mcp init-project .'"
+    ok, lines = _run_doctor(monkeypatch, [{"name": "framework_integrity", "status": "FAIL", "message": message}])
+
+    assert ok is False and any(message in line for line in lines)
+    assert [line for line in lines if line.startswith("Fix:")] == [
+        "Fix: see the message above, then run 'trw-mcp doctor' again to confirm."
+    ]
+
+
+def test_a_remedy_sentence_is_the_fix_even_when_it_mentions_init_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    remedy = "trw-mcp update-project (outside a git repository: trw-mcp init-project)."
     ok, lines = _run_doctor(
-        monkeypatch,
-        [
-            {
-                "name": "framework_integrity",
-                "status": "FAIL",
-                "message": "runtime frameworks not installed yet; run 'trw-mcp init-project .'",
-            }
-        ],
+        monkeypatch, [{"name": "hook_python", "status": "FAIL", "message": f"no interpreter. Remedy: {remedy}"}]
     )
 
-    assert ok is False and any("init-project" in line for line in lines)
+    assert ok is False
+    assert [line for line in lines if line.startswith("Fix:")] == [f"Fix: {remedy}"]
 
 
 def test_a_clean_doctor_is_a_pass(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -272,3 +272,42 @@ def test_append_ceremony_status_uses_workspace_config_not_global_singleton(tmp_p
     # The workspace config (nudge_enabled, minimal messenger) governed the call: a nudge was emitted and counted.
     assert "trw_session_start" in result["nudge_content"]
     assert read_ceremony_state(trw_dir).nudge_counts.get("session_start") == 1
+
+
+def test_the_selector_answers_as_6_1_0_did_on_twelve_recorded_states() -> None:
+    """PRD-CORE-303 NFR01: with no cached weights the changed selector picks the same learning and renders the same
+    nudge text as the 6.1.0 selector on 12 recorded states (the four phases, a transition, an empty list, a first
+    candidate with no renderable text, domain narrowing, elision, recall order over impact).
+
+    The expected answers in ``fixtures/nudge_replay_v6_1_0.json`` were produced once by running the 6.1.0 functions
+    (``_contextualize_candidates`` then ``_select_cached_or_deterministic_learning`` with ``bandit_params=None``,
+    then ``_deterministic_fallback_text``) from an export of tag v6.1.0; this test runs today's functions on the same
+    inputs.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from trw_mcp.tools import _ceremony_status_helpers as h
+
+    recorded = json.loads((Path(__file__).parent / "fixtures" / "nudge_replay_v6_1_0.json").read_text(encoding="utf-8"))
+    states = recorded["states"]
+    assert len({s["name"] for s in states}) == len(states) == 12, "NFR01 names twelve distinct states"
+
+    mismatches = []
+    for state in states:
+        candidates = state["candidates"]
+        recall_context = SimpleNamespace(inferred_domains=set(state["domains"]), modified_files=[])
+        is_transition = bool(state["previous_phase"] and state["previous_phase"] != state["phase"])
+        pool = h._contextualize_candidates(candidates, recall_context=recall_context, is_transition=is_transition)
+        chosen = h._select_deterministic_fallback_learning(pool or candidates)
+        got = {
+            "selected_id": chosen.get("id") if chosen is not None else None,
+            "text": h._deterministic_fallback_text(chosen) if chosen is not None else "",
+        }
+        if got != state["expected"]:
+            mismatches.append((state["name"], state["expected"], got))
+
+    assert mismatches == []
+    assert {s["expected"]["selected_id"] for s in states} >= {"L-a1", "L-c3", "L-d4", "L-b2", None}, (
+        "the states must exercise different answers, or a selector that always returns the first row would pass"
+    )

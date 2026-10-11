@@ -299,6 +299,39 @@ def test_probe_embedding_coverage_healthy(fake_memory_store: FakeMemoryStore, tm
     assert result["degraded"] is False
 
 
+@pytest.mark.parametrize(
+    ("extra_rows", "uncovered", "degraded"),
+    [(1, 1, True), (1, 0, False), (0, 1, False)],
+    ids=["past the scan bound, one row uncovered", "past the bound, fully covered", "at the bound, one uncovered"],
+)
+def test_probe_embedding_coverage_flags_a_store_whose_duplicate_check_cannot_run(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, extra_rows: int, uncovered: int, degraded: bool
+) -> None:
+    """2026-10-11: at 27% coverage of ~3,900 rows (above the 10% warn threshold) memory_similar answered
+    unavailable for every learning and trw_learn stored without a duplicate check. A store past the scan
+    bound with any row lacking an active-space vector is degraded, with its own advisory."""
+    from trw_mcp.tools._pipeline_health import DEDUP_SCAN_MAX_ROWS, probe_embedding_coverage
+
+    trw_dir = _make_trw_dir(tmp_path)
+    corpus = DEDUP_SCAN_MAX_ROWS + extra_rows
+    _stock_store(fake_memory_store, corpus=corpus, vec=corpus - uncovered)
+
+    result = probe_embedding_coverage(trw_dir)
+
+    assert (result["degraded"], result["dedup_unavailable"]) == (degraded, degraded)
+    assert ("duplicate check cannot run" in result["advisory"]) is degraded
+    if degraded:
+        assert "trw-mcp memory reembed" in result["advisory"]
+
+
+def test_the_dedup_scan_bound_mirrors_the_daemons() -> None:
+    from trw_memory.tools.similar import EXHAUSTIVE_MAX_ROWS
+
+    from trw_mcp.tools._pipeline_health import DEDUP_SCAN_MAX_ROWS
+
+    assert DEDUP_SCAN_MAX_ROWS == EXHAUSTIVE_MAX_ROWS
+
+
 def test_probe_embedding_coverage_empty_store(tmp_path: Path) -> None:
     """A pinned store with no entries is a measured empty corpus, not a degraded one."""
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage

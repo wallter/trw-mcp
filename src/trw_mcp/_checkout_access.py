@@ -31,14 +31,23 @@ pointing at it, and the descriptor closes only when that set becomes empty. Nor 
 ever closed by retirement (SERIAL-RUN-LEAKS, auditor): it stays pinned with no path naming it until the idle
 eviction finds it unheld.
 A stat-then-open race that opens a second descriptor for an inode already
-pinned closes the extra descriptor under the map lock instead of leaking it
-outside the cap (FR02(b)). The map is capped at ``_MAX_PINNED_FDS`` distinct
+pinned keeps the extra descriptor open and tracked in ``_race_loser_fds``,
+never closed: closing it would drop this process's locks on that inode
+(FR02(b)). The map is capped at ``_MAX_PINNED_FDS`` distinct
 *live* descriptors; hitting the cap raises
 :class:`PinnedReadCapacityExceeded` (an ``OSError``) rather than evicting a
 live descriptor -- UNLESS the path being read is the sole tracked owner of
 its own previous inode, in which case retiring that association frees a slot
 net-zero and the open is allowed (otherwise a replaced mailbox or journal
 file would become permanently unrefreshable once the cache reached its cap).
+Two limits of the cap, both deliberate and both stated by a review (2026-10-11):
+a path replaced while a connection holds its old inode keeps BOTH descriptors
+(the held one is never closed, the new one is admitted as a replacement), so
+the map can stand one above the cap for each such path until the hold ends;
+and a reader refused at the cap retries for as long as other readers keep
+taking the slot it freed or found free, with no bound of its own: every such
+retry follows another reader's completed pin, and only the wait on descriptors
+that are all mid-read is counted (``_BUSY_RETRIES``).
 **The "never evict a live descriptor another path still needs" policy is a
 recorded decision (B71-08, ``docs/sprint-mcp7/PLAN-7.1.md:201``), owned by
 the lead pending worker-2's measurement of real replacement rates;
@@ -425,15 +434,20 @@ def held_connect(path: Path, database: str | None = None, **kwargs: Any) -> sqli
 def _evict_idle_unheld() -> str:
     """Close the least recently read pinned descriptor no held path names and no reader is using.
 
-    Returns ``"evicted"``, ``"busy"`` (every unheld descriptor has a read in flight: worth a brief retry) or
-    ``"held"`` (every descriptor is held: the refusal stands).
+    Returns ``"evicted"``, ``"room"`` (the cache is below its cap again: nothing needs closing), ``"busy"``
+    (every unheld descriptor has a read in flight: worth a brief retry) or ``"held"`` (there is no room, and a
+    hold, or an open connection whose inode is unknown, forbids closing each descriptor: the refusal stands).
 
-    Runs only at the cap, after the dead-path sweep freed nothing. Everything happens under ``_map_lock``,
+    Runs only after a cap refusal, once this call's dead-path sweep has run. Everything happens under ``_map_lock``,
     the ``stat`` of each held path included (eviction is rare and the held set small), so a hold counted by
     :func:`held_connect` either is seen here or belongs to a connection opened after this close.
     """
     with _map_lock:
         _drain_releases_locked()
+        if len(_fds) < _MAX_PINNED_FDS:
+            # The refusal was decided under an earlier hold of the lock. Readers refused together each evict one
+            # descriptor, so the last of them can find nothing left to evict: that is room, not "every one held".
+            return "room"
         if _uncertain_holds > 0:
             return "held"  # an open connection's inode is unknown: nothing may be closed while it lives
         held_inodes: set[tuple[int, int]] = set(_held_inodes)
@@ -543,13 +557,13 @@ def _pinned_fd_for_io(path: Path) -> tuple[int, threading.Lock]:
         except PinnedReadCapacityExceeded:
             # At the cap: reclaim entries whose path is gone, once per call, then the least recently read
             # descriptor nothing holds (SERIAL-RUN-LEAKS; B71-08 as amended: a HELD fd is never evicted). If
-            # neither frees a slot the refusal stands.
+            # neither frees a slot, and no other reader freed one meanwhile, the refusal stands.
             if not swept and _evict_dead_paths() > 0:
                 swept = True
                 continue
             swept = True
             outcome = _evict_idle_unheld()
-            if outcome == "evicted":
+            if outcome in ("evicted", "room"):
                 continue
             if outcome == "busy" and busy_waits < _BUSY_RETRIES:  # in-flight reads finish in microseconds
                 busy_waits += 1

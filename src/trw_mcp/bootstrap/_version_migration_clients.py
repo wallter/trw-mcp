@@ -445,20 +445,18 @@ def _codex_manifest_hashes(target_dir: Path, prev_hashes: dict[str, str] | None 
     """
     import hashlib
 
-    from ._managed_client_artifacts import artifact_user_edited
+    from ._managed_client_artifacts import proven_digest
 
     hashes: dict[str, str] = {}
     for key, incoming in codex_artifact_contents().items():
         dest = target_dir / key
         if not dest.is_file():
             continue
-        if artifact_user_edited(dest, key, incoming, prev_hashes):
+        digest = proven_digest(dest, key, {hashlib.sha256(incoming).hexdigest()}, prev_hashes)
+        if digest is None:
             logger.info("codex_manifest_ownership_declined", path=key)
             continue
-        try:
-            hashes[key] = hashlib.sha256(dest.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("codex_content_hash_failed", path=str(dest))
+        hashes[key] = digest
     return hashes
 
 

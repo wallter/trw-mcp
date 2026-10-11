@@ -430,12 +430,15 @@ def register_orchestration_tools(server: FastMCP) -> None:
         """
         if heartbeat:
             return cast("dict[str, object]", compute_heartbeat_result(ctx, message))
-        if pre_compact:
+        if pre_compact and not message.strip():
             return cast(
                 "dict[str, object]",
-                execute_pre_compact_checkpoint(ctx, directive, context_anchor),
+                execute_pre_compact_checkpoint(ctx, directive, context_anchor, run_path),
             )
 
+        # With pre_compact, a message is recorded here first, as any checkpoint is and with the same refusals,
+        # and the capture follows: it used to be dropped for a fixed text, and writing it from the capture
+        # itself would let a message this path refuses (a factory transition) into the journal.
         result = execute_checkpoint(
             run_path,
             message,
@@ -458,4 +461,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
             tool_success=result.get("recorded") is True,
         )
 
+        if pre_compact and result.get("recorded") is True:
+            # Two writes, two outcomes: the message is recorded whatever the capture then does (it can be switched
+            # off, find nothing to snapshot or fail), so the capture's answer carries the checkpoint's own result.
+            capture = cast(
+                "dict[str, object]",
+                execute_pre_compact_checkpoint(ctx, directive, context_anchor, run_path),
+            )
+            capture["checkpoint"] = result
+            return capture
         return result

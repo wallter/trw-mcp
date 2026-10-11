@@ -35,6 +35,7 @@ gate in this slice.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import shutil
 import subprocess
@@ -46,6 +47,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import structlog
+from trw_memory import _store_lock
+from trw_memory._inode_pin import current_identity
 from trw_memory.testing.daemon_reaper import (
     reap_daemons_under,
     stop_spawned,
@@ -301,6 +304,41 @@ def pytest_testnodedown(node: object, error: object) -> None:
     for key, stash_key in ((_WORKER_LEAKS_KEY, _WORKER_LEAKS), (_WORKER_SURVIVORS_KEY, _WORKER_SURVIVORS)):
         if pids := output.get(key) or []:
             config.stash[stash_key] = [*config.stash.get(stash_key, []), *pids]
+
+
+def _collect_leaked_stores(tmp_path: Path | None) -> bool:
+    """Run one collection when an unclosed store under *tmp_path* holds a lock file that is gone; True when it ran.
+
+    An unclosed ``SQLiteBackend`` sits in a reference cycle and keeps its ``open`` hold until the cyclic collector
+    runs. pytest removes a passed test's tmp_path and hands the same directory name to the next parametrized case, so
+    that case's new store read as "the lock file was replaced while this process held it" (macOS gives the recreated
+    file a new inode), and only when no collection happened to run in between: a file run alone failed, the suite
+    passed. A collection costs about 40 ms, so it runs only when the next open of that name WOULD be refused: a hold
+    is still counted under this test's own tmp_path and its lock file was removed or replaced (the registry's own
+    test). A store something still references stays open.
+    """
+    if tmp_path is None:
+        return False
+    root = os.path.realpath(tmp_path) + os.sep  # the registry keys are resolved; macOS tmp sits behind a symlink
+    held = [file for name, file in tuple(_store_lock._FILES.items()) if file.users and name.startswith(root)]
+    if all(current_identity(file.name) == file.identity for file in held):
+        return False
+    gc.collect()
+    return True
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
+    """After every fixture of the test is torn down, release the store locks it leaked (``_collect_leaked_stores``).
+
+    A hook, not an autouse fixture: it runs after ALL fixture teardown whatever the fixture order, so a store a
+    fixture closes itself is already closed and never costs a collection.
+    """
+    tmp_path = getattr(item, "funcargs", {}).get("tmp_path")
+    try:
+        return (yield)
+    finally:
+        _collect_leaked_stores(tmp_path)
 
 
 _MIN_FREE_GB_ENV = "TRW_PYTEST_MIN_FREE_GB"

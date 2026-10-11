@@ -223,6 +223,11 @@ def _run_hook(
             "TRW_TEST_PHASE": phase,
             "TRW_HOOK_LOG": str(project_root / "hook.log"),
             "TRW_PYTHON": str(fixture_store_python(project_root)),
+            # Outcome tests must not depend on host load: with the default 2 s recall deadline a slow start inside a
+            # full suite injects nothing (one such failure in another file, 2026-10-11). The deadline tests set
+            # their own values through env_overrides, which are applied after these.
+            "TRW_AUTO_RECALL_DEADLINE_MS": "30000",
+            "TRW_HOOK_BUDGET_MS": "40000",
         }
     )
     if path_override is not None:

@@ -318,3 +318,23 @@ def test_a_create_without_a_project_root_is_written_unstamped(checkout: tuple[Pa
     )
 
     assert result["status"] == "recorded" and captured.assertions == [dict(_FIXED)]
+
+
+def test_a_failed_head_lookup_logs_the_error_class_and_nothing_of_its_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security review, second pass: an exception's message can carry a path or git's own output, so only the
+    exception's class is logged."""
+    import structlog
+
+    from trw_mcp.tools import _learn_assertion_stamp
+
+    def refuse(_root: Path) -> str:
+        raise RuntimeError(f"fatal: cannot read {tmp_path}/secret-token-file")
+
+    monkeypatch.setattr(_learn_assertion_stamp.claim_tree, "checkout_head", refuse)
+    with structlog.testing.capture_logs() as logs:
+        assert _learn_assertion_stamp.stamp_assertions([dict(_FIXED)], tmp_path) == [_FIXED]
+
+    assert [(entry["event"], entry["error"]) for entry in logs] == [("assertion_stamp_unavailable", "RuntimeError")]
+    assert "secret-token-file" not in repr(logs)

@@ -172,6 +172,44 @@ def test_install_check_headless_reports_a_project_only_key_and_never_prompts(
     assert not (home / ".trw" / "jev.env").exists()
 
 
+def test_install_check_command_shows_the_project_under_home_with_a_tilde_and_configure_accepts_it(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The printed command carries no user name, and it works as printed even where no shell expands the ``~``."""
+    from trw_mcp.tools._assess_cli import install_check
+
+    project = home / "work" / "app"
+    project.mkdir(parents=True)
+    (project / ".env").write_text(f"OPENROUTER_API_KEY={_KEY}\n", encoding="utf-8")
+
+    line = install_check(project, offer=False)
+
+    assert line.endswith("run: trw-mcp assess configure --from-env-file ~/work/app/.env")
+    assert str(home) not in line
+    argv = line.partition("run: trw-mcp ")[2].split()  # as a quoting shell, or `--opt=~/x`, would pass it
+    assert _dispatch([*argv, "--no-enable"]) == 0
+    assert f"OPENROUTER_API_KEY={_KEY}" in _store_text(home)
+
+
+def test_install_check_command_quotes_a_path_with_a_space_and_keeps_one_outside_home_absolute(
+    home: Path, tmp_path: Path
+) -> None:
+    import shlex
+
+    from trw_mcp.tools._assess_cli import install_check
+
+    inside, outside = home / "my work", tmp_path / "elsewhere"
+    for project in (inside, outside):
+        project.mkdir()
+        (project / ".env").write_text(f"OPENROUTER_API_KEY={_KEY}\n", encoding="utf-8")
+
+    def path_argument(project: Path) -> str:
+        return shlex.split(install_check(project, offer=False).partition("run: ")[2])[-1]
+
+    assert path_argument(inside) == "~/my work/.env"
+    assert path_argument(outside) == str(outside.resolve() / ".env")
+
+
 def test_install_check_offer_accepted_promotes_to_the_machine(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

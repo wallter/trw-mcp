@@ -1,67 +1,37 @@
-"""WAL-checkpoint trigger policy and its persisted clock (PRD-CORE-248 FR04).
-
-Parent facade: :mod:`trw_mcp.state.memory_adapter` (via ``_memory_lookups``),
-which owns the checkpoint execution. This module owns only the *decision*, so
-the ceremony layer stops holding a storage policy whose state it cannot see.
+"""WAL-checkpoint clocks beside the user memory store, read by the ``memory_wal`` doctor row (PRD-CORE-248 FR06).
 
 The markers are WRITTEN by the daemon's own checkpoint (``trw_memory.storage._wal_checkpoint.stamp_checkpoint_markers``);
-this module only reads them. Three things live here, and they are separate on purpose:
+this module only reads them. Since PRD-CORE-298 the daemon is the one writer and decides when to checkpoint, so the
+trigger that used to live here (``evaluate_wal_trigger``, PRD-CORE-248 FR04, size OR age, with no production caller
+left after the CORE-298 move) was deleted on 2026-10-11; what remains is reading the three clocks honestly.
 
 A note on the two size numbers, because they look like drift and are not:
-``wal_checkpoint_threshold_mb`` (10 MB default) is the size at which a
-checkpoint becomes DUE; trw-memory's ``WAL_JOURNAL_SIZE_LIMIT_BYTES``
-(``storage/_connection.py``, 64 MiB) is the size SQLite trims the file back TO
-when the WAL next resets -- a truncation target, not a ceiling it enforces on an
-active WAL, which can exceed it during a write burst under a long-lived reader. On an engine below 3.51.3 only PASSIVE may run and PASSIVE never
-truncates, so a busy store settles around the 64 MiB truncation target with the 10 MB trigger
-firing on every evaluation and reclaiming nothing. That is the documented
-consequence of the engine gate, not a mis-set knob.
+``wal_checkpoint_threshold_mb`` (10 MB default) is the size at which the doctor row calls a WAL oversized;
+trw-memory's ``WAL_JOURNAL_SIZE_LIMIT_BYTES`` (``storage/_connection.py``, 64 MiB) is the size SQLite trims the file
+back TO when the WAL next resets -- a truncation target, not a ceiling it enforces on an active WAL. On an engine below
+3.51.3 only PASSIVE may run and PASSIVE never truncates, so a busy store settles around the 64 MiB truncation target.
+That is the documented consequence of the engine gate, not a mis-set knob.
 
-**When is a checkpoint due** — size OR age. The size trigger alone was the whole
-policy, and a store below the threshold could go un-checkpointed forever on a
-low-write machine. The age trigger is measured against a timestamp persisted
-beside the store, so it survives the process restarts a stdio server does
-constantly; an absent or unreadable timestamp means "due", which makes the first
-run on any existing store checkpoint once rather than inheriting an unknown age.
-
-**What mode may run** — ``PASSIVE`` only, which never resets the WAL and is safe
-with any number of concurrent connections. ``TRUNCATE`` needed this process to be
-the certified sole live writer; PRD-CORE-298 FR01 deleted the writer locks that
-certified it, because the daemon is the one writer.
-
-**How cheap a no-op evaluation is** — NFR01 requires one ``stat`` call and zero
-SQLite connections when nothing is due. The trigger therefore reads the WAL size
-and the timestamp file and nothing else; the caller opens a connection only
-after :func:`evaluate_wal_trigger` says the checkpoint is due.
-
-What is deliberately NOT here: writer pressure never cancels the checkpoint.
-That cancel-or-run decision (PRD-INFRA-171 FR06 fixed the same defect for the
-journal drain and left this one behind) is gone.
+An absent or unreadable marker is "unknown", never a fabricated age; a marker from the future is unknown too.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
-
-from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
 
 __all__ = [
     "CHECKPOINT_ATTEMPT_SUFFIX",
     "CHECKPOINT_EFFECTIVE_SUFFIX",
-    "WalTrigger",
     "checkpoint_marker_path",
     "effective_checkpoint_marker_path",
-    "evaluate_wal_trigger",
     "last_checkpoint_age_seconds",
     "last_effective_checkpoint_age_seconds",
     "last_reset_checkpoint_age_seconds",
-    "resolve_wal_paths",
 ]
 
 #: Sidecar holding the epoch seconds of the last checkpoint that RAN without
@@ -109,22 +79,6 @@ CHECKPOINT_RESET_SUFFIX = ".checkpoint-reset-ts"
 #: anything beyond this is real clock skew or a restored backup, and guessing
 #: "very recently checkpointed" from it would suppress the age trigger forever.
 _FUTURE_MARKER_TOLERANCE_SECONDS = 1.0
-
-
-@dataclass(frozen=True)
-class WalTrigger:
-    """Why (or whether) a checkpoint is due, with the numbers behind it."""
-
-    due: bool
-    reason: str
-    wal_size_bytes: int
-    age_seconds: float | None
-
-
-def resolve_wal_paths(trw_dir: Path) -> tuple[Path, Path]:
-    """Return ``(db_path, wal_path)`` for the project memory store."""
-    db_path = trw_dir / "memory" / "memory.db"
-    return db_path, db_path.with_suffix(".db-wal")
 
 
 def checkpoint_marker_path(db_path: Path) -> Path:
@@ -180,32 +134,3 @@ def _marker_age(marker: Path, *, now: float | None = None) -> float | None:
     if age < -_FUTURE_MARKER_TOLERANCE_SECONDS:
         return None
     return max(age, 0.0)
-
-
-def evaluate_wal_trigger(trw_dir: Path, config: TRWConfig, *, now: float | None = None) -> WalTrigger:
-    """Decide whether a checkpoint is due. Opens no SQLite connection (NFR01).
-
-    Due when the WAL is at or above ``wal_checkpoint_threshold_mb`` **or** the
-    last successful checkpoint is at least ``wal_checkpoint_max_age_seconds``
-    old. An unknown age counts as due, so a store that has never recorded a
-    checkpoint gets one.
-    """
-    db_path, wal_path = resolve_wal_paths(trw_dir)
-    try:
-        wal_size = wal_path.stat().st_size
-    except OSError:
-        return WalTrigger(due=False, reason="no_wal_file", wal_size_bytes=0, age_seconds=None)
-
-    age = last_checkpoint_age_seconds(db_path, now=now)
-    over_size = wal_size >= config.wal_checkpoint_threshold_mb * 1024 * 1024
-    over_age = age is None or age >= config.wal_checkpoint_max_age_seconds
-
-    if over_size and over_age:
-        reason = "size_and_age"
-    elif over_size:
-        reason = "size"
-    elif over_age:
-        reason = "age" if age is not None else "never_checkpointed"
-    else:
-        reason = "not_due"
-    return WalTrigger(due=over_size or over_age, reason=reason, wal_size_bytes=wal_size, age_seconds=age)

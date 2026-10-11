@@ -1,6 +1,12 @@
-"""Feedback nudge engine (PRD-INFRA-132 FR07).
+"""Feedback nudge engine (PRD-INFRA-132 FR07) -- REMOVED.
 
-Tracks per-session signals that suggest the user may have hit a TRW bug,
+Status (2026-10-11): the engine below was never wired to a production
+caller, and the 8.0 removals deleted it as dead code (83754efb3b,
+PRD-CORE-313 FR01). Only the counter shape is left. The design notes are
+kept for a rebuild; whether to rebuild or withdraw FR07 is an open
+operator decision (PRD-INFRA-132 ``stubs``).
+
+As designed, it tracked per-session signals that suggest the user may have hit a TRW bug,
 and surfaces a single ``/trw-feedback`` reminder once any signal crosses
 its configured threshold.
 

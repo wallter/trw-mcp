@@ -133,7 +133,10 @@ def _fan_out(
             reqs.append((lane.label, build(lane.client or None, lane.model, prompts[max(lane.variant, 1) - 1])))
         except DispatchResolutionError as err:
             failed.append({"target": lane.label, "ok": False, "error": str(err), "reason": "resolution_error"})
-    results = [*(_run_fanout(reqs) if reqs else []), *failed]
+    # The CLI waits the configured dispatch_slot_wait_s for a slot, as its single dispatch does; only the MCP
+    # tool's lanes take the short wait (a fan-out here used to give every lane 10 s, and lanes over the cap
+    # came back as concurrency_cap instead of queueing).
+    results = [*(_run_fanout(reqs, run=dispatch) if reqs else []), *failed]
     payload = json.dumps({"status": f"{sum(1 for r in results if r.get('ok'))}/{len(results)} succeeded",
                           "results": results}, indent=2, default=str)  # fmt: skip
     if output_file:

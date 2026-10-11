@@ -297,7 +297,7 @@ def _compute_content_hashes(
     overwrite it. Omission is what makes ``_is_user_modified`` fall through to the
     framework baseline and preserve again.
     """
-    from ._managed_client_artifacts import artifact_user_edited_against
+    from ._managed_client_artifacts import proven_digest
 
     hashes: dict[str, str] = {}
     for key, path, framework_hashes in _core_artifact_baselines(target_dir, bundled, data_dir):
@@ -309,13 +309,11 @@ def _compute_content_hashes(
             # that error path is how the defect would come back (NFR04).
             logger.warning("manifest_baseline_unavailable", path=key)
             continue
-        if artifact_user_edited_against(path, key, framework_hashes, prev_hashes):
+        # The digest stored is of the very bytes proven (one read): never a second read a save could change.
+        if (digest := proven_digest(path, key, framework_hashes, prev_hashes)) is None:
             logger.info("manifest_ownership_declined", path=key)
             continue
-        try:
-            hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            logger.warning("content_hash_failed", path=str(path))
+        hashes[key] = digest
     return hashes
 
 
@@ -509,6 +507,8 @@ def _apply_agent_update(
     if _is_user_modified(dest, _manifest_key_for(key), manifest_hashes, framework_hashes=framework_hashes):
         logger.info("artifact_user_modified", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
+        if _manifest_key_for(key) not in (manifest_hashes or {}):  # no record: the report must not say "edited"
+            result.setdefault("unrecorded", []).append(str(dest))
         # Also recorded under ``preserved``, which is the bucket the CLI summary
         # counts ("N preserved"). ``modified`` is read by callers that need the
         # absolute path and is surfaced nowhere, so recording only there made a

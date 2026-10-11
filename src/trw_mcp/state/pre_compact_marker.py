@@ -228,6 +228,23 @@ def read_pre_compact_marker(trw_dir: Path | None = None) -> PreCompactMarker | N
     return read_pre_compact_marker_detail(trw_dir).marker
 
 
+def read_pre_compact_marker_run_path(trw_dir: Path | None = None) -> str:
+    """The ``run_path`` a VALID marker carries, or ``""``: one read, so what is validated is what is returned.
+
+    ``run_path`` is one of the writers' extra keys, not part of the typed subset; a marker that does not classify
+    as valid yields nothing, whatever it names.
+    """
+
+    try:
+        raw = json.loads(pre_compact_marker_path(trw_dir).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # trw-fail-silent-allow: an absent or unreadable marker names no run
+        return ""
+    if _classify(raw).marker is None or not isinstance(raw, dict):
+        return ""
+    named = raw.get("run_path")
+    return named if isinstance(named, str) else ""
+
+
 def write_pre_compact_marker(state: Mapping[str, object], trw_dir: Path | None = None) -> None:
     """Write the marker document atomically (PRD-CORE-258-FR07).
 

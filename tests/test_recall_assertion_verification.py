@@ -24,6 +24,7 @@ onward touches no memory store at all (plain dicts) and needed no change.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -45,8 +46,13 @@ def project(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def backend(tmp_path: Path) -> SQLiteBackend:
-    return SQLiteBackend(tmp_path / "store" / "memory.db")
+def backend(tmp_path: Path) -> Iterator[SQLiteBackend]:
+    # Closed here, not left to the collector: an unclosed backend keeps its store lock until a collection runs, and
+    # pytest hands a removed tmp_path's name to the next parametrized case, whose new store then reads as "the lock
+    # file was replaced while this process held it".
+    store = SQLiteBackend(tmp_path / "store" / "memory.db")
+    yield store
+    store.close()
 
 
 def _store(backend: SQLiteBackend, entry_id: str, assertions: list[Assertion]) -> None:

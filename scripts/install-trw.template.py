@@ -2129,6 +2129,19 @@ _CONFIG_WARNING_LINE_RE = re.compile(r"^TRW: WARNING \u2014\s*")
 #: an edit it made to the operator's own CLAUDE.md (``print_claude_md``) or AGENTS.md block, a ``Note:`` (hook timeouts rewritten) or the ``Status: ready, N item(s)`` line (``print_refreshed``, ``_summarize_update_result``). Either may touch the operator's files, so
 #: the spinner must not swallow it (FB-INSTALL-03).
 _RETIRED_LINE_RE = re.compile(r"^(?:(?:Removed retired TRW file|CLAUDE\.md|AGENTS\.md|Note):|Status: ready,)\s*")
+#: ``update-project``'s closing line. Its "ready" means "files refreshed", and the doctor's verdict comes after it, so
+#: relayed verbatim it read "ready" and then "health check FAILED", with a "(see above)" for lines printed later.
+_STATUS_LINE_RE = re.compile(r"^Status: ready(?:, (\d+ item\(s\) need attention))?(?: \(see above\))?$")
+
+
+def _relayed(line: str) -> str:
+    """*line* as the installer shows it: the child's status line says what it is, every other line is unchanged."""
+    status = _STATUS_LINE_RE.match(line.strip())
+    if status is None:
+        return line
+    return "Update finished" + (f", {status.group(1)}" if status.group(1) else "")
+
+
 #: A per-file progress line, used only to advance the spinner's counter.
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
@@ -2188,7 +2201,7 @@ def run_with_progress(
                 elif _CONFIG_WARNING_LINE_RE.match(line):
                     ui.defer_warn(_CONFIG_WARNING_LINE_RE.sub("", line, count=1).strip())  # defer_warn dedups
                 elif _RETIRED_LINE_RE.match(line):
-                    ui.defer_warn(line)
+                    ui.defer_warn(_relayed(line))
                 elif _PROGRESS_LINE_RE.match(line):
                     file_count += 1
                     short = _PROGRESS_LINE_RE.sub("", line, count=1)[:60]
@@ -2206,7 +2219,7 @@ def run_with_progress(
                 ):
                     continue  # the same config warning every earlier per-client run already showed
                 if not ui.quiet:
-                    print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
+                    print(f"{GREEN}[TRW]{NC}   {_relayed(line.rstrip())}")
 
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
@@ -5230,11 +5243,12 @@ def _refusal_lines(output: list[str], recovery: list[str] | None = None) -> list
 
 
 def uncaptured_env() -> dict[str, str]:
-    """The environment for a trw-mcp subprocess whose stderr goes straight to the terminal.
+    """The environment for a trw-mcp subprocess that must not print the config-key warning again.
 
     trw-mcp prints the retired/unrecognised config-key warning on stderr unless ``TRW_RETIRED_KEY_WARNING=off``.
-    The installer shows it once, from the CAPTURED ``update-project`` output, so a command that is not captured
-    runs with it off, and a captured one (update-project, the doctor, the dispatch step) must not.
+    The installer shows it once, from the CAPTURED ``update-project`` output, so every other command runs with it
+    off, whether its output is relayed or goes straight to the terminal; update-project, the doctor and the
+    dispatch step, whose captured output the installer reads the warning from, must not.
     """
     return {**os.environ, "TRW_RETIRED_KEY_WARNING": "off"}
 
@@ -5595,6 +5609,53 @@ def run_dispatch_step(ui: UI, trw_cmd: list[str], target_dir: Path, extra: tuple
     ui.step_warn(f"Dispatch setup was not completed ({failure}); run 'trw-mcp config dispatch .' to set it up.")
 
 
+_ASSESS_CHECK_TIMEOUT_SECONDS = 120
+
+
+def _relay_assess_check(ui: UI, cmd: list[str]) -> None:
+    """Run ``assess install-check`` and show what it printed as warning steps, the home directory written ``~``.
+
+    Advisory: a non-zero exit, a timeout or a child that cannot start is reported and never fails the install, and
+    whatever the child printed before that is still shown. Its ``--offer`` prompt is on ``/dev/tty``, not captured.
+    """
+    note = ""
+    try:
+        proc = subprocess.run(  # relayed below, after update-project already showed the config warning once
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_ASSESS_CHECK_TIMEOUT_SECONDS,
+            check=False,
+            env=uncaptured_env(),
+        )
+        parts: list[str | bytes | None] = [proc.stdout, proc.stderr]
+        if proc.returncode != 0:
+            note = f"'trw-mcp assess install-check' exited {proc.returncode}"
+    except subprocess.TimeoutExpired as exc:
+        parts = [exc.stdout, exc.stderr]
+        note = f"'trw-mcp assess install-check' did not complete in {_ASSESS_CHECK_TIMEOUT_SECONDS}s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        parts, note = [], f"Could not run 'trw-mcp assess install-check' ({exc})"
+    if note:
+        parts.append(f"{note}; the install continues. Run 'trw-mcp assess status' to check trw_assess.")
+    text = "\n".join(p.decode(errors="replace") if isinstance(p, bytes) else p or "" for p in parts)
+    for line in _home_as_tilde(text, str(Path.home())).splitlines():
+        if line.strip():
+            ui.step_warn(line.strip())
+
+
+def _home_as_tilde(text: str, home: str) -> str:
+    """*text* with the home directory written ``~``, only where *home* is a whole path prefix.
+
+    A plain replace turned ``/Users/alice/x`` into ``~ice/x`` for a home of ``/Users/al``: another user's
+    directory. The prefix must end at a separator or at the end of the path.
+    """
+    home = home.rstrip("/")
+    if not home:  # a home of "/" is every path's prefix
+        return text
+    return re.sub(rf"(?<![\w./-]){re.escape(home)}(?=/|[\s\"'`:;,)]|$)", "~", text)
+
+
 def run_install_doctor(
     ui: UI,
     python: str,
@@ -5616,11 +5677,7 @@ def run_install_doctor(
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     # trw_assess (jev) first: inherit the machine key (~/.trw/jev.env) in one line, or offer once (interactive only)
     # to promote a key found only in this project's .env. Never writes the key into a project file; advisory.
-    subprocess.run(
-        [*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive],
-        check=False,
-        env=uncaptured_env(),
-    )
+    _relay_assess_check(ui, [*trw_cmd, "assess", "install-check", str(target_dir), *["--offer"] * ui.interactive])
     run_dispatch_step(ui, trw_cmd, target_dir, dispatch_args)  # PRD-INFRA-210 FR08: after assess, advisory
     proc = _run_doctor_command(ui, [*trw_cmd, "doctor", str(target_dir), "--format", "json"])
     if proc is None:
@@ -5642,26 +5699,34 @@ def run_install_doctor(
             # FB-INSTALL-01: the row's own message says what broke and how to fix it (the generic fix
             # below does not repair e.g. a hook family whose lib is out of date).
             ui.step_warn(f"  FAIL: {name}: {message}" if message else f"  FAIL: {name}")
-        messages = [message for _name, message in failed]
-        # The remedy follows what failed (E2E-INC-131): `git init && init-project` is only right for a project that
-        # was never initialised, and it was printed over a daemon_version_mismatch in an initialised repository.
-        if any("daemon_version_mismatch" in m for m in messages):
-            ui.step_warn(
-                "Fix: a memory daemon of an older version is still serving. The user stops it (its pid is named "
-                "above); the next TRW call starts the new one. Then run 'trw-mcp doctor' again."
-            )
-        elif any("init-project" in m for m in messages):
-            ui.step_warn("Fix: run 'trw-mcp init-project .' in this directory (add 'git init &&' if it is not a repo).")
-        else:
-            ui.step_warn("Fix: see the message above, then run 'trw-mcp doctor' again to confirm.")
+        # The Fix line is the failing row's own "Remedy:" sentence, never a command picked by searching the prose for
+        # a command name: "init-project" inside a parenthetical for directories that are not repositories used to
+        # answer a git repository with init-project right after the doctor said update-project. A row without that
+        # sentence (every doctor before it existed) gets a line that names no repair, only the doctor itself.
+        fixes: list[str] = []
+        for _name, message in failed:
+            remedy = message.partition("Remedy:")[2].strip()
+            if remedy:
+                fix = f"Fix: {remedy}"
+            elif "daemon_version_mismatch" in message:  # E2E-INC-131: a diagnosis token, and the fix is no command
+                fix = (
+                    "Fix: a memory daemon of an older version is still serving. The user stops it (its pid is named "
+                    "above); the next TRW call starts the new one. Then run 'trw-mcp doctor' again."
+                )
+            else:
+                fix = "Fix: see the message above, then run 'trw-mcp doctor' again to confirm."
+            if fix not in fixes:
+                fixes.append(fix)
+                ui.step_warn(fix)
         return False
     warned = [c for c in checks if isinstance(c, dict) and c.get("status") == "WARN"]
     if warned:
         noun = "warning" if len(warned) == 1 else "warnings"
         names = ", ".join(str(c.get("name", "?")) for c in warned)
         ui.step_warn(f"Framework health check: {len(warned)} {noun} ({names}); run 'trw-mcp doctor' for details")
-        # FB-INSTALL-05 a: a row's own remedy ('fix: trw-mcp memory reembed') is printed, not left to the doctor.
-        for c in (c for c in warned if "fix:" in str(c.get("message", ""))):
+        # FB-INSTALL-05 a: a row's own remedy ('fix: trw-mcp memory reembed', or a "Remedy:" sentence) is printed,
+        # not left to the doctor: a warning whose fix the installer hides is a warning nobody acts on.
+        for c in (c for c in warned if any(mark in str(c.get("message", "")) for mark in ("fix:", "Remedy:"))):
             ui.step_warn(f"  {c.get('name', '?')}: {str(c['message']).strip()}")
         return True
     ui.step_ok("Framework health check passed (trw-mcp doctor: no failures)")
@@ -6367,15 +6432,16 @@ def main() -> None:
     # scripts/install.sh and to name the gap explicitly rather than silently
     # ignoring a channel request this copy cannot honor (see the refusal in
     # main()).
+    channels = ("local", "stable")
     parser.add_argument(
         "--channel",
         dest="channel",
         default=os.environ.get("TRW_CHANNEL", "stable"),
-        choices=("local", "canary", "stable"),
+        choices=channels,
         help=(
             "Where the pinned pair comes from (or set TRW_CHANNEL). This bundled-wheel installer only "
-            "ever carries the 'stable' pair it was built with -- 'local'/'canary' refuse with guidance "
-            "to scripts/install.sh, which resolves those channels against a wheelhouse or PyPI directly."
+            "ever carries the 'stable' pair it was built with -- 'local' refuses with guidance "
+            "to scripts/install.sh, which installs a local cut from a wheelhouse."
         ),
     )
     # PRD-SEC-006-FR09: offline / air-gapped install from embedded wheels.
@@ -6471,17 +6537,21 @@ def main() -> None:
     # pair this copy cannot fetch -- refuse clearly instead of silently
     # installing the bundled pair anyway (the prior behavior: the flag parsed
     # but was never read past this point).
+    if args.channel not in channels:
+        # argparse checks `choices` for a value given on the command line, not for a default read from TRW_CHANNEL.
+        parser.error(f"TRW_CHANNEL={args.channel} is not a channel (choose from {', '.join(channels)})")
     if args.channel != "stable":
         parser.error(
             f"--channel {args.channel} is not supported by this bundled installer (it only ever carries "
-            f"the {TRW_VERSION} stable pair it was built with). Use scripts/install.sh TRW_CHANNEL={args.channel} "
-            "instead, which resolves 'local' against a wheelhouse and 'canary' against PyPI --pre directly."
+            f"the {TRW_VERSION} stable pair it was built with). From a checkout, run "
+            f"`TRW_CHANNEL={args.channel} bash scripts/install.sh` instead, which installs a local cut from a wheelhouse."
         )
     if args.pin_version and args.pin_version != TRW_VERSION:
         parser.error(
             f"--version {args.pin_version} does not match the pair bundled in this installer ({TRW_VERSION}). "
-            f"This copy cannot fetch a different release -- use scripts/install.sh TRW_VERSION={args.pin_version} "
-            "(PyPI-direct) or download the installer built for that version."
+            f"This copy cannot fetch a different release -- from a checkout, run "
+            f"`TRW_VERSION={args.pin_version} bash scripts/install.sh` (PyPI-direct), or download the installer built "
+            "for that version."
         )
 
     # ── Proprietary install env-var fallback + pin validation ────────

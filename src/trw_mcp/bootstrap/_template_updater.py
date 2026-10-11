@@ -200,6 +200,10 @@ def _guarded_copy_update(
     if _is_user_modified(dest, manifest_key, manifest_hashes, framework_hashes=framework_hashes):
         logger.info("artifact_user_modified", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
+        if manifest_key not in (manifest_hashes or {}):
+            # Kept all the same, but "you edited it" would be a guess: with no record, an older TRW copy and a
+            # user's edit are the same thing to this check, and the report says so (sub_GOYE8ssHqS).
+            result.setdefault("unrecorded", []).append(str(dest))
         return
     if root is not None and absent:  # the check saw no file: create it only if it is still absent (test_E)
         _create_if_absent(src, dest, result, make_executable=make_executable)
@@ -335,9 +339,9 @@ def _update_skills(
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
                         dest = dest_skill / skill_file.name
-                        # Manifest only hashes each skill's SKILL.md
-                        # (``{name}/SKILL.md``); other files fall through to
-                        # update since they carry no baseline hash.
+                        # The manifest recorder records only ``{skill}/SKILL.md``; ``--rerender`` records
+                        # another file until the next plain update drops the key again. A file with no
+                        # record that differs from the bundle is kept and reported as unrecorded.
                         _guarded_copy_update(
                             skill_file,
                             dest,

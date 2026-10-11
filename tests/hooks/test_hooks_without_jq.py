@@ -1,7 +1,7 @@
 """PRD-FIX-156 FR04 (B71-22): no hook goes dark because jq is missing.
 
-The cursor and copilot edit hints and the degenerate-result advisory read their
-payload with jq, else python3. These tests run the REAL hooks with jq hidden
+The cursor, copilot and Claude Code edit hints and the degenerate-result advisory
+read their payload with jq, else python3. These tests run the REAL hooks with jq hidden
 and compare against the jq run, then with neither parser, where each hook keeps
 its allow / print-nothing / silent exit (and the degenerate-result hook logs
 ``jq_unavailable=1``, the key every hook uses for "no JSON parser").
@@ -34,7 +34,24 @@ _HINT_HOOKS: dict[str, tuple[str, dict[str, object]]] = {
         "c5-copilot-debounce",
         {"toolName": "edit", "toolArgs": {"filePath": _EDIT}},
     ),
+    "claude_code/hooks/pre-tool-distill-hint.sh": (
+        "cc03-debounce",
+        {"tool_name": "Edit", "tool_input": {"file_path": _EDIT}},
+    ),
 }
+
+
+def _hook_script(hook: str, project: Path) -> Path:
+    """The script to run. The Claude Code hint sources ``lib-trw.sh`` from its own directory, which holds only
+    once it is installed (run from the bundle it stops before reading anything, and every assertion about it
+    would hold for the wrong reason), so it is laid out beside its libraries the way the installer does it."""
+    if not hook.startswith("claude_code/"):
+        return DATA / hook
+    installed = project / ".claude" / "hooks"
+    installed.mkdir(parents=True, exist_ok=True)
+    for source in (*sorted((DATA / "claude_code" / "hooks").glob("*.sh")), DATA / "hooks" / "lib-trw.sh"):
+        shutil.copy2(source, installed / source.name)
+    return installed / Path(hook).name
 
 
 def _run_hint(hook: str, project: Path, path: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
@@ -43,7 +60,7 @@ def _run_hint(hook: str, project: Path, path: str) -> tuple[subprocess.Completed
     (project / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
     debounce_dir, payload = _HINT_HOOKS[hook]
     result = subprocess.run(
-        ["sh", str(DATA / hook)],
+        ["sh", str(_hook_script(hook, project))],
         input=json.dumps(payload),
         capture_output=True,
         text=True,
@@ -96,9 +113,10 @@ def test_parsing_never_runs_the_checkout_chosen_interpreter(tmp_path: Path, hook
     extension_skipped = json.loads(json.dumps(payload).replace(_EDIT, "notes.md"))
     no_jq = path_without(tmp_path, {"jq"})
 
+    script = _hook_script(hook, project)
     for body in ({}, extension_skipped):
         result = subprocess.run(
-            ["sh", str(DATA / hook)],
+            ["sh", str(script)],
             input=json.dumps(body),
             capture_output=True,
             text=True,

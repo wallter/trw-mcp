@@ -160,7 +160,7 @@ def _jq_free_env(root: Path, tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> None:
-    """FR02: with jq hidden, the snapshot carries the same nine keys as with jq."""
+    """FR02: with jq hidden, the snapshot carries the same keys as with jq."""
     root, own, _foreign = build_project(tmp_path, own_events=1)
     write_hook_env(root)
     (own / "meta" / "checkpoints.jsonl").write_text(
@@ -194,7 +194,10 @@ def test_pre_compact_snapshot_keeps_all_fields_without_jq(tmp_path: Path) -> Non
         "pending_decisions",
         "ownership",
         "session_key",  # E2E-INC-031: a shared marker is replayed only for the session that wrote it
+        "directive",  # PRE-COMPACT-KEEP: what the checkpoint tool recorded is carried over, empty when nothing was
+        "context_anchor",
     }
+    assert (snapshot["directive"], snapshot["context_anchor"]) == ("", "")
     assert snapshot["session_key"] == SESSION_ID
     assert snapshot["run_path"] == f"{own}/"
     assert snapshot["trigger"] == "manual"
@@ -352,6 +355,18 @@ _JQ_ALLOWLIST: dict[tuple[str, str, str], str] = {
         "_trw_scan_log_for_trw_call",
         'jq -e -R --arg cut "$_tottc_since"',
     ): "jq log scan (fromjson? per line); _json_get reads one object, not a stream",
+    # The Claude Code edit hint reads its payload once, with jq or else PATH's python3 printing the same
+    # fields in the same order; tests/hooks/test_hooks_without_jq.py runs it with jq hidden.
+    (
+        "claude_code/hooks/pre-tool-distill-hint.sh",
+        "",
+        "command -v jq",
+    ): "capability probe choosing the jq reader or the python3 reader below it",
+    (
+        "claude_code/hooks/pre-tool-distill-hint.sh",
+        "",
+        'set -- jq -r "$_TRW_PARSE_JQ"',
+    ): "payload read; the python3 reader below it prints the same fields",
 }
 
 
@@ -371,7 +386,12 @@ _JQ_OWNED_BLOCKS = {"_TRW_JSON_GET_PY='": "_json_get"}
 
 
 def _bundled_hook_dirs() -> list[Path]:
-    return [d for d in (_DATA / "hooks", _DATA / "hooks" / "cursor", _DATA / "copilot" / "hooks") if d.is_dir()]
+    # FR07 names four directories. ``claude_code/hooks`` (the pre-edit hint hook and its library) was missing here
+    # until 2026-10-11: a jq-only read planted there was not reported (audit of PRD-FIX-154 for its promotion).
+    dirs = (_DATA / "hooks", _DATA / "hooks" / "cursor", _DATA / "copilot" / "hooks", _DATA / "claude_code" / "hooks")
+    missing = [d for d in dirs if not d.is_dir()]
+    assert not missing, f"a hook directory the census must cover is gone: {missing}"
+    return list(dirs)
 
 
 def _census_jq_calls(path: Path) -> list[tuple[int, str, str]]:
@@ -397,6 +417,19 @@ def test_census_every_jq_call_is_in_the_shared_helpers_or_allowlisted() -> None:
                     continue
                 offenders.append(f"{relpath}:{lineno}")
     assert offenders == [], f"unlisted jq call(s), add to _json_get/_json_object or the allowlist: {offenders}"
+
+
+def test_every_bundled_shell_file_that_names_jq_is_in_a_directory_the_census_reads() -> None:
+    """A directory the census does not list is not read, and nothing said so: ``claude_code/hooks`` was
+    outside it from the day the gate was written. A shell file anywhere in the bundle that names jq must
+    be in a listed directory, so a new hook directory fails here until it is added."""
+    covered = set(_bundled_hook_dirs())
+    outside = sorted(
+        str(path.relative_to(_DATA))
+        for path in _DATA.rglob("*.sh")
+        if path.parent not in covered and _JQ_WORD.search(path.read_text(encoding="utf-8", errors="replace"))
+    )
+    assert outside == [], f"shell file(s) naming jq outside the census's directories: {outside}"
 
 
 def test_census_catches_a_planted_new_jq_call(tmp_path: Path) -> None:

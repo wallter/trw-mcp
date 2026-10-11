@@ -924,7 +924,9 @@ _CHILD = textwrap.dedent(
     from trw_mcp.code_index.search import lexical_search, symbol_search
 
     root = pathlib.Path(sys.argv[1])
-    bounds = CodeIndexBounds(query_max_rows=int(sys.argv[2]))
+    # The row bound is under test, so the clock must not trip first: on a loaded host the 2M-row scan passed the
+    # default 20 s and the answer named query_timeout_seconds (gate b5, 2026-10-11). The timeout has its own tests.
+    bounds = CodeIndexBounds(query_max_rows=int(sys.argv[2]), query_timeout_seconds=240.0)
     store = str(root / ".trw" / "code-index" / "chunks.sqlite")
     real_open = builtins.open
 

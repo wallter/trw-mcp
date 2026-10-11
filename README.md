@@ -65,12 +65,12 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 9.x
-<!-- whats-new: 9.5.0 -->
+<!-- whats-new: 9.5.1 -->
 
+- **Recovery after compaction keeps what you recorded.** A pre-compaction checkpoint keeps your run and message, and the PreCompact hook keeps its directive and anchor.
+- **An installer that refuses before it fetches.** No canary channel; an inherited non-stable `TRW_CHANNEL` is refused before anything downloads, and a failed check names its fix.
 - **Learnings that know their commit.** `trw_learn` records your checkout's commit on assertions that have none, so a checkout git shows to be behind holds the claim as unknown, not failed.
-- **Multi-client installs outside git.** Installing for two or more clients can complete outside a git repository, and the install log keeps only the last frame of a redrawn menu.
 - **Answers about your project, wherever you run.** Tools read your project's repository even when the server started elsewhere; `telemetry channel-stats` and `handoff new` now use the bound project too.
-- **Build records that say why.** When `trw_build_check` cannot bind a record to your working tree, it names a nested repository with no commit and logs the failing git step otherwise.
 - **Dispatch setup in the installer.** Turn on `trw_dispatch` and pin a model and effort per client while installing, or later with `trw-mcp config dispatch`.
 - **`trw-mcp config set` and `unset`.** Change or remove one setting safely: validated exactly as TRW loads it, secrets refused, and every other line of your file kept.
 - **Handoffs another session can trust.** The `trw-handoff` skill seals a record with labelled claims and constraints copied from their source; `handoff check --strict` accepts only positive evidence.

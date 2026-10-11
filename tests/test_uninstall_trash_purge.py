@@ -151,3 +151,33 @@ def test_uninstall_on_macos_names_why_a_capture_stayed_in_trw_trash(
         f"remove with: rm -rf {root / '.trw' / 'trash'})" in out
     )
     assert data.read_bytes() == _TRW
+
+
+def test_one_reason_shared_by_many_kept_captures_is_said_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A 9.5.0 report: without a usable ~/.Trash every removed file printed its own identical line (79 for three
+    clients). Past three captures one reason is said once, with the count and the first names."""
+    from trw_mcp.server import _uninstall_trash_report as report
+
+    names = [f"thing{i}.md" for i in range(5)]
+    captured = [_capture(tmp_path, name) for name in names]
+    root = captured[0][0]
+    monkeypatch.setattr(report.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        report,
+        "move_captures_to_os_trash",
+        lambda _root, paths: (None, [(p, "no usable system Trash (PermissionError): ~/.Trash") for p in paths]),
+    )
+    result = {
+        "trashed": [str(root / ".claude" / name) for name in names],
+        "trashed_at": [str(data) for _root, data in captured],
+    }
+    report._move_matched_captures_to_os_trash(result, root, lambda p, r: str(p.relative_to(r)))
+    out = capsys.readouterr().out
+
+    assert "Kept in .trw/trash: " not in out
+    (line,) = [ln for ln in out.splitlines() if ln.startswith("  Kept 5 files in .trw/trash (")]
+    assert "no usable system Trash (PermissionError): ~/.Trash; see doctor; remove with: rm -rf" in line
+    assert line.endswith(": .claude/thing0.md, .claude/thing1.md, .claude/thing2.md and 2 more"), line
+    assert all(data.read_bytes() == _TRW for _root, data in captured), "nothing was removed"

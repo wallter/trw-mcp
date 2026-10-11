@@ -84,9 +84,17 @@ def _edit(
             "HOME": str(tmp_path),
             "CLAUDE_PROJECT_DIR": str(session_root or main),
             "PYTHONPATH": CHECKOUT_PYTHONPATH,
-            # Content assertions must not depend on how loaded the test host is; the deadline has its own tests.
+            # Content assertions must not depend on how loaded the test host is; the deadlines have their own tests.
+            # Every budget the hook kills on is raised, not only the outer two: with the parse (0.5 s), shell git
+            # (0.7 s), emit (0.8 s) and batch (1.6 s) budgets left at their defaults, one start that took longer
+            # inside a full suite on a busy host left the hook silent and this test with an empty hint
+            # (2026-10-11: 1 failure in 2 full runs, 0 in 23 runs alone at a load of 30).
             "TRW_CC03_ALARM_S": "20",
             "TRW_CC03_BOUND_S": "25",
+            "TRW_CC03_PARSE_BUDGET_S": "20",
+            "TRW_CC03_GIT_BUDGET_S": "20",
+            "TRW_CC03_TAIL_BOUND_S": "20",
+            "TRW_CC03_BATCH_BUDGET_S": "20",
         },
     )
     assert proc.returncode == 0, proc.stderr

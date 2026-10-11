@@ -209,6 +209,14 @@ def probe_graph_edges(trw_dir: Path, config: Any | None = None) -> SignalResult:
     }
 
 
+#: memory_similar decides a learning's duplicate by KNN only when every row has a vector in the active space;
+#: otherwise it scans every row, at most this many, and past them answers "unavailable", after which trw_learn
+#: stores with no semantic duplicate check (seen on a live store of ~3,900 rows at 27% coverage, 2026-10-11).
+#: Mirrors trw_memory.tools.similar.EXHAUSTIVE_MAX_ROWS so this probe never imports the embedder side; a test
+#: pins the two equal.
+DEDUP_SCAN_MAX_ROWS = 2_000
+
+
 def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> SignalResult:
     """Report the share of the namespace's entries the store holds a vector for.
 
@@ -235,12 +243,20 @@ def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> Signal
     coverage_ratio = embedded / total if total else None
     # A young store has had no chance to embed: weights arrive after the first entries (E2E-INC-010).
     min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 50))
-    degraded = coverage_ratio is not None and coverage_ratio < threshold and total > min_corpus
+    sparse = coverage_ratio is not None and coverage_ratio < threshold and total > min_corpus
+    dedup_unavailable = coverage_ratio is not None and coverage_ratio < 1.0 and total > DEDUP_SCAN_MAX_ROWS
+    degraded = sparse or dedup_unavailable
     advisory = ""
-    if degraded:
+    if sparse:
         advisory = (
             f"embedding_coverage degraded: {embedded}/{total} entries embedded in the active space "
             f"({coverage_ratio:.1%}, threshold {threshold:.1%}); run: trw-mcp memory reembed"
+        )
+    elif dedup_unavailable:
+        advisory = (
+            f"embedding_coverage degraded: {total - embedded} of {total} entries have no vector in the active "
+            f"space, so trw_learn's duplicate check cannot run (it scans at most {DEDUP_SCAN_MAX_ROWS} rows "
+            "without one); run: trw-mcp memory reembed"
         )
     return {
         "degraded": degraded,
@@ -249,6 +265,7 @@ def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> Signal
         "embedded": embedded,
         "total": total,
         "coverage_threshold": threshold,
+        "dedup_unavailable": dedup_unavailable,
         "advisory": advisory,
     }
 

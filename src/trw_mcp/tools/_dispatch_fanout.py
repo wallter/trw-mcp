@@ -42,15 +42,22 @@ def status_many(job_ids: list[str]) -> dict[str, object]:
     return {"terminal": all(lane.get("terminal") for lane in lanes), "results": lanes}
 
 
-def _run_fanout(reqs: list[tuple[str, DispatchRequest]]) -> list[dict[str, object]]:
-    """Run every request concurrently and return compact lanes in input order."""
+def _run_fanout(
+    reqs: list[tuple[str, DispatchRequest]], *, run: Callable[[DispatchRequest], Any] | None = None
+) -> list[dict[str, object]]:
+    """Run every request concurrently and return compact lanes in input order.
+
+    *run* launches one lane. The MCP tool keeps the default, the facade's ``dispatch`` with its short slot
+    wait (a request thread must not block on a busy cap); the CLI passes the runner's own ``dispatch``, which
+    waits the configured ``dispatch_slot_wait_s`` (PRD-CORE-355 FR03).
+    """
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(label: str, req: DispatchRequest) -> dict[str, object]:
         child_id = f"sync-{uuid.uuid4().hex}"
         _f().record_dispatch_policy(req, child_id)
         try:
-            result = _f().dispatch(req)
+            result = (run or _f().dispatch)(req)
         except Exception as exc:  # justified: one lane's crash must not lose the others
             _f().logger.warning("dispatch_fanout_lane_failed", target=label, exc_info=True)
             return {"target": label, "ok": False, "error": f"{type(exc).__name__}: {exc}", "reason": "launch_error"}

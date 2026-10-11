@@ -126,6 +126,12 @@ if os.environ.get('SLOW'):
         **(extra or {}),
     }
     if not slow:
+        # Outcome tests must not depend on host load (the deadline is the slow case's subject): the hook's parse,
+        # git, emit and batch budgets are raised too, as in test_pre_edit_hook_worktree_e2e.py. Left at their
+        # defaults (0.5 to 1.6 s), one start inside a full suite at a load of 27 left the hook silent and the
+        # capture file unwritten (2026-10-11; 3 of 3 passed alone at a load of 43).
+        for name in ("PARSE_BUDGET_S", "GIT_BUDGET_S", "TAIL_BOUND_S", "BATCH_BUDGET_S"):
+            env.setdefault(f"TRW_CC03_{name}", "20")
         timeout_shim = stub / "timeout"
         timeout_shim.write_text('#!/bin/sh\nshift\nexec "$@"\n')
         timeout_shim.chmod(0o755)
@@ -146,7 +152,7 @@ if os.environ.get('SLOW'):
         ),
         capture_output=True,
         text=True,
-        timeout=8,
+        timeout=8 if slow else 60,
     )
 
 

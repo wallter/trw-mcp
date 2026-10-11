@@ -165,8 +165,24 @@ def test_the_library_obeys_library_discipline() -> None:
     assert not re.search(r"\blocal\s", code), "bashism: `local` is not POSIX sh"
 
 
+#: PRD-FIX-156 NFR01 names this test for the hooks it changed; until 2026-10-11 the list held only the three
+#: intent-guard files, so that requirement's evidence covered none of its own.
+_FIX156_CHANGED_HOOKS = [
+    "lib-trw.sh",
+    "user-prompt-submit.sh",
+    "session-start.sh",
+    "post-tool-degenerate-result.sh",
+    "cursor/trw-before-edit-hint.sh",
+    "cursor/lib-distill-hint.sh",
+    "../copilot/hooks/trw-copilot-distill-hint.sh",
+    "../copilot/hooks/lib-copilot-distill-hint.sh",
+]
+
+
 @pytest.mark.skipif(shutil.which("dash") is None, reason="dash unavailable")
-@pytest.mark.parametrize("name", ["lib-intent-guard.sh", "pre-tool-intent-guard.sh", "post-tool-intent-check.sh"])
+@pytest.mark.parametrize(
+    "name", ["lib-intent-guard.sh", "pre-tool-intent-guard.sh", "post-tool-intent-check.sh", *_FIX156_CHANGED_HOOKS]
+)
 def test_posix_sh_parses_every_changed_file(name: str) -> None:
     """NFR04: a strict POSIX shell, not bash in sh-mode, must parse these."""
     result = subprocess.run(["dash", "-n", str(_HOOKS / name)], capture_output=True, text=True, check=False)

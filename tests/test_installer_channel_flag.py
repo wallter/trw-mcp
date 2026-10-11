@@ -7,7 +7,8 @@ read again (dead parameter): a mismatched pin was silently ignored and the
 bundled pair installed anyway. This asserts the fix: a channel other than
 "stable", or a version that does not match the bundled ``TRW_VERSION``, now
 refuses clearly and points at ``scripts/install.sh`` (which resolves those
-channels for real), before any wheel data is touched.
+channels for real), before any wheel data is touched. The ``canary`` channel
+(pre-releases from PyPI) was removed on 2026-10-10: no pre-release is published.
 
 The template is loaded as a module by file path (``scripts/`` is not a package),
 matching the pattern in ``test_phase_install_downgrade_guard.py``.
@@ -38,16 +39,45 @@ def installer() -> ModuleType:
     return _load()
 
 
-def test_non_stable_channel_refuses_and_points_at_install_sh(
+def test_local_channel_refuses_and_points_at_install_sh(
     installer: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["install-trw.py", "--channel", "canary"])
+    monkeypatch.setattr(sys, "argv", ["install-trw.py", "--channel", "local"])
     with pytest.raises(SystemExit) as exc:
         installer.main()
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "not supported by this bundled installer" in err
-    assert "scripts/install.sh TRW_CHANNEL=canary" in err
+    assert "`TRW_CHANNEL=local bash scripts/install.sh`" in err  # a command that runs as written
+    assert "canary" not in err and "--pre" not in err
+
+
+def test_canary_channel_flag_is_an_invalid_choice(
+    installer: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The channel that read pre-releases from PyPI is gone: argparse refuses the name and lists what is left."""
+    monkeypatch.setattr(sys, "argv", ["install-trw.py", "--channel", "canary"])
+    with pytest.raises(SystemExit) as exc:
+        installer.main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "invalid choice: 'canary'" in err
+    assert "local" in err and "stable" in err
+    assert "TRW_CHANNEL=canary bash" not in err  # never send the reader to a channel that is refused
+
+
+def test_canary_channel_from_the_environment_is_refused_too(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """argparse does not check ``choices`` for a default, and the default is read from TRW_CHANNEL."""
+    monkeypatch.setenv("TRW_CHANNEL", "canary")
+    monkeypatch.setattr(sys, "argv", ["install-trw.py"])
+    with pytest.raises(SystemExit) as exc:
+        _load().main()
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "TRW_CHANNEL=canary is not a channel (choose from local, stable)" in err
+    assert "TRW_CHANNEL=canary bash" not in err
 
 
 def test_mismatched_version_pin_refuses_before_wheel_extraction(
@@ -60,13 +90,13 @@ def test_mismatched_version_pin_refuses_before_wheel_extraction(
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert f"does not match the pair bundled in this installer ({installer.TRW_VERSION})" in err
-    assert f"scripts/install.sh TRW_VERSION={bogus}" in err
+    assert f"`TRW_VERSION={bogus} bash scripts/install.sh`" in err
 
 
 def test_channel_argparse_rejects_unknown_values_before_our_own_check(
     installer: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An out-of-{local,canary,stable} value is refused by argparse's own ``choices=`` (exit 2)."""
+    """An out-of-{local,stable} value is refused by argparse's own ``choices=`` (exit 2)."""
     monkeypatch.setattr(sys, "argv", ["install-trw.py", "--channel", "bogus-channel"])
     with pytest.raises(SystemExit) as exc:
         installer.main()

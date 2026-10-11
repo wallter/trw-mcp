@@ -1,0 +1,501 @@
+{
+  "captured_from": "trw-mcp v6.1.0 (tag v6.1.0, b6caf5ea2a), _ceremony_status_helpers with bandit_params=None",
+  "states": [
+    {
+      "name": "phase research",
+      "phase": "research",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-a1",
+        "text": "Checkpoint before compaction keeps the run's directive"
+      }
+    },
+    {
+      "name": "phase plan",
+      "phase": "plan",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-d4",
+        "text": "Prefer deleting a superseded path to keeping it beside the new one"
+      }
+    },
+    {
+      "name": "phase implement",
+      "phase": "implement",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-a1",
+        "text": "Checkpoint before compaction keeps the run's directive"
+      }
+    },
+    {
+      "name": "phase validate",
+      "phase": "validate",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-b2",
+        "text": "Run test_impact.py --files first."
+      }
+    },
+    {
+      "name": "phase transition",
+      "phase": "implement",
+      "previous_phase": "plan",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-a1",
+        "text": "Checkpoint before compaction keeps the run's directive"
+      }
+    },
+    {
+      "name": "empty candidate list",
+      "phase": "implement",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [],
+      "expected": {
+        "selected_id": null,
+        "text": ""
+      }
+    },
+    {
+      "name": "first candidate has no renderable text",
+      "phase": "implement",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-e5",
+          "summary": "   ",
+          "impact": 1.0
+        },
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-a1",
+        "text": "Checkpoint before compaction keeps the run's directive"
+      }
+    },
+    {
+      "name": "no candidate has renderable text",
+      "phase": "review",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-e5",
+          "summary": "",
+          "impact": 0.5
+        },
+        {
+          "id": "L-f6",
+          "summary": "  ",
+          "impact": 0.5,
+          "nudge_line": "  "
+        }
+      ],
+      "expected": {
+        "selected_id": null,
+        "text": ""
+      }
+    },
+    {
+      "name": "domain narrows the pool",
+      "phase": "implement",
+      "previous_phase": "",
+      "domains": [
+        "hooks"
+      ],
+      "candidates": [
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-c3",
+        "text": "When a hook sources its library from its own directory it exits silently when…"
+      }
+    },
+    {
+      "name": "domain matches nothing",
+      "phase": "implement",
+      "previous_phase": "",
+      "domains": [
+        "billing"
+      ],
+      "candidates": [
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        },
+        {
+          "id": "L-b2",
+          "summary": "Run the selector's tests before a merge",
+          "impact": 0.9,
+          "nudge_line": "Run test_impact.py --files first.",
+          "phase_affinity": [
+            "validate"
+          ]
+        },
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-d4",
+          "summary": "Prefer deleting a superseded path to keeping it beside the new one",
+          "impact": 0.8,
+          "phase_affinity": [
+            "plan"
+          ],
+          "tags": [
+            "refactor"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-a1",
+        "text": "Checkpoint before compaction keeps the run's directive"
+      }
+    },
+    {
+      "name": "a long summary is elided at a word boundary",
+      "phase": "research",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-c3",
+          "summary": "When a hook sources its library from its own directory it exits silently when run from the bundle, so every assertion about it holds for the wrong reason",
+          "impact": 0.7,
+          "phase_affinity": [
+            "research"
+          ],
+          "tags": [
+            "hooks"
+          ]
+        },
+        {
+          "id": "L-a1",
+          "summary": "Checkpoint before compaction keeps the run's directive",
+          "impact": 0.4,
+          "phase_affinity": [
+            "implement"
+          ]
+        }
+      ],
+      "expected": {
+        "selected_id": "L-c3",
+        "text": "When a hook sources its library from its own directory it exits silently when…"
+      }
+    },
+    {
+      "name": "a higher impact later does not win",
+      "phase": "deliver",
+      "previous_phase": "",
+      "domains": [],
+      "candidates": [
+        {
+          "id": "L-g7",
+          "summary": "Low impact first",
+          "impact": 0.1
+        },
+        {
+          "id": "L-h8",
+          "summary": "High impact",
+          "impact": 1.0
+        }
+      ],
+      "expected": {
+        "selected_id": "L-g7",
+        "text": "Low impact first"
+      }
+    }
+  ]
+}

@@ -198,6 +198,11 @@ def test_hook_recall_excludes_a_ledgered_identity(daemon_checkout: object, tmp_p
             "TRW_TEST_PHASE": "done",
             "TRW_HOOK_LOG": str(project_root / "hook.log"),
             "TRW_PYTHON": sys.executable,
+            # What reaches the prompt is under test, not the deadline (it has its own tests): with the default 2 s
+            # for recall, one start inside a full suite at a load of 27 printed nothing (2026-10-11; 3 of 3 passed
+            # alone at a load of 43).
+            "TRW_AUTO_RECALL_DEADLINE_MS": "30000",
+            "TRW_HOOK_BUDGET_MS": "40000",
         },
         check=False,
     )

@@ -322,6 +322,8 @@ def install_claude_code_distill_channels(
     target_dir: Path,
     force: bool = False,
     manifest_hashes: dict[str, str] | None = None,
+    *,
+    settings_created: bool = False,
 ) -> dict[str, list[str]]:
     """Install all Claude Code distill channel artifacts.
 
@@ -333,6 +335,8 @@ def install_claude_code_distill_channels(
         force: Reserved; never overrides the user-edit guard on the explorer agent (HB-2).
         manifest_hashes: ``content_hashes`` of the manifest as it stood before this run (None on a
             first install); an explorer agent whose bytes are not TRW's own is kept.
+        settings_created: this run created ``.claude/settings.json`` from the whole template, so the
+            statusLine in it is the template's own and is taken out again unless the project opted in.
 
     Returns:
         Dict with ``created``, ``updated``, ``preserved``, ``errors`` lists.
@@ -374,10 +378,11 @@ def install_claude_code_distill_channels(
     sync_cc03_hook_files(target_dir, result, manifest_hashes)
     if apply_cc03_hook_registration(target_dir, result):
         result["updated"].append(".claude/settings.json")
-    # PRD-CORE-354 FR06: a fresh whole-template copy still honours the statusLine opt-out.
+    # PRD-CORE-354 FR06/FR09: a fresh whole-template copy honours the statusLine opt-out, and carries no
+    # statusLine at all unless the project opted in.
     from ._settings_merge import apply_statusline_registration
 
-    if apply_statusline_registration(target_dir, result):
+    if apply_statusline_registration(target_dir, result, fresh=settings_created):
         result["updated"].append(".claude/settings.json")
 
     # 3. Bootstrap channel manifest (two CC channel entries)

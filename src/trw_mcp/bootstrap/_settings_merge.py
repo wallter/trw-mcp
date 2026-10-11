@@ -133,8 +133,11 @@ def _merge_settings_json(
     if not src.is_file():
         return
     if not dest.exists():
-        # New install — copy bundled template directly
+        # New install — copy bundled template directly. The copy carries the template's statusLine, which is
+        # nobody's choice: it comes out again unless the project opted in (PRD-CORE-354 FR09).
         _parent._update_or_report(src, dest, result)
+        if dest.is_file():
+            apply_statusline_registration(dest.parents[1], result, fresh=True)
         return
 
     bundled = read_json_object(src, context="settings_merge_bundled")
@@ -332,12 +335,15 @@ def _reconcile_statusline(
     *,
     shadowed: bool = False,
     script_kept: bool = False,
+    fresh: bool = False,
     result: dict[str, list[str]] | None = None,
 ) -> str:
     """Apply the FR06 ownership rule to ``data["statusLine"]`` in place; returns a note when TRW removes its own.
 
     ``script_kept``: the update kept an edited ``statusline.sh``, so an existing TRW statusLine object (which may
     carry the user's flags for that script) is not refreshed; the opt-out removals above it are unchanged.
+    ``fresh``: this run created the settings file by copying the whole template, so a TRW entry in it is the
+    template's own and nobody's choice.
     """
     current = data.get("statusLine")
     if current is not None and not is_trw_statusline(current):
@@ -350,8 +356,12 @@ def _reconcile_statusline(
             note_registration_left(result, "statusline.sh")
         return ""
     if enabled is None:
-        # Absent key: never add, never remove; only bring an existing TRW entry current.
-        if current is not None and is_trw_statusline(bundled):
+        # Absent key: never add, never remove; only bring an existing TRW entry current. The whole-template copy
+        # of a fresh install carries the entry, which made every new install add one (FR09: opt-in); taking the
+        # template's entry back out is the "never add" half, and nothing the user had is removed.
+        if fresh:
+            data.pop("statusLine", None)
+        elif current is not None and is_trw_statusline(bundled):
             data["statusLine"] = bundled
     elif not enabled:
         if current is not None:
@@ -367,8 +377,12 @@ def _reconcile_statusline(
     return ""
 
 
-def apply_statusline_registration(target_dir: Path, result: dict[str, list[str]] | None = None) -> bool:
+def apply_statusline_registration(
+    target_dir: Path, result: dict[str, list[str]] | None = None, *, fresh: bool = False
+) -> bool:
     """Idempotently reconcile ``.claude/settings.json``'s statusLine; ``True`` when it changed.
+
+    ``fresh``: the caller's run created the settings file from the whole template (see ``_reconcile_statusline``).
 
     Covers what the merge cannot: a fresh whole-template copy under opt-out, and
     the re-apply after the uncommitted-changes guard (same reason as CC-03).
@@ -387,6 +401,7 @@ def apply_statusline_registration(target_dir: Path, result: dict[str, list[str]]
         statusline_enabled(target_dir),
         shadowed=statusline_shadowed(target_dir),
         script_kept=hook_file_kept(target_dir, "statusline.sh", (_data_dir() / "hooks",)),
+        fresh=fresh,
         result=result,
     )
     if json.dumps(data, sort_keys=True) == before:

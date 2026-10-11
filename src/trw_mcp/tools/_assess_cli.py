@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import shlex
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -36,6 +37,21 @@ _TRUTHY = frozenset({"1", "true", "yes", "on"})
 MACHINE_STORE_LABEL = "~/.trw/jev.env"
 
 
+def _user_path(text: str) -> Path:
+    """A path argument with ``~`` expanded: the installer prints the command with ``~``, and a quoted or
+    ``--opt=~/x`` spelling reaches us unexpanded by the shell."""
+    return Path(text).expanduser()
+
+
+def _shown(path: Path) -> str:
+    """*path* for a printed command: ``~/...`` under the home directory (no user name in a terminal or a log)."""
+    try:
+        shown = "~/" + path.relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        shown = str(path)
+    return shlex.quote(shown) if shlex.quote(shown.removeprefix("~")) != shown.removeprefix("~") else shown
+
+
 def add_assess_subcommands(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     """Register ``assess configure|status|install-check``."""
     assess = subparsers.add_parser("assess", help="Configure trw_assess (jev) once per computer, and show its sources")
@@ -45,7 +61,7 @@ def add_assess_subcommands(subparsers: argparse._SubParsersAction[argparse.Argum
         help=f"Store the OpenRouter key in {MACHINE_STORE_LABEL} (0600) and enable trw_assess for every project",
     )
     configure.add_argument(
-        "--from-env-file", type=Path, help="promote OPENROUTER_API_KEY (and TRW_JEV_*) from this .env"
+        "--from-env-file", type=_user_path, help="promote OPENROUTER_API_KEY (and TRW_JEV_*) from this .env"
     )
     configure.add_argument("--base-url", help="TRW_JEV_BASE_URL to store (must be https on openrouter.ai)")
     configure.add_argument("--model", help="TRW_JEV_MODEL to store")
@@ -189,7 +205,7 @@ def install_check(target: Path, *, offer: bool) -> str:
         return f"trw_assess: machine key found in {MACHINE_STORE_LABEL}, but the backend is {reason}"
     if not project_values.get(_KEY):
         return ""
-    command = f"trw-mcp assess configure --from-env-file {target / '.env'}"
+    command = f"trw-mcp assess configure --from-env-file {_shown(target / '.env')}"
     if offer and _ask_on_tty(
         f"Use this project's OpenRouter key for every TRW project on this computer ({MACHINE_STORE_LABEL})?"
     ):

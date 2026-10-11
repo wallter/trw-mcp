@@ -17,6 +17,15 @@ doctor run in a fresh clone must not execute a program the clone chose
 (PRD-FIX-156 boundary; review dist-int-merge-2 r1). A deployed hook whose copy
 of the function differs from the bundled one also fails the row, because it
 still resolves the old way. Deployed hooks are compared, never sourced.
+
+A stale copy FAILs only when ``update-project`` would rewrite it. Each deployed
+file names the clients whose update writes it; when the install record
+(``target_platforms``) holds clients and none of them is one of those, a bare
+``update-project`` leaves the file alone by design, so the row WARNs, names the
+client and the file, and gives the remedy that does work (sub_GOYE8ssHqS-5q3hE:
+the row failed an install over a file its own remedy could not fix). A record
+that is absent, empty or unreadable downgrades nothing: every file is then
+checked as recorded, which is also what ``update-project`` does without one.
 """
 
 from __future__ import annotations
@@ -31,11 +40,15 @@ from typing import Literal
 
 __all__ = ["hook_python_row"]
 
-_DEPLOYED = (
-    ".claude/hooks/lib-distill-hint.sh",
-    ".cursor/hooks/lib-distill-hint.sh",
-    ".github/hooks/lib-copilot-distill-hint.sh",
-    ".trw/hooks/trw-post-commit.sh",
+#: Each deployed hook file with the clients whose ``update-project`` writers rewrite it (the first is the
+#: one the remedy names). ``()`` belongs to no client and is always checked. Sources: ``.claude`` is
+#: ``sync_cc03_hook_files`` (the claude-code and codex update paths), ``.cursor`` is ``_IDE_HOOK_SCRIPTS``
+#: (cursor-ide only; the cursor-cli script list does not carry the lib), ``.github`` is ``_C5_HOOK_NAMES``.
+_DEPLOYED: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (".claude/hooks/lib-distill-hint.sh", ("claude-code", "codex")),
+    (".cursor/hooks/lib-distill-hint.sh", ("cursor-ide",)),
+    (".github/hooks/lib-copilot-distill-hint.sh", ("copilot",)),
+    (".trw/hooks/trw-post-commit.sh", ()),
 )
 _BUNDLED_LIB = Path(__file__).resolve().parent.parent / "data" / "claude_code" / "hooks" / "lib-distill-hint.sh"
 _FUNCTION_RE = re.compile(r"^_get_python_path\(\) \{\n.*?^\}\n", re.DOTALL | re.MULTILINE)
@@ -91,13 +104,51 @@ def _same_environment(py: str) -> bool:
     )
 
 
-def hook_python_row(target: Path) -> tuple[Literal["PASS", "FAIL", "SKIP"], str]:
-    """FAIL when the hooks' interpreter cannot ``import trw_mcp``, or a deployed hook resolves the old way."""
+def _recorded_clients(target: Path) -> list[str]:
+    """The install record's clients; ``[]`` when it holds none or cannot be read (both mean "check everything")."""
+    from trw_mcp.bootstrap._template_claude_md import _recorded_targets
+
+    return _recorded_targets(target)
+
+
+def _orphan_note(orphans: list[tuple[str, tuple[str, ...]]]) -> tuple[str, str]:
+    """``(what is wrong, the remedy sentence)`` for stale files of clients the install record does not hold.
+
+    The remedy names only what was rehearsed (2026-10-10, temp projects): with the file deleted the row
+    passes, and ``update-project --ide <client>`` records the client and writes a current copy. An
+    ``init-project --force --ide <client>`` also rewrites the file but REPLACES the record with that one
+    client, so it is not offered.
+    """
+    described = "; ".join(
+        f"{rel} still resolves the interpreter the old way and belongs to {' or '.join(owners)}, which this "
+        "project's install record (target_platforms in .trw/config.yaml) does not hold, so trw-mcp "
+        "update-project leaves it alone"
+        for rel, owners in orphans
+    )
+    steps = ", and ".join(
+        f"delete {rel} if you do not use {owners[0]} in this project or else run trw-mcp update-project --ide "
+        f"{owners[0]} to add that client to the install record"
+        for rel, owners in orphans
+    )
+    return described, f"Remedy: {steps}."
+
+
+def hook_python_row(target: Path) -> tuple[Literal["PASS", "WARN", "FAIL", "SKIP"], str]:
+    """FAIL when the hooks' interpreter cannot ``import trw_mcp``, or a recorded client's hook resolves the old way.
+
+    WARN when the only finding is a stale hook of a client the install record does not hold.
+    """
     sh = shutil.which("sh")
     if not (target / ".trw").is_dir() or sh is None:
         return "SKIP", "no .trw/ directory or no POSIX sh; no hook starts Python here."
     bundled = _resolver(_BUNDLED_LIB)
-    stale = [rel for rel in _DEPLOYED if (target / rel).is_file() and _resolver(target / rel) != bundled]
+    stale_files = [
+        (rel, owners) for rel, owners in _DEPLOYED if (target / rel).is_file() and _resolver(target / rel) != bundled
+    ]
+    # Read only when something is stale. An empty answer (no record, or an unreadable one) keeps every file a FAIL.
+    recorded = set(_recorded_clients(target)) if stale_files else set()
+    orphans = [(rel, owners) for rel, owners in stale_files if owners and recorded and recorded.isdisjoint(owners)]
+    stale = [rel for rel, owners in stale_files if (rel, owners) not in orphans]
     problems = [f"{', '.join(stale)} still resolve(s) the interpreter the old way"] if stale else []
     _rc, py, _err = _run([sh, "-c", '. "$0" && _get_python_path "$1"', str(_BUNDLED_LIB), str(target)], target, 10)
     if not py:
@@ -105,6 +156,11 @@ def hook_python_row(target: Path) -> tuple[Literal["PASS", "FAIL", "SKIP"], str]
     elif not _same_environment(py):
         # Compared, never executed: the pointer is checkout-controlled.
         problems.append(f"the hooks start {py}, not the interpreter running trw-mcp ({sys.executable})")
+    orphan_problem, orphan_remedy = _orphan_note(orphans) if orphans else ("", "")
     if problems:
-        return "FAIL", f"{'; '.join(problems)}. {_REMEDY}"
+        # One remedy sentence: the installer lifts the sentence that begins "Remedy:". The orphaned file is
+        # still described, and the row's WARN (with its own remedy) is what remains once the FAIL is fixed.
+        return "FAIL", f"{'; '.join([*problems, orphan_problem] if orphans else problems)}. {_REMEDY}"
+    if orphans:
+        return "WARN", f"{orphan_problem}. {orphan_remedy}"
     return "PASS", f"the hooks start {py}, which imports trw_mcp."

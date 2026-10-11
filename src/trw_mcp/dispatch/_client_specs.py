@@ -530,7 +530,12 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # as `agent`; this repository spells it `cursor-agent` in 194 places. `binary`
     # is the repository's spelling because that is what bootstrap installs
     # against; `agent` is carried as an alias so the readiness probe can report
-    # which one actually answered instead of guessing.
+    # which one actually answered instead of guessing. `agent` is a generic name
+    # another vendor can ship (Grok's CLI installs one; observed 2026-10-10,
+    # banner `grok 1.0.34`), so the doctor's readiness row accepts a binary
+    # reached through an alias only when its version banner names no OTHER
+    # registered client, and reports `wrong_binary` with that client otherwise.
+    # `cursor-agent` itself is never questioned. Only that row applies the test.
     #
     # forbidden_tokens: -f/--force, --yolo and --approve-mcps are the parameter
     # reference's own permission-bypass flags. --sandbox is already in the shared

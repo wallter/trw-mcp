@@ -81,17 +81,19 @@ def test_a_prompt_stops_a_spinner_nobody_stopped(installer: Any, capsys: pytest.
 
 
 @pytest.mark.parametrize(
-    "line",
+    ("line", "shown"),
     [
-        "Removed retired TRW file: .claude/agents/trw-old.md",
-        "CLAUDE.md: removed TRW's block (it already imports AGENTS.md, which imports .trw/INSTRUCTIONS.md)",
-        "AGENTS.md: refreshed the TRW block",
-        "Note: .claude/settings.json: 2 hook timeout(s) updated to TRW's bundled value",
-        "Status: ready, 3 item(s) need attention (see above)",
+        ("Removed retired TRW file: .claude/agents/trw-old.md", ""),
+        ("CLAUDE.md: removed TRW's block (it already imports AGENTS.md, which imports .trw/INSTRUCTIONS.md)", ""),
+        ("AGENTS.md: refreshed the TRW block", ""),
+        ("Note: .claude/settings.json: 2 hook timeout(s) updated to TRW's bundled value", ""),
+        # The status line is relayed as what it is: "ready" would be read as the install's verdict, which is the
+        # doctor's and comes later, and "(see above)" would point at lines the installer has not printed yet.
+        ("Status: ready, 3 item(s) need attention (see above)", "Update finished, 3 item(s) need attention"),
     ],
 )
 def test_a_line_naming_an_edit_to_the_operators_files_survives_the_spinner(
-    installer: Any, capsys: pytest.CaptureFixture[str], line: str
+    installer: Any, capsys: pytest.CaptureFixture[str], line: str, shown: str
 ) -> None:
     import sys
 
@@ -100,7 +102,7 @@ def test_a_line_naming_an_edit_to_the_operators_files_survives_the_spinner(
     assert installer.run_with_progress(ui, "Updating", [sys.executable, "-c", child])
     ui.stop_spinner(True, "configured")
     out = capsys.readouterr().out
-    assert line in out
+    assert (shown or line) in out
     assert _spinner_threads() == 0
 
 

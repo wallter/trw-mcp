@@ -118,7 +118,8 @@ def resolve_role(role: str | None) -> tuple[str | None, bool | None]:
 def resolved_dispatch_defaults(dispatch_cfg: object) -> list[dict[str, object]]:
     """Per supported client: what a dispatch with no ``--model``/``--effort``/``--role`` would launch with.
 
-    ``installed`` is a PATH lookup only (no client process is started). ``model``/``effort`` and their
+    ``installed`` is a PATH lookup of the name a dispatch starts (no client process is started); an alias
+    spelling alone does not count, because a launch never uses one. ``model``/``effort`` and their
     sources come from the same resolvers a real dispatch uses, with ``role=None`` (PRD-INFRA-210-FR03).
     ``applied_effort`` is what the launch would really carry: the resolved level clamped to what the
     client accepts, or None when the client has no effort carrier (or the model takes none).
@@ -131,7 +132,9 @@ def resolved_dispatch_defaults(dispatch_cfg: object) -> list[dict[str, object]]:
         rows.append(
             {
                 "client": cid,
-                "installed": any(shutil.which(b) for b in spec.binary_names),
+                # ``build_command`` always emits ``binary``. Counting an alias reported cursor-cli installed when
+                # only ``agent`` was on PATH (which another vendor's CLI also installs), and a dispatch then failed.
+                "installed": shutil.which(spec.binary) is not None,
                 "model": model,
                 "model_source": model_source,
                 "effort": effort,

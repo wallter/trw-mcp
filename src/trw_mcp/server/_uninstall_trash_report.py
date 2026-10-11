@@ -18,6 +18,9 @@ from trw_mcp.bootstrap._safe_remove import (
     trash_dir,
 )
 
+#: Captures kept for one shared reason that are still named one per line; past this the reason is said once.
+_NAMED_PER_REASON = 3
+
 
 def _take_trw_only_captures(apply_result: dict[str, list[str]], target: Path) -> None:
     """Add this run's captures of instruction files that held only TRW's blocks (CLAUDE-MD S2) to *apply_result*."""
@@ -50,11 +53,23 @@ def _move_matched_captures_to_os_trash(
             print(f"  Removed {deleted} unchanged TRW file(s) (byte-identical to what TRW wrote; no system Trash here)")
     left = {str(data): why for data, why in kept}
     remove = f"remove with: rm -rf {shlex.quote(str(trash_dir(target)))}"
+    by_reason: dict[str, list[str]] = {}
     for orig, at in pairs:
-        if at and at in left:  # E2E-INC-062: on either platform, say why the capture stayed and how to remove it
-            print(f"  Kept in .trw/trash: {display(Path(orig), target)} ({left[at]}; see doctor; {remove})")
+        if at and at in left:
+            by_reason.setdefault(left[at], []).append(display(Path(orig), target))
         elif not at:
             print(f"  Moved to .trw/trash: {display(Path(orig), target)} (unchanged TRW file; see doctor)")
+    # E2E-INC-062: on either platform, say why each capture stayed and how to remove it. One reason shared by many
+    # captures (no usable system Trash: one per removed file, 79 lines for three clients in a 9.5.0 report) is said
+    # once, with the first few names; doctor lists every capture.
+    for why, names in by_reason.items():
+        if len(names) <= _NAMED_PER_REASON:
+            for name in names:
+                print(f"  Kept in .trw/trash: {name} ({why}; see doctor; {remove})")
+        else:
+            shown = ", ".join(names[:_NAMED_PER_REASON])
+            more = len(names) - _NAMED_PER_REASON
+            print(f"  Kept {len(names)} files in .trw/trash ({why}; see doctor; {remove}): {shown} and {more} more")
     # Every capture moved on: leave no empty .trw/trash behind, even on a refused run that keeps .trw -- unless it was
     # there before this uninstall began, which makes it not this run's to remove (CLAUDE-MD S1 red team).
     from trw_mcp.server._uninstall_corpus import PREEXISTING_TRASH

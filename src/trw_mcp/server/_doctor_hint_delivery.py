@@ -45,6 +45,35 @@ _REMEDIES: dict[str, str] = {
     "stale": "the distill sidecar is not built at HEAD; trw-distill self-improve refresh-sidecars --repo . builds one",
 }
 
+#: ``target_not_in_sidecar``: a sidecar loaded but has no entry for the edited file. It is not one of the
+#: statuses that make a commit or a session start request a rebuild (``tools/_distill_spawn.rebuild_reason``:
+#: only a missing, malformed or too-far-behind sidecar does), and nothing builds one at install, so the
+#: remedy names the one command that does build it -- and says so when trw-distill is not there to run it.
+_NOT_IN_SIDECAR_REMEDY: dict[bool, str] = {
+    True: (
+        "the code-map sidecar has no entry for those files (added after it was built, or a kind of file the map "
+        "does not cover), and no commit or session start rebuilds it for that reason alone; "
+        "trw-distill self-improve refresh-sidecars --repo . rebuilds it, and once it has rebuilt, a covered file gets its hint"
+    ),
+    False: (
+        "the code-map sidecar has no entry for those files, and trw-distill, the separate package that builds "
+        "the sidecar, cannot be imported in this environment, so nothing here can rebuild it; those edits get "
+        "no code-map hint until it is installed and trw-distill self-improve refresh-sidecars --repo . is run"
+    ),
+}
+
+
+def _remedies(status_counts: Counter[str], *, distill_installed: bool) -> list[str]:
+    """One remedy per counted status that has one, most frequent first."""
+    remedies: list[str] = []
+    for name, _count in status_counts.most_common():
+        if name == "target_not_in_sidecar":
+            remedies.append(_NOT_IN_SIDECAR_REMEDY[distill_installed])
+        elif name in _REMEDIES:
+            remedies.append(_REMEDIES[name])
+    return list(dict.fromkeys(remedies))
+
+
 _FALLBACK_STATUSES = ("exception_fallback", "timeout_fallback")
 
 #: A receipt from 8.2 S2b on records a rebuild REQUEST, not per-file counts, so the share is undefined.
@@ -395,7 +424,7 @@ def hint_delivery_row(target: Path, config: TRWConfig) -> tuple[Literal["PASS", 
     top_statuses = ", ".join(f"{name}={count}" for name, count in status_counts.most_common(5))
     tier_mix = ", ".join(f"{tier}={tier_counts.get(tier, 0)}" for tier in ("T0", "T1", "T2"))
 
-    remedies = [_REMEDIES[name] for name, _count in status_counts.most_common() if name in _REMEDIES]
+    remedies = _remedies(status_counts, distill_installed=distill_installed)
 
     warn = fallback_warn or t2_zero_warn or receipt_warn
     status: Literal["PASS", "WARN"] = "WARN" if warn else "PASS"

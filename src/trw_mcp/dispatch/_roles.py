@@ -24,6 +24,14 @@ _READ_ONLY_CONTRACT = (
     "specific recommendation. End with a one-line overall verdict."
 )
 
+#: Asked of every review of a change: is the claim behind it true? A review told only what changed checks the
+#: implementation and accepts the reason for it; one that was asked this found a false premise from the code, and
+#: one that was not accepted a change that was withdrawn twenty minutes later (2026-10-10, both the same day).
+_PREMISE_CHECK = (
+    "First check the premise: is the problem this change says it fixes real in the code as it was? Name the "
+    "code path, rule or recorded evidence that decides it, or say that you could not find one."
+)
+
 #: The adversarial audit's blocking rule and output contract. A review samples a few
 #: findings from a large pool, so without a rule for what blocks, fix-and-review loops
 #: never converge. The JSON labels below are a parsed contract: tooling that judges a
@@ -67,7 +75,7 @@ ROLE_TABLE: dict[str, RoleSpec] = {
         f"{_READ_ONLY_CONTRACT}\n\n"
         "Focus: code correctness, edge cases, error handling, test quality, and "
         "whether the change does what it claims. Flag bugs, missing validation, "
-        "and tests that assert existence rather than behavior.",
+        f"and tests that assert existence rather than behavior. {_PREMISE_CHECK}",
     ),
     "design-audit": RoleSpec(
         "review",
@@ -88,7 +96,7 @@ ROLE_TABLE: dict[str, RoleSpec] = {
         f"{_READ_ONLY_CONTRACT}\n\n"
         "Focus: actively try to break the work. Hunt for security holes, injection "
         "vectors, race conditions, unhandled inputs, and incorrect assumptions. "
-        "Assume the author is wrong until the code proves otherwise.\n\n"
+        f"Assume the author is wrong until the code proves otherwise. {_PREMISE_CHECK}\n\n"
         f"{_BLOCK_RULE}",
     ),
     "plan": RoleSpec(

@@ -345,10 +345,19 @@ def test_slot_release_paths(
 ) -> None:
     _set_cap(monkeypatch, 1)
     install_stub(tmp_path, monkeypatch, body)
+    held_during_run: list[bool] = []
+    real_run = _runner.run_dispatch
+
+    def watched(*args: object, **kwargs: object) -> object:
+        held_during_run.append(not _slot_is_free(slot_dir))
+        return real_run(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_runner, "run_dispatch", watched)
 
     result = _runner.dispatch(DispatchRequest(client=_CLIENT, prompt="p", timeout_s=timeout_s))
 
     assert result.silence_reason != "concurrency_cap"
+    assert held_during_run == [True], "free afterwards proves nothing unless the run held it"
     assert _slot_is_free(slot_dir)
 
 
@@ -540,6 +549,52 @@ def test_capped_fanout_lane_reports_concurrency_cap(
     (lane,) = _run_fanout([("grok-lane", DispatchRequest(client=_CLIENT, prompt="p"))])
 
     assert (lane["target"], lane["ok"], lane["reason"]) == ("grok-lane", False, "concurrency_cap")
+
+
+def _slot_held_for(slot_dir: Path, seconds: float) -> threading.Thread:
+    """Another dispatch holding the only slot for *seconds*, then releasing it."""
+    ready = threading.Event()
+
+    def run() -> None:
+        with dispatch_slot(1, wait_s=5, directory=slot_dir):
+            ready.set()
+            time.sleep(seconds)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    assert ready.wait(5)
+    return thread
+
+
+def test_cli_fanout_lanes_wait_the_configured_slot_wait(
+    slot_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FR03: a CLI fan-out lane queues for the configured dispatch_slot_wait_s, as a single CLI dispatch does.
+
+    It used to go through the MCP tool's facade and wait that path's short bound instead, so lanes over the cap
+    came back as concurrency_cap. The short bound is lowered here so the two waits differ inside one test: the
+    slot frees after 0.6 s, the configured wait is 5 s, the tool's bound 0.1 s.
+    """
+    from trw_mcp.dispatch._cli import _fan_out
+    from trw_mcp.dispatch._targets import Target
+    from trw_mcp.tools._dispatch_fanout import _run_fanout
+
+    install_stub(tmp_path, monkeypatch, """echo '{"result": "ok"}'\n""")
+    _set_cap(monkeypatch, 1, wait_s=5.0)
+    monkeypatch.setattr("trw_mcp.tools.dispatch._SYNC_SLOT_WAIT_S", 0.1)
+
+    _slot_held_for(slot_dir, 0.6).join(0)  # started; it releases on its own
+    with pytest.raises(SystemExit) as exc:
+        _fan_out(
+            [Target(_CLIENT, None, 1)], ["p"], lambda c, m, prompt: DispatchRequest(client=_CLIENT, prompt=prompt), None
+        )
+    (lane,) = json.loads(capsys.readouterr().out)["results"]
+    assert (exc.value.code, lane["ok"]) == (0, True), lane
+
+    holder = _slot_held_for(slot_dir, 0.6)
+    (tool_lane,) = _run_fanout([("tool-lane", DispatchRequest(client=_CLIENT, prompt="p"))])
+    holder.join(5)
+    assert (tool_lane["ok"], tool_lane["reason"]) == (False, "concurrency_cap"), "the tool's lanes keep the short wait"
 
 
 def test_runner_env_forwards_the_dispatch_cap_env() -> None:

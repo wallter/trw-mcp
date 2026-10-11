@@ -19,8 +19,10 @@ from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
+    TRWCallContext,
     find_active_run,
     resolve_project_root,
+    resolve_run_path,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 from trw_mcp.state.pre_compact_marker import write_pre_compact_marker
@@ -142,33 +144,48 @@ def _read_last_events(events_path: Path) -> list[str]:
     return last_5_events
 
 
-def _read_last_checkpoint_message(run_dir: Path) -> str:
-    """Last checkpoint message from checkpoints.jsonl (PRD-CORE-342 FR-02).
+#: What a pre-compaction checkpoint records when the caller gave no message (the PreCompact hook never does).
+_PRE_COMPACT_TEXT = "pre-compaction safety checkpoint"
+#: How far back the recovery looks for a real message; a run compacted more often than this without one has none.
+_LAST_MESSAGE_LOOKBACK = 50
 
-    Pre-compaction recovery must surface the REAL last checkpoint message — that
+
+def _read_last_checkpoint_message(run_dir: Path) -> str:
+    """Last REAL checkpoint message from checkpoints.jsonl (PRD-CORE-342 FR-02).
+
+    Pre-compaction recovery must surface the real last checkpoint message — that
     is what the next session reads to resume — not a generic hardcoded literal.
-    Falls back to the generic string only when no checkpoint has been written yet.
+    The pre-compaction checkpoint itself appends that literal when the caller
+    gave no message, and this is read right after it, so the newest line was
+    always the literal and the real message was never shown. Lines that carry
+    the literal, no message, or no JSON are passed over; the literal is returned
+    only when no real message is found.
     """
     import json
 
-    fallback = "pre-compaction safety checkpoint"
     checkpoints_path = run_dir / "meta" / "checkpoints.jsonl"
     if not checkpoints_path.exists():
-        return fallback
+        return _PRE_COMPACT_TEXT
     try:
         # errors="replace" guards the read itself: a checkpoints.jsonl with
         # non-UTF-8 bytes would otherwise raise UnicodeDecodeError before the
         # try/except and crash pre-compact recovery instead of falling back.
         raw = checkpoints_path.read_text(encoding="utf-8", errors="replace")
-        lines = [ln for ln in raw.strip().split("\n") if ln]
-        if not lines:
-            return fallback
-        rec = json.loads(lines[-1])
-        message = str(rec.get("message", "")).strip()
-        return message or fallback
-    except Exception:  # per-item error handling: malformed/undecodable JSONL -> safe fallback
-        logger.debug("checkpoint_jsonl_parse_failed", exc_info=True)
-        return fallback
+    except OSError:  # unreadable log -> safe fallback, never a crashed recovery
+        logger.debug("checkpoint_jsonl_read_failed", exc_info=True)
+        return _PRE_COMPACT_TEXT
+    lines = [ln for ln in raw.strip().split("\n") if ln]
+    for line in reversed(lines[-_LAST_MESSAGE_LOOKBACK:]):
+        try:
+            rec = json.loads(line)
+        except ValueError:  # per-item error handling: a malformed line is passed over, not fatal
+            logger.debug("checkpoint_jsonl_parse_failed", exc_info=True)
+            continue
+        text = rec.get("message") if isinstance(rec, dict) else None
+        message = text.strip() if isinstance(text, str) else ""  # a null or a number is no message
+        if message and message != _PRE_COMPACT_TEXT:
+            return message
+    return _PRE_COMPACT_TEXT
 
 
 def _read_failing_tests(project_root: Path) -> list[str]:
@@ -304,10 +321,26 @@ def _write_compact_instructions(
     return instructions_path
 
 
+def _explicit_pre_compact_run(run_path: str, context: TRWCallContext) -> Path:
+    """The run a caller named for a pre-compaction checkpoint, validated as the ordinary checkpoint validates it.
+
+    An explicit ``run_path`` is the only run a session with no pin can name
+    (often the case right after a compaction), and it used to be dropped, so
+    the call answered ``no_active_run`` while the same arguments without
+    ``pre_compact`` recorded. A wrong one is a caller mistake and raises as it
+    does there: containment and existence from :func:`resolve_run_path`, then a
+    readable ``meta/run.yaml``, before anything is written.
+    """
+    run_dir = resolve_run_path(run_path, context=context)
+    FileStateReader().read_yaml(run_dir / "meta" / "run.yaml")
+    return run_dir
+
+
 def execute_pre_compact_checkpoint(
     ctx: Context | None,
     directive: str = "",
     context_anchor: str = "",
+    run_path: str | None = None,
 ) -> PreCompactResultDict:
     """Capture a safety checkpoint before the context window compacts.
 
@@ -329,14 +362,19 @@ def execute_pre_compact_checkpoint(
     if not cfg.auto_checkpoint_pre_compact:
         return {"status": "skipped", "reason": "auto_checkpoint_pre_compact disabled"}
 
+    # Only an explicit run_path is resolved outside the best-effort boundary: a wrong one is a caller mistake and
+    # raises exactly as the ordinary checkpoint does. The pin lookup stays inside it, as it always was, so a pin
+    # store that cannot be read is a failed capture, never an exception (PRD-CORE-141 FR03/FR05: ctx-aware, no scan).
+    context = _build_call_context(ctx)
+    explicit = _explicit_pre_compact_run(run_path, context) if run_path else None
     try:
-        # PRD-CORE-141 FR03/FR05: ctx-aware find_active_run suppresses
-        # scan fallback for fresh sessions.
-        run_dir = find_active_run(context=_build_call_context(ctx))
+        run_dir = explicit if explicit is not None else find_active_run(context=context)
         if run_dir is None:
             return {"status": "skipped", "reason": "no_active_run"}
 
-        _do_checkpoint(run_dir, "pre-compaction safety checkpoint")
+        # A caller's own message never comes through here: the tool records it first through the ordinary
+        # checkpoint, with that path's validation, and the marker reads it back past this line.
+        _do_checkpoint(run_dir, _PRE_COMPACT_TEXT)
 
         project_root = resolve_project_root()
         events_path = run_dir / "meta" / "events.jsonl"

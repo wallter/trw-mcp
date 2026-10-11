@@ -71,3 +71,22 @@ def test_cli_role_choices_derive_from_the_table() -> None:
     add_dispatch_subcommand(subparsers)
     role_action = next(a for a in subparsers.choices["dispatch"]._actions if a.dest == "role")
     assert list(role_action.choices or ()) == sorted(ROLE_TABLE)
+
+
+def test_the_roles_that_review_a_change_ask_whether_its_premise_is_true() -> None:
+    """A review told only what changed checks the implementation and accepts the reason for it. On 2026-10-10 a
+    review that was asked found a false premise from the code; one that was not accepted a change withdrawn
+    twenty minutes later. The question reaches the child as part of the prompt, ahead of the caller's text."""
+    for role in ("code-review", "adversarial-audit"):
+        prompt = apply_role(role, "review the diff of commit abc")
+        question = prompt.index("First check the premise: is the problem this change says it fixes real")
+        assert question < prompt.index("review the diff of commit abc")
+        assert "or say that you could not find one" in prompt
+
+    # A design or architecture audit and a plan review no change's claim, so they are not asked.
+    for role in ("design-audit", "architectural-audit", "plan"):
+        assert "check the premise" not in apply_role(role, "x")
+
+    # The adversarial audit's parsed contract still ends the preamble: the question sits before it.
+    audit = apply_role("adversarial-audit", "x")
+    assert audit.index("check the premise") < audit.index("Blocking rule:")
