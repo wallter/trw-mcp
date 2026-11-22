@@ -1,5 +1,22 @@
 # trw-mcp
 
+> [!IMPORTANT]
+> **Archived, November 2026.** Development of the TRW Framework is suspended and this repository is read-only. The package remains on PyPI and keeps working locally. The hosted service (accounts, sync, telemetry, the feedback channel and the one-line installer) has been shut down, and there will be no fixes, releases or support. Development may resume if a need arises.
+
+## A note from the author
+
+TRW named itself in late 2025. In early 2026, models and the harnesses around them were in a very different place: sessions forgot what they had learned, "done" was often a claim and not a result, and every tool behaved differently. TRW filled that gap. It gave agents the same memory, requirements and verification discipline in whichever harness they ran.
+
+Then the ground moved, faster than anyone planned for. Memory, workflows, adaptive harnesses, and communication within and across harnesses and models are now built into the tools themselves. As they improved, the overhead TRW added bought less and less. As of November 2026, adding TRW to a current harness appears to be net neutral, so development is suspended and the repositories are archived.
+
+I am proud of what it stood for. TRW argued early that an agent should carry the details a task genuinely needs and no more, that completion should be evidenced, and that knowledge should be cheaper to keep than to relearn. Much of that is now ordinary advice, which is the best outcome a framework like this can have.
+
+The pace of all this is hard to overstate. What was science fiction a few years ago is a daily occurrence. I believe we have passed the Turing test and crossed to the other side of the singularity; in all likelihood, AGI arrived in 2026. As humanity turns its gaze to the stars, we are joined by another intelligence.
+
+The future is bright. Thank you to everyone who tried TRW, broke it, and told me so.
+
+— Tyler Wall
+
 **Give your coding agent a memory that carries over from one session to the next.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
